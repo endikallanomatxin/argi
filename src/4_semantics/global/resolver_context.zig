@@ -169,6 +169,8 @@ pub const Context = struct {
             };
         }
         try self.core.reached_signature_changes.appendSlice(allocator, source.core.reached_signature_changes.items);
+        try self.expressions.session_bindings.appendSlice(allocator, source.expressions.session_bindings.items);
+        self.expressions.continuation_function = source.expressions.continuation_function;
         self.generics.pointer_types = try source.generics.pointer_types.clone(allocator);
         self.generics.generic_types = try source.generics.generic_types.clone(allocator);
         self.generics.comptime_failure = source.generics.comptime_failure;
@@ -217,6 +219,7 @@ pub const Context = struct {
     }
 
     pub fn deinit(self: *Context) void {
+        self.expressions.deinit();
         self.ownership.deinit();
         self.errors.deinit();
         self.contracts.deinit();

@@ -19,6 +19,20 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     stats: Stats = .{},
+    session_bindings: std.ArrayList(global_sg.GlobalBindingId) = .empty,
+    continuation_function: ?global_sg.GlobalFunctionId = null,
+    operation_owner: ?global_sg.GlobalFunctionId = null,
+
+    pub fn deinit(self: *Resolver) void {
+        self.session_bindings.deinit(self.allocator);
+    }
+    fn sessionBinding(self: *const Resolver, name: []const u8) ?global_sg.GlobalBindingId {
+        if (self.continuation_function == null or self.operation_owner != self.continuation_function) return null;
+        for (self.session_bindings.items) |binding| {
+            if (std.mem.eql(u8, self.graph.text(self.graph.binding(binding).name), name)) return binding;
+        }
+        return null;
+    }
 
     pub fn tryResolve(
         self: *Resolver,
@@ -56,6 +70,8 @@ pub const Resolver = struct {
             const binding = name_lookup.bindingInModule(self.modules, self.offsets, target_index, name) orelse return false;
             return self.patchNameUse(o, value.node, binding, value.source);
         }
+        if (self.sessionBinding(name)) |binding|
+            return self.patchNameUse(o, value.node, binding, value.source);
         if (name_lookup.binding(self.modules, self.offsets, module_index, name)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
         return self.patchTypeExpression(module_index, o, value.node, name);
@@ -63,7 +79,7 @@ pub const Resolver = struct {
 
     fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) bool {
         const name = self.modules[module_index].text(value.name);
-        const binding = name_lookup.binding(self.modules, self.offsets, module_index, name) orelse return false;
+        const binding = self.sessionBinding(name) orelse name_lookup.binding(self.modules, self.offsets, module_index, name) orelse return false;
         const target = globalizer.globalNode(o, value.node);
         var source = value.source;
         source.file_index += o.file_base;

@@ -577,11 +577,28 @@ pub const Session = struct {
             return error.InvalidSafetyContinuation;
         try self.includeExecutionRoot(function);
         self.resolvers.ownership.continuation_function = function;
+        self.resolvers.expressions.continuation_function = function;
     }
 
     /// Fill an empty checked command with the retained selected cleanup list.
     /// No source body is overwritten and no ordinary function gains implicit
     /// destruction semantics. The exit is checked as a temporal continuation.
+    pub fn retainContinuationBindings(self: *Session, function: global_sg.GlobalFunctionId) !void {
+        if (self.phase != .quiescent or self.resolvers.expressions.continuation_function != function) return error.InvalidSafetyContinuation;
+        const body = self.relocation.graph.function(function).body orelse return error.InvalidSafetyContinuation;
+        const block = self.relocation.graph.blocks.items[@intFromEnum(body)];
+        const retained = &self.resolvers.expressions.session_bindings;
+        for (self.relocation.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| {
+            const content = self.relocation.graph.node(node).content;
+            if (content != .binding_declaration) continue;
+            const binding = content.binding_declaration;
+            if (std.mem.indexOfScalar(global_sg.GlobalBindingId, retained.items, binding) != null) continue;
+            const name = self.relocation.graph.text(self.relocation.graph.binding(binding).name);
+            for (retained.items) |previous| if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.binding(previous).name), name)) return error.DuplicateSessionBinding;
+            try retained.append(self.allocator, binding);
+        }
+    }
+
     pub fn prepareExitScope(self: *Session, function: global_sg.GlobalFunctionId, bindings: []const global_sg.GlobalBindingId) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         if (@intFromEnum(function) >= self.relocation.graph.functions.items.len or self.resolution.finalized_functions.contains(function))
@@ -1851,6 +1868,8 @@ fn resolvePendingPhase(
         const module = &modules[module_index];
         const operation = module.semantic.pending_operations.items[operation_index];
         const attempt_start = if (detailed_stats != null) profileTimestamp(profile_io) else 0;
+        expressions.operation_owner = item.owner_function;
+        defer expressions.operation_owner = null;
         const result = resolvePendingOperation(
             core,
             expressions,

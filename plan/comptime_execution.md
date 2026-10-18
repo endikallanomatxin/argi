@@ -510,3 +510,11 @@ it and invokes its exact checked entry on persistent storage. Published units ow
 their session layouts. A checked exit runs before reset; remaining active cleanup
 poisons the context instead of dropping owners. Source loading, persistent name
 lookup and interactive commands remain pending.
+
+Concrete continuation name operations can resolve the accepted direct-binding
+list through ordinary expression resolution. Pending-operation owner identity
+limits this environment to the designated command; qualified module lookup stays
+unchanged. Candidate resolver contexts own independent binding lists, reject
+duplicate session names and publish new direct bindings only after resolution.
+Two separately lowered command modules can now mutate the same persistent slot.
+Generic-body lookup and source-level interactive submission assembly remain.

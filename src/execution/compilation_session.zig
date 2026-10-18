@@ -135,6 +135,7 @@ pub const CompilationSession = struct {
             if (exit_bindings) |bindings| try candidate.prepareExitScope(function, bindings) else try candidate.prepareContinuationScope(function);
         }
         try candidate.advance();
+        if (continuation) |function| try candidate.retainContinuationBindings(function);
         const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
         errdefer if (proof) |owned| owned.release();
         var checked = try checkedSnapshot(candidate, self.allocator, diagnostics, continuation, proof);
@@ -473,4 +474,34 @@ test "execution session publishes commands and runs checked exit before reset" {
     try std.testing.expectEqual(.fresh, runtime.context.state);
     try std.testing.expectEqual(@as(usize, 0), runtime.context.bindings.count());
     try std.testing.expectEqual(@as(u64, 2), compiler.revision);
+}
+
+test "execution session resolves accepted bindings in later command modules" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const first_source = "command := () -> () { retained :: Int32 = 42 }\n";
+    const second_source = "update := () -> () { retained = 7 }\n";
+    const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = first_source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var first = try sourceModule(a, first_source, &diagnostics);
+    defer first.deinit(a);
+    var second = try sourceModule(a, second_source, &diagnostics);
+    defer second.deinit(a);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    var compiler = try CompilationSession.init(a, &.{}, .{ .exhaustive_function_bodies = false });
+    defer compiler.deinit();
+    var runtime = @import("session.zig").Session.init(a, &compiler, .{});
+    defer runtime.deinit();
+    var command = try compiler.prepareContinuation(modules[0..1], &diagnostics, @enumFromInt(0));
+    defer command.deinit();
+    const binding = command.semantic.?.resolvers.expressions.session_bindings.items[0];
+    const layouts = [_]bytecode.SessionBinding{.{ .binding = binding, .slots = &.{command.checked.?.graph.binding(binding).ty} }};
+    try runtime.execute(&command, @enumFromInt(0), &layouts);
+    var update = try compiler.prepareContinuation(&modules, &diagnostics, @enumFromInt(first.functions.items.len));
+    defer update.deinit();
+    try runtime.execute(&update, @enumFromInt(first.functions.items.len), &layouts);
+    const stored = try runtime.context.storage.slots(runtime.context.bindings.get(binding).?);
+    try std.testing.expectEqual(@as(i128, 7), (try stored.get(0)).integer);
 }
