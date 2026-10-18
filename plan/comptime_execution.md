@@ -320,9 +320,8 @@ call nodes with frozen constants. Nested requests use dependency order and cycle
 detection, independent of declaration order. Runtime variables are rejected as
 arguments, and aborted evaluation becomes a source diagnostic. AOT and VM tests
 cover an aggregate returned through nested requests in a generic body. This
-initial source connection does not yet participate in type formation, compile-time
-argument computation or conditional selection; it must move into staged semantic
-resolution for those uses.
+source connection now also feeds integer type/specialization arguments through
+staged semantic resolution. Conditional declaration selection remains pending.
 
 Closed calls and selected integer arithmetic/comparisons in arguments now use
 ordinary VM execution too. Each explicit request shares one remaining instruction
@@ -360,12 +359,17 @@ addresses.
 
 ## Next integration steps
 
-- Parameterized integer expressions now retain executable `#run` nodes through
-  module caching. Connect those nodes to dependency scheduling: resolve closed
-  dependencies before freezing results, and defer requests whose bodies/types
-  are pending. Evaluation in type/specialization arguments is not connected yet.
-- Make semantic worklists wake users of frozen results before reporting unresolved
-  types. Dependency-unit checking must not require unrelated bodies to finish.
+Integer argument requests now register bound recipes without retaining speculative
+node IDs. GlobalSema materializes them between resolution passes, makes their
+selected dependencies reachable, waits for those bodies' pending work and cleanup,
+then uses the ordinary unit checker/evaluator to freeze the result. Completed
+requests wake types and calls. Keys include bound integer/type parameters; type
+identities created within an active speculative pass cannot be retained yet.
+
+- Complete request dependency diagnostics and source-independent checking for
+  callers of GlobalSema without a diagnostic source database.
+- Preserve request demand through speculative selection and support temporary
+  type recipes without retaining IDs from rolled-back graph tails.
 - Replace target-only preprocessing with staged conditional declaration discovery
   before enabling computed `#if`; discarded imports must remain undiscovered.
 

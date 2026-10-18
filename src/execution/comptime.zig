@@ -25,6 +25,27 @@ pub fn resolve(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diag
     graph.comptime_requests.clearRetainingCapacity();
 }
 
+// The staged frontend evaluates one ready request without touching unrelated
+// requests whose types/bodies are still pending. Nested requests keep the same
+// dependency ordering, proof, budgets and freeze boundary as final evaluation.
+pub fn resolveRequest(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diagnostics: *diag.Diagnostics, root: g.GlobalNodeId) !void {
+    var scratch = std.heap.ArenaAllocator.init(allocator);
+    defer scratch.deinit();
+    var context = Context{ .allocator = allocator, .temporary = scratch.allocator(), .graph = graph, .diagnostics = diagnostics };
+    context.states = try context.temporary.alloc(State, graph.comptime_requests.items.len);
+    @memset(context.states, .waiting);
+    for (graph.comptime_requests.items, 0..) |request, index| {
+        if (request != root) continue;
+        context.process(index) catch |err| {
+            if (err == error.OutOfMemory or err == error.Reported) return err;
+            try context.report(context.failure_source orelse graph.node(root).source, err);
+            return error.Reported;
+        };
+        return;
+    }
+    return error.MissingCompileTimeRequest;
+}
+
 const State = enum { waiting, executing, done };
 const Context = struct {
     allocator: std.mem.Allocator,

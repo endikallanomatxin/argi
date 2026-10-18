@@ -13763,3 +13763,17 @@ test "feature_tests/execution/62_comptime_aggregate_projection" {
 test "feature_tests/execution/63X_comptime_projection_bounds" {
     try buildExpectFail("tests/feature_tests/execution/63X_comptime_projection_bounds", "#run array index is out of bounds");
 }
+
+test "feature_tests/execution/64_comptime_specialization_arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/64_comptime_specialization_arguments");
+    try runExpect("tests/feature_tests/execution/64_comptime_specialization_arguments", 42);
+    try vmExpect("tests/feature_tests/execution/64_comptime_specialization_arguments", 42, null);
+}
+
+test "feature_tests/execution/65X_comptime_noninteger_argument" {
+    try buildExpectFail("tests/feature_tests/execution/65X_comptime_noninteger_argument", "compile-time integer argument requires an integer result");
+}
+
+test "feature_tests/execution/66X_comptime_argument_safety" {
+    try buildExpectFail("tests/feature_tests/execution/66X_comptime_argument_safety", "consumption requires an initialized owner");
+}

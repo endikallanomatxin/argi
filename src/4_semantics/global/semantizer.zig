@@ -352,6 +352,14 @@ pub fn semantizeWithOptions(
         .generics = &generics,
         .profile_io = options.profile_io,
     };
+    var staged_execution = @import("comptime_execution.zig").Scheduler{
+        .allocator = allocator,
+        .functions = &generic_functions,
+        .stable_type_count = relocation.graph.types.items.len,
+    };
+    defer staged_execution.deinit();
+    generics.execution_context = &staged_execution;
+    generics.execute_integer = @import("comptime_execution.zig").Scheduler.integer;
     var contracts = contract_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,
@@ -529,6 +537,7 @@ pub fn semantizeWithOptions(
     var changed = true;
     while (true) {
         while (changed) {
+            staged_execution.stable_type_count = relocation.graph.types.items.len;
             profile_rounds += 1;
             changed = false;
             // Published operation signatures do not make their bodies roots.
@@ -627,6 +636,7 @@ pub fn semantizeWithOptions(
             if (evidence_functions != relocation.graph.functions.items.len or
                 evidence_types != relocation.graph.types.items.len or
                 evidence_conformances != relocation.graph.contract_conformances.items.len) changed = true;
+            if (try staged_execution.materialize()) changed = true;
             if (reachable) |set| {
                 if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
             }
@@ -653,7 +663,22 @@ pub fn semantizeWithOptions(
             try reachability_mod.expand(allocator, &relocation.graph, set)
         else
             false;
-        if (!finalized_any and !reached_cleanup) break;
+        var pending_bodies = std.AutoHashMap(global_sg.GlobalFunctionId, void).init(allocator);
+        defer pending_bodies.deinit();
+        if (staged_execution.requests.items.len != 0) {
+            for (pending_phases) |phase| for (worklists.forPhase(phase).items) |item| {
+                if (item.owner_function) |owner| try pending_bodies.put(owner, {});
+            };
+        }
+        const evaluated = if (options.diagnostics) |diagnostics|
+            staged_execution.evaluateReady(diagnostics, &finalized_functions, &pending_bodies) catch |err| {
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                return err;
+            }
+        else
+            false;
+        if (evaluated) try contracts.resolveAssociatedTypes();
+        if (!finalized_any and !reached_cleanup and !evaluated) break;
         changed = true;
     }
     const profile_postloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
@@ -1661,6 +1686,11 @@ fn resolvePendingPhase(
             offsets[module_index],
             operation,
         ) catch |err| {
+            if (err == error.ComptimeExecutionPending) {
+                work.items[write] = item;
+                write += 1;
+                continue;
+            }
             if (err == error.ConflictingGenericArgument and operation == .resolve_call) {
                 if (diagnostics) |bag| {
                     const reference = module.semantic.external_refs.items[@intFromEnum(operation.resolve_call.callee)];

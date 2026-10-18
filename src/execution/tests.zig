@@ -1256,3 +1256,40 @@ test "bytecode source run projects aggregate argument expressions" {
         \\}
     , .{ .instructions = 50 }));
 }
+
+test "bytecode source run determines specialization arguments" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\compute() -> (.result: Int32 = 0) := {
+        \\    while result < 6 { result = result + 1 }
+        \\}
+        \\scale#(.n: Int32)(.value: Int32) -> (.result: Int32 = value * n) := {}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = scale#(.n = #run compute())(.value = 7)
+        \\}
+    , .{ .instructions = 50 }));
+}
+
+test "bytecode source run determines type arguments" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\compute() -> (.result: Int32 = 2) := {}
+        \\Holder#(.n: Int32): Type = (.items: Array#(.n = n, .t: Int32))
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    data :: Holder#(.n = #run compute()) = (.items = (20, 42))
+        \\    status_code = data.items[1]
+        \\}
+    , .{ .instructions = 50 }));
+}
+
+test "bytecode source run keys generic requests by bound arguments" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\increment(.value: Int32) -> (.result: Int32 = value + 1) := {}
+        \\result#(.n: Int32)() -> (.value: Int32 = n) := {}
+        \\compute#(.n: Int32)() -> (.value: Int32) := {
+        \\    value = result#(.n = #run increment(.value = n))()
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    if compute#(.n = 3)() != 4 { abort }
+        \\    status_code = compute#(.n = 41)()
+        \\}
+    , .{ .instructions = 80 }));
+}

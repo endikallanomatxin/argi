@@ -554,7 +554,8 @@ pub const SafetyChecker = struct {
 
     fn validateForeignSignatures(self: *SafetyChecker) !void {
         const c_abi = @import("../global/c_abi.zig");
-        for (self.graph.bindings.items) |binding| {
+        for (self.graph.bindings.items, 0..) |binding, raw| {
+            if (self.unit) |unit| if (!unit.containsBinding(@enumFromInt(raw))) continue;
             if (types.incompleteDeclaration(self.graph, binding.ty)) |id|
                 try self.report(binding.source, "CIncomplete type '{s}' has no value representation; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
             if (self.graph.resolvedSemanticType(binding.ty)) |semantic| {
@@ -585,7 +586,8 @@ pub const SafetyChecker = struct {
                     try self.report(field.source, "CStruct field '{s}' has no supported C representation", .{self.graph.text(field.name)});
             }
         }
-        for (self.graph.functions.items) |function| {
+        for (self.graph.functions.items, 0..) |function, raw| {
+            if (self.unit) |unit| if (!unit.contains(@enumFromInt(raw))) continue;
             if (!function.flags.is_c_abi and (function.body != null or function.flags.has_declared_body)) continue;
             const declaration = self.graph.declaration(function.declaration);
             const name = self.graph.text(declaration.name);

@@ -121,6 +121,7 @@ pub fn resolveAssociatedTypes(self: *Resolver) !void {
                     defer bindings.deinit(self.allocator);
                     break :blk self.generics.instantiateParameterizedType(module_index, computed, &bindings);
                 } else resolveAssociatedType(self, globalizer.globalType(o, reference.projection_base.?), module.text(reference.name), self.sourceFor(module_index, reference.source))) catch |err| switch (err) {
+                    error.ComptimeExecutionPending => continue,
                     error.UnresolvedAssociatedType => {
                         remaining += 1;
                         continue;

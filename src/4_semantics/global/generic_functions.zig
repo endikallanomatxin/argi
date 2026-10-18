@@ -2052,6 +2052,20 @@ pub const Resolver = struct {
         return expression;
     }
 
+    // Compile-time requests reuse ordinary expression instantiation without a
+    // fabricated function identity. The scheduler owns publication/rollback.
+    pub fn instantiateComptimeExpression(self: *Resolver, module_index: usize, node: ir.ParameterizedNodeId, bindings: *generic_mod.Resolver.Bindings) !global_sg.GlobalNodeId {
+        var instance = InstanceContext.init(self, module_index, .{
+            .declaration = @enumFromInt(0),
+            .parameters = .{ .start = 0, .len = 0 },
+            .input = @enumFromInt(0),
+            .output = @enumFromInt(0),
+            .body = null,
+        }, bindings);
+        defer instance.deinit();
+        return instance.instantiateNode(node);
+    }
+
     const InstanceContext = struct {
         resolver: *Resolver,
         module_index: usize,

@@ -42,6 +42,8 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     stats: Stats = .{},
     comptime_failure: ?ComptimeFailure = null,
+    execution_context: ?*anyopaque = null,
+    execute_integer: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!i64 = null,
     argument_failure: ?struct { declaration: global_sg.GlobalDeclId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
@@ -84,7 +86,10 @@ pub const Resolver = struct {
             const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(index)));
             switch (self.graph.types.items[index]) {
                 .generic => {
-                    if (try self.ensureGenericInstance(id)) changed = true;
+                    if (self.ensureGenericInstance(id) catch |err| switch (err) {
+                        error.ComptimeExecutionPending => continue,
+                        else => return err,
+                    }) changed = true;
                 },
                 else => {},
             }
@@ -740,6 +745,8 @@ pub const Resolver = struct {
         return switch (expression) {
             .literal => |value| value,
             .execution => |node| {
+                if (self.execute_integer) |execute|
+                    return execute(self.execution_context.?, module_index, node, bindings);
                 const local = self.modules[module_index].semantic.parameterized_storage.ir.nodes.items[@intFromEnum(node)];
                 const source = switch (local) {
                     .resolved => |value| value.source,

@@ -31,9 +31,10 @@ branch is compiled. This differs from running an ordinary `if` inside
 > those arguments. Calls use the checked bytecode
 > subset and its execution limits; references, resource-owning results and host
 > effects cannot cross this boundary. Requests in specialized bodies are retained,
-> and nested requests are resolved before their callers. Evaluation currently
-> follows global semantic completion, so computed results cannot yet shape types
-> or compile-time arguments. General compile-time conditions remain unsupported.
+> and nested requests are resolved before their callers. Integer results can
+> determine type and function specialization arguments: semantic resolution
+> waits for the selected dependency bodies, proves their safety, and resumes
+> with the frozen result. General compile-time conditions remain unsupported.
 > `#if` accepts the target predicates below, combined with `not`, `and`, `or`,
 > and parentheses.
 

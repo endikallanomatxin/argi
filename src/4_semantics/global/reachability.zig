@@ -111,6 +111,22 @@ pub fn expand(
 // Closed function dependencies without executable-program roots. Evaluation
 // and interactive submissions must not pull unrelated main/global work into
 // their proof merely because it exists in the retained graph.
+pub fn expressionUnit(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, root: graph_mod.GlobalNodeId) !FunctionSet {
+    var result = FunctionSet.init(allocator);
+    errdefer result.deinit();
+    var state = State{
+        .allocator = allocator,
+        .graph = graph,
+        .functions = &result,
+        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
+    };
+    defer state.visited_functions.deinit();
+    defer state.visited_nodes.deinit();
+    try state.walkNode(root);
+    return result;
+}
+
 pub fn dependencyUnit(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, roots: []const graph_mod.GlobalFunctionId) !FunctionSet {
     for (roots) |root| if (@intFromEnum(root) >= graph.functions.items.len) return error.InvalidEntry;
     var result = FunctionSet.init(allocator);
