@@ -239,6 +239,11 @@ pub const Resolver = struct {
     fn resolveCopy(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
         const source = globalizer.globalNode(o, value.value);
         const target = globalizer.globalNode(o, value.node);
+        return self.resolveGlobalCopy(source, target);
+    }
+
+    /// Resolve implicit copying identically for lowered and inherited inputs.
+    pub fn resolveGlobalCopy(self: *Resolver, source: global_sg.GlobalNodeId, target: global_sg.GlobalNodeId) !bool {
         const ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return false;
         // Index syntax can resolve to an operator call after lowering has
         // inserted an implicit copy. The call already produces a fresh value;
@@ -851,6 +856,39 @@ pub const Resolver = struct {
         return null;
     }
 
+    /// Reuse lexical evidence without bypassing implicit-copy permission or
+    /// allowing an inherited assumption to override a local binding.
+    pub fn inheritAssumedFields(
+        self: *Resolver,
+        source: primitives.SourceRef,
+        original: primitives.Range(global_sg.GlobalValueFieldId),
+        assumptions: []const global_sg.GlobalBindingId,
+        visible: []const global_sg.GlobalBindingId,
+    ) !primitives.Range(global_sg.GlobalValueFieldId) {
+        if (assumptions.len == 0) return original;
+        var fields: std.ArrayList(global_sg.ValueField) = .empty;
+        defer fields.deinit(self.allocator);
+        try fields.appendSlice(self.allocator, self.graph.value_fields.items[original.start..][0..original.len]);
+        for (assumptions) |binding| {
+            const value = self.graph.binding(binding);
+            var shadowed = false;
+            for (fields.items) |field| {
+                if (std.mem.eql(u8, self.graph.text(field.name), self.graph.text(value.name))) shadowed = true;
+            }
+            for (visible) |local| {
+                if (local != binding and std.mem.eql(u8, self.graph.text(self.graph.binding(local).name), self.graph.text(value.name))) shadowed = true;
+            }
+            if (shadowed) continue;
+            const use = try self.appendNode(source, value.ty, .{ .binding_use = binding });
+            const copy = try self.appendNode(source, value.ty, .{ .binding_use = binding });
+            if (!try self.resolveGlobalCopy(use, copy)) return error.InvalidSafetyContinuation;
+            try fields.append(self.allocator, .{ .name = value.name, .value = copy });
+        }
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.appendSlice(self.allocator, fields.items);
+        return .{ .start = start, .len = @intCast(fields.items.len) };
+    }
+
     fn prepareAutoDeinit(
         self: *Resolver,
         binding: global_sg.GlobalBindingId,
@@ -864,6 +902,16 @@ pub const Resolver = struct {
         var cleanup_context = context;
         if (record.cleanup_arguments) |input| {
             cleanup_context.global.assumed_fields = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields;
+        }
+        if (self.continuation_function != null and context.ownerFunction() == self.continuation_function) {
+            if (self.core.session_namespace) |namespace| {
+                cleanup_context.global.assumed_fields = try self.inheritAssumedFields(
+                    record.source,
+                    cleanup_context.global.assumed_fields,
+                    namespace.assumptions.items,
+                    context.global.visible_bindings,
+                );
+            }
         }
         const descriptor = try self.buildAutoDeinit(binding, target, record.ty, cleanup_context, module_index);
         var cleanup_node: ?global_sg.GlobalNodeId = null;
@@ -1010,6 +1058,8 @@ pub const Resolver = struct {
         if (standard_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
             if (try dispatch.contracts.implements(target_ty, declaration)) {
                 const input = try self.singleNamedInput("self", address, source);
+                if (context == .global)
+                    self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = context.global.assumed_fields;
                 var participants = [_]global_sg.GlobalTypeId{target_ty};
                 const node = try dispatch.contracts.callOperationCandidate(module_index, .{
                     .declaration = declaration,

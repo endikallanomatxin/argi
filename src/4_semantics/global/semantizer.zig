@@ -579,6 +579,42 @@ pub const Session = struct {
         try self.includeExecutionRoot(function);
         self.resolvers.ownership.continuation_function = function;
         self.resolvers.expressions.continuation_function = function;
+        try self.inheritContinuationAssumptions(function);
+    }
+
+    /// Seed only this command's lexical call sites. Ordinary function bodies
+    /// retain their own capability inputs; nested blocks can shadow this evidence.
+    fn inheritContinuationAssumptions(self: *Session, function: global_sg.GlobalFunctionId) !void {
+        const namespace = self.resolvers.core.session_namespace orelse return;
+        if (namespace.assumptions.items.len == 0) return;
+        for (self.modules, self.relocation.offsets.items) |module, offsets| {
+            for (module.semantic.pending_operations.items, module.semantic.pending_owner_functions.items) |operation, owner| {
+                const local_owner = owner orelse continue;
+                if (globalizer.globalFunction(offsets, local_owner) != function) continue;
+                const input = switch (operation) {
+                    .resolve_call => |call| call.input,
+                    .resolve_binary => |call| call.assumed_arguments orelse continue,
+                    .resolve_comparison => |call| call.assumed_arguments orelse continue,
+                    else => continue,
+                };
+                const visible_range = switch (operation) {
+                    .resolve_call => |call| call.visible_bindings,
+                    .resolve_binary => |call| call.visible_bindings,
+                    .resolve_comparison => |call| call.visible_bindings,
+                    else => unreachable,
+                };
+                const start = offsets.binding_ref_base + visible_range.start;
+                const visible = self.relocation.graph.binding_refs.items[start..][0..visible_range.len];
+                try self.inheritAssumedInput(globalizer.globalNode(offsets, input), namespace.assumptions.items, visible);
+            }
+        }
+    }
+
+    fn inheritAssumedInput(self: *Session, input: global_sg.GlobalNodeId, assumptions: []const global_sg.GlobalBindingId, visible: []const global_sg.GlobalBindingId) !void {
+        const node = self.relocation.graph.node(input);
+        if (node.content != .struct_value_literal) return error.InvalidSafetyContinuation;
+        const fields = try self.resolvers.ownership.inheritAssumedFields(node.source, node.content.struct_value_literal.assumed_fields, assumptions, visible);
+        self.relocation.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = fields;
     }
 
     /// Fill an empty checked command with the retained selected cleanup list.
@@ -600,6 +636,14 @@ pub const Session = struct {
                 if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.declaration(declaration).name), name)) return error.DuplicateSessionDeclaration;
             };
             try retained.append(self.allocator, binding);
+        }
+        const namespace = try self.resolvers.core.sessionNamespace();
+        for (self.relocation.graph.block_assumptions.items) |evidence| {
+            if (evidence.block != body) continue;
+            for (self.relocation.graph.binding_refs.items[evidence.bindings.start..][0..evidence.bindings.len]) |binding| {
+                if (std.mem.indexOfScalar(global_sg.GlobalBindingId, namespace.assumptions.items, binding) == null)
+                    try namespace.assumptions.append(self.allocator, binding);
+            }
         }
     }
 

@@ -370,6 +370,14 @@ pub fn Binding(comptime Ids: type) type {
     };
 }
 
+/// Sparse lexical evidence; ordinary blocks without assumptions need no entry.
+pub fn BlockAssumptions(comptime Ids: type) type {
+    return struct {
+        block: Ids.BlockId,
+        bindings: Range(Ids.BindingId),
+    };
+}
+
 pub fn Block(comptime Ids: type) type {
     return struct {
         nodes: Range(Ids.NodeId),

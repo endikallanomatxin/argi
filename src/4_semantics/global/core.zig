@@ -68,6 +68,7 @@ pub const Resolver = struct {
     pub const SessionNamespace = struct {
         modules: std.ArrayList(global_sg.GlobalModuleId) = .empty,
         declarations: std.ArrayList(global_sg.GlobalDeclId) = .empty,
+        assumptions: std.ArrayList(global_sg.GlobalBindingId) = .empty,
     };
 
     pub fn sessionNamespace(self: *Resolver) !*SessionNamespace {
@@ -92,6 +93,7 @@ pub const Resolver = struct {
         if (self.session_namespace) |namespace| {
             namespace.modules.deinit(self.allocator);
             namespace.declarations.deinit(self.allocator);
+            namespace.assumptions.deinit(self.allocator);
             self.allocator.destroy(namespace);
         }
     }

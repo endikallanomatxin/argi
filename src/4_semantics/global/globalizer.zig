@@ -370,6 +370,10 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .nodes = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.nodes),
         .ret_val = if (value.ret_val) |id| globalNode(o, id) else null,
     });
+    for (storage.block_assumptions.items) |value| try result.block_assumptions.append(allocator, .{
+        .block = globalBlock(o, value.block),
+        .bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.bindings),
+    });
     for (storage.value_fields.items) |value| try result.value_fields.append(allocator, .{
         .name = try relocateString(module, value.name, o.string_base),
         .value = globalNode(o, value.value),

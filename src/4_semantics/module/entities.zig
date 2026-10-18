@@ -77,6 +77,7 @@ pub const GenericArgument = primitives.GenericArgument(Ids);
 pub const Function = primitives.Function(Ids);
 pub const Binding = primitives.Binding(Ids);
 pub const Block = primitives.Block(Ids);
+pub const BlockAssumptions = primitives.BlockAssumptions(Ids);
 pub const ValueField = primitives.ValueField(Ids);
 pub const SwitchCase = primitives.SwitchCase(Ids);
 pub const Switch = primitives.Switch(Ids);

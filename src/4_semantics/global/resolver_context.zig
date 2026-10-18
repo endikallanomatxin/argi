@@ -172,6 +172,7 @@ pub const Context = struct {
             const namespace = try self.core.sessionNamespace();
             try namespace.modules.appendSlice(allocator, previous.modules.items);
             try namespace.declarations.appendSlice(allocator, previous.declarations.items);
+            try namespace.assumptions.appendSlice(allocator, previous.assumptions.items);
         }
         try self.core.reached_signature_changes.appendSlice(allocator, source.core.reached_signature_changes.items);
         try self.expressions.session_bindings.appendSlice(allocator, source.expressions.session_bindings.items);

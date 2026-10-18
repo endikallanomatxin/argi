@@ -41,6 +41,7 @@ pub const Storage = struct {
     nodes: std.ArrayList(entities.ModuleNode) = .empty,
     comptime_requests: std.ArrayList(entities.ModuleNodeId) = .empty,
     blocks: std.ArrayList(entities.Block) = .empty,
+    block_assumptions: std.ArrayList(entities.BlockAssumptions) = .empty,
     value_fields: std.ArrayList(entities.ValueField) = .empty,
     switch_cases: std.ArrayList(entities.SwitchCase) = .empty,
     switches: std.ArrayList(entities.Switch) = .empty,
@@ -90,6 +91,7 @@ pub const Storage = struct {
         self.nodes.deinit(allocator);
         self.comptime_requests.deinit(allocator);
         self.blocks.deinit(allocator);
+        self.block_assumptions.deinit(allocator);
         self.value_fields.deinit(allocator);
         self.switch_cases.deinit(allocator);
         self.switches.deinit(allocator);
@@ -137,6 +139,7 @@ pub const Storage = struct {
             self.nodes.items.len * @sizeOf(entities.ModuleNode) +
             self.comptime_requests.items.len * @sizeOf(entities.ModuleNodeId) +
             self.blocks.items.len * @sizeOf(entities.Block) +
+            self.block_assumptions.items.len * @sizeOf(entities.BlockAssumptions) +
             self.value_fields.items.len * @sizeOf(entities.ValueField) +
             self.switch_cases.items.len * @sizeOf(entities.SwitchCase) +
             self.switches.items.len * @sizeOf(entities.Switch) +

@@ -164,6 +164,10 @@ Run `argi repl` to load core and start a retained bytecode session. The same VM
 subset and execution limits described above apply. `--sysroot <path>` selects an
 installation prefix. Input can come from a terminal or a pipe.
 
+Top-level `assume` declarations remain available to calls and selected cleanup in
+later submissions. Inner blocks keep lexical assumptions local. Rejected
+submissions publish no assumptions; reset clears the session evidence.
+
 ```text
 >>> value ::= 40 + 2
 >>> value

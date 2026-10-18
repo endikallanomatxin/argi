@@ -51,6 +51,10 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     }
     try verifyGenericFunctionInstances(graph);
     for (graph.bindings.items) |value| try payload.binding(graph_mod.Ids, value, bounds);
+    for (graph.block_assumptions.items) |value| {
+        try require(verify.idFits(value.block, graph.blocks.items.len));
+        try require(verify.rangeFits(value.bindings, graph.binding_refs.items.len));
+    }
     for (graph.blocks.items) |value| try payload.block(graph_mod.Ids, value, bounds);
     for (graph.value_fields.items) |value| try payload.valueField(graph_mod.Ids, value, bounds);
     for (graph.switch_cases.items) |value| try payload.switchCase(graph_mod.Ids, value, bounds);

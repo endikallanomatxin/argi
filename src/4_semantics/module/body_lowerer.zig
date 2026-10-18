@@ -334,7 +334,25 @@ const Context = struct {
             try nodes.append(value.node);
             ret_val = value.node;
         }
-        return self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(nodes.items), .ret_val = ret_val });
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(nodes.items), .ret_val = ret_val });
+        var assumptions: std.ArrayList(entities.ModuleBindingId) = .empty;
+        defer assumptions.deinit(self.allocator);
+        for (self.bindings.items, 0..) |binding, index| {
+            if (!binding.assumed) continue;
+            var shadowed = false;
+            for (self.bindings.items[index + 1 ..]) |later| {
+                if (std.mem.eql(u8, self.graph.text(binding.name), self.graph.text(later.name))) {
+                    shadowed = true;
+                    break;
+                }
+            }
+            if (!shadowed) try assumptions.append(self.allocator, binding.id);
+        }
+        if (assumptions.items.len != 0) try self.graph.semantic.block_assumptions.append(self.allocator, .{
+            .block = block,
+            .bindings = try self.writer.appendBindingRefs(assumptions.items),
+        });
+        return block;
     }
 
     fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {

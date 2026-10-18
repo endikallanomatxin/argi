@@ -74,6 +74,7 @@ pub const GenericArgument = primitives.GenericArgument(Ids);
 pub const Function = primitives.Function(Ids);
 pub const Binding = primitives.Binding(Ids);
 pub const Block = primitives.Block(Ids);
+pub const BlockAssumptions = primitives.BlockAssumptions(Ids);
 pub const ValueField = primitives.ValueField(Ids);
 pub const SwitchCase = primitives.SwitchCase(Ids);
 pub const Switch = primitives.Switch(Ids);
@@ -263,6 +264,7 @@ pub const GlobalSemanticGraph = struct {
     nodes: std.ArrayList(Node) = .empty,
     comptime_requests: std.ArrayList(GlobalNodeId) = .empty,
     blocks: std.ArrayList(Block) = .empty,
+    block_assumptions: std.ArrayList(BlockAssumptions) = .empty,
     fields: std.ArrayList(Field) = .empty,
     variants: std.ArrayList(ChoiceVariant) = .empty,
     generic_arguments: std.ArrayList(GenericArgument) = .empty,
@@ -382,7 +384,7 @@ pub const GlobalSemanticGraph = struct {
             &self.type_refs,                   &self.binding_refs,               &self.function_refs,                &self.virtual_registry_refs,
             &self.strings,                     &self.roots,                      &self.contract_safety_conformances, &self.contract_conformances,
             &self.contract_operation_bindings, &self.argument_defaults,          &self.argument_default_temporaries, &self.argument_default_bindings,
-            &self.comptime_requests,
+            &self.comptime_requests,           &self.block_assumptions,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -705,6 +707,7 @@ pub const GlobalSemanticGraph = struct {
             self.nodes.items.len * @sizeOf(Node) +
             self.comptime_requests.items.len * @sizeOf(GlobalNodeId) +
             self.blocks.items.len * @sizeOf(Block) +
+            self.block_assumptions.items.len * @sizeOf(BlockAssumptions) +
             self.fields.items.len * @sizeOf(Field) +
             self.variants.items.len * @sizeOf(ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(GenericArgument) +

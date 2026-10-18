@@ -484,3 +484,44 @@ test "interactive imported aliases survive subsequent submissions without export
     try std.testing.expectEqual(revision, session.compiler.revision);
     try session.close();
 }
+
+test "interactive assumptions persist without leaking nested scopes or rejected commands" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("observe := (.capability: &Bool) -> (.result: Bool) { result = capability& }\n");
+    try session.submitStatements("enabled ::= true\nassume capability ::= &enabled");
+    try std.testing.expect((try session.submitInput("observe()")).?.value.boolean);
+    try session.submitStatements("nested_result :: Bool = true\nif true {\nlocal ::= false\nassume capability ::= &local\nnested_result = observe()\n}");
+    try std.testing.expect(!(try session.submitInput("nested_result")).?.value.boolean);
+    try std.testing.expectError(error.Reported, session.submitStatements("if true {\ncapability ::= &enabled\nignored ::= observe()\n}"));
+    try std.testing.expect((try session.submitInput("observe()")).?.value.boolean);
+    const assumptions = session.compiler.semantic.resolvers.core.session_namespace.?.assumptions.items.len;
+    try std.testing.expectError(error.Reported, session.submitStatements("assume rejected ::= true\nmissing()"));
+    try std.testing.expectEqual(assumptions, session.compiler.semantic.resolvers.core.session_namespace.?.assumptions.items.len);
+    try std.testing.expect((try session.submitInput("observe()")).?.value.boolean);
+    try session.reset();
+    try session.submitDefinitions("observe := (.capability: &Bool) -> (.result: Bool) { result = capability& }\n");
+    try std.testing.expectError(error.Reported, session.submitInput("observe()"));
+    try session.close();
+}
+
+test "interactive inherited assumptions supply selected nested cleanup" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("Resource: Type = ()");
+    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .capability: $&(.used: Bool) = reach capability) -> () { capability&.used = true })");
+    try session.submitStatements("state :: (.used: Bool) = (.used = false)\nassume capability ::= $&state");
+    try session.submitStatements("if true {\nresource :: Resource = ()\n}");
+    try std.testing.expect((try session.submitInput("state.used")).?.value.boolean);
+    try session.close();
+}

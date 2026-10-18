@@ -66,6 +66,10 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.optionalIdFits(value.reinitialize_cleanup, semantic.nodes.items.len));
         } else try payload.binding(entities.Ids, value, bounds);
     }
+    for (semantic.block_assumptions.items) |value| {
+        try require(verify.idFits(value.block, semantic.blocks.items.len));
+        try require(verify.rangeFits(value.bindings, semantic.binding_refs.items.len));
+    }
     for (semantic.blocks.items) |value| try payload.block(entities.Ids, value, bounds);
     for (semantic.value_fields.items) |value| try payload.valueField(entities.Ids, value, bounds);
     for (semantic.switch_cases.items) |value| try payload.switchCase(entities.Ids, value, bounds);
