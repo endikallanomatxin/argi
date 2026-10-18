@@ -6,6 +6,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Next
 
+- Support string literals with immutable executor-owned backing storage and
+  ordinary StringView references across calls and interactive submissions.
+- Execute and display an ordinary Argi REPL prelude establishing persistent
+  assumed allocator, output and trace capabilities. Add checked host capability
+  operations rather than injecting unchecked bindings or bypassing safety.
 - Load imports from interactive submissions through the normal source collector,
   retaining immutable module prefixes and correct relative paths.
 - Improve unresolved-name diagnostics in retained sessions.
