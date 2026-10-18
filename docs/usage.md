@@ -154,8 +154,13 @@ views preserves the original storage, permissions and target byte order. Byte
 writes update the numeric value without creating cleanup obligations. Reference
 fields and nonnumeric representations remain unsupported.
 
+Referenced globals with constant initializers receive context-owned storage.
+Dependencies follow the native initializer plan. Retained REPL globals initialize
+once per session and preserve writes across later code units; reset starts fresh.
+Globals requiring cleanup and globals without explicit initializers remain rejected.
+
 Raw pointers, C enums, floating point, complete trace reporting,
-partial initialization through output references, globals, closures, foreign calls,
+partial initialization through output references, owning globals, closures, foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable
 function bodies are rejected
 before execution, including constructs on untaken branches. Integer arithmetic

@@ -24,7 +24,7 @@ pub const Place = struct {
     // Root indexes local slots or the program's typed session binding table.
     // Dynamic index operands always name local slots in the executing frame.
     root: u32,
-    region: enum { local, session } = .local,
+    region: enum { local, session, global } = .local,
     path: []const Projection,
 };
 
@@ -150,7 +150,10 @@ pub const Function = struct {
 // tables and graph metadata must then remain unchanged until Vm.deinit.
 // A shared context can retain virtual code after Vm.deinit. Its owner must
 // retain those backing tables and graphs until context reset or destruction.
+pub const Global = struct { binding: g.GlobalBindingId, ty: Type, initializer: Function };
+
 pub const Program = struct {
+    globals: []const Global = &.{},
     graph: *const g.GlobalSemanticGraph,
     functions: []const ?Function,
     expression: ?*const Function = null,

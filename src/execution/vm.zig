@@ -30,6 +30,7 @@ const Frame = struct {
 /// Cleanup remains checked language code; reset discards storage after cleanup
 /// or a terminal trap and never attempts to synthesize an unwind.
 pub const Context = struct {
+    const GlobalKey = struct { session: bool, owner: u64, binding: g.GlobalBindingId };
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     storage: Storage = undefined,
@@ -38,6 +39,7 @@ pub const Context = struct {
     running: bool = false,
     namespace: ?b.SessionNamespace = null,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, runtime_value.FrameId) = .empty,
+    globals: std.AutoHashMapUnmanaged(GlobalKey, runtime_value.FrameId) = .empty,
     literal_bytes: std.StringHashMapUnmanaged(runtime_value.Reference) = .empty,
     trace_locations: std.ArrayList(b.TraceLocation) = .empty,
 
@@ -72,6 +74,7 @@ pub const Context = struct {
         self.state = .fresh;
         self.namespace = null;
         self.bindings = .empty;
+        self.globals = .empty;
         self.literal_bytes = .empty;
         self.trace_locations = .empty;
         return previous;
@@ -87,6 +90,10 @@ pub const Context = struct {
             if (namespace != interface.namespace) return error.ExecutionForeignSession;
         };
     }
+    fn globalKey(program: *const b.Program, binding: g.GlobalBindingId) GlobalKey {
+        return .{ .session = program.session != null, .owner = if (program.session) |session| @intFromEnum(session.namespace) else @intFromPtr(program.graph), .binding = binding };
+    }
+
     fn literalBytes(self: *Context, bytes: []const u8) !b.Value {
         if (self.literal_bytes.get(bytes)) |reference| return .{ .reference = reference };
         try self.storage.charge(1);
@@ -214,6 +221,16 @@ pub const Vm = struct {
         self.steps = 0;
         errdefer self.context().state = .poisoned;
         const inputs = try self.context().storage.cloneValues(args);
+        for (self.program.globals) |global| {
+            const key = Context.globalKey(&self.program, global.binding);
+            if (self.context().globals.contains(key)) continue;
+            const initialized = try self.execute(&self.program, &global.initializer, &.{});
+            if (initialized.len != 1) return error.InvalidBytecode;
+            const storage = try self.context().storage.enterSession(1, &.{});
+            try self.context().storage.initializeSession(storage, 0, initialized[0]);
+            try self.context().storage.charge(1);
+            try self.context().globals.put(self.context().arena.allocator(), key, storage.frame);
+        }
         return self.execute(&self.program, function, inputs);
     }
     fn chargeCleanup(self: *Vm, updated: usize) !void {
@@ -245,6 +262,14 @@ pub const Vm = struct {
         return .{ .program = program, .function = function, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
     }
     fn resolvePlace(self: *Vm, program: *const b.Program, frame_id: runtime_value.FrameId, place: b.Place, path: *[64]runtime_value.Projection, comptime read_value: bool) !runtime_value.Reference {
+        if (place.region == .global) {
+            const key = Context.globalKey(program, @enumFromInt(place.root));
+            const target = self.context().globals.get(key) orelse return error.ExecutionUninitializedStorage;
+            var persistent = place;
+            persistent.root = 0;
+            persistent.region = .session;
+            return self.context().storage.resolveSession(frame_id, target, persistent, path, read_value);
+        }
         if (place.region == .session) {
             const binding = program.session.?.bindings[place.root].binding;
             const target = self.context().bindings.get(binding) orelse return error.ExecutionUninitializedStorage;

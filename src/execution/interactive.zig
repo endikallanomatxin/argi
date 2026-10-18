@@ -678,3 +678,26 @@ test "interactive imports load folder dependencies transactionally and retain ac
     try std.testing.expectEqual(@as(i128, 99), (try session.submitInput("library.answer()")).?.value.integer);
     try session.close();
 }
+
+test "interactive imported globals initialize once and retain mutation across units" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "library");
+    try tmp.dir.writeFile(io, .{ .sub_path = "library/main.rg", .data = "counter :: Int32 = 41\nadvance := () -> (.result: Int32) { result = counter\ncounter = 42 }" });
+    const base = try tmp.dir.realPathFileAlloc(io, ".", a);
+    defer a.free(base);
+    var session: Interactive = undefined;
+    try session.init(a, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.enableImports(io, base);
+    try session.submit("library := import(\"./library\")");
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("library.advance()")).?.value.integer);
+    try session.submit("again := import(\"./library\")");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.advance()")).?.value.integer);
+    try session.reset();
+    try session.submit("library := import(\"./library\")");
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("library.advance()")).?.value.integer);
+    try session.close();
+}

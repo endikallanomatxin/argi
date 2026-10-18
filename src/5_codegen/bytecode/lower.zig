@@ -11,6 +11,7 @@ pub const Lower = struct {
     allocator: std.mem.Allocator,
     graph: *const g.GlobalSemanticGraph,
     functions: []?b.Function,
+    globals: std.ArrayList(b.Global) = .empty,
     cleanup_bindings: []const bool,
     cleanup_types: []const bool,
     bool_type: ?b.Type,
@@ -111,8 +112,36 @@ pub const Lower = struct {
             stored.* = value;
             break :blk stored;
         } else null;
-        return .{ .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions), .expression = entry, .session = self.session };
+        return .{ .globals = try self.allocator.dupe(b.Global, self.globals.items), .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions), .expression = entry, .session = self.session };
     }
+    fn isGlobal(self: *const Lower, binding: g.GlobalBindingId) bool {
+        for (self.graph.roots.items) |root| {
+            const node = self.graph.node(root);
+            if (node.content == .binding_declaration and node.content.binding_declaration == binding) return true;
+        }
+        return false;
+    }
+
+    fn requireGlobal(self: *Lower, binding: g.GlobalBindingId) anyerror!void {
+        for (self.globals.items) |global| if (global.binding == binding) return;
+        const plan = try @import("../global_initialization.zig").build(self.allocator, self.graph, &.{binding});
+        defer self.allocator.free(plan.order);
+        for (plan.order) |id| {
+            var found = false;
+            for (self.globals.items) |global| if (global.binding == id) {
+                found = true;
+                break;
+            };
+            if (found) continue;
+            const record = self.graph.binding(id);
+            if (self.cleanup_types[@intFromEnum(record.ty)]) return self.reject(record.source, "global storage with cleanup obligations");
+            const initializer = record.initialization orelse return self.reject(record.source, "global storage without an explicit initializer");
+            var function = FunctionLower{ .parent = self };
+            const compiled = try function.compileExpression(initializer, &.{});
+            try self.globals.append(self.allocator, .{ .binding = id, .ty = record.ty, .initializer = compiled });
+        }
+    }
+
     fn reject(self: *Lower, source: p.SourceRef, name: []const u8) error{UnsupportedExecution} {
         self.source = source;
         self.unsupported = name;
@@ -421,6 +450,12 @@ const FunctionLower = struct {
                     try self.commitWrite(node.source, destination, value);
                     return;
                 }
+                if (self.parent.isGlobal(x.binding)) {
+                    try self.parent.requireGlobal(x.binding);
+                    const destination = try self.captureWrite(node.source, .{ .root = @intFromEnum(x.binding), .region = .global, .path = &.{} }, self.parent.graph.binding(x.binding).ty, false);
+                    try self.commitWrite(node.source, destination, try self.expression(x.value));
+                    return;
+                }
                 const dst = self.bindings.get(x.binding) orelse return self.parent.reject(node.source, "global or captured storage");
                 try self.copyTo(node.source, dst, try self.expression(x.value));
                 if (self.drops.get(x.binding)) |drop| try self.setDrop(drop, true);
@@ -623,8 +658,10 @@ const FunctionLower = struct {
         return switch (node.content) {
             .binding_use => |binding| if (self.parent.sessionIndex(binding)) |index|
                 .{ .root = index, .region = .session, .path = &.{} }
-            else
-                .{ .root = self.bindings.get(binding) orelse return self.parent.reject(node.source, "global or captured storage"), .path = &.{} },
+            else if (self.parent.isGlobal(binding)) blk: {
+                try self.parent.requireGlobal(binding);
+                break :blk .{ .root = @intFromEnum(binding), .region = .global, .path = &.{} };
+            } else .{ .root = self.bindings.get(binding) orelse return self.parent.reject(node.source, "global or captured storage"), .path = &.{} },
             .address_of => |value| self.place(value),
             .dereference => |x| self.project(.{ .root = try self.expression(x.pointer), .path = &.{} }, .dereference),
             .struct_field_access => |x| self.project(try self.place(x.value), .{ .field = x.field_index }),
@@ -926,6 +963,12 @@ const FunctionLower = struct {
             if (self.parent.sessionIndex(node.content.binding_use)) |index| {
                 const dst = try self.newSlot(node.ty orelse return error.InvalidBytecode);
                 _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = .{ .root = index, .region = .session, .path = &.{} } } });
+                return dst;
+            }
+            if (self.parent.isGlobal(node.content.binding_use)) {
+                const target = try self.place(id);
+                const dst = try self.newSlot(node.ty orelse return error.InvalidBytecode);
+                _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = target } });
                 return dst;
             }
             const src = self.bindings.get(node.content.binding_use) orelse return self.parent.reject(node.source, "global or captured storage");

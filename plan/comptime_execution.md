@@ -19,7 +19,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Execution coverage
 
-- Extend partial initialization and trace reporting.
+- Extend partial initialization and trace reporting. Investigate the core tracer
+  byte-copy abort in nullable view matching before enabling its REPL prelude.
 - Complete evaluated cleanup identities for owning replacement through indexed
   storage and unresolved/retargetable references, shared with native lowering.
 - Extend scalar representations and explicit host-call capabilities only through

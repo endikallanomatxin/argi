@@ -28,8 +28,23 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             try verifyCleanup(allocator, program.graph, .{ .slots = binding.slots, .inputs = &.{}, .outputs = &.{}, .code = &.{}, .cleanup = binding.cleanup });
         }
     }
-    for (0..program.functions.len + @intFromBool(program.expression != null)) |fi| {
-        const f = if (fi == program.functions.len) program.expression.?.* else program.functions[fi] orelse continue;
+    const module_bindings = try allocator.alloc(bool, program.graph.bindings.items.len);
+    defer allocator.free(module_bindings);
+    @memset(module_bindings, false);
+    for (program.graph.roots.items) |root| {
+        const node = program.graph.node(root);
+        if (node.content == .binding_declaration) module_bindings[@intFromEnum(node.content.binding_declaration)] = true;
+    }
+    for (program.globals, 0..) |global, index| {
+        if (@intFromEnum(global.binding) >= program.graph.bindings.items.len or !module_bindings[@intFromEnum(global.binding)] or !types.equal(program.graph, global.ty, program.graph.binding(global.binding).ty)) return error.InvalidBytecode;
+        for (program.globals[0..index]) |previous| if (previous.binding == global.binding) return error.InvalidBytecode;
+        if (global.initializer.inputs.len != 0 or global.initializer.outputs.len != 1) return error.InvalidBytecode;
+        const output = global.initializer.outputs[0];
+        if (output >= global.initializer.slots.len or !types.equal(program.graph, global.initializer.slots[output], global.ty)) return error.InvalidBytecode;
+    }
+    const expression_end = program.functions.len + @intFromBool(program.expression != null);
+    for (0..expression_end + program.globals.len) |fi| {
+        const f = if (fi >= expression_end) program.globals[fi - expression_end].initializer else if (fi == program.functions.len) program.expression.?.* else program.functions[fi] orelse continue;
         if (f.code.len == 0) return error.InvalidBytecode;
         for (f.slots) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
         for (f.write_destinations) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
@@ -71,8 +86,9 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 },
                 .static_bytes => |x| {
                     const pointer = program.graph.semanticType(f.slots[x.dst]);
-                    if (pointer != .pointer or pointer.pointer.mutability != .read_only or
-                        !types.isBuiltin(program.graph, pointer.pointer.child, .UInt8)) return error.InvalidBytecode;
+                    if (pointer != .pointer or pointer.pointer.mutability != .read_only) return error.InvalidBytecode;
+                    const bounds = integerBounds(program.graph, pointer.pointer.child) orelse return error.InvalidBytecode;
+                    if (bounds.maximum - bounds.minimum != 255) return error.InvalidBytecode;
                 },
                 .numeric_bytes => |x| {
                     const from = program.graph.semanticType(f.slots[x.src]);
@@ -440,7 +456,10 @@ fn placeInfo(program: Program, slots: []const Type, place: Place) !struct { ty: 
     if (place.path.len > 64) return error.InvalidBytecode;
     var ty = if (place.region == .session)
         (try sessionBinding(program, place.root)).slots[0]
-    else if (place.root < slots.len)
+    else if (place.region == .global) blk: {
+        for (program.globals) |global| if (@intFromEnum(global.binding) == place.root) break :blk global.ty;
+        return error.InvalidBytecode;
+    } else if (place.root < slots.len)
         slots[place.root]
     else
         return error.InvalidBytecode;
