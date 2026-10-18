@@ -13777,3 +13777,9 @@ test "feature_tests/execution/65X_comptime_noninteger_argument" {
 test "feature_tests/execution/66X_comptime_argument_safety" {
     try buildExpectFail("tests/feature_tests/execution/66X_comptime_argument_safety", "consumption requires an initialized owner");
 }
+
+test "feature_tests/execution/67_comptime_argument_default_suspension" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/67_comptime_argument_default_suspension");
+    try runExpect("tests/feature_tests/execution/67_comptime_argument_default_suspension", 42);
+    try vmExpect("tests/feature_tests/execution/67_comptime_argument_default_suspension", 42, null);
+}

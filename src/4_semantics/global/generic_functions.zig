@@ -89,6 +89,7 @@ pub const Resolver = struct {
     publishing_signature: bool = false,
 
     pub const SideEffectCheckpoint = struct {
+        execution_requests: ?usize = null,
         ownership: ?[2]usize = null,
         reached_calls: usize = 0,
         reached_signatures: usize = 0,
@@ -103,15 +104,24 @@ pub const Resolver = struct {
         graph: global_sg.GlobalSemanticGraph.Checkpoint,
         effects: SideEffectCheckpoint,
         active: bool = true,
+        retain_execution: bool = false,
 
         pub fn commit(self: *Speculation) void {
             self.active = false;
         }
 
+        // A suspended selection still needs its integer dependencies. Keep
+        // their stable recipes while discarding the incomplete graph/evidence.
+        pub fn retainPendingExecution(self: *Speculation) void {
+            self.retain_execution = true;
+        }
+
         pub fn rollback(self: *Speculation) void {
             if (!self.active) return;
             self.resolver.graph.rollback(self.graph);
-            self.resolver.rollbackSideEffects(self.effects);
+            var effects = self.effects;
+            if (self.retain_execution) effects.execution_requests = null;
+            self.resolver.rollbackSideEffects(effects);
             self.active = false;
         }
 
@@ -126,6 +136,8 @@ pub const Resolver = struct {
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
         var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .reached_signatures = self.core.reached_signature_changes.items.len };
+        if (self.generics.checkpoint_execution) |checkpoint|
+            saved.execution_requests = checkpoint(self.generics.execution_context.?);
         if (self.ownership_context) |context| {
             if (self.ownership_checkpoint) |checkpoint|
                 saved.ownership = checkpoint(context);
@@ -136,6 +148,10 @@ pub const Resolver = struct {
     }
 
     pub fn rollbackSideEffects(self: *Resolver, saved: SideEffectCheckpoint) void {
+        if (saved.execution_requests) |count| {
+            if (self.generics.rollback_execution) |rollback|
+                rollback(self.generics.execution_context.?, count);
+        }
         self.generics.comptime_failure = saved.comptime_failure;
         self.core.rollbackReachedCalls(saved.reached_calls);
         self.core.rollback_reached_signatures(saved.reached_signatures);
@@ -269,6 +285,9 @@ pub const Resolver = struct {
             speculation.deinit();
             if (failure) |value| contracts.participant_conformance_failure = value;
         };
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
+        }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         for (operands) |operand| try self.graph.generic_arguments.append(self.allocator, .{
             .name = .{ .start = 0, .len = 0 },
@@ -282,7 +301,7 @@ pub const Resolver = struct {
                 value.input = null;
                 value.output = null;
             }
-            return err;
+            return @as(anyerror!?global_sg.Node, err);
         } orelse {
             failure = contracts.participant_conformance_failure;
             if (failure) |*value| {
@@ -310,6 +329,9 @@ pub const Resolver = struct {
             speculation.deinit();
             if (failure) |value| contracts.participant_conformance_failure = value;
         };
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
+        }
         const input = try self.makePositionalInput(operands);
         // Operand transfer is explicit. No distinguished receiver is borrowed
         // automatically, and Args completion handles all auxiliary capabilities.
@@ -453,6 +475,7 @@ pub const Resolver = struct {
                 self.resolveExplicitGenericFunction(module_index, module, reference, args, input, reach) catch |err| switch (err) {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
+                    error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
                     error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
                     else => return .deferred,
@@ -461,6 +484,7 @@ pub const Resolver = struct {
                 self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| switch (err) {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
+                    error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
                     error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
                     error.ConflictingGenericArgument => return err,
@@ -648,7 +672,7 @@ pub const Resolver = struct {
             if (self.graph.node(value).ty) |actual|
                 if (self.definiteNominalReferenceMismatch(module_index, field.ty, actual)) return false;
             if (allow_contextual_concrete) {
-                if (self.contextualParameterizedLiteralFits(module_index, field.ty, bindings, value)) continue;
+                if (try self.contextualParameterizedLiteralFits(module_index, field.ty, bindings, value)) continue;
             }
             const actual = self.graph.node(value).ty orelse return false;
             if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
@@ -1034,6 +1058,10 @@ pub const Resolver = struct {
         }
         const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null) catch |err| {
             return switch (err) {
+                error.ComptimeExecutionPending => blk: {
+                    speculation.retainPendingExecution();
+                    break :blk .deferred;
+                },
                 error.OutOfMemory => err,
                 error.DeferredGenericFunction => .deferred,
                 error.AmbiguousGenericFunction => .ambiguous,
@@ -1116,7 +1144,7 @@ pub const Resolver = struct {
                     // Earlier typed inputs may determine a generic scalar.
                     // A literal then supplies context-compatible data, rather
                     // than conflicting evidence from its default numeric type.
-                    if (self.contextualParameterizedLiteralFits(candidate_index, field.ty, &bindings, supplied)) continue;
+                    if (try self.contextualParameterizedLiteralFits(candidate_index, field.ty, &bindings, supplied)) continue;
                     const actual = self.graph.node(supplied).ty orelse {
                         candidate_deferred = true;
                         matches = false;
@@ -1198,7 +1226,7 @@ pub const Resolver = struct {
         pattern: ir.ParameterizedTypeId,
         bindings: *generic_mod.Resolver.Bindings,
         value: global_sg.GlobalNodeId,
-    ) bool {
+    ) anyerror!bool {
         // Context probes can materialize constrained nominal types even before
         // the actual argument is resolved. Keep those types speculative: the
         // final constraint pass must see only selected or source-written types.
@@ -1208,7 +1236,13 @@ pub const Resolver = struct {
             speculation.deinit();
             self.generics.stats = saved_stats;
         }
-        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
+        }
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+            else => return false,
+        };
         return self.core.contextualLiteralFits(value, expected);
     }
 
@@ -1379,7 +1413,10 @@ pub const Resolver = struct {
         }
         // TODO: Classify definite instantiation errors separately from missing
         // bindings without publishing diagnostics from losing identities.
-        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return .deferred;
+        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
+            return .deferred;
+        };
         const fields = self.interfaceFields(ty) catch return .deferred;
         const matching_fields = self.materializeDefaultPresenceForMatch(module_index, pattern, fields) catch return .deferred;
         return self.core.matchCallInput(matching_fields, input);
@@ -1518,7 +1555,10 @@ pub const Resolver = struct {
                     if (pointer.mutability == .read_write and value.mutability != .read_write) return false;
                     if (try self.inferInputType(module_index, pointer.child, value.child, bindings)) return true;
                     if (self.definiteNominalReferenceMismatch(module_index, pattern, actual)) return false;
-                    const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
+                    const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+                        error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+                        else => return false,
+                    };
                     if (self.core.callTypesCompatible(actual, expected)) return true;
                     return false;
                 },
@@ -1570,7 +1610,10 @@ pub const Resolver = struct {
             },
             else => {},
         }
-        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+            else => return false,
+        };
         return global_types.equal(self.graph, expected, actual);
     }
 
@@ -1594,7 +1637,10 @@ pub const Resolver = struct {
             // Composite expressions are constraints rather than invertible
             // bindings. Once their operands have been inferred elsewhere the
             // regular evaluator validates the dependent value.
-            .binary, .projection, .execution => (self.generics.evalInt(module_index, expression, bindings) catch return false) == actual,
+            .binary, .projection, .execution => (self.generics.evalInt(module_index, expression, bindings) catch |err| switch (err) {
+                error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+                else => return false,
+            }) == actual,
         };
     }
 
@@ -1813,7 +1859,8 @@ pub const Resolver = struct {
         var speculation = self.beginSpeculation();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
-        errdefer {
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
             const comptime_failure = self.generics.comptime_failure;
             const projection_failure = if (self.nested_call_context) |contracts| contracts.participant_conformance_failure else null;
             speculation.deinit();
@@ -2104,12 +2151,16 @@ pub const Resolver = struct {
         }
 
         fn instantiateBindingRange(self: *InstanceContext, range: primitives.Range(ir.ParameterizedBindingId)) !global_sg.BindingRange {
-            const start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
-            for (0..range.len) |offset| {
+            // Defaults can instantiate other functions and append their binding
+            // ranges. Publish this interface only after those dependencies.
+            const bindings = try self.resolver.allocator.alloc(global_sg.GlobalBindingId, range.len);
+            defer self.resolver.allocator.free(bindings);
+            for (bindings, 0..) |*binding, offset| {
                 const local: ir.ParameterizedBindingId = @enumFromInt(range.start + @as(u32, @intCast(offset)));
-                const global = try self.instantiateBinding(local);
-                try self.resolver.graph.binding_refs.append(self.resolver.allocator, global);
+                binding.* = try self.instantiateBinding(local);
             }
+            const start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
+            try self.resolver.graph.binding_refs.appendSlice(self.resolver.allocator, bindings);
             return .{ .start = start, .len = range.len };
         }
 

@@ -28,6 +28,20 @@ pub const Scheduler = struct {
         self.requests.deinit(self.allocator);
     }
 
+    pub fn checkpoint(context: *anyopaque) usize {
+        const self: *Scheduler = @ptrCast(@alignCast(context));
+        return self.requests.items.len;
+    }
+
+    pub fn rollback(context: *anyopaque, saved: usize) void {
+        const self: *Scheduler = @ptrCast(@alignCast(context));
+        for (self.requests.items[saved..]) |*request| {
+            std.debug.assert(request.node == null);
+            request.bindings.deinit(self.allocator);
+        }
+        self.requests.shrinkRetainingCapacity(saved);
+    }
+
     pub fn integer(context: *anyopaque, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings) anyerror!i64 {
         const self: *Scheduler = @ptrCast(@alignCast(context));
         for (bindings.types) |ty| if (ty) |id| {
@@ -68,7 +82,11 @@ pub const Scheduler = struct {
             defer speculation.deinit();
             var bindings = request.bindings;
             const node = self.functions.instantiateComptimeExpression(request.module, request.expression, &bindings) catch |err| switch (err) {
-                error.ComptimeExecutionPending, error.UnboundComptimeParameter, error.UnboundGenericTypeParameter, error.UnresolvedParameterizedCall, error.UnresolvedParameterizedExpression => continue,
+                error.ComptimeExecutionPending => {
+                    speculation.retainPendingExecution();
+                    continue;
+                },
+                error.UnboundComptimeParameter, error.UnboundGenericTypeParameter, error.UnresolvedParameterizedCall, error.UnresolvedParameterizedExpression => continue,
                 else => return err,
             };
             try self.functions.graph.roots.append(self.allocator, node);
@@ -76,7 +94,7 @@ pub const Scheduler = struct {
             speculation.commit();
             changed = true;
         }
-        return changed;
+        return changed or self.requests.items.len != count;
     }
 
     pub fn evaluateReady(self: *Scheduler, diagnostics: *@import("../../1_base/diagnostic.zig").Diagnostics, finalized: *const std.AutoHashMap(g.GlobalFunctionId, void), pending_bodies: *const std.AutoHashMap(g.GlobalFunctionId, void)) !bool {
@@ -139,4 +157,61 @@ test "staged integer requests retain bindings across pending retries" {
     bindings.types[1] = @enumFromInt(1);
     try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
     try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
+}
+
+test "staged request registration rolls back rejected selection demand" {
+    const a = std.testing.allocator;
+    var scheduler = Scheduler{ .allocator = a, .functions = undefined, .stable_type_count = 0 };
+    defer scheduler.deinit();
+    var bindings = try Generics.Bindings.init(a, 1);
+    defer bindings.deinit(a);
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
+    const saved = Scheduler.checkpoint(&scheduler);
+    bindings.ints[0] = 5;
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(1), &bindings));
+    Scheduler.rollback(&scheduler, saved);
+    try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
+}
+
+test "staged execution demand follows generic selection transactions" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinitReachedCalls();
+    var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var functions = Functions{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };
+    var scheduler = Scheduler{ .allocator = a, .functions = &functions, .stable_type_count = 0 };
+    defer scheduler.deinit();
+    generics.execution_context = &scheduler;
+    generics.checkpoint_execution = Scheduler.checkpoint;
+    generics.rollback_execution = Scheduler.rollback;
+    var bindings = try Generics.Bindings.init(a, 0);
+    defer bindings.deinit(a);
+    {
+        var selection = functions.beginSpeculation();
+        defer selection.deinit();
+        try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
+    }
+    try std.testing.expectEqual(@as(usize, 0), scheduler.requests.items.len);
+    try std.testing.expect(!try scheduler.materialize());
+    {
+        var selection = functions.beginSpeculation();
+        defer selection.deinit();
+        try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
+        selection.retainPendingExecution();
+    }
+    try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
+    {
+        var outer = functions.beginSpeculation();
+        defer outer.deinit();
+        var inner = functions.beginSpeculation();
+        defer inner.deinit();
+        try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(1), &bindings));
+        inner.retainPendingExecution();
+    }
+    try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
+    // The sole retained recipe belongs to the genuinely suspended selection.
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(scheduler.requests.items[0].expression));
 }

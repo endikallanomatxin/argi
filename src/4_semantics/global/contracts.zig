@@ -2305,7 +2305,10 @@ pub const Resolver = struct {
             },
             else => {},
         }
-        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => return err,
+            else => return false,
+        };
         return global_types.equal(self.graph, expected, actual);
     }
 
@@ -2325,7 +2328,10 @@ pub const Resolver = struct {
                 slot.* = actual;
                 break :blk true;
             },
-            .binary, .projection, .execution => (self.generics.evalInt(module_index, pattern, bindings) catch return false) == actual,
+            .binary, .projection, .execution => (self.generics.evalInt(module_index, pattern, bindings) catch |err| switch (err) {
+                error.ComptimeExecutionPending => return err,
+                else => return false,
+            }) == actual,
         };
     }
 

@@ -359,6 +359,8 @@ pub fn semantizeWithOptions(
     };
     defer staged_execution.deinit();
     generics.execution_context = &staged_execution;
+    generics.checkpoint_execution = @import("comptime_execution.zig").Scheduler.checkpoint;
+    generics.rollback_execution = @import("comptime_execution.zig").Scheduler.rollback;
     generics.execute_integer = @import("comptime_execution.zig").Scheduler.integer;
     var contracts = contract_mod.Resolver{
         .allocator = allocator,

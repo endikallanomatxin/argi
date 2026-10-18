@@ -1293,3 +1293,14 @@ test "bytecode source run keys generic requests by bound arguments" {
         \\}
     , .{ .instructions = 80 }));
 }
+
+test "bytecode staged dependencies survive default argument suspension" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\compute() -> (.value: Int32 = 42) := {}
+        \\result#(.n: Int32)() -> (.value: Int32 = n) := {}
+        \\defaulted#(.T: Type)(.ignored: T, .value: Int32 = result#(.n = #run compute())()) -> (.output: Int32 = value) := {}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = defaulted(.ignored = 0)
+        \\}
+    , .{ .instructions = 50 }));
+}

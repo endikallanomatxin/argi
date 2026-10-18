@@ -1432,7 +1432,7 @@ pub const Resolver = struct {
             else => return false,
         };
         const saved = self.graph.checkpoint();
-        const effects = if (self.argument_defaults) |defaults|
+        var effects = if (self.argument_defaults) |defaults|
             defaults.checkpoint(defaults.context)
         else
             null;
@@ -1445,6 +1445,12 @@ pub const Resolver = struct {
             self.graph.rollback(saved);
             if (effects) |checkpoint| self.argument_defaults.?.rollback(self.argument_defaults.?.context, checkpoint);
         };
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending)
+                if (effects) |*checkpoint| {
+                    checkpoint.execution_requests = null;
+                };
+        }
         var values: std.ArrayList(global_sg.ValueField) = .empty;
         defer values.deinit(self.allocator);
         for (0..expected_fields.len) |offset| {
