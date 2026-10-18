@@ -60,6 +60,8 @@ pub const Instruction = struct {
     source: p.SourceRef,
     op: union(enum) {
         constant: struct { dst: Slot, value: Value },
+        static_bytes: struct { dst: Slot, bytes: []const u8 },
+        offset_reference: struct { dst: Slot, src: Slot, elements: Slot },
         copy: struct { dst: Slot, src: Slot },
         session_initialize: struct { binding: u32, value: Slot },
         session_borrow: struct { binding: u32, dst: Slot },

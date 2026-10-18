@@ -91,11 +91,18 @@ The directory is a folder module; package executable selection and ordinary
 build flags are not supported in this mode. `--frontend-jobs N` is accepted.
 
 The initial subset supports fixed-width integers through 64 bits, host-width
-`UIntNative`, booleans, records and fixed-size arrays by value, direct specialized
+`UIntNative`, booleans, string literals, records and fixed-size arrays by value, direct specialized
 function calls, local assignments, `if`, `while`, `for`, `break`, `continue`, and
 bare `return`. Calls support multiple named outputs through their checked record
 result. Boolean operators short-circuit. A program entry has no inputs and either no
 result or `status_code: Int32`; its status follows native process truncation.
+
+String literals use immutable UTF-8 backing owned by the execution context,
+shared across repeated literals and valid after calls return. `StringView` values
+can remain in interactive bindings; reset retires their backing with the context.
+Checked reference offsets retain storage identity and enforce concrete bounds.
+Text operations that require tracing or other capabilities still require those
+capabilities and their bytecode operations to be supported.
 
 Array reads support nested values and returned temporaries. Writes follow local
 storage through record fields and array indices, including nested combinations.
@@ -176,7 +183,8 @@ redefining accepted names is rejected. Import loading is not yet supported.
 Expressions create ordinary numbered bindings (`_0`, `_1`, ...), skipping names
 already in use. Results, owners and loans remain in the session until reset or
 exit; presentation does not copy owners or dereference references. Aggregate
-presentation is bounded, references are shown as `<reference>`, and choices use
+presentation is bounded, StringView results display quoted text, other references
+are shown as `<reference>`, and choices use
 variant indexes. This is an initial value display, not the text-formatting API.
 
 `:reset` runs checked cleanup and starts a fresh session; `:quit` or EOF cleans up

@@ -2678,16 +2678,7 @@ pub const CodeGenerator = struct {
     }
 
     fn isStringView(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
-        const range = types.fields(self.graph, ty) orelse return false;
-        if (range.len != 2) return false;
-        const data = self.graph.fields.items[range.start];
-        const length = self.graph.fields.items[range.start + 1];
-        if (!std.mem.eql(u8, self.graph.text(data.name), "_data") or !std.mem.eql(u8, self.graph.text(length.name), "_length")) return false;
-        const pointer = switch (self.graph.types.items[@intFromEnum(data.ty)]) {
-            .pointer => |value| value,
-            else => return false,
-        };
-        return types.isBuiltin(self.graph, pointer.child, .UInt8) and types.isBuiltin(self.graph, length.ty, .UIntNative);
+        return types.isStringView(self.graph, ty);
     }
 
     fn nativeUIntType(self: *CodeGenerator) !llvm.c.LLVMTypeRef {

@@ -51,6 +51,16 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (reads.items) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
             switch (inst.op) {
                 .constant => |x| if (!valueFits(program.graph, f.slots[x.dst], x.value)) return error.InvalidBytecode,
+                .static_bytes => |x| {
+                    const pointer = program.graph.semanticType(f.slots[x.dst]);
+                    if (pointer != .pointer or pointer.pointer.mutability != .read_only or
+                        !types.isBuiltin(program.graph, pointer.pointer.child, .UInt8)) return error.InvalidBytecode;
+                },
+                .offset_reference => |x| {
+                    const pointer = program.graph.semanticType(f.slots[x.src]);
+                    if (pointer != .pointer or !types.equal(program.graph, f.slots[x.dst], f.slots[x.src]) or
+                        !types.isBuiltin(program.graph, f.slots[x.elements], .UIntNative)) return error.InvalidBytecode;
+                },
                 .copy => |x| if (!types.equal(program.graph, f.slots[x.dst], f.slots[x.src])) return error.InvalidBytecode,
                 .session_initialize => |x| {
                     const binding = try sessionBinding(program, x.binding);
@@ -259,6 +269,8 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     if (i.op == .call) return i.op.call.outputs;
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
+        .static_bytes => |x| x.dst,
+        .offset_reference => |x| x.dst,
         .copy => |x| x.dst,
         .session_borrow => |x| x.dst,
         .readonly => |x| x.dst,
@@ -285,6 +297,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
 fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !void {
     switch (i.op) {
         .copy => |x| try out.append(a, x.src),
+        .offset_reference => |x| try out.appendSlice(a, &.{ x.src, x.elements }),
         .session_initialize => |x| try out.append(a, x.value),
         .readonly => |x| try out.append(a, x.src),
         .binary => |x| try out.appendSlice(a, &.{ x.left, x.right }),

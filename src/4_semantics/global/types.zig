@@ -630,3 +630,16 @@ pub fn conformanceParticipantOwner(graph: *const graph_mod.GlobalSemanticGraph, 
     if (semantic == .pointer) return conformanceParticipantOwner(graph, semantic.pointer.child);
     return nominalTypeOwner(graph, ty);
 }
+
+/// Runtime layout of the language's validated borrowed string literals.
+/// Shared by executor presentation and both literal lowerers.
+pub fn isStringView(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    const range = fields(graph, ty) orelse return false;
+    if (range.len != 2) return false;
+    const data = graph.fields.items[range.start];
+    const length = graph.fields.items[range.start + 1];
+    if (!std.mem.eql(u8, graph.text(data.name), "_data") or !std.mem.eql(u8, graph.text(length.name), "_length")) return false;
+    const pointer = graph.semanticType(data.ty);
+    return pointer == .pointer and pointer.pointer.mutability == .read_only and
+        isBuiltin(graph, pointer.pointer.child, .UInt8) and isBuiltin(graph, length.ty, .UIntNative);
+}

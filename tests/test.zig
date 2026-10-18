@@ -5774,7 +5774,7 @@ test "argi repl retains values and shares compile-time execution" {
         ":begin\n" ++
         "choose := () -> (.result: Int32) {\n" ++
         "    #if enabled() { result = 12 } else { result = missing() }\n" ++
-        "}\n:end\n#run choose()\n:reset\ntrue\n");
+        "}\n:end\n#run choose()\n:reset\ntrue\n\"hello\"\n_1\n");
     child.stdin.?.close(std.testing.io);
     child.stdin = null;
     var buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
@@ -5792,7 +5792,7 @@ test "argi repl retains values and shares compile-time execution" {
     if (stderr.len != 0) std.debug.print("REPL stderr: {s}\n", .{stderr});
     try expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(std.testing.io));
     try expectEqualStrings("", stderr);
-    try expectEqualStrings("_0 = 42\n_1 = 7\n_2 = 49\n_3 = 12\n_0 = true\n", stdout);
+    try expectEqualStrings("_0 = 42\n_1 = 7\n_2 = 49\n_3 = 12\n_0 = true\n_1 = \"hello\"\n_2 = \"hello\"\n", stdout);
 }
 
 test "argi version reports current release" {
@@ -13871,4 +13871,10 @@ test "feature_tests/execution/77_computed_test_condition" {
 
 test "feature_tests/execution/78X_computed_discarded_binding" {
     try buildExpectFail("tests/feature_tests/execution/78X_computed_discarded_binding", "cannot materialize body");
+}
+
+test "feature_tests/execution/79_string_literals_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/79_string_literals_vm");
+    try runExpect("tests/feature_tests/execution/79_string_literals_vm", 42);
+    try vmExpect("tests/feature_tests/execution/79_string_literals_vm", 42, null);
 }

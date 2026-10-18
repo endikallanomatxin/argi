@@ -661,8 +661,13 @@ const FunctionLower = struct {
         for (args, self.parent.graph.value_fields.items[fields.start..][0..fields.len], 0..) |*arg, field, index| arg.* = try self.coerce(node.source, try self.expression(field.value), self.parent.graph.fields.items[f.input.start + index].ty);
         const outputs = try self.parent.allocator.alloc(b.Slot, f.output.len);
         for (outputs, self.parent.graph.fields.items[f.output.start..][0..f.output.len]) |*slot, field| slot.* = try self.newSlot(field.ty);
-        try self.parent.pending.append(self.parent.allocator, x.callee);
-        _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
+        if (f.safety_primitive == .reference_offset or f.safety_primitive == .mutable_reference_offset) {
+            if (args.len != 2 or outputs.len != 1) return self.parent.reject(node.source, "reference offset signature");
+            _ = try self.emit(node.source, .{ .offset_reference = .{ .dst = outputs[0], .src = args[0], .elements = args[1] } });
+        } else {
+            try self.parent.pending.append(self.parent.allocator, x.callee);
+            _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
+        }
         if (x.consumes_auto_deinit) |value| try self.updateCallCleanup(value, false, fields, args);
         for (x.consumed_auto_deinits) |value| try self.updateCallCleanup(value, false, fields, args);
         for (x.initialized_auto_deinits) |value| try self.updateCallCleanup(value, true, fields, args);
@@ -752,6 +757,21 @@ const FunctionLower = struct {
             },
             .choice_payload_access => |x| {
                 _ = try self.emit(node.source, .{ .payload = .{ .dst = dst, .src = try self.expression(x.value), .variant = x.variant } });
+            },
+            .string_literal => |range| {
+                const ty = self.parent.graph.semanticType(self.slots.items[dst]);
+                if (ty == .pointer) {
+                    _ = try self.emit(node.source, .{ .static_bytes = .{ .dst = dst, .bytes = self.parent.graph.text(range) } });
+                } else {
+                    if (!types.isStringView(self.parent.graph, self.slots.items[dst])) return self.parent.reject(node.source, "string literal representation");
+                    const fields = types.fields(self.parent.graph, self.slots.items[dst]).?;
+                    const data = try self.newSlot(self.parent.graph.fields.items[fields.start].ty);
+                    const length = try self.newSlot(self.parent.graph.fields.items[fields.start + 1].ty);
+                    _ = try self.emit(node.source, .{ .static_bytes = .{ .dst = data, .bytes = self.parent.graph.text(range) } });
+                    _ = try self.emit(node.source, .{ .constant = .{ .dst = length, .value = .{ .integer = range.len } } });
+                    const values = try self.parent.allocator.dupe(b.Slot, &.{ data, length });
+                    _ = try self.emit(node.source, .{ .record = .{ .dst = dst, .fields = values } });
+                }
             },
             .int_literal => |value| {
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = value } } });

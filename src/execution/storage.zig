@@ -6,8 +6,9 @@ const p = @import("../4_semantics/primitives/schema.zig");
 const Frame = struct {
     values: []?b.Value,
     cleanup: []const b.Cleanup = &.{},
+    bytes: []const u8 = &.{},
     alive: bool = true,
-    duration: enum { call, session } = .call,
+    duration: enum { call, session, static } = .call,
 };
 
 // Slots contain either a complete value (including Void) or no value. This is
@@ -141,7 +142,7 @@ pub const Storage = struct {
         for (values) |value| switch (value) {
             .reference => |reference| {
                 _ = try self.read(reference);
-                if (self.frames.items[@intFromEnum(reference.frame)].duration != .session) return error.ExecutionTemporaryReference;
+                if (self.frames.items[@intFromEnum(reference.frame)].duration == .call) return error.ExecutionTemporaryReference;
             },
             .choice => |choice| if (choice.payload) |payload| try self.validateSessionValues(payload[0..1], depth + 1),
             .record => |fields| try self.validateSessionValues(fields, depth + 1),
@@ -152,6 +153,63 @@ pub const Storage = struct {
 
     /// Checked cleanup must deactivate every represented obligation before
     /// retiring session storage. Releasing a region never runs user code.
+    /// Literal backing has context lifetime and immutable storage, independently
+    /// of the frame evaluating it. Include the native trailing zero without
+    /// exposing it as part of a StringView's logical length.
+    pub fn staticBytes(self: *Storage, bytes: []const u8) !v.Reference {
+        const length = try std.math.add(usize, bytes.len, 1);
+        try self.charge(length);
+        const data = try self.allocator.alloc(u8, length);
+        @memcpy(data[0..bytes.len], bytes);
+        data[bytes.len] = 0;
+        const frame = try self.enter(0);
+        self.frames.items[@intFromEnum(frame)].bytes = data;
+        self.frames.items[@intFromEnum(frame)].duration = .static;
+        try self.charge(1);
+        const path = try self.allocator.alloc(v.Projection, 1);
+        path[0] = .{ .element = 0 };
+        return .{ .context = self.context, .frame = frame, .root = 0, .path = path, .mutability = .read_only };
+    }
+
+    fn offsetInto(self: *Storage, reference: v.Reference, elements: i128, path: *[64]v.Projection) !v.Reference {
+        _ = try self.read(reference);
+        if (elements < 0) return error.ExecutionIndexOutOfBounds;
+        if (elements == 0) return reference;
+        if (reference.path.len == 0 or reference.path[reference.path.len - 1] != .element) return error.ExecutionIndexOutOfBounds;
+        const offset = std.math.cast(usize, elements) orelse return error.ExecutionIndexOutOfBounds;
+        const index = std.math.add(usize, reference.path[reference.path.len - 1].element, offset) catch return error.ExecutionIndexOutOfBounds;
+        if (reference.path.len > path.len) return error.ExecutionInvalidReference;
+        @memcpy(path[0..reference.path.len], reference.path);
+        path[reference.path.len - 1] = .{ .element = index };
+        var result = reference;
+        result.path = path[0..reference.path.len];
+        _ = try self.read(result);
+        return result;
+    }
+
+    pub fn offsetReference(self: *Storage, reference: v.Reference, elements: i128) !v.Reference {
+        var path: [64]v.Projection = undefined;
+        var result = try self.offsetInto(reference, elements, &path);
+        if (elements == 0) return result;
+        try self.charge(result.path.len);
+        result.path = try self.allocator.dupe(v.Projection, result.path);
+        return result;
+    }
+
+    /// Host inspection uses bounded stack projections, without allocating
+    /// executor cells or changing the program's execution resource budget.
+    pub fn readOffset(self: *Storage, reference: v.Reference, elements: i128) !b.Value {
+        var path: [64]v.Projection = undefined;
+        return self.read(try self.offsetInto(reference, elements, &path));
+    }
+
+    pub fn literalBytes(self: *Storage, reference: v.Reference) ![]const u8 {
+        _ = try self.read(reference);
+        const frame = self.frames.items[@intFromEnum(reference.frame)];
+        if (frame.duration != .static) return error.ExecutionInvalidReference;
+        return frame.bytes[0 .. frame.bytes.len - 1];
+    }
+
     pub fn releaseSession(self: *Storage, target: Slots) !void {
         if (target.storage != self or target.context != self.context) return error.ExecutionForeignReference;
         const values = try target.cells();
@@ -199,6 +257,14 @@ pub const Storage = struct {
     }
     pub fn read(self: *Storage, reference: v.Reference) !b.Value {
         try self.validateContext(reference);
+        _ = try self.frameValues(reference.frame);
+        const frame = self.frames.items[@intFromEnum(reference.frame)];
+        if (frame.duration == .static) {
+            if (reference.root != 0 or reference.path.len != 1 or reference.path[0] != .element) return error.ExecutionInvalidReference;
+            const index = reference.path[0].element;
+            if (index >= frame.bytes.len) return error.ExecutionIndexOutOfBounds;
+            return .{ .integer = frame.bytes[index] };
+        }
         const values = try self.slots(reference.frame);
         var value = try values.get(reference.root);
         for (reference.path) |projection| value = try child(value, projection);
@@ -265,7 +331,7 @@ pub const Storage = struct {
     }
     pub fn borrow(self: *Storage, reference: v.Reference, mutability: p.PointerMutability) !b.Value {
         _ = try self.read(reference);
-        if (mutability == .read_write and reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+        if (mutability == .read_write and (reference.mutability != .read_write or self.frames.items[@intFromEnum(reference.frame)].duration == .static)) return error.ExecutionReadonlyReference;
         try self.charge(reference.path.len);
         var result = reference;
         result.path = try self.allocator.dupe(v.Projection, reference.path);
@@ -296,8 +362,7 @@ pub const Storage = struct {
         return (try (try self.slots(reference.frame)).get(flag)).boolean;
     }
     pub fn cleanupSet(self: *Storage, reference: v.Reference, enabled: bool) !usize {
-        try self.validateContext(reference);
-        if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+        try self.validateWritable(reference);
         return self.cleanupSetAt(reference, try self.cleanupEntry(reference), enabled);
     }
     fn cleanupSetAt(self: *Storage, reference: v.Reference, index: usize, enabled: bool) !usize {
@@ -318,7 +383,7 @@ pub const Storage = struct {
     }
     // The caller has already evaluated and resolved the complete destination.
     pub fn captureResolvedWrite(self: *Storage, reference: v.Reference, activate_cleanup: bool) !WriteDestination {
-        if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+        try self.validateWritable(reference);
         const cleanup_entry = if (activate_cleanup) try self.cleanupEntry(reference) else null;
         try self.charge(reference.path.len);
         var captured = reference;
@@ -362,11 +427,17 @@ pub const Storage = struct {
     }
 
     pub fn store(self: *Storage, reference: v.Reference, value: b.Value) !void {
-        try self.validateContext(reference);
-        if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+        try self.validateWritable(reference);
         const values = try self.slots(reference.frame);
         const previous = try values.get(reference.root);
         try values.put(reference.root, try self.update(previous, reference.path, value));
+    }
+
+    fn validateWritable(self: *Storage, reference: v.Reference) !void {
+        try self.validateContext(reference);
+        if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+        _ = try self.frameValues(reference.frame);
+        if (self.frames.items[@intFromEnum(reference.frame)].duration == .static) return error.ExecutionReadonlyReference;
     }
 
     fn validateContext(self: *const Storage, reference: v.Reference) !void {

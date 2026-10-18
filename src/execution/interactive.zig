@@ -70,6 +70,7 @@ pub const Interactive = struct {
 
     pub const PresentedValue = struct {
         name: []const u8,
+        ty: @import("../4_semantics/global/graph.zig").GlobalTypeId,
         value: @import("../5_codegen/bytecode/value.zig").Value,
     };
 
@@ -100,7 +101,7 @@ pub const Interactive = struct {
                 const binding = bindings[bindings.len - 1];
                 const frame = self.runtime.context.bindings.get(binding) orelse return error.UninitializedBinding;
                 const slots = try self.runtime.context.storage.slots(frame);
-                return .{ .name = name, .value = try slots.get(0) };
+                return .{ .name = name, .ty = self.compiler.semantic.relocation.graph.binding(binding).ty, .value = try slots.get(0) };
             },
         }
         return null;

@@ -1630,3 +1630,67 @@ test "comptime evaluation releases transient proofs with a retained graph alloca
     for (graph.nodes.items[0..before], source.nodes.items) |retained, original|
         try std.testing.expectEqualDeep(original, retained);
 }
+
+test "bytecode string literal backing survives completed calls" {
+    try std.testing.expectEqual(@as(i128, 65), try execute(
+        \\StringView: Type = (._data: &UInt8, ._length: UIntNative)
+        \\text := () -> (.result: StringView) { result = "A" }
+        \\main := () -> (.status_code: Int32) {
+        \\    value ::= text()
+        \\    byte ::= value._data&
+        \\    if byte == 65 { status_code = 65 } else { status_code = 1 }
+        \\}
+    , .{}));
+}
+
+test "literal storage is immutable compact and survives session publication" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try @import("storage.zig").Storage.init(arena.allocator(), 100);
+    const reference = try storage.staticBytes("hello");
+    try std.testing.expectEqualStrings("hello", try storage.literalBytes(reference));
+    try std.testing.expectEqual(@as(i128, 'h'), (try storage.read(reference)).integer);
+    var forged = reference;
+    forged.mutability = .read_write;
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.store(forged, .{ .integer = 0 }));
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.captureResolvedWrite(forged, false));
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.borrow(forged, .read_write));
+    const session = try storage.enterSession(1, &.{});
+    try storage.initializeSession(session, 0, .{ .reference = reference });
+    try std.testing.expectEqual(@as(i128, 'h'), (try storage.read((try session.get(0)).reference)).integer);
+    const empty = try storage.staticBytes("");
+    try std.testing.expectEqualStrings("", try storage.literalBytes(empty));
+    try std.testing.expectEqual(@as(i128, 0), (try storage.read(empty)).integer);
+}
+
+test "bounded reference offsets preserve literal backing and permissions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try @import("storage.zig").Storage.init(arena.allocator(), 100);
+    const reference = try storage.staticBytes("hello");
+    const last = try storage.offsetReference(reference, 4);
+    try std.testing.expectEqual(@as(i128, 'o'), (try storage.read(last)).integer);
+    try std.testing.expectEqual(reference.frame, last.frame);
+    try std.testing.expectEqual(.read_only, last.mutability);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.offsetReference(reference, 6));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.offsetReference(reference, -1));
+}
+
+test "bytecode verifier rejects mutable literal references" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .UInt8 });
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const expression = b.Function{
+        .slots = &.{@enumFromInt(1)},
+        .inputs = &.{},
+        .outputs = &.{0},
+        .code = &.{
+            .{ .source = source, .op = .{ .static_bytes = .{ .dst = 0, .bytes = "x" } } },
+            .{ .source = source, .op = .{ .ret = &.{0} } },
+        },
+    };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }));
+}

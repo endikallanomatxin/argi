@@ -105,7 +105,33 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
 fn evaluate(session: *interactive.Interactive, output: *std.Io.Writer, source: []const u8) !void {
     if (try session.submitInput(source)) |result| {
         try output.print("{s} = ", .{result.name});
-        try printValue(output, result.value, 0);
+        const graph = &session.compiler.semantic.relocation.graph;
+        if (@import("../4_semantics/global/types.zig").isStringView(graph, result.ty)) {
+            const reference = result.value.record[0].reference;
+            const length = std.math.cast(usize, result.value.record[1].integer) orelse return error.ExecutionInvalidReference;
+            try output.writeByte('"');
+            var scalars: usize = 0;
+            for (0..length) |index| {
+                const byte: u8 = @intCast((try session.runtime.context.storage.readOffset(reference, @intCast(index))).integer);
+                if (byte & 0xc0 != 0x80) {
+                    if (scalars == 256) {
+                        try output.writeAll("...");
+                        break;
+                    }
+                    scalars += 1;
+                }
+                switch (byte) {
+                    '"' => try output.writeAll("\\\""),
+                    '\\' => try output.writeAll("\\\\"),
+                    '\n' => try output.writeAll("\\n"),
+                    '\r' => try output.writeAll("\\r"),
+                    '\t' => try output.writeAll("\\t"),
+                    0...8, 11, 12, 14...31, 127 => try output.print("\\x{x:0>2}", .{byte}),
+                    else => try output.writeByte(byte),
+                }
+            }
+            try output.writeByte('"');
+        } else try printValue(output, result.value, 0);
         try output.writeByte('\n');
     }
 }
@@ -182,4 +208,23 @@ test "REPL transport requires reset after a runtime trap" {
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "ExecutionContextPoisoned") != null);
     try std.testing.expect(std.mem.endsWith(u8, output.written(), "_0 = 2\n"));
     try std.testing.expect(session.closed);
+}
+
+test "REPL presents persistent string literals as escaped text" {
+    const allocator = std.testing.allocator;
+    var sources = @import("../execution/submissions.zig").Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diag.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "StringView: Type = (._data: &UInt8, ._length: UIntNative)");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: interactive.Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    var input = std.Io.Reader.fixed("\"hello\"\n_0\n\"ñ€\"\n\"\"\n:reset\n:quit\n");
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try interact(&session, &input, &output.writer, false);
+    try std.testing.expectEqualStrings("_0 = \"hello\"\n_1 = \"hello\"\n_2 = \"ñ€\"\n_3 = \"\"\n", output.written());
 }

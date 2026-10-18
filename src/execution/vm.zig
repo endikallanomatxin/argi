@@ -36,6 +36,7 @@ pub const Context = struct {
     running: bool = false,
     namespace: ?b.SessionNamespace = null,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, runtime_value.FrameId) = .empty,
+    literal_bytes: std.StringHashMapUnmanaged(runtime_value.Reference) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, value_cells: usize) Context {
         return .{ .arena = .init(allocator), .allocator = allocator, .limit = value_cells };
@@ -66,6 +67,7 @@ pub const Context = struct {
         self.state = .fresh;
         self.namespace = null;
         self.bindings = .empty;
+        self.literal_bytes = .empty;
     }
 
     fn checkNamespace(self: *const Context, session: ?b.Session) !void {
@@ -73,6 +75,17 @@ pub const Context = struct {
             if (namespace != interface.namespace) return error.ExecutionForeignSession;
         };
     }
+    fn literalBytes(self: *Context, bytes: []const u8) !b.Value {
+        if (self.literal_bytes.get(bytes)) |reference| return .{ .reference = reference };
+        try self.storage.charge(1);
+        const allocator = self.arena.allocator();
+        try self.literal_bytes.ensureUnusedCapacity(allocator, 1);
+        const reference = try self.storage.staticBytes(bytes);
+        const key = try self.storage.literalBytes(reference);
+        self.literal_bytes.putAssumeCapacity(key, reference);
+        return .{ .reference = reference };
+    }
+
     fn initializeBinding(self: *Context, binding: b.SessionBinding, value: b.Value) !void {
         if (self.bindings.contains(binding.binding)) return error.ExecutionInitializedStorage;
         try self.storage.charge(1);
@@ -224,6 +237,8 @@ pub const Vm = struct {
             current.pc += 1;
             switch (inst.op) {
                 .constant => |x| try slots.put(x.dst, x.value),
+                .static_bytes => |x| try slots.put(x.dst, try self.context().literalBytes(x.bytes)),
+                .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, (try slots.get(x.elements)).integer) }),
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
                 .session_initialize => |x| try self.context().initializeBinding(self.program.session.?.bindings[x.binding], try slots.get(x.value)),
                 .session_borrow => |x| try slots.put(x.dst, try self.context().borrowBinding(self.program.session.?.bindings[x.binding], self.program.graph.semanticType(f.slots[x.dst]).pointer.mutability)),
