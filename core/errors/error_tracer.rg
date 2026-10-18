@@ -34,7 +34,7 @@ capture_error_tracer(
     .location     : SourceLocationId,
     .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
 ) -> (.tracer: $&Virtual#(.contract: ErrorTracer)) := {
-    add_context_text(.context = "", .location = location, .error_tracer = error_tracer)
+    add_context(.context = "", .location = location, .error_tracer = error_tracer)
     tracer = error_tracer
 }
 
