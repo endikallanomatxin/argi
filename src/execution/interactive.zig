@@ -1219,3 +1219,22 @@ test "interactive cancellation preserves completed effects and stops later host 
     try std.testing.expectEqual(@as(usize, 2), host_state.calls);
     try session.close();
 }
+
+test "interactive choice payload writes preserve vacant record siblings and snapshots" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Choice: Type = (..empty, ..some(.value: Int32))\nRecord: Type = (.choice: Choice, .later: Int32)");
+    try session.submitStatements("record :: Record\nrecord.choice = ..some(.value = 41)\nsaved ::= record.choice");
+    try session.submitStatements("match record.choice { ..empty { abort } ..some $&payload { payload&.value = 42 } }");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("record.later"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.submitStatements("observed :: Int32 = 0\nmatch saved { ..empty { abort } ..some payload { observed = payload.value } }");
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("observed")).?.value.integer);
+    try session.submitStatements("record.later = 7\nmatch record.choice { ..empty { abort } ..some payload { observed = payload.value } }");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observed")).?.value.integer);
+    try session.submitStatements("record.choice = ..empty\nmatch record.choice { ..empty {} ..some payload { abort } }");
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("record.later")).?.value.integer);
+    try session.close();
+}

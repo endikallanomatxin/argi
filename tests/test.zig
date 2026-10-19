@@ -14102,3 +14102,9 @@ test "bytecode CLI execution budgets" {
     try expect(invalid.term == .exited and invalid.term.exited != 0);
     try expect(std.mem.indexOf(u8, invalid.stderr, "InvalidExecutionLimit") != null);
 }
+
+test "feature_tests/execution/116_partial_record_choice_payload" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/116_partial_record_choice_payload");
+    try runExpect("tests/feature_tests/execution/116_partial_record_choice_payload", 42);
+    try vmExpect("tests/feature_tests/execution/116_partial_record_choice_payload", 42, null);
+}

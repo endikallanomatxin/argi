@@ -107,6 +107,9 @@ capabilities and their bytecode operations to be supported.
 Array reads support nested values and returned temporaries. Writes follow local
 storage through record fields and array indices, including nested combinations.
 Copies are independent values, and all indexing checks bounds at runtime.
+An initialized choice inside a partially initialized record supports ordinary
+payload borrowing and writes without reading vacant sibling fields. Copied choices
+remain independent snapshots; switching variants preserves the other fields.
 Local safe references can be passed to and returned from checked calls. They retain
 storage identity through record/array projections and can reduce mutable access
 to read access. Ended call frames cannot be accessed. References cannot be supplied
@@ -180,7 +183,8 @@ Callback failures poison execution. `argi repl` registers stdout/stderr adapters
 reject foreign calls.
 
 Raw pointers, C enums, floating point, complete trace reporting,
-partial choice initialization, vacant arrays with owning elements, owning globals,
+partial choice initialization before selecting a complete variant, vacant arrays
+with owning elements, owning globals,
 closures,
 general foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable
