@@ -67,9 +67,31 @@ pub fn plan(graph: *const g.GlobalSemanticGraph, id: g.GlobalNodeId) !Plan {
         inline .pointer_assignment, .struct_field_store => |x| {
             const target = x.cleanup_target orelse return error.InvalidReplacementDestination;
             const chosen = selected.targetNode() orelse return error.InvalidReplacementDestination;
-            const owner = selected.ownerBinding() orelse return error.InvalidReplacementDestination;
-            if (lexical.root(graph, target) != owner or !lexical.equal(graph, chosen, target))
-                return error.InvalidReplacementDestination;
+            if (selected.storage == .indirect) {
+                // Identity is the evaluated write operand, never a synthetic
+                // lexical owner or a second equivalent-looking expression.
+                if (chosen != target) return error.InvalidReplacementDestination;
+                switch (write.content) {
+                    .pointer_assignment => |assignment| {
+                        const place = graph.node(target).content;
+                        if (place != .dereference or place.dereference.pointer != assignment.pointer)
+                            return error.InvalidReplacementDestination;
+                    },
+                    .struct_field_store => |store| {
+                        const field = graph.node(target).content;
+                        if (field != .struct_field_access or field.struct_field_access.field_index != store.field_index)
+                            return error.InvalidReplacementDestination;
+                        const base = graph.node(field.struct_field_access.value).content;
+                        if (base != .dereference or base.dereference.pointer != store.struct_ptr)
+                            return error.InvalidReplacementDestination;
+                    },
+                    else => unreachable,
+                }
+            } else {
+                const owner = selected.ownerBinding() orelse return error.InvalidReplacementDestination;
+                if (lexical.root(graph, target) != owner or !lexical.equal(graph, chosen, target))
+                    return error.InvalidReplacementDestination;
+            }
         },
         else => unreachable,
     }
@@ -145,6 +167,41 @@ test "checked replacement owns its destination preparation cleanup and commit" {
     try std.testing.expectError(error.InvalidReplacementDestination, plan(&graph, replacement));
     graph.nodes.items[@intFromEnum(write)].content.pointer_assignment.cleanup_target = target;
     graph.auto_deinits.items[0].storage.projected.target = other;
+    try std.testing.expectError(error.InvalidReplacementDestination, plan(&graph, replacement));
+    const indirect: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .dereference = .{
+        .pointer = pointer,
+        .ty = @enumFromInt(0),
+        .pointer_type = @enumFromInt(1),
+    } } });
+    graph.auto_deinits.items[0].storage = .{ .indirect = indirect };
+    graph.nodes.items[@intFromEnum(write)].content.pointer_assignment.cleanup_target = indirect;
+    _ = try plan(&graph, replacement);
+    graph.nodes.items[@intFromEnum(indirect)].content.dereference.pointer = other;
+    try std.testing.expectError(error.InvalidReplacementDestination, plan(&graph, replacement));
+    graph.nodes.items[@intFromEnum(indirect)].content.dereference.pointer = pointer;
+    graph.nodes.items[@intFromEnum(write)].content.pointer_assignment.cleanup_target = target;
+    try std.testing.expectError(error.InvalidReplacementDestination, plan(&graph, replacement));
+    const field_target: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .struct_field_access = .{
+        .value = indirect,
+        .field_name = name,
+        .field_index = 0,
+    } } });
+    graph.auto_deinits.items[0].storage = .{ .indirect = field_target };
+    graph.nodes.items[@intFromEnum(write)].content = .{ .struct_field_store = .{
+        .struct_ptr = pointer,
+        .struct_type = @enumFromInt(0),
+        .field_type = @enumFromInt(0),
+        .field_index = 0,
+        .value = value,
+        .cleanup_target = field_target,
+    } };
+    _ = try plan(&graph, replacement);
+    graph.nodes.items[@intFromEnum(write)].content.struct_field_store.field_index = 1;
+    try std.testing.expectError(error.InvalidReplacementDestination, plan(&graph, replacement));
+    graph.nodes.items[@intFromEnum(write)].content.struct_field_store.field_index = 0;
+    graph.nodes.items[@intFromEnum(write)].content.struct_field_store.struct_ptr = other;
     try std.testing.expectError(error.InvalidReplacementDestination, plan(&graph, replacement));
     graph.auto_deinits.items[0].storage = .{ .binding = @enumFromInt(0) };
     graph.nodes.items[@intFromEnum(write)].content = .{ .assignment = .{ .binding = @enumFromInt(0), .value = value } };
