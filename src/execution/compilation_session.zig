@@ -107,6 +107,34 @@ pub const CompilationSession = struct {
         }
     };
 
+    /// Unpublished construction state for source loading and staged selection. It
+    /// cannot execute or publish until ordinary finalization produces a Candidate.
+    pub const Draft = struct {
+        owner: *const CompilationSession,
+        revision: u64,
+        semantic: ?*sema.Session,
+
+        pub fn deinit(self: *Draft) void {
+            if (self.semantic) |semantic| {
+                semantic.deinit();
+                self.owner.allocator.destroy(semantic);
+            }
+            self.* = undefined;
+        }
+
+        pub fn finishDefinitions(self: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
+            return self.owner.finishPreparation(self, modules, diagnostics, null, null, true);
+        }
+    };
+
+    pub fn beginPreparation(self: *const CompilationSession, diagnostics: *diagnostics_mod.Diagnostics) !Draft {
+        if (diagnostics.hasErrors()) return error.Reported;
+        const semantic = try self.allocator.create(sema.Session);
+        errdefer self.allocator.destroy(semantic);
+        try self.semantic.fork(semantic, self.allocator, diagnostics);
+        return .{ .owner = self, .revision = self.revision, .semantic = semantic };
+    }
+
     pub fn init(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, options: sema.Options) !CompilationSession {
         const semantic = try allocator.create(sema.Session);
         errdefer allocator.destroy(semantic);
@@ -163,11 +191,15 @@ pub const CompilationSession = struct {
     }
 
     fn prepareImpl(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, exit_bindings: ?[]const @import("../4_semantics/global/graph.zig").GlobalBindingId, definitions: bool) !Candidate {
+        var draft = try self.beginPreparation(diagnostics);
+        defer draft.deinit();
+        return self.finishPreparation(&draft, modules, diagnostics, continuation, exit_bindings, definitions);
+    }
+
+    fn finishPreparation(self: *const CompilationSession, draft: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, exit_bindings: ?[]const @import("../4_semantics/global/graph.zig").GlobalBindingId, definitions: bool) !Candidate {
         if (diagnostics.hasErrors()) return error.Reported;
-        const candidate = try self.allocator.create(sema.Session);
-        errdefer self.allocator.destroy(candidate);
-        try self.semantic.fork(candidate, self.allocator, diagnostics);
-        errdefer candidate.deinit();
+        if (draft.owner != self or draft.revision != self.revision) return error.StaleCompilationCandidate;
+        const candidate = draft.semantic orelse return error.StaleCompilationCandidate;
         const previous_modules = candidate.modules.len;
         if (modules.len < previous_modules) return error.InvalidSemanticModuleViews;
         // A source batch ends with its submission module. Earlier new modules
@@ -208,6 +240,7 @@ pub const CompilationSession = struct {
         errdefer checked.deinit(self.allocator);
         const version = try self.allocator.create(Version);
         version.* = checked;
+        draft.semantic = null;
         return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .checked = version, .temporal = proof, .is_exit = exit_bindings != null, .entry = continuation };
     }
 
@@ -288,6 +321,8 @@ test "compilation session publishes checked candidates and rejects stale revisio
     defer candidate.deinit();
     var stale = try session.prepare(&modules, &diagnostics);
     defer stale.deinit();
+    var stale_draft = try session.beginPreparation(&diagnostics);
+    defer stale_draft.deinit();
     try std.testing.expectEqual(@as(usize, 1), session.semantic.modules.len);
     try std.testing.expectEqual(@as(u64, 0), session.revision);
     try session.accept(&candidate);
@@ -295,6 +330,7 @@ test "compilation session publishes checked candidates and rejects stale revisio
     try std.testing.expectEqual(@as(u64, 1), session.revision);
     try std.testing.expectEqual(@as(usize, 1), session.versions.items.len);
     try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&stale));
+    try std.testing.expectError(error.StaleCompilationCandidate, stale_draft.finishDefinitions(&modules, &diagnostics));
     try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&candidate));
     var next = try session.prepare(&modules, &diagnostics);
     defer next.deinit();

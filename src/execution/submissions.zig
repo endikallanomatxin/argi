@@ -1,5 +1,8 @@
 const std = @import("std");
 const module_sg = @import("../4_semantics/module/graph.zig");
+const sema = @import("../4_semantics/global/semantizer.zig");
+const selection_mod = @import("../1_base/target_selection.zig");
+const FileId = @import("../1_base/source_db.zig").FileId;
 const diagnostics_mod = @import("../1_base/diagnostic.zig");
 
 /// Owns immutable submitted source and syntax-free module graphs. Initialize in
@@ -11,6 +14,7 @@ pub const Sources = struct {
     arena: std.heap.ArenaAllocator,
     modules: std.ArrayList(*module_sg.ModuleSemanticGraph) = .empty,
     sequence: u64 = 0,
+    selections: std.AutoHashMapUnmanaged(FileId, selection_mod.Prepared) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Sources {
         return .{ .allocator = allocator, .arena = .init(allocator) };
@@ -21,6 +25,9 @@ pub const Sources = struct {
             self.allocator.destroy(module);
         }
         self.modules.deinit(self.allocator);
+        var selections = self.selections.valueIterator();
+        while (selections.next()) |selection| selection.deinit(self.allocator);
+        self.selections.deinit(self.allocator);
         self.arena.deinit();
         self.* = undefined;
     }
@@ -129,6 +136,10 @@ pub const Sources = struct {
     }
 
     fn parseFile(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8, origin: ?SourceOrigin, path: []const u8, dir: []const u8) !Parsed {
+        return self.parseSelectedFile(diagnostics, source, origin, path, dir, null);
+    }
+
+    fn parseSelectedFile(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8, origin: ?SourceOrigin, path: []const u8, dir: []const u8, target: ?@import("../1_base/target.zig").Config) !Parsed {
         const retained = self.arena.allocator();
         const code = try retained.dupe(u8, source);
         const file = try diagnostics.appendSource(.{ .path = path, .code = code });
@@ -144,16 +155,37 @@ pub const Sources = struct {
                 .length = std.math.cast(u32, input.text.len) orelse return error.SubmissionIdentityLimit,
             });
         }
-        var tokens = @import("../2_tokens/tokenizer.zig").Tokenizer.init(self.allocator, diagnostics, code, file);
+        var selected: ?selection_mod.Prepared = null;
+        defer if (selected) |*selection| selection.deinit(self.allocator);
+        const syntax = if (target) |config| blk: {
+            var offset: usize = 0;
+            selected = selection_mod.Prepared.init(self.allocator, code, config, &offset, .computed) catch |err| {
+                if (err == error.OutOfMemory) return err;
+                try diagnostics.add(.{ .file = file, .offset = @intCast(offset) }, .syntax, "invalid target selection: {s}", .{selection_mod.errorMessage(err)});
+                return error.Reported;
+            };
+            break :blk (try selected.?.syntax(retained)).source;
+        } else code;
+        var tree = try self.parseSyntax(diagnostics, syntax, file);
+        errdefer tree.deinit(self.allocator);
+        if (selected) |selection| {
+            try self.selections.put(self.allocator, file, selection);
+            selected = null;
+        }
+        return .{ .tree = tree, .code = code, .path = path, .dir = dir };
+    }
+
+    fn parseSyntax(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8, file: FileId) !@import("../3_syntax/syntax_tree.zig").FileSyntaxTree {
+        var tokens = @import("../2_tokens/tokenizer.zig").Tokenizer.init(self.allocator, diagnostics, source, file);
         defer tokens.deinit();
         _ = try tokens.tokenize();
         if (diagnostics.hasErrors()) return error.Reported;
-        var parser = @import("../3_syntax/syntaxer.zig").Syntaxer.initFile(self.allocator, @import("../3_syntax/syntax_tree.zig").FileSyntaxTree.initOwnedTokens(file, tokens.takeTokens()), code, diagnostics);
+        var parser = @import("../3_syntax/syntaxer.zig").Syntaxer.initFile(self.allocator, @import("../3_syntax/syntax_tree.zig").FileSyntaxTree.initOwnedTokens(file, tokens.takeTokens()), source, diagnostics);
         defer parser.deinit();
         var tree = try parser.parse();
         errdefer tree.deinit(self.allocator);
         if (diagnostics.hasErrors()) return error.Reported;
-        return .{ .tree = tree, .code = code, .path = path, .dir = dir };
+        return tree;
     }
 
     pub fn loadModule(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !*module_sg.ModuleSemanticGraph {
@@ -184,15 +216,14 @@ pub const Sources = struct {
 
     /// Build dependency modules through the ordinary tokenizer, parser and
     /// ModuleSema. Only the accepted prefix determines which files are reused.
-    pub fn loadImports(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, io: std.Io, importer_path: []const u8, source: []const u8, prefix: []const module_sg.ModuleSemanticGraph, target: @import("../1_base/target.zig").Config) ![]const module_sg.ModuleSemanticGraph {
+    pub fn loadImports(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, io: std.Io, importer_path: []const u8, source: []const u8, session: *sema.Session, target: @import("../1_base/target.zig").Config) !void {
         const sf = @import("../1_base/source_files.zig");
         const a = self.allocator;
-        const dirs = try a.alloc([]const u8, prefix.len);
+        const dirs = try a.alloc([]const u8, session.modules.len);
         defer a.free(dirs);
-        for (dirs, prefix) |*dir, module| dir.* = module.module_dir;
+        for (dirs, session.modules) |*dir, module| dir.* = module.module_dir;
         var files = try sf.collectImportedModules(&a, io, .{ .path = importer_path, .code = source }, dirs, .{ .target = target });
         defer sf.freeList(&a, &files);
-        const first_module = self.modules.items.len;
         var start: usize = 0;
         while (start < files.items.len) {
             const dir = std.fs.path.dirname(files.items[start].path) orelse ".";
@@ -205,23 +236,58 @@ pub const Sources = struct {
             for (files.items[start..end], parsed) |file, *out| {
                 const path = try self.arena.allocator().dupe(u8, file.path);
                 const owned_dir = try self.arena.allocator().dupe(u8, dir);
-                out.* = try self.parseFile(diagnostics, file.code, null, path, owned_dir);
+                out.* = try self.parseSelectedFile(diagnostics, file.code, null, path, owned_dir, target);
                 count += 1;
             }
             const inputs = try a.alloc(module_sg.FileInput, parsed.len);
             defer a.free(inputs);
             for (inputs, parsed) |*input, *file| input.* = .{ .diagnostics = diagnostics, .path = file.path, .tree = &file.tree, .source = file.code };
-            _ = try self.finishModule(diagnostics, dir, inputs, target);
+            const module = try self.finishModule(diagnostics, dir, inputs, target);
+            try session.appendModules(try self.appendSnapshot(session.modules, module));
             start = end;
         }
-        const added = self.modules.items[first_module..];
-        if (added.len == 0) return prefix;
-        const count = std.math.add(usize, prefix.len, added.len) catch return error.SubmissionIdentityLimit;
-        const snapshot = try self.arena.allocator().alloc(module_sg.ModuleSemanticGraph, count);
-        @memcpy(snapshot[0..prefix.len], prefix);
-        for (snapshot[prefix.len..], added) |*out, module| out.* = module.*;
-        return snapshot;
     }
+
+    /// Resolve newly loaded source choices through the same fixed-point driver
+    /// used by CLI preparation. Already accepted module choices stay frozen.
+    pub fn selectModules(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, session: *sema.Session, first_module: usize, io: std.Io, target: @import("../1_base/target.zig").Config) !void {
+        var loader = SelectionLoader{ .sources = self, .diagnostics = diagnostics, .io = io, .target = target };
+        try @import("../4_semantics/global/module_selection.zig").resolve(self.allocator, session, first_module, &loader);
+    }
+
+    const SelectionLoader = struct {
+        sources: *Sources,
+        diagnostics: *diagnostics_mod.Diagnostics,
+        io: std.Io,
+        target: @import("../1_base/target.zig").Config,
+
+        pub fn materialize(self: *SelectionLoader, session: *sema.Session, module_index: usize, condition: module_sg.ModuleCondition, decision: bool) !void {
+            const sources = self.sources;
+            const a = sources.arena.allocator();
+            const module = session.modules[module_index];
+            const path = try std.fs.path.join(a, &.{ module.module_dir, module.text(module.file_offsets.items[condition.source.file_index].path) });
+            // A rejected import can be edited and loaded again at the same
+            // path. Its current plan belongs to the newest retained source.
+            var cursor = self.diagnostics.source_files.len;
+            const file: FileId = while (cursor > 0) {
+                cursor -= 1;
+                if (std.mem.eql(u8, self.diagnostics.source_files[cursor].path, path)) break self.diagnostics.source_db.fileId(cursor);
+            } else return error.InvalidModuleConditionSource;
+            const selection = sources.selections.getPtr(file) orelse return error.InvalidModuleConditionSource;
+            const branch = for (selection.plan.branches.items, 0..) |candidate, index| {
+                if (candidate.extent.start == condition.source.offset) break @as(selection_mod.Prepared.BranchId, @enumFromInt(index));
+            } else return error.InvalidModuleConditionSource;
+            try selection.resolve(branch, decision);
+            const rendered = try selection.fragment(a, branch, true);
+            const imports = try selection.fragment(a, branch, false);
+            try sources.loadImports(self.diagnostics, self.io, path, imports.source, session, self.target);
+            var tree = try sources.parseSyntax(self.diagnostics, rendered.source, file);
+            defer tree.deinit(sources.allocator);
+            const input = module_sg.FileInput{ .diagnostics = self.diagnostics, .path = path, .tree = &tree, .source = self.diagnostics.source_files[@intFromEnum(file)].code, .is_bundled_core = module.is_bundled_core };
+            const fragment = try sources.finishModule(self.diagnostics, module.module_dir, &.{input}, self.target);
+            try session.appendModuleFragment(try sources.appendSnapshot(session.modules, fragment), @enumFromInt(module_index));
+        }
+    };
 
     /// Synthetic modules keep unique identities. Resolve their import spellings
     /// at the loader boundary against the real caller directory instead.

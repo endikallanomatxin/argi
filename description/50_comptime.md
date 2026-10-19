@@ -48,9 +48,9 @@ branch is compiled. This differs from running an ordinary `if` inside
 > discovery follows selection, so `main` can be declared in a selected arm.
 > `argi test` uses the same selection to discover active tests, without selecting
 > `main` or executing test bodies during discovery.
-> Initial REPL modules use the same staged source loader and retain their selected
-> namespaces across reset. Imports submitted after startup do not yet support
-> computed module-level selection.
+> REPL module preparation and later imports use the same staged selection driver.
+> Selected namespaces remain stable across subsequent commands; reset restores
+> the initial modules, and later imports can read updated sources.
 
 The experimental `argi run --vm <directory>` command uses the shared bytecode
 executor for runtime execution. Explicit `#run` requests use that executor during

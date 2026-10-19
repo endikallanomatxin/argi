@@ -13,7 +13,6 @@ const module_sg = @import("../4_semantics/module/graph.zig");
 const module_semantizer = @import("../4_semantics/module/semantizer.zig");
 const global_sg = @import("../4_semantics/global/graph.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
-const module_linker = @import("../4_semantics/global/module_linker.zig");
 const global_once_verify = @import("../4_semantics/global/once_verify.zig");
 const module_test_declaration_verify = @import("../4_semantics/module/test_declaration_verify.zig");
 const global_safety_checker = @import("../4_semantics/safety/checker.zig");
@@ -638,40 +637,8 @@ pub const FrontendPipeline = struct {
             .diagnostics = self.diagnostics,
         });
         errdefer session.deinit();
-        var completed: std.AutoHashMapUnmanaged(u64, void) = .empty;
-        while (true) {
-            var changed = false;
-            const count = modules.items.len;
-            for (0..count) |module_index| {
-                // Appending a fragment can move the module view table.
-                const module = modules.items[module_index];
-                for (module.conditions.items, 0..) |condition, index| {
-                    const key = (@as(u64, @intCast(module_index)) << 32) | @as(u32, @intCast(index));
-                    if (completed.contains(key)) continue;
-                    const decision = try session.evaluateModuleCondition(module_index, condition.expression) orelse continue;
-                    const path = try std.fs.path.join(a, &.{ module.module_dir, module.text(module.file_offsets.items[condition.source.file_index].path) });
-                    const file_id = self.source_db.findPath(path) orelse return error.InvalidModuleConditionSource;
-                    const selection = &self.source_selections.items[@intFromEnum(file_id)];
-                    const branch = for (selection.plan.branches.items, 0..) |candidate, branch_index| {
-                        if (candidate.extent.start == condition.source.offset) break @as(@import("../1_base/conditional_source.zig").BranchId, @enumFromInt(branch_index));
-                    } else return error.InvalidModuleConditionSource;
-                    try selection.resolve(branch, decision);
-                    const rendered = try selection.fragment(a, branch, true);
-                    const imports = try selection.fragment(a, branch, false);
-                    try self.discoverSelectedImports(a, session, &modules, path, imports.source);
-                    const fragment = try self.buildSelectedFragment(a, path, file_id, rendered.source, module.is_bundled_core);
-                    try modules.append(a, fragment);
-                    try session.appendModuleFragment(modules.items, @enumFromInt(module_index));
-                    try completed.put(a, key, {});
-                    changed = true;
-                }
-            }
-            if (!changed) break;
-        }
-        if (try module_linker.cycleSource(self.allocator, &session.relocation.graph)) |source| {
-            try self.diagnostics.add(@import("../execution/diagnostics.zig").location(&session.relocation.graph, self.diagnostics, source), .semantic, "import cycle detected after compile-time selection", .{});
-            return error.Reported;
-        }
+        var loader = SelectionLoader{ .pipeline = self, .allocator = a, .modules = &modules };
+        try @import("../4_semantics/global/module_selection.zig").resolve(a, session, 0, &loader);
         try module_test_declaration_verify.validate(self.syntax_files.items, self.source_db, self.diagnostics, self.options.semantizing.include_tests, self.options.semantizing.selected_test_name);
         if (self.deferred_entry) {
             const before = self.syntax_files.items.len;
@@ -692,6 +659,31 @@ pub const FrontendPipeline = struct {
         if (self.diagnostics.hasErrors()) return error.Reported;
         try session.advance();
     }
+
+    const SelectionLoader = struct {
+        pipeline: *FrontendPipeline,
+        allocator: std.mem.Allocator,
+        modules: *std.ArrayList(module_sg.ModuleSemanticGraph),
+
+        pub fn materialize(self: *SelectionLoader, session: *global_semantizer.Session, module_index: usize, condition: module_sg.ModuleCondition, decision: bool) !void {
+            const pipeline = self.pipeline;
+            const a = self.allocator;
+            const module = session.modules[module_index];
+            const path = try std.fs.path.join(a, &.{ module.module_dir, module.text(module.file_offsets.items[condition.source.file_index].path) });
+            const file_id = pipeline.source_db.findPath(path) orelse return error.InvalidModuleConditionSource;
+            const selection = &pipeline.source_selections.items[@intFromEnum(file_id)];
+            const branch = for (selection.plan.branches.items, 0..) |candidate, branch_index| {
+                if (candidate.extent.start == condition.source.offset) break @as(@import("../1_base/conditional_source.zig").BranchId, @enumFromInt(branch_index));
+            } else return error.InvalidModuleConditionSource;
+            try selection.resolve(branch, decision);
+            const rendered = try selection.fragment(a, branch, true);
+            const imports = try selection.fragment(a, branch, false);
+            try pipeline.discoverSelectedImports(a, session, self.modules, path, imports.source);
+            const fragment = try pipeline.buildSelectedFragment(a, path, file_id, rendered.source, module.is_bundled_core);
+            try self.modules.append(a, fragment);
+            try session.appendModuleFragment(self.modules.items, @enumFromInt(module_index));
+        }
+    };
 
     fn discoverSelectedImports(self: *FrontendPipeline, a: std.mem.Allocator, session: *global_semantizer.Session, modules: *std.ArrayList(module_sg.ModuleSemanticGraph), path: []const u8, source: []const u8) !void {
         if (sf.firstImportDirectiveOffset(source) == null) return;

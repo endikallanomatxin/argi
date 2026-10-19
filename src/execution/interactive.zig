@@ -164,17 +164,21 @@ pub const Interactive = struct {
     pub fn submitDefinitions(self: *Interactive, source: []const u8) !void {
         try self.beginSubmission();
         const module = try self.sources.loadModule(&self.diagnostics, source);
-        var dependencies = self.compiler.semantic.modules;
+        var draft = try self.compiler.beginPreparation(&self.diagnostics);
+        defer draft.deinit();
+        const semantic = draft.semantic.?;
+        const first_module = semantic.modules.len;
         if (module.semantic.module_aliases.items.len != 0) {
             const loader = self.imports orelse {
                 try self.diagnostics.add(.{ .file = self.diagnostics.source_db.fileId(self.diagnostics.source_files.len - 1), .offset = 0 }, .semantic, "interactive imports require a configured source loader", .{});
                 return error.Reported;
             };
-            dependencies = try self.sources.loadImports(&self.diagnostics, loader.io, loader.path, source, dependencies, self.options.target);
+            try self.sources.loadImports(&self.diagnostics, loader.io, loader.path, source, semantic, self.options.target);
+            try self.sources.selectModules(&self.diagnostics, semantic, first_module, loader.io, self.options.target);
             try self.sources.resolveSubmissionImports(module, loader.io, loader.path);
         }
-        const prefix = try self.sources.appendSnapshot(dependencies, module);
-        var candidate = try self.compiler.prepareDefinitions(prefix, &self.diagnostics);
+        const prefix = try self.sources.appendSnapshot(semantic.modules, module);
+        var candidate = try draft.finishDefinitions(prefix, &self.diagnostics);
         defer candidate.deinit();
         try self.compiler.accept(&candidate);
     }
@@ -1040,5 +1044,42 @@ test "interactive arrays retain initialized elements across commands" {
     try session.submitStatements("numbers[1] = 42");
     const complete = (try session.submitInput("numbers")).?;
     try std.testing.expectEqual(@as(i128, 42), complete.value.array[1].integer);
+    try session.close();
+}
+
+test "interactive computed imports share staged selection without replaying accepted state" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    for ([_][]const u8{ "library", "dependency", "broken", "cycle" }) |dir| try tmp.dir.createDirPath(io, dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "dependency/main.rg", .data = "enabled := () -> (.ok: Bool) { ok = true }\nanswer := () -> (.value: Int32) { value = 42 }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "library/main.rg", .data = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { dep := import(\"../dependency\")\n#if dep.enabled() { answer := () -> (.value: Int32) { value = dep.answer() } } } #else { missing := import(\"../missing\") }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "choose := () -> (.value: Int32) { value = 1 }\n#if choose() { answer := () -> (.value: Int32) { value = 11 } }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "cycle/main.rg", .data = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { self := import(\"./\") }" });
+    const base = try tmp.dir.realPathFileAlloc(io, ".", a);
+    defer a.free(base);
+    var session: Interactive = undefined;
+    try session.init(a, &.{}, .{ .exhaustive_function_bodies = false, .root_selection = .requests_only }, .{});
+    defer session.deinit();
+    try session.enableImports(io, base);
+    try session.submitStatements("retained :: Int32 = 7");
+    try session.submit("library := import(\"./library\")");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("retained")).?.value.integer);
+    const revision = session.compiler.revision;
+    const module_count = session.compiler.semantic.modules.len;
+    try std.testing.expectError(error.Reported, session.submit("bad := import(\"./broken\")"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(module_count, session.compiler.semantic.modules.len);
+    try std.testing.expectError(error.Reported, session.submit("cycle := import(\"./cycle\")"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(module_count, session.compiler.semantic.modules.len);
+    try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { answer := () -> (.value: Int32) { value = 11 } }" });
+    try session.submit("fixed := import(\"./broken\")");
+    try std.testing.expectEqual(@as(i128, 11), (try session.submitInput("fixed.answer()")).?.value.integer);
+    try tmp.dir.writeFile(io, .{ .sub_path = "library/main.rg", .data = "broken := () -> () {" });
+    try session.submit("again := import(\"./library\")");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.answer()")).?.value.integer);
     try session.close();
 }
