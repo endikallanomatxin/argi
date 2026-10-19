@@ -3,7 +3,8 @@ const g = @import("../../4_semantics/global/graph.zig");
 const types = @import("../../4_semantics/global/types.zig");
 
 // Siblings occupy contiguous entries. Leaves hold complete checked values;
-// only records expose independently initialized fields in the initial layout.
+// only nonempty records expose independently initialized fields. Empty records
+// remain leaves: having no fields does not itself construct a value.
 pub const Node = struct { first: u32 = 0, count: u32 = 0, record: bool = false };
 pub const Layout = struct { nodes: []const Node };
 
@@ -17,6 +18,7 @@ pub fn compile(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph
 fn populate(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, nodes: *std.ArrayList(Node), index: u32, depth: usize) anyerror!void {
     if (depth > 64) return error.UnsupportedStorageLayout;
     const fields = types.fields(graph, ty) orelse return;
+    if (fields.len == 0) return;
     const start = std.math.cast(u32, nodes.items.len) orelse return error.UnsupportedStorageLayout;
     try nodes.appendNTimes(allocator, .{}, fields.len);
     nodes.items[index] = .{ .record = true, .first = start, .count = fields.len };

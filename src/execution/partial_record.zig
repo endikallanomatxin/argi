@@ -13,6 +13,7 @@ pub const Storage = struct {
         if (layout.nodes.len == 0) return error.ExecutionInvalidReference;
         for (layout.nodes, 0..) |node, index| {
             if (!node.record and node.count != 0) return error.ExecutionInvalidReference;
+            if (node.record and node.count == 0) return error.ExecutionInvalidReference;
             if (node.count != 0 and (node.first <= index or node.first > layout.nodes.len or node.count > layout.nodes.len - node.first)) return error.ExecutionInvalidReference;
         }
         const values = try allocator.alloc(?b.Value, layout.nodes.len);
@@ -120,4 +121,37 @@ test "partial records preserve initialized siblings and immutable snapshots" {
     try std.testing.expectEqual(@as(i128, 42), snapshot.record[1].record[0].integer);
     try std.testing.expectEqual(@as(i128, 7), (try storage.read(allocator, &.{})).record[1].record[0].integer);
     try std.testing.expectEqual(@as(i128, 41), (try storage.read(allocator, &.{})).record[0].integer);
+}
+
+test "vacant empty record storage requires an explicit value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.fields.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+    });
+    var nested = try Storage.init(allocator, try layout_mod.compile(allocator, &graph, @enumFromInt(1)));
+    const field = &.{Projection{ .field = 0 }};
+    try std.testing.expectError(error.ExecutionUninitializedStorage, nested.read(allocator, field));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, nested.materializationCells(&.{}));
+    try nested.write(field, .{ .record = &.{} });
+    try std.testing.expectEqual(@as(usize, 0), (try nested.read(allocator, &.{})).record[0].record.len);
+
+    var empty = try Storage.init(allocator, try layout_mod.compile(allocator, &graph, @enumFromInt(0)));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, empty.read(allocator, &.{}));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, empty.materializationCells(&.{}));
+    try empty.write(&.{}, .{ .record = &.{} });
+    try std.testing.expectEqual(@as(usize, 0), (try empty.read(allocator, &.{})).record.len);
+    try std.testing.expectError(error.ExecutionInvalidReference, Storage.init(allocator, .{
+        .nodes = &.{.{ .record = true }},
+    }));
 }

@@ -13976,3 +13976,9 @@ test "feature_tests/execution/95_partial_owner_allocated_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/execution/95_partial_owner_allocated_cleanup");
     try runExpect("tests/feature_tests/execution/95_partial_owner_allocated_cleanup", 42);
 }
+
+test "feature_tests/execution/96_empty_record_values_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/96_empty_record_values_vm");
+    try runExpect("tests/feature_tests/execution/96_empty_record_values_vm", 42);
+    try vmExpect("tests/feature_tests/execution/96_empty_record_values_vm", 42, null);
+}
