@@ -1771,6 +1771,7 @@ pub const SafetyChecker = struct {
                 var result: facts.ValueFacts = .{ .owned_roots = try self.oneRoot(root) };
                 for (fields) |field| result = try self.mergeValueFacts(result, field.value.*);
                 result.fields = fields;
+                result.explicit_dependency = false;
                 break :blk result;
             },
             .reference_copy => if (values.len != 0) values[0].referenceCopy() else .{},
@@ -3377,6 +3378,10 @@ pub const SafetyChecker = struct {
         }
 
         if (effect.fields.len != 0) {
+            // Explicit anchors belong to the value that introduced them. Child
+            // anchors are checked recursively; flattening their flag would make
+            // an enclosing owner retain replaced allocations as explicit loans.
+            const intrinsic_explicit_dependency = result.explicit_dependency;
             var intrinsic_owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer intrinsic_owned.deinit();
             try intrinsic_owned.appendSlice(direct_owned_roots);
@@ -3401,6 +3406,7 @@ pub const SafetyChecker = struct {
             }
             result.fields = fields;
             result.variants = variants;
+            result.explicit_dependency = intrinsic_explicit_dependency;
             // A complete field effect supersedes ownership derived from the
             // prior fields. Intrinsic roots follow the whole-value transfer;
             // roots owned only by replaced fields must leave the parent.
@@ -8180,4 +8186,28 @@ test "branches share initial storage identities without reviving ended generatio
     try std.testing.expect(replacement != initial);
     try std.testing.expect(!left.tracker.isAlive(initial));
     try std.testing.expect(right.tracker.isAlive(initial));
+}
+
+test "child explicit anchors do not become intrinsic aggregate anchors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const child = facts.ValueEffect{
+        .fresh_owned_roots = &.{91},
+        .fresh_dependencies = &.{91},
+        .explicit_dependency = true,
+    };
+    const effect = facts.ValueEffect{ .fields = &.{.{ .index = 0, .value = &child }} };
+    const owner = try checker.instantiateOutput(effect, &.{}, &state);
+    try std.testing.expect(!owner.explicit_dependency);
+    try std.testing.expect(owner.fields[0].value.explicit_dependency);
+    var explicitly_anchored = effect;
+    explicitly_anchored.explicit_dependency = true;
+    const anchored = try checker.instantiateOutput(explicitly_anchored, &.{}, &state);
+    try std.testing.expect(anchored.explicit_dependency);
+    try std.testing.expect(anchored.fields[0].value.explicit_dependency);
 }

@@ -13372,3 +13372,8 @@ test "feature_tests/control_flow/39_defer_keyword" {
 test "feature_tests/control_flow/40X_defer_hash_prefix" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/control_flow/40X_defer_hash_prefix", "use 'defer' without a '#' prefix");
 }
+
+test "feature_tests/collections/151_factory_owner_mutation" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/151_factory_owner_mutation");
+    try runExpect("tests/feature_tests/collections/151_factory_owner_mutation", 0);
+}
