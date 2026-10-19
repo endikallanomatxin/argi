@@ -47,6 +47,9 @@ pub const Resolver = struct {
     // Only the designated command's direct declarations have session duration.
     // Nested blocks and initializer temporaries retain ordinary lexical cleanup.
     continuation_function: ?global_sg.GlobalFunctionId = null,
+    // Earlier session storage is visible to checked replacement planning, but
+    // must not enter this command's lexical cleanup list.
+    continuation_bindings: std.ArrayList(global_sg.GlobalBindingId) = .empty,
     loop_cleanup_base: ?struct { active: usize, defers: usize } = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
@@ -61,6 +64,7 @@ pub const Resolver = struct {
     pub fn deinit(self: *Resolver) void {
         self.deferred.deinit(self.allocator);
         self.auto_nodes.deinit(self.allocator);
+        self.continuation_bindings.deinit(self.allocator);
         self.replacement_candidates.deinit(self.allocator);
     }
 
@@ -103,6 +107,8 @@ pub const Resolver = struct {
         while (replacements.next()) |node| try self.replacement_candidates.put(self.allocator, node.*, {});
         var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer visible.deinit(self.allocator);
+        if (self.continuation_function == function_id)
+            try visible.appendSlice(self.allocator, self.continuation_bindings.items);
         try visible.appendSlice(
             self.allocator,
             self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len],

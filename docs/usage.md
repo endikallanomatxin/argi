@@ -180,7 +180,7 @@ Callback failures poison execution. `argi repl` registers stdout/stderr adapters
 reject foreign calls.
 
 Raw pointers, C enums, floating point, complete trace reporting,
-partial initialization of retained session bindings or non-record storage, owning globals,
+partial array and choice initialization, owning globals,
 closures,
 general foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable
@@ -253,6 +253,11 @@ exit; presentation does not copy owners or dereference references. Aggregate
 presentation is bounded, StringView results display quoted text, other references
 are shown as `<reference>`, and choices use
 variant indexes. This is an initial value display, not the text-formatting API.
+
+Scalar and record bindings can be declared without an initial value and written
+in later commands. Initialized record fields can be read independently of vacant
+siblings. Reads of unavailable storage are rejected before publication. Reading
+a whole record after initializing its fields separately remains unsupported.
 
 `:reset` runs checked cleanup and starts a fresh session; `:quit` or EOF cleans up
 and exits. Preparation failures publish no state and subsequent input can retry.

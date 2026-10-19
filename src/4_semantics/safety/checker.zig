@@ -5639,6 +5639,11 @@ pub const SafetyChecker = struct {
     }
 
     fn endBlockStorage(self: *SafetyChecker, block_id: graph_mod.GlobalBlockId, state: *FunctionState) !void {
+        // A command's outer scope belongs to the session. Nested lexical
+        // scopes still end normally; accepted outer storage survives commands.
+        if (self.continuation) |continuation| {
+            if (self.graph.function(continuation.function).body == block_id and state == &continuation.state.state) return;
+        }
         // TODO: Preserve lexical array roots through imported Errable payload
         // extraction; a borrowed aggregate assigned into an outer binding can
         // otherwise lose its dependency when the inner array's scope ends.

@@ -407,7 +407,11 @@ pub const Vm = struct {
                     for (x.outputs, results[0..binding.outputs.len]) |slot, value| try slots.put(slot, .{ .integer = value });
                 },
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
-                .session_declare => |index| try self.context().declareBinding(unit.session.?.bindings[index]),
+                .session_declare => |x| {
+                    const binding = unit.session.?.bindings[x.binding];
+                    try self.context().declareBinding(binding);
+                    if (x.layout) |layout| try self.context().storage.prepareRecord(self.context().bindings.get(binding.binding).?, 0, layout);
+                },
                 .session_initialize => |x| try self.context().initializeBinding(unit.session.?.bindings[x.binding], try slots.get(x.value), x.reinitialize),
                 .readonly => |x| {
                     var reference = (try slots.get(x.src)).reference;

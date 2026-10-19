@@ -106,7 +106,7 @@ pub const Instruction = struct {
         virtualize: struct { dst: Slot, receiver: Slot, table: *const VirtualTable },
         virtual_call: *const VirtualInvocation,
         copy: struct { dst: Slot, src: Slot },
-        session_declare: u32,
+        session_declare: struct { binding: u32, layout: ?@import("storage_layout.zig").Layout = null },
         session_initialize: struct { binding: u32, value: Slot, reinitialize: bool = false },
         readonly: struct { dst: Slot, src: Slot },
         binary: struct { dst: Slot, left: Slot, right: Slot, operator: p.BinaryOperator },

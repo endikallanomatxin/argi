@@ -151,8 +151,14 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     }
                 },
                 .copy => |x| if (!types.equal(program.graph, f.slots[x.dst], f.slots[x.src])) return error.InvalidBytecode,
-                .session_declare => |index| {
-                    _ = try sessionBinding(program, index);
+                .session_declare => |x| {
+                    const binding = try sessionBinding(program, x.binding);
+                    if (x.layout) |layout| {
+                        const expected = try @import("storage_layout.zig").compile(allocator, program.graph, binding.slots[0]);
+                        defer allocator.free(expected.nodes);
+                        if (expected.nodes.len != layout.nodes.len) return error.InvalidBytecode;
+                        for (expected.nodes, layout.nodes) |wanted, actual| if (!std.meta.eql(wanted, actual)) return error.InvalidBytecode;
+                    }
                 },
                 .session_initialize => |x| {
                     const binding = try sessionBinding(program, x.binding);

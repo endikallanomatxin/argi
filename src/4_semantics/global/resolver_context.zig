@@ -196,6 +196,7 @@ pub const Context = struct {
         self.contracts.virtual_signature_failure = source.contracts.virtual_signature_failure;
         try self.ownership.deferred.appendSlice(allocator, source.ownership.deferred.items);
         try self.ownership.auto_nodes.appendSlice(allocator, source.ownership.auto_nodes.items);
+        try self.ownership.continuation_bindings.appendSlice(allocator, source.ownership.continuation_bindings.items);
         self.ownership.replacement_candidates = try source.ownership.replacement_candidates.clone(allocator);
         self.ownership.denied_copy = source.ownership.denied_copy;
         self.ownership.empty_block = source.ownership.empty_block;

@@ -954,3 +954,54 @@ test "interactive scalar host calls require explicit bindings before publication
     try session.reset();
     try session.close();
 }
+
+test "interactive vacant records retain partial initialization across commands" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("pair :: (.first: Int32, .second: Int32)");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("pair.first"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.submitStatements("pair.first = 41");
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("pair.first")).?.value.integer);
+    try std.testing.expectError(error.Reported, session.submitInput("pair.second"));
+    try std.testing.expectError(error.Reported, session.submitInput("pair"));
+    try session.submitStatements("pair.second = 42");
+    const complete = (try session.submitInput("pair.second")).?;
+    try std.testing.expectEqual(@as(i128, 42), complete.value.integer);
+    try session.submitStatements("number :: Int32");
+    try std.testing.expectError(error.Reported, session.submitInput("number"));
+    try session.submitStatements("number = 42");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("number")).?.value.integer);
+    try session.close();
+}
+
+test "interactive partial records clean initialized owners at exit" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Resource: Type = ()\nmake := () -> (.result: Resource) { result = () }");
+    try session.submitDefinitions("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
+    try session.submitStatements("pair :: (.first: Resource, .second: Resource)");
+    try session.submitStatements("pair.first = make()");
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const frame = session.runtime.context.bindings.get(binding).?;
+    const slots = try session.runtime.context.storage.slots(frame);
+    const cleanup = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup;
+    var active: usize = 0;
+    for (cleanup) |entry| if ((try slots.get(entry.flag)).boolean) {
+        active += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), active);
+    try session.close();
+    for (cleanup) |entry| try std.testing.expect(!(try slots.get(entry.flag)).boolean);
+}

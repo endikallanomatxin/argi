@@ -449,11 +449,12 @@ const FunctionLower = struct {
             .binding_declaration => |binding_id| {
                 const binding_ = self.parent.graph.binding(binding_id);
                 if (self.parent.sessionIndex(binding_id)) |index| {
-                    if (binding_.deferred_initialization) {
-                        _ = try self.emit(node.source, .{ .session_declare = index });
+                    if (binding_.deferred_initialization or binding_.initialization == null) {
+                        const layout = if (binding_.deferred_initialization) null else try @import("storage_layout.zig").compile(self.parent.allocator, self.parent.graph, binding_.ty);
+                        _ = try self.emit(node.source, .{ .session_declare = .{ .binding = index, .layout = layout } });
                         return;
                     }
-                    const initializer = binding_.initialization orelse return self.parent.reject(node.source, "session declaration without initialization");
+                    const initializer = binding_.initialization.?;
                     const value = try self.coerce(node.source, try self.expression(initializer), binding_.ty);
                     _ = try self.emit(node.source, .{ .session_initialize = .{ .binding = index, .value = value } });
                     if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);

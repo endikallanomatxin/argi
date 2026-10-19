@@ -578,6 +578,8 @@ pub const Session = struct {
         _ = try self.resolvers.core.builtin(.Bool);
         try self.includeExecutionRoot(function);
         self.resolvers.ownership.continuation_function = function;
+        self.resolvers.ownership.continuation_bindings.clearRetainingCapacity();
+        try self.resolvers.ownership.continuation_bindings.appendSlice(self.allocator, self.resolvers.expressions.session_bindings.items);
         self.resolvers.expressions.continuation_function = function;
         try self.inheritContinuationAssumptions(function);
     }
