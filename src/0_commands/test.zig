@@ -5,11 +5,9 @@ const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
 const build_plan = @import("build_plan.zig");
 const build = @import("build.zig");
-const syn = @import("../3_syntax/syntax_tree.zig");
 
 const DiscoverTest = struct {
     name: []const u8,
-    location: @import("../2_tokens/token.zig").Location,
 };
 
 const ParsedArgs = struct {
@@ -47,13 +45,20 @@ fn discoverTests(
     options: sf.CoreResolutionOptions,
     module_dir: []const u8,
 ) ![]DiscoverTest {
-    const files = try sf.collectModuleWithOptions(&allocator, io, options, module_dir);
+    var files = try sf.collectModuleWithOptions(&allocator, io, options, module_dir);
+    defer sf.freeList(&allocator, &files);
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
-
-    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{});
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{ .target = options.target, .semantizing = .{ .root_selection = .requests_only } });
     defer pipeline.deinit();
 
-    const syntax_roots = try pipeline.parseFiles(files.items);
+    pipeline.prepareTestDiscovery(files.items) catch |err| {
+        if (diagnostics.hasErrors()) {
+            try diagnostics.dumpWithLimit(std.math.maxInt(usize));
+            return error.CompilationFailed;
+        }
+        return err;
+    };
 
     if (diagnostics.hasErrors()) {
         try diagnostics.dumpWithLimit(std.math.maxInt(usize));
@@ -61,15 +66,13 @@ fn discoverTests(
     }
 
     var discovered = std.array_list.Managed(DiscoverTest).init(allocator);
-    for (syntax_roots) |node| {
-        const syntax_file = syn.fileForRef(pipeline.syntax_files.items, node);
-        const declaration = syntax_file.testDeclaration(node.node) orelse continue;
+    for (pipeline.syntax_files.items) |*syntax_file| for (syntax_file.roots) |node| {
+        const declaration = syntax_file.testDeclaration(node) orelse continue;
         const name = syntax_file.tokenText(&diagnostics.source_db, declaration.function.name_token);
         try discovered.append(.{
             .name = try allocator.dupe(u8, name),
-            .location = syntax_file.location(node.node),
         });
-    }
+    };
 
     return try discovered.toOwnedSlice();
 }

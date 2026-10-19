@@ -24,6 +24,7 @@ pub const FrontendPipeline = struct {
         selected_test_name: ?[]const u8 = null,
         implicit_testing_module_dir: ?[]const u8 = null,
         exhaustive_function_bodies: bool = false,
+        root_selection: global_semantizer.RootSelection = .program,
     };
 
     pub const Options = struct {
@@ -198,6 +199,27 @@ pub const FrontendPipeline = struct {
         const roots = try self.syntax();
         self.syntaxing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - syntax_start);
         return roots;
+    }
+
+    /// Test discovery only executes closed source-selection requests. It never
+    /// selects main or a test body as an executable root. Ordinary files keep
+    /// the parser-only discovery path; computed declarations use the shared
+    /// staged loader and retain their selected syntax for the caller.
+    pub fn prepareTestDiscovery(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
+        if (self.options.semantizing.root_selection != .requests_only) return error.InvalidDiscoveryRootSelection;
+        _ = try self.parseFiles(files);
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        var computed = false;
+        scan: for (self.syntax_files.items) |*file| for (file.roots) |root| {
+            if (file.ifStatement(root)) |conditional| if (conditional.comptime_selection) {
+                computed = true;
+                break :scan;
+            };
+        };
+        if (computed) {
+            self.deferred_entry = false;
+            try self.buildGlobalGraph();
+        }
     }
 
     /// Load syntax-free modules without selecting an executable entry or
@@ -558,6 +580,7 @@ pub const FrontendPipeline = struct {
             .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
+            .root_selection = self.options.semantizing.root_selection,
             .diagnostics = self.diagnostics,
             .profile_io = if (self.options.collect_stats) self.io else null,
         });
@@ -584,6 +607,7 @@ pub const FrontendPipeline = struct {
             .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
+            .root_selection = self.options.semantizing.root_selection,
             .diagnostics = self.diagnostics,
         });
         defer session.deinit();

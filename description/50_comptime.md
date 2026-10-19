@@ -46,6 +46,8 @@ branch is compiled. This differs from running an ordinary `if` inside
 > the selected declarations and discovering their imports. Nested selections
 > retain original source offsets; inactive imports need not exist. Program entry
 > discovery follows selection, so `main` can be declared in a selected arm.
+> `argi test` uses the same selection to discover active tests, without selecting
+> `main` or executing test bodies during discovery.
 > Interactive module preparation does not yet use this staged source loader.
 
 The experimental `argi run --vm <directory>` command uses the shared bytecode

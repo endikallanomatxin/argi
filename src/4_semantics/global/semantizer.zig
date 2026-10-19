@@ -24,9 +24,12 @@ const dispatch_mod = @import("dispatch.zig");
 const reachability_mod = @import("reachability.zig");
 const reach_context = @import("reach_context.zig");
 
+pub const RootSelection = enum { program, requests_only };
+
 pub const Options = struct {
     target: @import("../../1_base/target.zig").Config = .{},
     selected_test_name: ?[]const u8 = null,
+    root_selection: RootSelection = .program,
     exhaustive_function_bodies: bool = true,
     diagnostics: ?*diagnostics_mod.Diagnostics = null,
     profile_io: ?std.Io = null,
@@ -484,8 +487,11 @@ pub const Session = struct {
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_validation)]);
         setup_start = profileTimestamp(options.profile_io);
-        if (!options.exhaustive_function_bodies)
+        if (options.root_selection == .requests_only) {
+            self.reachable = reachability_mod.FunctionSet.init(allocator);
+        } else if (!options.exhaustive_function_bodies) {
             self.reachable = try reachability_mod.executionRoots(allocator, &relocation.graph, options.selected_test_name);
+        }
         profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
         self.phase = .ready;
     }
@@ -576,14 +582,14 @@ pub const Session = struct {
         }
         try contracts.validateParticipantConformances();
         try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
-        if (self.reachable) |*set| {
+        if (self.reachable) |*set| if (self.options.root_selection == .program) {
             var roots = try reachability_mod.executionRoots(allocator, &self.relocation.graph, self.options.selected_test_name);
             defer roots.deinit();
             // Root selection includes newly added entry and test declarations;
             // retain the existing closure through the ordinary expansion pass.
             var iterator = roots.values.keyIterator();
             while (iterator.next()) |id| _ = try set.include(id.*);
-        }
+        };
         self.phase = .ready;
     }
 

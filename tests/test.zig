@@ -14054,3 +14054,8 @@ test "feature_tests/execution/109X_module_condition_safety" {
 test "feature_tests/execution/110X_computed_import_cycle" {
     try buildExpectFail("tests/feature_tests/execution/110X_computed_import_cycle", "import cycle detected after compile-time selection");
 }
+
+test "feature_tests/testing/31_computed_module_selection" {
+    try argiTestExpectStderr("tests/feature_tests/testing/31_computed_module_selection", &.{}, 0, "PASS selected\n");
+    try argiTestExpectStderr("tests/feature_tests/testing/31_computed_module_selection", &.{ "--filter", "discarded" }, 1, "No tests found\n");
+}

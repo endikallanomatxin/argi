@@ -837,3 +837,24 @@ fn stagedFrontendAllocationFailures(allocator: std.mem.Allocator) !void {
 test "staged frontend releases failed module condition preparation" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, stagedFrontendAllocationFailures, .{});
 }
+
+test "computed test discovery excludes main and dormant test bodies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { missing_main() }\n#if choose() { test selected() -> () := { missing_test() } } #else { test discarded() -> () := {} }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .semantizing = .{ .root_selection = .requests_only, .exhaustive_function_bodies = true } });
+    defer pipeline.deinit();
+    try pipeline.prepareTestDiscovery(&files);
+    var count: usize = 0;
+    for (pipeline.syntax_files.items) |*file| for (file.roots) |root| {
+        const declaration = file.testDeclaration(root) orelse continue;
+        try std.testing.expectEqualStrings("selected", file.tokenText(&diagnostics.source_db, declaration.function.name_token));
+        count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expect(!diagnostics.hasErrors());
+}
