@@ -647,7 +647,7 @@ pub const Storage = struct {
     pub fn store(self: *Storage, reference: v.Reference, value: b.Value) !void {
         try self.validateWritable(reference);
         if (reference.byte_view) |view| {
-            if (value != .integer or value.integer < 0 or value.integer > 255) return error.ExecutionInvalidReference;
+            if (value != .integer or value.integer > 255) return error.ExecutionInvalidReference;
             var base = reference;
             base.byte_view = null;
             try self.charge(view.layout.size);
@@ -905,7 +905,7 @@ test "acquired aggregates preserve partial initialization and validate writes be
     second.path = &.{.{ .field = 1 }};
     try storage.store(first, .{ .integer = 7 });
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(root));
-    try std.testing.expectError(error.ExecutionIntegerOutOfRange, storage.store(root, .{ .record = &.{ .{ .integer = 9 }, .{ .integer = std.math.maxInt(i32) + @as(i128, 1) } } }));
+    try std.testing.expectError(error.ExecutionIntegerOutOfRange, storage.store(root, .{ .record = &.{ .{ .integer = 9 }, .{ .integer = std.math.maxInt(u32) + @as(u64, 1) } } }));
     try std.testing.expectEqual(@as(i128, 7), (try storage.read(first)).integer);
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(second));
     try storage.store(second, .{ .integer = 42 });

@@ -103,7 +103,7 @@ fn freezable(graph: *const g.GlobalSemanticGraph, owners: []const bool, ty: g.Gl
 
 fn freeze(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, ty: g.GlobalTypeId, value: bytecode.Value, source: p.SourceRef) anyerror!g.GlobalNodeId {
     const content: @TypeOf(@as(g.Node, undefined).content) = switch (value) {
-        .integer => |integer| .{ .int_literal = integer },
+        .integer => |integer| .{ .int_literal = @import("../5_codegen/integer_arithmetic.zig").decode(integer, bytecode.integerBounds(graph, ty).?) },
         inline .float16, .float32, .float64 => |number| .{ .float_literal = number },
         .boolean => |boolean| .{ .bool_literal = boolean },
         .unit => .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } },

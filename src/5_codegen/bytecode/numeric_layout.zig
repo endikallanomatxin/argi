@@ -88,8 +88,8 @@ pub fn readByte(layout: *const Layout, value: b.Value, offset: usize, endian: st
     return switch (layout.shape) {
         .integer => blk: {
             if (value != .integer) return error.ExecutionInvalidReference;
-            const shift: u7 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
-            break :blk @truncate(@as(u128, @bitCast(value.integer)) >> shift);
+            const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
+            break :blk @truncate(value.integer >> shift);
         },
         .fields => |fields| blk: {
             if (value != .record or value.record.len != fields.len) return error.ExecutionInvalidReference;
@@ -134,7 +134,7 @@ pub fn encodeInteger(layout: *const Layout, value: i128, bytes: []u8, endian: st
     const minimum = if (layout.shape.integer.signed) -@divExact(limit, 2) else 0;
     const maximum = if (layout.shape.integer.signed) @divExact(limit, 2) - 1 else limit - 1;
     if (value < minimum or value > maximum) return error.ExecutionIntegerOutOfRange;
-    for (bytes, 0..) |*byte, index| byte.* = try readByte(layout, .{ .integer = value }, index, endian);
+    for (bytes, 0..) |*byte, index| byte.* = try readByte(layout, .{ .integer = @import("../integer_arithmetic.zig").encode(value, @import("../../4_semantics/primitives/schema.zig").integerRangeForWidth(@intCast(layout.size * 8), layout.shape.integer.signed)) }, index, endian);
 }
 
 fn requireInteger(layout: *const Layout) !void {
@@ -149,16 +149,12 @@ fn requireInteger(layout: *const Layout) !void {
 pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
-        .integer => |integer| blk: {
+        .integer => blk: {
             if (value != .integer) return error.ExecutionInvalidReference;
-            const shift: u7 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
-            const mask = @as(u128, 255) << shift;
-            var bits = (@as(u128, @bitCast(value.integer)) & ~mask) | (@as(u128, byte) << shift);
-            const width: u7 = @intCast(layout.size * 8);
-            const limit = @as(u128, 1) << width;
-            bits &= limit - 1;
-            const number: i128 = @intCast(bits);
-            break :blk .{ .integer = if (integer.signed and bits & (limit >> 1) != 0) number - @as(i128, @intCast(limit)) else number };
+            const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
+            const mask = @as(u64, 255) << shift;
+            const bits = (value.integer & ~mask) | (@as(u64, byte) << shift);
+            break :blk .{ .integer = bits };
         },
         .fields => |fields| blk: {
             if (value != .record or value.record.len != fields.len) return error.ExecutionInvalidReference;
@@ -218,7 +214,7 @@ test "numeric byte reads honor endianness signed values and padding" {
     const byte: Layout = .{ .size = 1, .alignment = 1, .shape = .{ .integer = .{ .signed = false } } };
     const fields = [_]Layout.Field{ .{ .offset = 0, .layout = &byte }, .{ .offset = 4, .layout = &integer } };
     const record: Layout = .{ .size = 8, .alignment = 4, .shape = .{ .fields = &fields } };
-    const values = [_]b.Value{ .{ .integer = 42 }, .{ .integer = -2 } };
+    const values = [_]b.Value{ .{ .integer = 42 }, .{ .integer = 4294967294 } };
     const value: b.Value = .{ .record = &values };
     try std.testing.expectEqual(@as(u8, 42), try readByte(&record, value, 0, .little));
     try std.testing.expectEqual(@as(u8, 0), try readByte(&record, value, 2, .little));
@@ -237,11 +233,11 @@ test "numeric byte writes preserve siblings and interpret signed boundaries" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const updated = try writeByte(arena.allocator(), &record, .{ .record = &values }, 3, 128, .little);
-    try std.testing.expectEqual(@as(i128, -2147483648), updated.record[0].integer);
+    try std.testing.expectEqual(@as(u64, 2147483648), updated.record[0].integer);
     try std.testing.expectEqual(@as(i128, 42), updated.record[1].integer);
     try std.testing.expectEqual(@as(i128, 0), values[0].integer);
     const big = try writeByte(arena.allocator(), &number, .{ .integer = 0 }, 0, 128, .big);
-    try std.testing.expectEqual(@as(i128, -2147483648), big.integer);
+    try std.testing.expectEqual(@as(u64, 2147483648), big.integer);
 }
 
 test "numeric scalar codecs agree with byte views across widths and endianness" {
@@ -254,7 +250,7 @@ test "numeric scalar codecs agree with byte views across widths and endianness" 
             var bytes: [8]u8 = undefined;
             try encodeInteger(&layout, value, bytes[0..size], endian);
             try std.testing.expectEqual(value, try decodeInteger(&layout, bytes[0..size], endian));
-            for (bytes[0..size], 0..) |byte, index| try std.testing.expectEqual(byte, try readByte(&layout, .{ .integer = value }, index, endian));
+            for (bytes[0..size], 0..) |byte, index| try std.testing.expectEqual(byte, try readByte(&layout, .{ .integer = @import("../integer_arithmetic.zig").encode(value, @import("../../4_semantics/primitives/schema.zig").integerRangeForWidth(@intCast(layout.size * 8), layout.shape.integer.signed)) }, index, endian));
             @memset(&bytes, 99);
             try std.testing.expectError(error.ExecutionIntegerOutOfRange, encodeInteger(&layout, maximum + 1, bytes[0..size], endian));
             try std.testing.expectEqualSlices(u8, &(@as([8]u8, @splat(99))), &bytes);

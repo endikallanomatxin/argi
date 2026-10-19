@@ -47,6 +47,26 @@ pub fn evaluateBits(operator: p.BinaryOperator, left: u64, right: u64, range: Bo
     unreachable;
 }
 
+pub fn compareBits(operator: p.ComparisonOperator, left: u64, right: u64, range: Bounds) bool {
+    const std = @import("std");
+    inline for (.{ i8, i16, i32, i64, u8, u16, u32, u64 }) |T| {
+        if (range.minimum == std.math.minInt(T) and range.maximum == std.math.maxInt(T)) {
+            const U = std.meta.Int(.unsigned, @bitSizeOf(T));
+            const a: T = @bitCast(@as(U, @truncate(left)));
+            const b: T = @bitCast(@as(U, @truncate(right)));
+            return switch (operator) {
+                .equal => a == b,
+                .not_equal => a != b,
+                .less_than => a < b,
+                .less_than_or_equal => a <= b,
+                .greater_than => a > b,
+                .greater_than_or_equal => a >= b,
+            };
+        }
+    }
+    unreachable;
+}
+
 pub fn evaluate(operator: p.BinaryOperator, left: i128, right: i128, range: Bounds) error{DivisionByZero}!i128 {
     return decode(try evaluateBits(operator, encode(left, range), encode(right, range), range), range);
 }
@@ -79,6 +99,8 @@ test "integer register bits carry no implicit sign or width" {
         const ones = encode(-1, signed);
         try std.testing.expectEqual(@as(i128, -1), decode(ones, signed));
         try std.testing.expectEqual(unsigned.maximum, decode(ones, unsigned));
+        try std.testing.expect(compareBits(.less_than, ones, 0, signed));
+        try std.testing.expect(compareBits(.greater_than, ones, 0, unsigned));
         try std.testing.expectEqual(@as(u64, 1), try evaluateBits(.division, encode(signed.minimum, signed), encode(signed.minimum, signed), signed));
         try std.testing.expectEqual(encode(signed.minimum, signed), try evaluateBits(.division, encode(signed.minimum, signed), ones, signed));
     }

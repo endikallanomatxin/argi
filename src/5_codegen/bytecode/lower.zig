@@ -1152,7 +1152,7 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .payload = .{ .dst = dst, .src = try self.expression(x.value), .variant = x.variant } });
             },
             .int_literal => |value| {
-                _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = value } } });
+                _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = @import("../integer_arithmetic.zig").encode(value, b.integerBounds(self.parent.graph, self.slots.items[dst]).?) } } });
             },
             .float_literal => |value| {
                 const ty = self.parent.graph.semanticType(self.slots.items[dst]);

@@ -217,7 +217,7 @@ fn regularChoice(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bo
 
 pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bool {
     return switch (value) {
-        .integer => |n| if (integerBounds(graph, ty)) |b| n >= b.minimum and n <= b.maximum else false,
+        .integer => |n| if (integerBounds(graph, ty)) |range| n <= range.maximum - range.minimum else false,
         .float16 => types.isBuiltin(graph, ty, .Float16),
         .float32 => types.isBuiltin(graph, ty, .Float32),
         .float64 => types.isBuiltin(graph, ty, .Float64),

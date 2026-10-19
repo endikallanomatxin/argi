@@ -25,7 +25,8 @@ pub const Virtual = struct {
 };
 
 pub const Value = union(enum) {
-    integer: i128,
+    // Canonical low bits. Signedness and width belong to the checked slot type.
+    integer: u64,
     float16: f16,
     float32: f32,
     float64: f64,

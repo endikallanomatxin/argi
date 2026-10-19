@@ -177,7 +177,7 @@ fn evaluate(session: *interactive.Interactive, output: *std.Io.Writer, source: [
                 }
             }
             try output.writeByte('"');
-        } else try printValue(output, result.value.runtime, 0);
+        } else try printValue(output, graph, result.ty, result.value.runtime, 0);
         try output.writeByte('\n');
     }
 }
@@ -189,10 +189,10 @@ fn report(session: *interactive.Interactive, output: *std.Io.Writer, err: anyerr
     } else try output.print("Error: {s}\n", .{@errorName(err)});
 }
 
-fn printValue(output: *std.Io.Writer, item: value.Value, depth: usize) std.Io.Writer.Error!void {
+fn printValue(output: *std.Io.Writer, graph: *const @import("../4_semantics/global/graph.zig").GlobalSemanticGraph, ty: @import("../4_semantics/global/graph.zig").GlobalTypeId, item: value.Value, depth: usize) std.Io.Writer.Error!void {
     if (depth >= 16) return output.writeAll("...");
     switch (item) {
-        .integer => |number| try output.print("{d}", .{number}),
+        .integer => |number| try output.print("{d}", .{@import("../5_codegen/integer_arithmetic.zig").decode(number, @import("../5_codegen/bytecode/bytecode.zig").integerBounds(graph, ty).?)}),
         inline .float16, .float32, .float64 => |number| try output.print("{d}", .{number}),
         .boolean => |boolean| try output.writeAll(if (boolean) "true" else "false"),
         .unit => try output.writeAll("()"),
@@ -207,7 +207,9 @@ fn printValue(output: *std.Io.Writer, item: value.Value, depth: usize) std.Io.Wr
                     try output.writeAll("...");
                     break;
                 }
-                try printValue(output, element, depth + 1);
+                const types = @import("../4_semantics/global/types.zig");
+                const element_ty = if (item == .array) types.arrayElement(graph, ty).? else graph.fields.items[types.fields(graph, ty).?.start + index].ty;
+                try printValue(output, graph, element_ty, element, depth + 1);
             }
             try output.writeByte(if (item == .record) ')' else ']');
         },
@@ -215,7 +217,8 @@ fn printValue(output: *std.Io.Writer, item: value.Value, depth: usize) std.Io.Wr
             try output.print("<variant {d}", .{choice.variant});
             if (choice.payload) |payload| {
                 try output.writeAll(": ");
-                try printValue(output, payload.*, depth + 1);
+                const variants = @import("../4_semantics/global/types.zig").variants(graph, ty).?;
+                try printValue(output, graph, graph.variants.items[variants.start + choice.variant].payload_type.?, payload.*, depth + 1);
             }
             try output.writeByte('>');
         },
@@ -244,6 +247,23 @@ test "REPL transport executes multiline definitions expressions and checked rese
     try std.testing.expectEqualStrings("_0 = 42\n_0 = 7\n", output.written());
     try std.testing.expect(session.closed);
     try std.testing.expectEqual(.fresh, session.runtime.context.state);
+}
+
+test "REPL integer presentation uses slot and aggregate field types" {
+    var session: interactive.Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    var input = std.Io.Reader.fixed(
+        "negative :: Int8 = -1\n" ++
+            "large :: UInt64 = 18446744073709551615\n" ++
+            "negative\nlarge\n" ++
+            "pair :: (.small: Int8, .large: UInt64) = (.small = negative, .large = large)\n" ++
+            "pair\n:quit\n",
+    );
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try interact(&session, &input, &output.writer, false);
+    try std.testing.expectEqualStrings("_0 = -1\n_1 = 18446744073709551615\n_2 = (-1, 18446744073709551615)\n", output.written());
 }
 
 test "REPL transport requires reset after a runtime trap" {

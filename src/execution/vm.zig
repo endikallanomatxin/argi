@@ -326,6 +326,12 @@ pub const Vm = struct {
         var normalized: [64]b.Projection = undefined;
         if (semantic_place.path.len > normalized.len) return error.InvalidBytecode;
         try b.runtimePath(program.graph, root_type orelse return error.InvalidBytecode, semantic_place.path, normalized[0..semantic_place.path.len]);
+        const locals = try self.context().storage.slots(frame_id);
+        for (normalized[0..semantic_place.path.len]) |projection| if (projection == .element) {
+            const index = projection.element;
+            if (integer.decode((try locals.get(index)).integer, b.integerBounds(program.graph, slot_types[index]).?) < 0)
+                return error.ExecutionIndexOutOfBounds;
+        };
         var place = semantic_place;
         place.path = normalized[0..semantic_place.path.len];
         if (place.region == .global) {
@@ -387,7 +393,7 @@ pub const Vm = struct {
                     reference.mutability = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
                     try slots.put(x.dst, .{ .reference = reference });
                 },
-                .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, (try slots.get(x.elements)).integer) }),
+                .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, integer.decode((try slots.get(x.elements)).integer, b.integerBounds(unit.graph, f.slots[x.elements]).?)) }),
                 .virtualize => |x| {
                     const receiver = try slots.get(x.receiver);
                     if (receiver != .reference) return error.ExecutionInvalidVirtual;
@@ -477,7 +483,7 @@ pub const Vm = struct {
                     var arguments: [host.max_values]i128 = undefined;
                     var results: [host.max_values]i128 = undefined;
                     for (binding.outputs, 0..) |range, index| results[index] = range.minimum - 1;
-                    for (x.args[0 .. x.args.len - 1], 0..) |slot, index| arguments[index] = (try slots.get(slot)).integer;
+                    for (x.args[0 .. x.args.len - 1], 0..) |slot, index| arguments[index] = integer.decode((try slots.get(slot)).integer, b.integerBounds(unit.graph, f.slots[slot]).?);
                     // The logical ffi reference has already participated in
                     // checked argument evaluation. It never crosses this bridge.
                     _ = try slots.get(x.args[x.args.len - 1]);
@@ -485,7 +491,7 @@ pub const Vm = struct {
                     for (results[0..binding.outputs.len], binding.outputs) |value, range|
                         if (value < range.minimum or value > range.maximum) return error.ExecutionInvalidHostResult;
                     // Validate every output before changing any destination.
-                    for (x.outputs, results[0..binding.outputs.len]) |slot, value| try slots.put(slot, .{ .integer = value });
+                    for (x.outputs, results[0..binding.outputs.len]) |slot, value| try slots.put(slot, .{ .integer = integer.encode(value, b.integerBounds(unit.graph, f.slots[slot]).?) });
                 },
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
                 .session_declare => |x| {
@@ -511,7 +517,7 @@ pub const Vm = struct {
                 },
                 .index => |x| {
                     const elements = (try slots.get(x.base)).array;
-                    const index = try Storage.elementIndex((try slots.get(x.index)).integer, elements.len);
+                    const index = try Storage.elementIndex(integer.decode((try slots.get(x.index)).integer, b.integerBounds(unit.graph, f.slots[x.index]).?), elements.len);
                     try slots.put(x.dst, elements[index]);
                 },
                 .choice => |x| {
@@ -548,7 +554,7 @@ pub const Vm = struct {
                     if (value == .integer and self.context().storage.frames.items[@intFromEnum(reference.frame)].duration == .static) {
                         if (b.integerBounds(unit.graph, f.slots[x.dst])) |bounds| {
                             if (bounds.maximum - bounds.minimum != 255) return error.ExecutionInvalidReference;
-                            value.integer = try integer.evaluate(.addition, value.integer, 0, bounds);
+                            value.integer = try integer.evaluateBits(.addition, value.integer, 0, bounds);
                         }
                     }
                     try slots.put(x.dst, value);
@@ -608,7 +614,7 @@ pub const Vm = struct {
                     const left = (try slots.get(x.left)).integer;
                     const right = (try slots.get(x.right)).integer;
                     const range = b.integerBounds(unit.graph, f.slots[x.dst]).?;
-                    const n = integer.evaluate(x.operator, left, right, range) catch return error.ExecutionDivisionByZero;
+                    const n = integer.evaluateBits(x.operator, left, right, range) catch return error.ExecutionDivisionByZero;
                     try slots.put(x.dst, .{ .integer = n });
                 },
                 .compare => |x| {
@@ -624,14 +630,7 @@ pub const Vm = struct {
                         .equal => left.boolean == right.boolean,
                         .not_equal => left.boolean != right.boolean,
                         else => unreachable,
-                    } else switch (x.operator) {
-                        .equal => left.integer == right.integer,
-                        .not_equal => left.integer != right.integer,
-                        .less_than => left.integer < right.integer,
-                        .less_than_or_equal => left.integer <= right.integer,
-                        .greater_than => left.integer > right.integer,
-                        .greater_than_or_equal => left.integer >= right.integer,
-                    };
+                    } else integer.compareBits(x.operator, left.integer, right.integer, b.integerBounds(unit.graph, f.slots[x.left]).?);
                     try slots.put(x.dst, .{ .boolean = yes });
                 },
                 .call => |x| {

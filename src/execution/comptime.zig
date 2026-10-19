@@ -146,7 +146,7 @@ const Context = struct {
         };
         const node = self.graph.node(id);
         return switch (node.content) {
-            .int_literal => |value| .{ .integer = value },
+            .int_literal => |value| .{ .integer = @import("../5_codegen/integer_arithmetic.zig").encode(value, b.integerBounds(self.graph, node.ty.?).?) },
             .bool_literal => |value| .{ .boolean = value },
             .function_call => try self.constant(try self.callConstant(id, depth + 1), depth + 1),
             .binary_operation, .comparison, .struct_field_access, .array_index => try self.constant(try self.expressionConstant(id, depth + 1), depth + 1),

@@ -1,3 +1,5 @@
+const integer = @import("../5_codegen/integer_arithmetic.zig");
+const p = @import("../4_semantics/primitives/schema.zig");
 const std = @import("std");
 const Storage = @import("storage.zig").Storage;
 const Handle = @import("acquisitions.zig").Handle;
@@ -10,7 +12,7 @@ const Value = @import("../5_codegen/bytecode/value.zig").Value;
 pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) anyerror!Value {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
-        .integer => .{ .integer = try storage.acquisitions.loadInteger(storage, handle, offset, layout, endian) },
+        .integer => |kind| .{ .integer = integer.encode(try storage.acquisitions.loadInteger(storage, handle, offset, layout, endian), p.integerRangeForWidth(@intCast(layout.size * 8), kind.signed)) },
         .fields => |fields| blk: {
             const values = try storage.allocate(fields.len);
             for (fields, values) |field, *value| value.* = try read(storage, handle, offset + field.offset, field.layout, endian);
@@ -37,8 +39,10 @@ fn walkWrite(storage: *Storage, handle: Handle, offset: usize, layout: *const La
         .integer => {
             if (value != .integer) return error.ExecutionInvalidReference;
             if (layout.size > 8) return error.ExecutionInvalidReference;
+            const range = p.integerRangeForWidth(@intCast(layout.size * 8), layout.shape.integer.signed);
+            if (value.integer > range.maximum - range.minimum) return error.ExecutionIntegerOutOfRange;
             var bytes: [8]u8 = undefined;
-            try @import("../5_codegen/bytecode/numeric_layout.zig").encodeInteger(layout, value.integer, bytes[0..layout.size], endian);
+            try @import("../5_codegen/bytecode/numeric_layout.zig").encodeInteger(layout, integer.decode(value.integer, p.integerRangeForWidth(@intCast(layout.size * 8), layout.shape.integer.signed)), bytes[0..layout.size], endian);
             if (commit) try storage.acquisitions.write(storage, handle, offset, bytes[0..layout.size]);
         },
         .fields => |fields| {

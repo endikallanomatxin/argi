@@ -31,7 +31,7 @@ fn execute(source: []const u8, limits: vm.Limits) !i128 {
         var executor = try vm.Vm.init(allocator, program, limits);
         defer executor.deinit();
         const result = try executor.run(@enumFromInt(i), &.{});
-        return result[0].integer;
+        return @import("../5_codegen/integer_arithmetic.zig").decode(result[0].integer, b.integerBounds(graph, graph.fields.items[f.output.start].ty).?);
     }
     return error.MissingEntry;
 }
@@ -1827,7 +1827,7 @@ test "resolved source text respects signed byte loads" {
     var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }, .{});
     defer executor.deinit();
     for (0..4) |_| {
-        try std.testing.expectEqual(@as(i128, -61), (try executor.runExpression(&.{}))[0].integer);
+        try std.testing.expectEqual(@as(i128, -61), @import("../5_codegen/integer_arithmetic.zig").decode((try executor.runExpression(&.{}))[0].integer, b.integerBounds(&graph, expression.slots[expression.outputs[0]]).?));
         try std.testing.expectEqual(@as(usize, 1), executor.context().trace_locations.items.len);
         try std.testing.expectEqual(@as(u32, 2), executor.context().literal_bytes.count());
     }
@@ -2134,4 +2134,31 @@ test "bytecode memory adapters consume registered identities rather than declara
     }
     try std.testing.expectEqual(@as(usize, 2), releases);
     try std.testing.expectEqual(@as(usize, 1), ordinary);
+}
+
+test "negative narrow indices cannot address positive array elements" {
+    const a = std.testing.allocator;
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .builtin = .Int8 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 300 } },
+    });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const values: [300]b.Value = @splat(.{ .integer = 42 });
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .array = &values } } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 255 } } } },
+        .{ .source = source, .op = .{ .index = .{ .dst = 2, .base = 0, .index = 1 } } },
+        .{ .source = source, .op = .{ .ret = &.{2} } },
+    };
+    const expression: b.Function = .{ .slots = &.{ @enumFromInt(2), @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{2}, .code = &code };
+    const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &expression };
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, executor.runExpression(&.{}));
+    code[2].op = .{ .load = .{ .dst = 2, .place = .{ .root = 0, .path = &.{.{ .element = 1 }} } } };
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, executor.runExpression(&.{}));
 }
