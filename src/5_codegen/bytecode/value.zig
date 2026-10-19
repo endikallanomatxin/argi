@@ -26,6 +26,9 @@ pub const Virtual = struct {
 
 pub const Value = union(enum) {
     integer: i128,
+    float16: f16,
+    float32: f32,
+    float64: f64,
     boolean: bool,
     unit,
     // An observed erased value carries no recoverable representation or loan.

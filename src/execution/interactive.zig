@@ -460,20 +460,25 @@ test "interactive command diagnostics use original submitted coordinates" {
     try session.close();
 }
 
+test "interactive floating values preserve concrete precision and survive submissions" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("f := 0.123123");
+    try std.testing.expectEqual(@as(f32, 0.123123), (try session.submitInput("f")).?.value.runtime.float32);
+    try session.submit("fraction := () -> (.result: Float32) { result = 1.5 }");
+    try std.testing.expectEqual(@as(f32, 1.5), (try session.submitInput("fraction()")).?.value.runtime.float32);
+    try session.submit("half :: Float16 = 1.5");
+    try std.testing.expectEqual(@as(f16, 1.5), (try session.submitInput("half")).?.value.runtime.float16);
+    try session.submit("wide :: Float64 = 16777217.0");
+    try std.testing.expectEqual(@as(f64, 16777217), (try session.submitInput("wide")).?.value.runtime.float64);
+    try session.close();
+}
+
 test "interactive execution diagnostics map expression and statement source" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submit("fraction := () -> (.result: Float32) { result = 1.5 }");
-    const revision = session.compiler.revision;
-    try std.testing.expectError(error.Reported, session.submitInput("fraction()"));
-    try std.testing.expectEqual(revision, session.compiler.revision);
-    try std.testing.expect(session.diagnostics.hasErrors());
-    const unsupported = session.diagnostics.list.items[0];
-    try std.testing.expect(std.mem.indexOf(u8, unsupported.msg, "bytecode execution does not support") != null);
-    try std.testing.expect(std.mem.endsWith(u8, session.diagnostics.path(unsupported.loc), "/input.rg"));
-    try std.testing.expectEqualStrings("fraction()", session.diagnostics.source_db.get(unsupported.loc.file).source);
-    try std.testing.expectEqual(@as(u32, 1), session.diagnostics.lineColumn(unsupported.loc).column);
     try std.testing.expectError(error.ExecutionAborted, session.submitStatements("\nabort"));
     const aborted = session.diagnostics.list.items[0];
     try std.testing.expect(std.mem.endsWith(u8, session.diagnostics.path(aborted.loc), "/input.rg"));

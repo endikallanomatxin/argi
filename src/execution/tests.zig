@@ -56,7 +56,8 @@ test "bytecode enforces execution fuel" {
 
 test "bytecode refuses unsupported code before execution" {
     try std.testing.expectError(error.UnsupportedExecution, execute(
-        \\main() -> (.status_code: Int32 = 0) := { message: Float32 = 1.5 }
+        \\Mode: CEnum = (..one)
+        \\main() -> (.status_code: Int32 = 0) := { message: Mode = ..one }
     , .{}));
 }
 
@@ -976,7 +977,8 @@ test "bytecode retained lowering publishes stable programs for independent entri
         .{ .path = "app/main.rg", .code =
         \\first() -> (.result: Int32 = 20) := {}
         \\second() -> (.result: Int32 = 22) := {}
-        \\unsupported() -> (.result: Int32 = 0) := { value: Float32 = 1.5 }
+        \\Mode: CEnum = (..one)
+        \\unsupported() -> (.result: Int32 = 0) := { value: Mode = ..one }
         \\main() -> (.status_code: Int32 = 0) := {
         \\    status_code = first() + second()
         \\    unused ::= unsupported()
@@ -1928,10 +1930,11 @@ test "bytecode failed lowering does not retain host requirements" {
     const a = arena.allocator();
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code =
+        \\Mode: CEnum = (..one)
         \\foreign_value(.value: Int32) -> (.result: Int32): ExternFunction
         \\unsupported(.ffi: $&ForeignFunctionInterface) -> (.result: Int32) := {
         \\    result = foreign_value(.value = 41)
-        \\    value: Float32 = 1.5
+        \\    value: Mode = ..one
         \\}
         \\main() -> (.status_code: Int32 = 0) := {
         \\    capability :: ForeignFunctionInterface = ()

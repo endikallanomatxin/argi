@@ -193,6 +193,7 @@ fn printValue(output: *std.Io.Writer, item: value.Value, depth: usize) std.Io.Wr
     if (depth >= 16) return output.writeAll("...");
     switch (item) {
         .integer => |number| try output.print("{d}", .{number}),
+        inline .float16, .float32, .float64 => |number| try output.print("{d}", .{number}),
         .boolean => |boolean| try output.writeAll(if (boolean) "true" else "false"),
         .unit => try output.writeAll("()"),
         .erased => try output.writeAll("<opaque>"),

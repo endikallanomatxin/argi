@@ -176,9 +176,13 @@ pub fn integerBounds(graph: *const g.GlobalSemanticGraph, ty: Type) ?p.IntegerRa
     return p.integerRange(semantic.builtin, graph.target.stdTarget());
 }
 
+pub fn floatType(graph: *const g.GlobalSemanticGraph, ty: Type) bool {
+    return types.isBuiltin(graph, ty, .Float16) or types.isBuiltin(graph, ty, .Float32) or types.isBuiltin(graph, ty, .Float64);
+}
+
 pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bool {
     if (depth > 64 or @intFromEnum(ty) >= graph.types.items.len) return false;
-    if (integerBounds(graph, ty) != null) return true;
+    if (integerBounds(graph, ty) != null or floatType(graph, ty)) return true;
     const semantic = graph.semanticType(ty);
     if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void or semantic.builtin == .Any;
     if (semantic == .virtual) return true;
@@ -214,6 +218,9 @@ fn regularChoice(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bo
 pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bool {
     return switch (value) {
         .integer => |n| if (integerBounds(graph, ty)) |b| n >= b.minimum and n <= b.maximum else false,
+        .float16 => types.isBuiltin(graph, ty, .Float16),
+        .float32 => types.isBuiltin(graph, ty, .Float32),
+        .float64 => types.isBuiltin(graph, ty, .Float64),
         .boolean => graph.semanticType(ty) == .builtin and graph.semanticType(ty).builtin == .Bool,
         .unit => graph.semanticType(ty) == .builtin and graph.semanticType(ty).builtin == .Void,
         .erased => types.isBuiltin(graph, ty, .Any),

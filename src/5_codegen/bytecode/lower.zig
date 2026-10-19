@@ -1154,6 +1154,16 @@ const FunctionLower = struct {
             .int_literal => |value| {
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = value } } });
             },
+            .float_literal => |value| {
+                const ty = self.parent.graph.semanticType(self.slots.items[dst]);
+                const number: b.Value = switch (ty.builtin) {
+                    .Float16 => .{ .float16 = @floatCast(value) },
+                    .Float32 => .{ .float32 = @floatCast(value) },
+                    .Float64 => .{ .float64 = @floatCast(value) },
+                    else => return error.InvalidBytecode,
+                };
+                _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = number } });
+            },
             .bool_literal => |value| {
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .boolean = value } } });
             },

@@ -190,7 +190,10 @@ context-owned regions. Resource-bearing elements, references stored in acquired
 memory and choices still require additional establishment lowering. Compile-time
 evaluation continues to reject foreign calls.
 
-Raw pointers, C enums, floating point, complete trace reporting,
+Floating values preserve Float16, Float32 and Float64 precision in literals,
+arithmetic, comparisons and compile-time results.
+
+Raw pointers, C enums, complete trace reporting,
 partial choice initialization before selecting a complete variant, vacant arrays
 with owning elements, owning globals,
 closures,

@@ -13378,8 +13378,10 @@ test "feature_tests/execution/01_scalar_vm" {
     try vmExpect("tests/feature_tests/execution/01_scalar_vm", 42, null);
 }
 
-test "feature_tests/execution/02X_vm_unsupported_type" {
-    try vmExpect("tests/feature_tests/execution/02X_vm_unsupported_type", 1, "type outside the supported VM subset");
+test "feature_tests/execution/02_floating_point_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/02_floating_point_vm");
+    try runExpect("tests/feature_tests/execution/02_floating_point_vm", 42);
+    try vmExpect("tests/feature_tests/execution/02_floating_point_vm", 42, null);
 }
 
 test "feature_tests/execution/03X_vm_instruction_limit" {

@@ -598,6 +598,13 @@ pub const Vm = struct {
                 },
                 .field => |x| try slots.put(x.dst, (try slots.get(x.base)).record[x.index]),
                 .binary => |x| {
+                    const left_value = try slots.get(x.left);
+                    const right_value = try slots.get(x.right);
+                    if (b.floatType(unit.graph, f.slots[x.dst])) {
+                        const result = try floatValue(left_value).binary(x.operator, floatValue(right_value));
+                        try slots.put(x.dst, fromFloatValue(result));
+                        continue;
+                    }
                     const left = (try slots.get(x.left)).integer;
                     const right = (try slots.get(x.right)).integer;
                     const range = b.integerBounds(unit.graph, f.slots[x.dst]).?;
@@ -607,7 +614,9 @@ pub const Vm = struct {
                 .compare => |x| {
                     const left = try slots.get(x.left);
                     const right = try slots.get(x.right);
-                    const yes = if (left == .choice) switch (x.operator) {
+                    const yes = if (b.floatType(unit.graph, f.slots[x.left]))
+                        try floatValue(left).compare(x.operator, floatValue(right))
+                    else if (left == .choice) switch (x.operator) {
                         .equal => left.choice.variant == right.choice.variant,
                         .not_equal => left.choice.variant != right.choice.variant,
                         else => unreachable,
@@ -667,4 +676,18 @@ test "source metadata resolution rejects invalid IDs and retains immutable text"
     try std.testing.expectError(error.ExecutionReadonlyReference, context.storage.borrow(text, .read_write));
     try std.testing.expectError(error.ExecutionInvalidSourceLocation, context.resolveTraceLocation(-1));
     try std.testing.expectError(error.ExecutionInvalidSourceLocation, context.resolveTraceLocation(1));
+}
+
+fn floatValue(value: b.Value) @import("../5_codegen/numeric_value.zig").Value {
+    return switch (value) {
+        inline .float16, .float32, .float64 => |number, kind| @unionInit(@import("../5_codegen/numeric_value.zig").Value, @tagName(kind), number),
+        else => unreachable,
+    };
+}
+
+fn fromFloatValue(value: @import("../5_codegen/numeric_value.zig").Value) b.Value {
+    return switch (value) {
+        inline .float16, .float32, .float64 => |number, kind| @unionInit(b.Value, @tagName(kind), number),
+        else => unreachable,
+    };
 }

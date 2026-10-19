@@ -189,13 +189,13 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const to = program.graph.semanticType(f.slots[x.dst]);
                     if (from != .pointer or to != .pointer or from.pointer.mutability != .read_write or to.pointer.mutability != .read_only or !types.equal(program.graph, from.pointer.child, to.pointer.child)) return error.InvalidBytecode;
                 },
-                .binary => |x| if (integerBounds(program.graph, f.slots[x.dst]) == null or !types.equal(program.graph, f.slots[x.dst], f.slots[x.left]) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode,
+                .binary => |x| if ((integerBounds(program.graph, f.slots[x.dst]) == null and !b.floatType(program.graph, f.slots[x.dst])) or !types.equal(program.graph, f.slots[x.dst], f.slots[x.left]) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode,
                 .compare => |x| {
                     if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false }) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode;
-                    const integer = integerBounds(program.graph, f.slots[x.left]) != null;
+                    const numeric = integerBounds(program.graph, f.slots[x.left]) != null or b.floatType(program.graph, f.slots[x.left]);
                     const equality_only = valueFits(program.graph, f.slots[x.left], .{ .boolean = false }) or types.variants(program.graph, f.slots[x.left]) != null;
                     const equality = x.operator == .equal or x.operator == .not_equal;
-                    if (!integer and !(equality_only and equality)) return error.InvalidBytecode;
+                    if (!numeric and !(equality_only and equality)) return error.InvalidBytecode;
                 },
                 .record => |x| {
                     const fields = types.fields(program.graph, f.slots[x.dst]) orelse return error.InvalidBytecode;

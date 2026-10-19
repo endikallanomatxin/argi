@@ -75,7 +75,10 @@ pub const Value = union(enum) {
                 const b = @field(right, @tagName(kind));
                 break :blk switch (operator) {
                     .equal => a == b,
-                    .not_equal => a != b,
+                    .not_equal => if (@typeInfo(@TypeOf(a)) == .float)
+                        !std.math.isNan(a) and !std.math.isNan(b) and a != b
+                    else
+                        a != b,
                     .less_than => a < b,
                     .less_than_or_equal => a <= b,
                     .greater_than => a > b,
@@ -123,6 +126,7 @@ test "numeric values execute with their integer widths and float precision" {
     const nan: Value = .{ .float32 = std.math.nan(f32) };
     try std.testing.expect(!try nan.compare(.less_than, single));
     try std.testing.expect(!try nan.compare(.equal, nan));
+    try std.testing.expect(!try nan.compare(.not_equal, single));
     try std.testing.expectError(error.MismatchedNumericTypes, single.binary(.addition, double));
     try std.testing.expect(@sizeOf(Value) <= 16);
 }

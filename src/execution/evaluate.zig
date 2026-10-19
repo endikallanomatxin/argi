@@ -75,7 +75,7 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
 
 fn freezable(graph: *const g.GlobalSemanticGraph, owners: []const bool, ty: g.GlobalTypeId, depth: usize) bool {
     if (depth > 64 or owners[@intFromEnum(ty)]) return false;
-    if (bytecode.integerBounds(graph, ty) != null) return true;
+    if (bytecode.integerBounds(graph, ty) != null or bytecode.floatType(graph, ty)) return true;
     const semantic = graph.semanticType(ty);
     // Source IDs name one executor's metadata table, even though core exposes
     // an integer representation. They cannot become native executable constants.
@@ -104,6 +104,7 @@ fn freezable(graph: *const g.GlobalSemanticGraph, owners: []const bool, ty: g.Gl
 fn freeze(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, ty: g.GlobalTypeId, value: bytecode.Value, source: p.SourceRef) anyerror!g.GlobalNodeId {
     const content: @TypeOf(@as(g.Node, undefined).content) = switch (value) {
         .integer => |integer| .{ .int_literal = integer },
+        inline .float16, .float32, .float64 => |number| .{ .float_literal = number },
         .boolean => |boolean| .{ .bool_literal = boolean },
         .unit => .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } },
         .reference, .virtual_, .erased => return error.UnfreezableEvaluationResult,
