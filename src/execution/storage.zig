@@ -2,11 +2,11 @@ const std = @import("std");
 const b = @import("../5_codegen/bytecode/bytecode.zig");
 const v = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
-const partial = @import("partial_record.zig");
+const partial = @import("partial_storage.zig");
 
 const Frame = struct {
     values: []?b.Value,
-    partial_records: std.AutoHashMapUnmanaged(b.Slot, partial.Storage) = .empty,
+    partial_storage: std.AutoHashMapUnmanaged(b.Slot, partial.Storage) = .empty,
     cleanup: []const b.Cleanup = &.{},
     bytes: []const u8 = &.{},
     alive: bool = true,
@@ -25,7 +25,7 @@ pub const Slots = struct {
         const values = try self.cells();
         if (index >= values.len) return error.ExecutionInvalidReference;
         if (values[index]) |value| return value;
-        if (self.storage.frames.items[@intFromEnum(self.frame)].partial_records.getPtr(index)) |record| {
+        if (self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.getPtr(index)) |record| {
             try self.storage.charge(try record.materializationCells(&.{}));
             return record.read(self.storage.allocator, &.{});
         }
@@ -39,7 +39,7 @@ pub const Slots = struct {
         const values = try self.cells();
         if (index >= values.len) return error.ExecutionInvalidReference;
         values[index] = value;
-        _ = self.storage.frames.items[@intFromEnum(self.frame)].partial_records.remove(index);
+        _ = self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.remove(index);
     }
 
     fn cells(self: Slots) ![]?b.Value {
@@ -81,35 +81,35 @@ pub const Storage = struct {
         if (count > self.limit -| self.cells) return error.ExecutionMemoryLimit;
         self.cells += count;
     }
-    /// Reserve concrete record storage without initializing its fields. This
+    /// Reserve concrete storage without initializing its values. This
     /// does not grant a loan or activate any cleanup obligation.
-    pub fn prepareRecord(self: *Storage, frame: v.FrameId, root: b.Slot, layout: partial.Layout) !void {
+    pub fn prepareStorage(self: *Storage, frame: v.FrameId, root: b.Slot, layout: partial.Layout) !void {
         const slots_ = try self.slots(frame);
         const values = try slots_.cells();
         if (root >= values.len) return error.ExecutionInvalidReference;
-        if (values[root] != null or self.frames.items[@intFromEnum(frame)].partial_records.contains(root)) return error.ExecutionInitializedStorage;
-        try self.charge(layout.nodes.len);
+        if (values[root] != null or self.frames.items[@intFromEnum(frame)].partial_storage.contains(root)) return error.ExecutionInitializedStorage;
+        try self.charge(if (layout.nodes.len == 0) 0 else layout.nodes[0].span);
         const record = try partial.Storage.init(self.allocator, layout);
-        try self.frames.items[@intFromEnum(frame)].partial_records.put(self.allocator, root, record);
+        try self.frames.items[@intFromEnum(frame)].partial_storage.put(self.allocator, root, record);
     }
-    /// Re-enter lexical record storage after its previous cleanup has finished.
+    /// Re-enter lexical storage after its previous cleanup has finished.
     /// Existing leaf cells are reused; no old initialized value survives entry.
-    pub fn resetRecord(self: *Storage, frame: v.FrameId, root: b.Slot, layout: partial.Layout) !usize {
+    pub fn resetStorage(self: *Storage, frame: v.FrameId, root: b.Slot, layout: partial.Layout) !usize {
         const slots_ = try self.slots(frame);
         const values = try slots_.cells();
         if (root >= values.len) return error.ExecutionInvalidReference;
         for (self.frames.items[@intFromEnum(frame)].cleanup) |entry|
             if (entry.root == root and (try slots_.get(entry.flag)).boolean) return error.ExecutionPendingCleanup;
-        if (self.frames.items[@intFromEnum(frame)].partial_records.getPtr(root)) |record| {
+        if (self.frames.items[@intFromEnum(frame)].partial_storage.getPtr(root)) |record| {
             if (record.layout.nodes.len != layout.nodes.len) return error.ExecutionInvalidReference;
             for (record.layout.nodes, layout.nodes) |old, new| if (!std.meta.eql(old, new)) return error.ExecutionInvalidReference;
             @memset(record.values, null);
             values[root] = null;
         } else {
             values[root] = null;
-            try self.prepareRecord(frame, root, layout);
+            try self.prepareStorage(frame, root, layout);
         }
-        return layout.nodes.len;
+        return layout.nodes[0].span;
     }
     pub fn allocate(self: *Storage, count: usize) ![]b.Value {
         try self.charge(count);
@@ -358,7 +358,7 @@ pub const Storage = struct {
             return .{ .integer = frame.bytes[index] };
         }
         const values = try self.slots(reference.frame);
-        if (self.frames.items[@intFromEnum(reference.frame)].partial_records.getPtr(reference.root)) |record| {
+        if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |record| {
             try self.charge(try record.materializationCells(reference.path));
             return record.read(self.allocator, reference.path);
         }
@@ -410,9 +410,15 @@ pub const Storage = struct {
                 .field => |index| .{ .field = index },
                 .variant => |variant| .{ .variant = @intFromEnum(variant) },
                 .element => |index| blk: {
-                    const array = try self.read(reference);
-                    if (array != .array) return error.ExecutionInvalidReference;
-                    break :blk .{ .element = try elementIndex((try locals.get(index)).integer, array.array.len) };
+                    const array_length = blk_length: {
+                        if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |partial_| {
+                            if (try partial_.arrayLength(reference.path)) |count| break :blk_length count;
+                        }
+                        const array = try self.read(reference);
+                        if (array != .array) return error.ExecutionInvalidReference;
+                        break :blk_length array.array.len;
+                    };
+                    break :blk .{ .element = try elementIndex((try locals.get(index)).integer, array_length) };
                 },
                 .dereference => unreachable,
             };
@@ -428,9 +434,9 @@ pub const Storage = struct {
         const slots_ = try self.slots(reference.frame);
         if (reference.root >= (try slots_.cells()).len) return error.ExecutionInvalidReference;
         if (reference.path.len != 0) {
-            if (self.frames.items[@intFromEnum(reference.frame)].partial_records.getPtr(reference.root)) |record| {
+            if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |record| {
                 // Resolve the layout without requiring a value at its leaf.
-                if (try record.recordPrefix(reference.path) < reference.path.len)
+                if (try record.aggregatePrefix(reference.path) < reference.path.len)
                     try self.charge(try record.materializationCells(reference.path));
                 try record.validatePath(self.allocator, reference.path);
             } else _ = try self.read(reference);
@@ -584,8 +590,8 @@ pub const Storage = struct {
             return self.store(base, updated);
         }
         const values = try self.slots(reference.frame);
-        if (self.frames.items[@intFromEnum(reference.frame)].partial_records.getPtr(reference.root)) |record| {
-            const prefix = try record.recordPrefix(reference.path);
+        if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |record| {
+            const prefix = try record.aggregatePrefix(reference.path);
             if (prefix == reference.path.len) {
                 try record.write(reference.path, value);
             } else {
@@ -698,7 +704,7 @@ test "partial record storage reads initialized projected fields only" {
     var storage = try Storage.init(arena.allocator(), 4096);
     const frame = try storage.enter(1);
     const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
-    try storage.prepareRecord(frame, 0, .{ .nodes = &.{ .{ .record = true, .first = 1, .count = 2 }, .{}, .{} } });
+    try storage.prepareStorage(frame, 0, .{ .nodes = &.{ .{ .kind = .record, .first = 1, .count = 2, .span = 3 }, .{ .offset = 1 }, .{ .offset = 2 } } });
     const reserved_cells = storage.cells;
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(root));
     try std.testing.expectEqual(reserved_cells, storage.cells);
@@ -724,8 +730,8 @@ test "lexical record reset clears values only after cleanup is discharged" {
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 4096);
     const frame = try storage.enterCleanup(2, &.{.{ .root = 0, .path = &.{}, .flag = 1 }});
-    const layout: partial.Layout = .{ .nodes = &.{ .{ .record = true, .first = 1, .count = 1 }, .{} } };
-    _ = try storage.resetRecord(frame, 0, layout);
+    const layout: partial.Layout = .{ .nodes = &.{ .{ .kind = .record, .first = 1, .count = 1, .span = 2 }, .{ .offset = 1 } } };
+    _ = try storage.resetStorage(frame, 0, layout);
     const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
     var field = root;
     field.path = &.{.{ .field = 0 }};
@@ -733,11 +739,11 @@ test "lexical record reset clears values only after cleanup is discharged" {
     const snapshot = try storage.read(root);
     const slots_ = try storage.slots(frame);
     try slots_.put(1, .{ .boolean = true });
-    try std.testing.expectError(error.ExecutionPendingCleanup, storage.resetRecord(frame, 0, layout));
+    try std.testing.expectError(error.ExecutionPendingCleanup, storage.resetStorage(frame, 0, layout));
     try std.testing.expectEqual(@as(i128, 42), (try storage.read(field)).integer);
     try slots_.put(1, .{ .boolean = false });
     const cells = storage.cells;
-    _ = try storage.resetRecord(frame, 0, layout);
+    _ = try storage.resetStorage(frame, 0, layout);
     try std.testing.expectEqual(cells, storage.cells);
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(field));
     try std.testing.expectEqual(@as(i128, 42), snapshot.record[0].integer);
@@ -768,4 +774,18 @@ test "field cleanup activation completes record ancestors but not choices" {
     payload.path = &.{.{ .variant = 0 }};
     _ = try storage.cleanupSet(payload, true);
     try std.testing.expect(!try storage.cleanupTest(choice));
+}
+
+test "compact partial array layouts charge concrete cells before allocation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 16);
+    const frame = try storage.enter(1);
+    const before = storage.cells;
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.prepareStorage(frame, 0, .{ .nodes = &.{
+        .{ .kind = .array, .first = 1, .count = 1000000, .span = 1000001 },
+        .{ .offset = 1 },
+    } }));
+    try std.testing.expectEqual(before, storage.cells);
+    try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
 }

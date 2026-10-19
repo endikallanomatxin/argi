@@ -1009,3 +1009,23 @@ test "interactive partial records clean initialized owners at exit" {
     try session.close();
     for (cleanup) |entry| try std.testing.expect(!(try slots.get(entry.flag)).boolean);
 }
+
+test "interactive arrays retain initialized elements across commands" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("numbers :: [2]Int32");
+    session.submitStatements("numbers[0] = 40") catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
+    try std.testing.expectEqual(@as(i128, 40), (try session.submitInput("numbers[0]")).?.value.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("numbers[1]"));
+    try std.testing.expectError(error.Reported, session.submitInput("numbers"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.submitStatements("numbers[1] = 42");
+    const complete = (try session.submitInput("numbers")).?;
+    try std.testing.expectEqual(@as(i128, 42), complete.value.array[1].integer);
+    try session.close();
+}

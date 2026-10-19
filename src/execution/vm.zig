@@ -326,8 +326,8 @@ pub const Vm = struct {
             switch (inst.op) {
                 .reserve_storage => |x| {
                     if (x.reset) {
-                        try self.chargeCleanup(try self.context().storage.resetRecord(current.storage, x.dst, x.layout));
-                    } else try self.context().storage.prepareRecord(current.storage, x.dst, x.layout);
+                        try self.chargeCleanup(try self.context().storage.resetStorage(current.storage, x.dst, x.layout));
+                    } else try self.context().storage.prepareStorage(current.storage, x.dst, x.layout);
                 },
                 .borrow_storage => |x| {
                     var path: [64]runtime_value.Projection = undefined;
@@ -410,7 +410,7 @@ pub const Vm = struct {
                 .session_declare => |x| {
                     const binding = unit.session.?.bindings[x.binding];
                     try self.context().declareBinding(binding);
-                    if (x.layout) |layout| try self.context().storage.prepareRecord(self.context().bindings.get(binding.binding).?, 0, layout);
+                    if (x.layout) |layout| try self.context().storage.prepareStorage(self.context().bindings.get(binding.binding).?, 0, layout);
                 },
                 .session_initialize => |x| try self.context().initializeBinding(unit.session.?.bindings[x.binding], try slots.get(x.value), x.reinitialize),
                 .readonly => |x| {
@@ -471,7 +471,7 @@ pub const Vm = struct {
                 },
                 .check_place => |place| {
                     var path: [64]runtime_value.Projection = undefined;
-                    _ = try self.resolvePlace(unit, current.storage, place, f.slots, &path, true);
+                    _ = try self.resolvePlace(unit, current.storage, place, f.slots, &path, false);
                 },
                 .capture_write => |x| {
                     var path: [64]runtime_value.Projection = undefined;

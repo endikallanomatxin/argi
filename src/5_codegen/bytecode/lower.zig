@@ -94,6 +94,22 @@ pub const Lower = struct {
         return self.finish(try function.compileExpression(node, operands));
     }
 
+    fn partialLayout(self: *Lower, source: p.SourceRef, ty: b.Type) !@import("storage_layout.zig").Layout {
+        try self.requirePartialLayout(source, ty, 0);
+        return @import("storage_layout.zig").compile(self.allocator, self.graph, ty);
+    }
+    fn requirePartialLayout(self: *Lower, source: p.SourceRef, ty: b.Type, depth: usize) anyerror!void {
+        if (depth > 64) return self.reject(source, "partial storage nesting");
+        if (types.arrayElement(self.graph, ty)) |element| {
+            if (self.cleanup_types[@intFromEnum(element)])
+                return self.reject(source, "partial storage for owning array elements requires indexed cleanup identities");
+            try self.requirePartialLayout(source, element, depth + 1);
+        } else if (types.fields(self.graph, ty)) |fields| {
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
+                try self.requirePartialLayout(source, field.ty, depth + 1);
+        }
+    }
+
     fn finish(self: *Lower, expression: ?b.Function) !b.Program {
         defer {
             self.pending.deinit(self.allocator);
@@ -234,7 +250,7 @@ const FunctionLower = struct {
             slot.* = try self.bindingSlot(binding);
             if (self.parent.graph.binding(binding).initialization != null) return error.InvalidBytecode;
             const ty = self.parent.graph.binding(binding).ty;
-            const layout = try @import("storage_layout.zig").compile(a, self.parent.graph, ty);
+            const layout = try self.parent.partialLayout(source, ty);
             _ = try self.emit(source, .{ .reserve_storage = .{ .dst = slot.*, .layout = layout } });
         }
         try self.block(f.body.?);
@@ -450,7 +466,7 @@ const FunctionLower = struct {
                 const binding_ = self.parent.graph.binding(binding_id);
                 if (self.parent.sessionIndex(binding_id)) |index| {
                     if (binding_.deferred_initialization or binding_.initialization == null) {
-                        const layout = if (binding_.deferred_initialization) null else try @import("storage_layout.zig").compile(self.parent.allocator, self.parent.graph, binding_.ty);
+                        const layout = if (binding_.deferred_initialization) null else try self.parent.partialLayout(node.source, binding_.ty);
                         _ = try self.emit(node.source, .{ .session_declare = .{ .binding = index, .layout = layout } });
                         return;
                     }
@@ -466,7 +482,7 @@ const FunctionLower = struct {
                         try self.copyTo(node.source, dst, try self.expression(value));
                         if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
                     } else {
-                        const layout = try @import("storage_layout.zig").compile(self.parent.allocator, self.parent.graph, binding_.ty);
+                        const layout = try self.parent.partialLayout(node.source, binding_.ty);
                         _ = try self.emit(node.source, .{ .reserve_storage = .{ .dst = dst, .layout = layout, .reset = true } });
                     }
                 }
@@ -1129,6 +1145,10 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .array = .{ .dst = dst, .elements = elements } });
             },
             .array_index => |x| {
+                if (self.addressable(id)) {
+                    _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = try self.place(id) } });
+                    return dst;
+                }
                 const target = self.parent.graph.node(x.array_ptr);
                 const base = try self.expression(if (target.content == .address_of) target.content.address_of else x.array_ptr);
                 const index = try self.expression(x.index);

@@ -180,7 +180,7 @@ Callback failures poison execution. `argi repl` registers stdout/stderr adapters
 reject foreign calls.
 
 Raw pointers, C enums, floating point, complete trace reporting,
-partial array and choice initialization, owning globals,
+partial choice initialization, vacant arrays with owning elements, owning globals,
 closures,
 general foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable
@@ -254,12 +254,13 @@ presentation is bounded, StringView results display quoted text, other reference
 are shown as `<reference>`, and choices use
 variant indexes. This is an initial value display, not the text-formatting API.
 
-Scalar and record bindings can be declared without an initial value and written
-in later commands. Initialized record fields can be read independently of vacant
-siblings. The complete record can be read once every field is initialized,
-including nested fields. Empty record fields require an explicit write; having
-no fields does not initialize vacant storage. Reads of unavailable storage are
-rejected before publication.
+Scalar, record and non-owning array bindings can be declared without an initial
+value and written in later commands. Initialized fields and elements can be read
+independently of vacant siblings. A complete aggregate can be read once every
+field or statically identified element is initialized, including nested fields.
+Empty aggregates require an explicit write. Reads of unavailable storage are
+rejected before publication. Array layouts keep one element template; concrete
+execution cells are charged against the VM's memory limit before allocation.
 
 `:reset` runs checked cleanup and starts a fresh session; `:quit` or EOF cleans up
 and exits. Preparation failures publish no state and subsequent input can retry.

@@ -18,7 +18,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Partial storage
 
-- Extend partial layouts to arrays and choices.
+- Extend partial layouts to choices and connect owning array elements to
+  indexed cleanup identities.
 - Extend acquired storage and release identities before enabling the allocator
   prelude; scalar host handles alone do not establish allocation receipts.
 

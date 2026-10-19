@@ -834,7 +834,7 @@ pub const SafetyChecker = struct {
                     }
                 },
                 .array_store => |store| {
-                    const pointer = try self.evaluatePointerUse(function, node.source, store.array_ptr, state) orelse continue;
+                    const pointer = try self.evaluateArrayStorage(function, node.source, store.array_ptr, state) orelse continue;
                     _ = try self.evaluate(function, store.index, state);
                     const value = try self.evaluate(function, store.value, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
@@ -1085,7 +1085,7 @@ pub const SafetyChecker = struct {
                 break :blk aggregate;
             },
             .array_index => |access| blk: {
-                const pointer = try self.evaluatePointerUse(function, node.source, access.array_ptr, state) orelse break :blk .{};
+                const pointer = try self.evaluateArrayStorage(function, node.source, access.array_ptr, state) orelse break :blk .{};
                 _ = try self.evaluate(function, access.index, state);
                 var value: facts.ValueFacts = .{};
                 if (pointer.referenced_place) |base| {
@@ -4168,6 +4168,29 @@ pub const SafetyChecker = struct {
         }
     }
 
+    // Indexing addresses array storage; it does not read every element. The
+    // pointer operands used to reach it still require ordinary validity checks.
+    fn evaluateArrayStorage(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, node: graph_mod.GlobalNodeId, state: *FunctionState) anyerror!?facts.ValueFacts {
+        if (self.graph.node(node).ty) |ty| if (types.arrayElement(self.graph, ty) != null) {
+            const before = self.diagnostics.list.items.len;
+            try self.validateAddressAccess(function, source, node, state);
+            if (self.diagnostics.list.items.len != before) return null;
+            if (try self.resolvePlace(node, state)) |storage| {
+                if (self.initializednessAtPlace(state, storage) == .moved) {
+                    try self.reportMovedPlace(source, storage, state);
+                    return null;
+                }
+                const value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
+                if (valueHasDeadExplicitDependencyForUse(value, state, false)) {
+                    try self.report(source, "value depends on a root that has ended", .{});
+                    return null;
+                }
+                return .{ .referenced_place = storage, .opaque_provenance = try self.opaqueProvenanceForAccess(node, state) };
+            }
+        };
+        return self.evaluatePointerUse(function, source, node, state);
+    }
+
     fn evaluatePointerUse(
         self: *SafetyChecker,
         function: graph_mod.GlobalFunctionId,
@@ -4983,12 +5006,27 @@ pub const SafetyChecker = struct {
 
     const StorageReadiness = enum { unavailable, possible, complete };
 
-    // Completeness can come from one whole write or from authoritative field
-    // writes. Empty vacant records do not become initialized vacuously.
+    // Completeness can come from one whole write or authoritative projected
+    // writes. Empty vacant aggregates do not become initialized vacuously.
     fn storageReadiness(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) anyerror!StorageReadiness {
         const initializedness = self.initializednessAtPlace(state, storage);
         if (initializedness == .initialized) return .complete;
         const ty = self.domainStorageType(storage) orelse return .unavailable;
+        if (types.arrayLength(self.graph, ty)) |length| {
+            // Every available element needs at least one authoritative fact.
+            // Never scan a large vacant array just to rediscover missing facts.
+            if (length == 0 or length > state.places.items.len)
+                return if (initializedness == .maybe_initialized) .possible else .unavailable;
+            var result: StorageReadiness = .complete;
+            for (0..@intCast(length)) |index| {
+                switch (try self.storageReadiness(state, try self.project(storage, .{ .static_index = index }))) {
+                    .unavailable => return if (initializedness == .maybe_initialized) .possible else .unavailable,
+                    .possible => result = .possible,
+                    .complete => {},
+                }
+            }
+            return result;
+        }
         const fields = types.fields(self.graph, ty) orelse return if (initializedness == .maybe_initialized) .possible else .unavailable;
         if (fields.len == 0) return if (initializedness == .maybe_initialized) .possible else .unavailable;
         var result: StorageReadiness = .complete;
@@ -5274,7 +5312,7 @@ pub const SafetyChecker = struct {
             .struct_field_access => |access| try self.validateAddressAccess(function, source, access.value, state),
             .choice_payload_access => |access| try self.validateAddressAccess(function, source, access.value, state),
             .array_index => |access| {
-                _ = try self.evaluatePointerUse(function, source, access.array_ptr, state);
+                _ = try self.evaluateArrayStorage(function, source, access.array_ptr, state);
                 _ = try self.evaluate(function, access.index, state);
             },
             else => {},
@@ -5327,8 +5365,11 @@ pub const SafetyChecker = struct {
                 break :blk try self.project(base, .{ .variant = index });
             },
             .array_index => |access| blk: {
-                const pointer = try self.evaluate(@enumFromInt(0), access.array_ptr, state);
-                const base = pointer.referenced_place orelse break :blk null;
+                const ty = self.graph.node(access.array_ptr).ty orelse break :blk null;
+                const base = if (types.arrayElement(self.graph, ty) != null)
+                    try self.resolvePlace(access.array_ptr, state) orelse break :blk null
+                else
+                    (try self.evaluate(@enumFromInt(0), access.array_ptr, state)).referenced_place orelse break :blk null;
                 break :blk try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index);
             },
             else => null,
@@ -5451,7 +5492,7 @@ pub const SafetyChecker = struct {
         initializedness: value_state.Initializedness,
         state: *FunctionState,
     ) !void {
-        // Field writes can complete a vacant record without a whole-value
+        // Projected writes can complete vacant aggregates without a whole-value
         // write. This is a read proof, not a generation change: historical
         // references must remain invalid after destruction or replacement.
         if (initializedness == .deinitialized and try self.storageReadiness(state, storage) == .complete) return;

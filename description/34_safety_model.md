@@ -73,9 +73,10 @@ use(p)            // error: stale reference
 The use check does not require all references to leave scope before a root
 can end.
 
-A vacant record becomes readable when all its fields are initialized, including
-nested fields. Individual initialized fields can be read before their siblings
-are ready. Empty records require an explicit initialization; an empty field list
+A vacant record or fixed-length array becomes readable when all its fields or
+statically identified elements are initialized, including nested fields.
+Individual initialized fields and elements can be read before their siblings
+are ready. Empty aggregates require an explicit initialization; an empty shape
 alone is not evidence of an available value. Structural completeness proves
 initialization without reviving ended storage generations or stale references.
 

@@ -14009,3 +14009,28 @@ test "feature_tests/execution/101_field_completed_owner_move_vm" {
     try runExpect("tests/feature_tests/execution/101_field_completed_owner_move_vm", 42);
     try vmExpect("tests/feature_tests/execution/101_field_completed_owner_move_vm", 42, null);
 }
+
+test "feature_tests/execution/102_partial_arrays_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/102_partial_arrays_vm");
+    try runExpect("tests/feature_tests/execution/102_partial_arrays_vm", 42);
+    try vmExpect("tests/feature_tests/execution/102_partial_arrays_vm", 42, null);
+}
+
+test "feature_tests/execution/103X_partial_array_missing_element" {
+    try buildExpectFail("tests/feature_tests/execution/103X_partial_array_missing_element", "deinitialized");
+    try vmExpect("tests/feature_tests/execution/103X_partial_array_missing_element", 1, "deinitialized");
+}
+
+test "feature_tests/execution/104X_partial_owning_array_boundary" {
+    try vmExpect("tests/feature_tests/execution/104X_partial_owning_array_boundary", 1, "indexed cleanup identities");
+}
+
+test "feature_tests/execution/105X_partial_array_reference_lifetime" {
+    try buildExpectFail("tests/feature_tests/execution/105X_partial_array_reference_lifetime", "depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/105X_partial_array_reference_lifetime", 1, "depends on a root that has ended");
+}
+
+test "feature_tests/execution/106X_partial_array_explicit_dependency" {
+    try buildExpectFail("tests/feature_tests/execution/106X_partial_array_explicit_dependency", "depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/106X_partial_array_explicit_dependency", 1, "depends on a root that has ended");
+}
