@@ -14,6 +14,10 @@ pub const Sources = struct {
     arena: std.heap.ArenaAllocator,
     modules: std.ArrayList(*module_sg.ModuleSemanticGraph) = .empty,
     sequence: u64 = 0,
+    // Published slices share initialized prefixes. Only the unpublished tail of
+    // the current buffer may be filled; branching starts a separate buffer.
+    snapshot_tail: []module_sg.ModuleSemanticGraph = &.{},
+    snapshot_len: usize = 0,
     selections: std.AutoHashMapUnmanaged(FileId, selection_mod.Prepared) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Sources {
@@ -295,14 +299,24 @@ pub const Sources = struct {
         }
     }
 
-    /// Each snapshot is immutable and independently allocated; growth of the
-    /// source owner cannot invalidate a semantic session's borrowed prefix.
+    /// Extend an immutable prefix without copying every previous module header.
+    /// Geometric buffers never relocate: old slices keep their length and only
+    /// unused tail slots are written. Forking any older prefix allocates a new
+    /// buffer, preserving both accepted and rejected candidates' borrowed views.
     pub fn appendSnapshot(self: *Sources, prefix: []const module_sg.ModuleSemanticGraph, module: *const module_sg.ModuleSemanticGraph) ![]const module_sg.ModuleSemanticGraph {
         const count = std.math.add(usize, prefix.len, 1) catch return error.SubmissionIdentityLimit;
-        const snapshot = try self.arena.allocator().alloc(module_sg.ModuleSemanticGraph, count);
+        if (prefix.ptr == self.snapshot_tail.ptr and prefix.len == self.snapshot_len and count <= self.snapshot_tail.len) {
+            self.snapshot_tail[prefix.len] = module.*;
+            self.snapshot_len = count;
+            return self.snapshot_tail[0..count];
+        }
+        const capacity = std.math.ceilPowerOfTwo(usize, @max(count, 4)) catch return error.SubmissionIdentityLimit;
+        const snapshot = try self.arena.allocator().alloc(module_sg.ModuleSemanticGraph, capacity);
         @memcpy(snapshot[0..prefix.len], prefix);
         snapshot[prefix.len] = module.*;
-        return snapshot;
+        self.snapshot_tail = snapshot;
+        self.snapshot_len = count;
+        return snapshot[0..count];
     }
 };
 
@@ -362,4 +376,32 @@ test "source submissions compile and execute incrementally without history repla
     try std.testing.expectEqual(@as(usize, 3), diagnostics.source_maps.len);
     try std.testing.expectEqualStrings("retained = 7", diagnostics.source_db.get(diagnostics.source_maps[2].original).source);
     try std.testing.expectEqual(@as(u64, 2), compiler.revision);
+}
+
+test "submission snapshot growth shares prefixes without mutating earlier branches" {
+    var sources = Sources.init(std.testing.allocator);
+    defer sources.deinit();
+    const first: module_sg.ModuleSemanticGraph = .{ .module_dir = "first" };
+    const second: module_sg.ModuleSemanticGraph = .{ .module_dir = "second" };
+    const alternate: module_sg.ModuleSemanticGraph = .{ .module_dir = "alternate" };
+    const prefix = try sources.appendSnapshot(&.{}, &first);
+    const extended = try sources.appendSnapshot(prefix, &second);
+    try std.testing.expect(prefix.ptr == extended.ptr);
+    const branch = try sources.appendSnapshot(prefix, &alternate);
+    try std.testing.expect(branch.ptr != extended.ptr);
+    try std.testing.expectEqualStrings("second", extended[1].module_dir);
+    try std.testing.expectEqualStrings("alternate", branch[1].module_dir);
+    var grown = branch;
+    for (0..8) |_| grown = try sources.appendSnapshot(grown, &first);
+    try std.testing.expect(grown.ptr != branch.ptr);
+    try std.testing.expectEqual(@as(usize, 1), prefix.len);
+    try std.testing.expectEqual(@as(usize, 2), branch.len);
+    try std.testing.expectEqualStrings("alternate", branch[1].module_dir);
+    try std.testing.expectEqualStrings("second", extended[1].module_dir);
+    // Appending a discarded branch after growth cannot overwrite the current
+    // history or its older prefix, even when a previous buffer has spare room.
+    const resumed = try sources.appendSnapshot(extended, &second);
+    try std.testing.expect(resumed.ptr != grown.ptr);
+    try std.testing.expectEqualStrings("alternate", grown[1].module_dir);
+    try std.testing.expectEqualStrings("second", resumed[1].module_dir);
 }

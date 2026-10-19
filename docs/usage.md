@@ -348,3 +348,11 @@ The 1,000-command samples used a 4,096 MiB limit, for example
 2,048 MiB limit, minimal updates stop after 954 commands; the core workload stops
 after 296 commands. These failures are retained-memory measurements, not VM
 instruction-budget exhaustion.
+
+After sharing append-only module-prefix buffers, the same 1,000 minimal updates
+retain 955.23 MiB, including 13.45 MiB in the source arena. Checked graph payload,
+code arenas and diagnostic arenas remain at 267.96, 261.90 and 242.97 MiB.
+The sample takes 2,515.0 ms (2,365.3 ms frontend/publication); this is still not
+linear retained memory. Core at 100 commands retains 716.97 MiB, with 1.51 MiB
+in the source arena. Earlier snapshots and branched/rejected histories retain
+their original module headers; growth fills only unused buffer slots.
