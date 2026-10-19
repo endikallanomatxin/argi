@@ -241,6 +241,15 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
     safety.graph_allocator = allocator;
     defer safety.deinit();
     if (continuation) |function| {
+        const command = result.graph.function(function);
+        // Ordinary helpers may forward an unresolved reached capability as a
+        // logical input. A top-level command has no caller to supply it.
+        if (command.input.len != 0) {
+            const field = result.graph.fields.items[command.input.start];
+            const source = result.graph.declaration(command.declaration).source;
+            try diagnostics.add(@import("diagnostics.zig").location(&result.graph, diagnostics, source), .semantic, "interactive command requires input '.{s}'; pass it explicitly or bind the required capability with assume before the call", .{result.graph.text(field.name)});
+            return error.Reported;
+        }
         try safety.analyzeContinuation(function, &proof.?.state);
         try once_verify.verifyContinuation(proof_allocator, &result.graph, diagnostics, function, &proof.?.once);
     } else try safety.analyze();

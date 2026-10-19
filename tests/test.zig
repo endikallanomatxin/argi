@@ -13927,3 +13927,7 @@ test "feature_tests/execution/86_deferred_address_temporaries_vm" {
     try runExpect("tests/feature_tests/execution/86_deferred_address_temporaries_vm", 42);
     try vmExpect("tests/feature_tests/execution/86_deferred_address_temporaries_vm", 42, null);
 }
+
+test "feature_tests/execution/87X_vm_host_requires_binding" {
+    try vmExpect("tests/feature_tests/execution/87X_vm_host_requires_binding", 1, "MissingHostBinding");
+}

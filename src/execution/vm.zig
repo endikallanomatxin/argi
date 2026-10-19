@@ -7,6 +7,7 @@ const Storage = @import("storage.zig").Storage;
 const WriteDestination = @import("storage.zig").WriteDestination;
 const runtime_value = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
+const host = @import("host.zig");
 
 pub const Limits = struct {
     instructions: usize = 1_000_000,
@@ -35,6 +36,7 @@ pub const Context = struct {
     allocator: std.mem.Allocator,
     storage: Storage = undefined,
     limit: usize,
+    host_bindings: []const host.Binding = &.{},
     state: enum { fresh, ready, poisoned } = .fresh,
     running: bool = false,
     namespace: ?b.SessionNamespace = null,
@@ -162,8 +164,14 @@ pub const Vm = struct {
 
     // Verify before executing anything, including before checking the entry.
     pub fn init(a: std.mem.Allocator, program: b.Program, limits: Limits) !Vm {
+        return initWithHost(a, program, limits, &.{});
+    }
+    pub fn initWithHost(a: std.mem.Allocator, program: b.Program, limits: Limits, bindings: []const host.Binding) !Vm {
         try b.verify(a, program);
-        return .{ .owned_context = Context.init(a, limits.value_cells), .allocator = a, .program = program, .limits = limits };
+        try host.preflight(program, bindings);
+        var context_ = Context.init(a, limits.value_cells);
+        context_.host_bindings = bindings;
+        return .{ .owned_context = context_, .allocator = a, .program = program, .limits = limits };
     }
     /// Borrow session-owned execution storage without transferring it. The
     /// memory quota belongs to that context; instruction/depth limits are local
@@ -171,6 +179,7 @@ pub const Vm = struct {
     pub fn initShared(a: std.mem.Allocator, program: b.Program, limits: Limits, shared: *Context) !Vm {
         if (limits.value_cells != shared.limit) return error.ExecutionContextLimitMismatch;
         try b.verify(a, program);
+        try host.preflight(program, shared.host_bindings);
         return .{ .owned_context = undefined, .shared_context = shared, .allocator = a, .program = program, .limits = limits };
     }
     pub fn context(self: *Vm) *Context {
@@ -374,6 +383,21 @@ pub const Vm = struct {
                         if (!types.equal(universe, f.slots[slot], callee.slots[output])) return error.ExecutionInvalidVirtual;
                     }
                     try frames.append(self.allocator, try self.frame(&virtual.program, callee, values, x.outputs));
+                },
+                .host_call => |x| {
+                    const binding = try host.resolve(unit.graph, unit.host_functions[x.function], self.context().host_bindings);
+                    var arguments: [host.max_values]i128 = undefined;
+                    var results: [host.max_values]i128 = undefined;
+                    for (binding.outputs, 0..) |range, index| results[index] = range.minimum - 1;
+                    for (x.args[0 .. x.args.len - 1], 0..) |slot, index| arguments[index] = (try slots.get(slot)).integer;
+                    // The logical ffi reference has already participated in
+                    // checked argument evaluation. It never crosses this bridge.
+                    _ = try slots.get(x.args[x.args.len - 1]);
+                    try binding.call(binding.data, arguments[0..binding.inputs.len], results[0..binding.outputs.len]);
+                    for (results[0..binding.outputs.len], binding.outputs) |value, range|
+                        if (value < range.minimum or value > range.maximum) return error.ExecutionInvalidHostResult;
+                    // Validate every output before changing any destination.
+                    for (x.outputs, results[0..binding.outputs.len]) |slot, value| try slots.put(slot, .{ .integer = value });
                 },
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
                 .session_declare => |index| try self.context().declareBinding(unit.session.?.bindings[index]),

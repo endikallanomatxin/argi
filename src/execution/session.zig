@@ -77,7 +77,17 @@ pub const Session = struct {
             }
             return err;
         };
-        var vm = try execution.Vm.initShared(self.allocator, program, self.limits, &self.context);
+        var vm = execution.Vm.initShared(self.allocator, program, self.limits, &self.context) catch |err| {
+            switch (err) {
+                error.MissingHostBinding, error.IncompatibleHostBinding, error.AmbiguousHostBinding => {
+                    const host = @import("host.zig");
+                    const failure = host.findFailure(program, self.context.host_bindings) orelse return err;
+                    try diagnostics.add(@import("diagnostics.zig").location(checked, diagnostics, failure.source), .codegen, "bytecode host binding for '{s}' is unavailable: {s}", .{ host.symbol(checked, failure.function), @errorName(failure.reason) });
+                    return error.Reported;
+                },
+                else => return err,
+            }
+        };
         defer vm.deinit();
         try self.units.ensureUnusedCapacity(self.allocator, 1);
         try self.compiler.accept(candidate);

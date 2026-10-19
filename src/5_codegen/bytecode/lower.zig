@@ -12,6 +12,7 @@ pub const Lower = struct {
     graph: *const g.GlobalSemanticGraph,
     functions: []?b.Function,
     globals: std.ArrayList(b.Global) = .empty,
+    host_functions: std.ArrayList(g.GlobalFunctionId) = .empty,
     cleanup_bindings: []const bool,
     cleanup_types: []const bool,
     bool_type: ?b.Type,
@@ -46,6 +47,8 @@ pub const Lower = struct {
     // All bytecode allocations belong to the caller's compilation arena.
     // VM initialization verifies the completed program before accepting it.
     pub fn compile(self: *Lower, entry: g.GlobalFunctionId) !b.Program {
+        const host_count = self.host_functions.items.len;
+        errdefer self.host_functions.items.len = host_count;
         if (@intFromEnum(entry) >= self.functions.len) return error.InvalidEntry;
         try self.pending.append(self.allocator, entry);
         return self.finish(null);
@@ -55,6 +58,8 @@ pub const Lower = struct {
     /// emitter. This entry has no invented semantic function identity. Its
     /// dependency bodies and persistent layouts must belong to the checked graph.
     pub fn compileSessionCleanup(self: *Lower, nodes: []const g.GlobalNodeId) !b.Program {
+        const host_count = self.host_functions.items.len;
+        errdefer self.host_functions.items.len = host_count;
         if (self.session == null) return error.InvalidBytecode;
         for (nodes) |id| {
             if (@intFromEnum(id) >= self.graph.nodes.items.len) return error.InvalidBytecode;
@@ -71,6 +76,8 @@ pub const Lower = struct {
     // Inputs replace already-evaluated operand nodes; normal lowering still
     // selects every instruction, call and control-flow edge.
     pub fn compileExpression(self: *Lower, node: g.GlobalNodeId, operands: []const g.GlobalNodeId) !b.Program {
+        const host_count = self.host_functions.items.len;
+        errdefer self.host_functions.items.len = host_count;
         const root = self.graph.node(node);
         if (self.cleanup_types[@intFromEnum(root.ty orelse return error.InvalidBytecode)])
             return self.reject(root.source, "owning expression entry result");
@@ -114,7 +121,7 @@ pub const Lower = struct {
             stored.* = value;
             break :blk stored;
         } else null;
-        return .{ .globals = try self.allocator.dupe(b.Global, self.globals.items), .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions), .expression = entry, .session = self.session };
+        return .{ .host_functions = try self.allocator.dupe(g.GlobalFunctionId, self.host_functions.items), .globals = try self.allocator.dupe(b.Global, self.globals.items), .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions), .expression = entry, .session = self.session };
     }
     fn isGlobal(self: *const Lower, binding: g.GlobalBindingId) bool {
         for (self.graph.roots.items) |root| {
@@ -890,6 +897,17 @@ const FunctionLower = struct {
                 else => return err,
             };
             _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout } });
+        } else if (f.flags.is_c_abi and self.parent.mode == .runtime) {
+            @import("host_signature.zig").validate(self.parent.graph, x.callee) catch
+                return self.parent.reject(node.source, "foreign call outside the scalar host boundary");
+            const host_index: u32 = for (self.parent.host_functions.items, 0..) |function, index| {
+                if (function == x.callee) break @intCast(index);
+            } else blk: {
+                const index: u32 = @intCast(self.parent.host_functions.items.len);
+                try self.parent.host_functions.append(self.parent.allocator, x.callee);
+                break :blk index;
+            };
+            _ = try self.emit(node.source, .{ .host_call = .{ .outputs = outputs, .function = host_index, .args = args } });
         } else {
             try self.parent.pending.append(self.parent.allocator, x.callee);
             _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });

@@ -130,6 +130,7 @@ pub const Instruction = struct {
         cleanup_test: struct { dst: Slot, place: Place },
         branch_cleanup: struct { place: Place, yes: u32, no: u32 },
         cleanup_set: struct { place: Place, enabled: bool },
+        host_call: struct { outputs: []const Slot, function: u32, args: []const Slot },
         call: struct { outputs: []const Slot, function: g.GlobalFunctionId, args: []const Slot },
         branch: struct { condition: Slot, yes: u32, no: u32 },
         jump: u32,
@@ -155,6 +156,7 @@ pub const Function = struct {
 pub const Global = struct { binding: g.GlobalBindingId, ty: Type, initializer: Function };
 
 pub const Program = struct {
+    host_functions: []const g.GlobalFunctionId = &.{},
     globals: []const Global = &.{},
     graph: *const g.GlobalSemanticGraph,
     functions: []const ?Function,

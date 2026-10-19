@@ -202,6 +202,7 @@ pub const Interactive = struct {
         }
         // A trapped context has no safe user-code unwind. Its explicit reset
         // discards the poisoned execution and proof state together.
+        const host_bindings = self.runtime.context.host_bindings;
         self.runtime.deinit();
         self.compiler.deinit();
         // No accepted graph or execution unit can refer to submitted source
@@ -214,6 +215,7 @@ pub const Interactive = struct {
         self.compiler = replacement;
         transferred = true;
         self.runtime = .init(self.allocator, &self.compiler, self.limits);
+        self.runtime.context.host_bindings = host_bindings;
         self.result_sequence = 0;
         self.diagnostics.list.clearRetainingCapacity();
         if (self.prelude) |source| try self.submitStatements(source);
@@ -878,4 +880,77 @@ test "interactive generic diagnostics explain omitted reachable capabilities" {
         try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42)")).?.value.integer);
         try session.close();
     }
+}
+
+test "interactive scalar host calls require explicit bindings before publication" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "ForeignFunctionInterface: Type = ()\nhost_increment(.value: Int32) -> (.result: Int32): ExternFunction\nhost_reference(.value: &Int32) -> (.result: Int32): ExternFunction");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability\nnumber :: Int32 = 41");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("host_reference(.value = &number)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "scalar host boundary") != null);
+    try std.testing.expectError(error.Reported, session.submitInput("host_increment(.value = 41)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(.ready, session.runtime.context.state);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "host binding") != null);
+    const Host = @import("host.zig");
+    const State = struct {
+        calls: usize = 0,
+        invalid_result: bool = false,
+        fail: bool = false,
+        fn invoke(data: ?*anyopaque, inputs: []const i128, outputs: []i128) !void {
+            const self: *@This() = @ptrCast(@alignCast(data.?));
+            try std.testing.expectEqual(@as(usize, 1), inputs.len);
+            try std.testing.expectEqual(@as(usize, 1), outputs.len);
+            self.calls += 1;
+            if (self.fail) return error.TestHostFailure;
+            if (!self.invalid_result) outputs[0] = inputs[0] + 1;
+        }
+    };
+    var state: State = .{};
+    const range = @import("../4_semantics/primitives/schema.zig").integerRangeForWidth(32, true);
+    var bindings = [_]Host.Binding{.{ .symbol = "host_increment", .inputs = &.{range}, .outputs = &.{range}, .data = &state, .call = State.invoke }};
+    bindings[0].inputs = &.{@import("../4_semantics/primitives/schema.zig").integerRangeForWidth(64, true)};
+    session.runtime.context.host_bindings = &bindings;
+    try std.testing.expectError(error.Reported, session.submitInput("host_increment(.value = 41)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(usize, 0), state.calls);
+    bindings[0].inputs = &.{range};
+    const duplicated = [_]Host.Binding{ bindings[0], bindings[0] };
+    session.runtime.context.host_bindings = &duplicated;
+    try std.testing.expectError(error.Reported, session.submitInput("host_increment(.value = 41)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(usize, 0), state.calls);
+    session.runtime.context.host_bindings = &bindings;
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("host_increment(.value = 41)")).?.value.integer);
+    try std.testing.expectEqual(@as(usize, 1), state.calls);
+    try std.testing.expectError(error.Reported, session.submitInput("#run host_increment(.value = 41)"));
+    try std.testing.expectEqual(@as(usize, 1), state.calls);
+    state.invalid_result = true;
+    try std.testing.expectError(error.ExecutionInvalidHostResult, session.submitInput("host_increment(.value = 41)"));
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try session.reset();
+    try std.testing.expectEqual(@as(usize, 1), session.runtime.context.host_bindings.len);
+    const calls_before_missing_capability = state.calls;
+    try std.testing.expectError(error.Reported, session.submitInput("host_increment(.value = 41)"));
+    try std.testing.expectEqual(calls_before_missing_capability, state.calls);
+    try std.testing.expectEqual(.fresh, session.runtime.context.state);
+    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability");
+    state.invalid_result = false;
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("host_increment(.value = 41)")).?.value.integer);
+    state.fail = true;
+    try std.testing.expectError(error.TestHostFailure, session.submitInput("host_increment(.value = 41)"));
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try session.reset();
+    try session.close();
 }

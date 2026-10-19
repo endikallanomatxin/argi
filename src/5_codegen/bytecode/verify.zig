@@ -28,6 +28,10 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             try verifyCleanup(allocator, program.graph, .{ .slots = binding.slots, .inputs = &.{}, .outputs = &.{}, .code = &.{}, .cleanup = binding.cleanup });
         }
     }
+    for (program.host_functions, 0..) |function, index| {
+        @import("host_signature.zig").validate(program.graph, function) catch return error.InvalidBytecode;
+        for (program.host_functions[0..index]) |previous| if (previous == function) return error.InvalidBytecode;
+    }
     const module_bindings = try allocator.alloc(bool, program.graph.bindings.items.len);
     defer allocator.free(module_bindings);
     @memset(module_bindings, false);
@@ -241,6 +245,17 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (slots.len != f.outputs.len) return error.InvalidBytecode;
                     for (slots, f.outputs) |slot, output| if (!types.equal(program.graph, f.slots[slot], f.slots[output])) return error.InvalidBytecode;
                 },
+                .host_call => |x| {
+                    if (x.function >= program.host_functions.len) return error.InvalidBytecode;
+                    const callee = program.graph.function(program.host_functions[x.function]);
+                    if (x.args.len != callee.input.len or x.outputs.len != callee.output.len) return error.InvalidBytecode;
+                    for (x.args, program.graph.fields.items[callee.input.start..][0..callee.input.len]) |slot, field|
+                        if (!types.equal(program.graph, f.slots[slot], field.ty)) return error.InvalidBytecode;
+                    for (x.outputs, program.graph.fields.items[callee.output.start..][0..callee.output.len], 0..) |slot, field, index| {
+                        if (!types.equal(program.graph, f.slots[slot], field.ty)) return error.InvalidBytecode;
+                        for (x.outputs[0..index]) |previous| if (previous == slot) return error.InvalidBytecode;
+                    }
+                },
                 .call => |x| {
                     if (@intFromEnum(x.function) >= program.functions.len) return error.InvalidBytecode;
                     const callee = program.functions[@intFromEnum(x.function)] orelse return error.InvalidBytecode;
@@ -373,6 +388,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
 
 fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     if (i.op == .call) return i.op.call.outputs;
+    if (i.op == .host_call) return i.op.host_call.outputs;
     if (i.op == .virtual_call) return i.op.virtual_call.outputs;
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
@@ -436,6 +452,7 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
         inline .cleanup_test, .branch_cleanup => |x| try readCleanupPlace(a, x.place, out),
         .cleanup_set => |x| try readCleanupPlace(a, x.place, out),
         .call => |x| try out.appendSlice(a, x.args),
+        .host_call => |x| try out.appendSlice(a, x.args),
         .branch => |x| try out.append(a, x.condition),
         .ret => |x| try out.appendSlice(a, x),
         else => {},

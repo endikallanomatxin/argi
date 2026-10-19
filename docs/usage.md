@@ -160,8 +160,16 @@ Dependencies follow the native initializer plan. Retained REPL globals initializ
 once per session and preserve writes across later code units; reset starts fresh.
 Globals requiring cleanup and globals without explicit initializers remain rejected.
 
+Embedding hosts can register explicit integer-only foreign-call adapters with
+`Vm.initWithHost` or a retained context's `host_bindings` (up to 32 integer
+inputs and outputs). Symbols and complete integer signatures must match; missing or ambiguous adapters reject a command
+before publication. The logical `ffi` capability remains checked by the frontend.
+Callbacks receive integer copies, and results are range-checked before publication.
+Callback failures poison execution. The CLI currently registers no adapters;
+compile-time evaluation continues to reject foreign calls.
+
 Raw pointers, C enums, floating point, complete trace reporting,
-partial initialization through output references, owning globals, closures, foreign calls,
+partial initialization through output references, owning globals, closures, general foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable
 function bodies are rejected
 before execution, including constructs on untaken branches. Integer arithmetic

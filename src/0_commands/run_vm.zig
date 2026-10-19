@@ -75,6 +75,14 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
         return error.CompilationFailed;
     };
     var executor = vm.Vm.init(allocator, program, .{}) catch |err| {
+        if (err == error.MissingHostBinding or err == error.IncompatibleHostBinding or err == error.AmbiguousHostBinding) {
+            const host = @import("../execution/host.zig");
+            if (host.findFailure(program, &.{})) |failure| {
+                const message = try std.fmt.allocPrint(allocator, "VM host binding for '{s}' is unavailable: {s}", .{ host.symbol(graph, failure.function), @errorName(failure.reason) });
+                try report(&diagnostics, graph, failure.source, message);
+                return error.CompilationFailed;
+            }
+        }
         const message = try std.fmt.allocPrint(allocator, "VM initialization failed: {s}", .{@errorName(err)});
         try report(&diagnostics, graph, compiler.source, message);
         return error.CompilationFailed;

@@ -1905,3 +1905,36 @@ test "bytecode cleanup branches refine only the active storage edge" {
     code[4].op = .{ .ret = &.{0} };
     try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, program));
 }
+
+test "bytecode failed lowering does not retain host requirements" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code =
+        \\foreign_value(.value: Int32) -> (.result: Int32): ExternFunction
+        \\unsupported(.ffi: $&ForeignFunctionInterface) -> (.result: Int32) := {
+        \\    result = foreign_value(.value = 41)
+        \\    value: Float32 = 1.5
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    capability :: ForeignFunctionInterface = ()
+        \\    status_code = unsupported(.ffi = $&capability)
+        \\}
+        },
+        .{ .path = "ffi_core/main.rg", .origin = .bundled_core, .code = "ForeignFunctionInterface: Type = ()" },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = try pipeline.semantizeGlobalFiles(&files);
+    var compiler = try lower.Lower.init(a, graph);
+    compiler.mode = .runtime;
+    const entry = for (graph.functions.items, 0..) |function, index| {
+        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main"))
+            break @as(@import("../4_semantics/global/graph.zig").GlobalFunctionId, @enumFromInt(index));
+    } else return error.TestMissingEntry;
+    try std.testing.expectError(error.UnsupportedExecution, compiler.compile(entry));
+    try std.testing.expectEqual(@as(usize, 0), compiler.host_functions.items.len);
+}
