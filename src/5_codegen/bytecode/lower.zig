@@ -369,32 +369,33 @@ const FunctionLower = struct {
         const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
         if (auto.storage == .indirect) return self.parent.reject(self.parent.source, "indirect cleanup identity transport");
         if (auto.targetNode()) |target| {
-            const drop = self.nodeDrop(target) orelse return error.InvalidBytecode;
-            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?, drop);
+            if (self.nodeDrop(target) == null) return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?);
         }
         if (self.parent.sessionIndex(auto.ownerBinding().?)) |index| {
-            const drop = self.drops.get(auto.ownerBinding().?) orelse return error.InvalidBytecode;
-            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = index, .region = .session, .path = &.{} }, self.parent.graph.binding(auto.ownerBinding().?).ty, drop);
+            if (!self.drops.contains(auto.ownerBinding().?)) return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = index, .region = .session, .path = &.{} }, self.parent.graph.binding(auto.ownerBinding().?).ty);
         }
         const root = self.bindings.get(auto.ownerBinding().?) orelse return error.InvalidBytecode;
-        try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root], self.drops.get(auto.ownerBinding().?).?);
+        if (!self.drops.contains(auto.ownerBinding().?)) return error.InvalidBytecode;
+        try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root]);
     }
-    fn cleanupStorage(self: *FunctionLower, callee: ?g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32, fields: p.Range(g.GlobalAutoDeinitFieldId), target: b.Place, ty: b.Type, drop: DropState) anyerror!void {
+    fn cleanupStorage(self: *FunctionLower, callee: ?g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32, fields: p.Range(g.GlobalAutoDeinitFieldId), target: b.Place, ty: b.Type) anyerror!void {
         try cleanup_plan.emit(CleanupEmitter{ .lower = self }, self.parent.graph, .{
             .deinit_fn = callee,
             .input = input,
             .self_field_index = self_index,
             .fields = fields,
-        }, CleanupEmitter.Target{ .place = target, .ty = ty, .drop = drop });
+        }, CleanupEmitter.Target{ .place = target, .ty = ty });
     }
     const CleanupEmitter = struct {
         lower: *FunctionLower,
-        const Target = struct { place: b.Place, ty: b.Type, drop: DropState };
+        const Target = struct { place: b.Place, ty: b.Type };
 
         pub fn begin(self: @This(), target: Target) !u32 {
             const lower = self.lower;
             return lower.emit(lower.parent.source, .{ .branch_cleanup = .{
-                .place = lower.cleanup.items[@intFromEnum(target.drop)].place,
+                .place = target.place,
                 .yes = lower.position() + 1,
                 .no = 0,
             } });
@@ -427,14 +428,14 @@ const FunctionLower = struct {
         }
         pub fn project(self: @This(), target: Target, field: g.AutoDeinitField, selected: cleanup_plan.Child) !Target {
             const projection: b.Projection = if (selected.variant) |variant| .{ .variant = variant } else .{ .field = field.field_index };
-            return .{ .place = try self.lower.project(target.place, projection), .ty = selected.ty, .drop = self.lower.dropChild(target.drop, projection) orelse return error.InvalidBytecode };
+            return .{ .place = try self.lower.project(target.place, projection), .ty = selected.ty };
         }
         pub fn finish(self: @This(), target: Target, branch: u32) !void {
             try self.clear(target);
             self.lower.code.items[branch].op.branch_cleanup.no = self.lower.position();
         }
         pub fn clear(self: @This(), target: Target) !void {
-            try self.lower.setDrop(target.drop, false);
+            _ = try self.lower.emit(self.lower.parent.source, .{ .cleanup_set = .{ .place = target.place, .enabled = false } });
         }
     };
     fn newSlot(self: *FunctionLower, ty: b.Type) !b.Slot {
