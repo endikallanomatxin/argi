@@ -751,3 +751,36 @@ test "module frontend initializes interactive execution without a program entry"
     try std.testing.expectEqual(@as(i128, 42), (try stored.get(0)).integer);
     try session.close();
 }
+
+fn retainFrontendSelections(allocator: std.mem.Allocator) !void {
+    const source = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { selected := import(\"./later\") } #else { discarded := import(\"./missing\") }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.parseFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), pipeline.source_selections.items.len);
+    var selected = &pipeline.source_selections.items[0];
+    const pending = try selected.imports(allocator);
+    defer pending.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), pending.pending.len);
+    try selected.resolve(pending.pending[0], true);
+    const rendered = try selected.imports(allocator);
+    defer rendered.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.source, "./later") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.source, "./missing") == null);
+    try std.testing.expectEqualStrings(source, pipeline.source_db.get(pipeline.source_db.fileId(0)).source);
+    // Retokenizing starts a fresh decision owner instead of reusing a previous
+    // compilation's choice for unchanged source offsets.
+    _ = try pipeline.parseFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), pipeline.source_selections.items.len);
+    try std.testing.expect(pipeline.source_selections.items[0].decisions[0] == null);
+}
+
+test "frontend retains source selection plans and releases failed preparation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFrontendSelections, .{});
+}

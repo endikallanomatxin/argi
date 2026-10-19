@@ -24,14 +24,10 @@ fn buildCondition(allocator: std.mem.Allocator, path: []const u8, source: []cons
     const inputs = [_]module.FileInput{.{ .path = path, .source = source, .tree = &tree }};
     var graph = try module.build(allocator, std.fs.path.dirname(path).?, &inputs);
     errdefer graph.deinit(allocator);
-    if (condition) |out| {
-        var writer = @import("../module/writer.zig").Writer.init(allocator, &graph);
-        for (tree.roots) |root| if (tree.ifStatement(root)) |statement| {
-            out.* = try @import("../module/parameterized/lowerer.zig").lowerConcreteExpression(&graph, &writer, 0, &tree, source, statement.condition);
-            break;
-        };
-    }
     _ = try @import("../module/semantizer.zig").finish(allocator, &graph, &inputs, &diagnostics);
+    if (condition) |out| {
+        if (graph.conditions.items.len != 0) out.* = graph.conditions.items[0].expression;
+    }
     return graph;
 }
 
@@ -370,4 +366,29 @@ test "checked module decisions select source fragments without evaluating discar
     var vm = try @import("../../execution/vm.zig").Vm.init(a, try lower.compile(declaration.function_id.?), .{});
     defer vm.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try vm.invoke(declaration.function_id.?, &.{}))[0].integer);
+}
+
+test "cached modules retain executable condition recipes and source identities" {
+    const a = std.testing.allocator;
+    const source = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() {}";
+    var graph = try build(a, "/project/pkg/base.rg", source);
+    defer graph.deinit(a);
+    try std.testing.expectEqual(@as(usize, 1), graph.conditions.items.len);
+    const codec = @import("../../0_commands/module_cache_codec.zig");
+    const fingerprint = [_]u8{0} ** 32;
+    const bytes = try codec.encode(a, &graph, fingerprint);
+    defer a.free(bytes);
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var restored = try codec.decode(arena.allocator(), bytes, fingerprint);
+    try std.testing.expectEqual(graph.conditions.items[0], restored.conditions.items[0]);
+    const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    defer diagnostics.deinit();
+    var session: sema.Session = undefined;
+    try session.init(a, &.{restored}, .{ .diagnostics = &diagnostics });
+    defer session.deinit();
+    try std.testing.expectEqual(@as(?bool, true), try session.evaluateModuleCondition(0, restored.conditions.items[0].expression));
+    restored.conditions.items[0].expression = @enumFromInt(std.math.maxInt(u32));
+    try std.testing.expectError(error.InvalidModuleCondition, @import("../module/complete_verify.zig").verifyModule(&restored));
 }

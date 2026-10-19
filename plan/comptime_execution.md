@@ -12,6 +12,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Wire the source loader to retained selections and checked module-condition
   requests, then resume import/declaration discovery. The semantic session can
   evaluate closed Boolean recipes and retry after appending dependencies.
+  ModuleSG retains directive source identities and recipes through cache
+  serialization; the frontend retains source selection decisions independently
+  of syntax trees.
   Do not analyze inactive branches or replace original source identities with
   rendered buffers.
   Append selected declarations through explicit module fragments, preserving

@@ -41,6 +41,9 @@ pub const FrontendPipeline = struct {
     options: Options,
     source_db: *const source_db.SourceDb,
     syntax_files: std.array_list.Managed(st.FileSyntaxTree),
+    // Borrow original source buffers; rendered selections never replace the
+    // source database. Computed decisions survive tokenization for the loader.
+    source_selections: std.ArrayList(@import("../1_base/target_selection.zig").Prepared) = .empty,
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
     module_entries: std.ArrayList(*cache.ModuleCache.Entry) = .empty,
@@ -88,6 +91,8 @@ pub const FrontendPipeline = struct {
         self.module_arenas.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
+        for (self.source_selections.items) |*selection| selection.deinit(self.allocator);
+        self.source_selections.deinit(self.allocator);
         self.syntax_root_list.deinit();
         if (self.entry_source) |value| self.allocator.free(value);
         if (self.entry_path) |value| self.allocator.free(value);
@@ -97,25 +102,33 @@ pub const FrontendPipeline = struct {
         self.clearModuleGraphs();
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.clearRetainingCapacity();
+        for (self.source_selections.items) |*selection| selection.deinit(self.allocator);
+        self.source_selections.clearRetainingCapacity();
+        try self.syntax_files.ensureTotalCapacity(files.len);
+        try self.source_selections.ensureTotalCapacity(self.allocator, files.len);
 
         for (files, 0..) |source_file, index| {
             var error_offset: usize = 0;
-            const selected = @import("../1_base/target_selection.zig").selectSyntax(self.allocator, source_file.code, self.options.target, &error_offset) catch |err| {
+            var prepared = @import("../1_base/target_selection.zig").Prepared.init(self.allocator, source_file.code, self.options.target, &error_offset, .computed) catch |err| {
+                if (err == error.OutOfMemory) return err;
                 try self.diagnostics.add(.{ .file = self.source_db.fileId(index), .offset = @intCast(error_offset) }, .syntax, "invalid target selection: {s}", .{@import("../1_base/target_selection.zig").errorMessage(err)});
                 return err;
             };
-            defer self.allocator.free(selected);
+            errdefer prepared.deinit(self.allocator);
+            const selected = try prepared.syntax(self.allocator);
+            defer selected.deinit(self.allocator);
             var tokenizer_ctx = tokenizer.Tokenizer.init(
                 self.allocator,
                 self.diagnostics,
-                selected,
+                selected.source,
                 self.source_db.fileId(index),
             );
             defer tokenizer_ctx.deinit();
             _ = try tokenizer_ctx.tokenize();
             var file = st.FileSyntaxTree.initOwnedTokens(self.source_db.fileId(index), tokenizer_ctx.takeTokens());
             errdefer file.deinit(self.allocator);
-            try self.syntax_files.append(file);
+            self.syntax_files.appendAssumeCapacity(file);
+            self.source_selections.appendAssumeCapacity(prepared);
         }
     }
 

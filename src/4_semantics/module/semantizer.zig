@@ -70,6 +70,7 @@ pub fn finish(
     const global_roots = try global_roots_lowerer.lower(allocator, graph);
 
     const parameterized_stats = try parameterized_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
+    try lowerModuleConditions(allocator, graph, files);
     // Templates register contract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
@@ -92,6 +93,19 @@ pub fn finish(
         .contract_relations = relation_stats.implementations,
         .generic_calls = generic_calls.generic_calls,
         .local_semantics_complete = true,
+    };
+}
+
+fn lowerModuleConditions(allocator: std.mem.Allocator, graph: *module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput) !void {
+    var writer = @import("writer.zig").Writer.init(allocator, graph);
+    for (files, 0..) |file, file_index| for (file.tree.roots) |root| {
+        const statement = file.tree.ifStatement(root) orelse continue;
+        if (!statement.comptime_selection) continue;
+        const expression = try parameterized_lowerer.lowerConcreteExpression(graph, &writer, @intCast(file_index), file.tree, file.source, statement.condition);
+        try graph.conditions.append(allocator, .{
+            .source = .{ .file_index = @intCast(file_index), .offset = file.tree.location(root).offset },
+            .expression = expression,
+        });
     };
 }
 
