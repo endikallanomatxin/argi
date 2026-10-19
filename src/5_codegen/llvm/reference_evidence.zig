@@ -13,6 +13,57 @@ pub fn storageViewType() c.LLVMTypeRef {
     return c.LLVMStructType(&fields, fields.len, 0);
 }
 
+/// Construct the private view without turning missing state into permission.
+pub fn storageView(builder: c.LLVMBuilderRef, cleanup: ?c.LLVMValueRef, references_: ?c.LLVMValueRef) !c.LLVMValueRef {
+    var result = c.LLVMConstNull(storageViewType());
+    for ([_]?c.LLVMValueRef{ cleanup, references_ }, 0..) |pointer, index| if (pointer) |value| {
+        if (value == null) continue;
+        if (c.LLVMGetTypeKind(c.LLVMTypeOf(value)) != c.LLVMPointerTypeKind) return error.InvalidReferenceEvidenceStorage;
+        result = c.LLVMBuildInsertValue(builder, result, value, @intCast(index), "reference.storage.view");
+    };
+    return result;
+}
+
+pub fn cleanupPointer(builder: c.LLVMBuilderRef, view: c.LLVMValueRef) !c.LLVMValueRef {
+    if (c.LLVMTypeOf(view) != storageViewType()) return error.InvalidReferenceEvidenceStorage;
+    return c.LLVMBuildExtractValue(builder, view, 0, "reference.cleanup");
+}
+
+// An absent sidecar is legal at boundaries that do not transport evidence.
+// Never dereference it speculatively: LLVM select does not guard a load/store.
+pub fn referencesPointer(builder: c.LLVMBuilderRef, view: c.LLVMValueRef) !c.LLVMValueRef {
+    if (c.LLVMTypeOf(view) != storageViewType()) return error.InvalidReferenceEvidenceStorage;
+    return c.LLVMBuildExtractValue(builder, view, 1, "reference.leaves");
+}
+
+pub fn loadOptional(builder: c.LLVMBuilderRef, storage: c.LLVMValueRef) c.LLVMValueRef {
+    const origin = c.LLVMGetInsertBlock(builder);
+    const function = c.LLVMGetBasicBlockParent(origin);
+    const present = c.LLVMAppendBasicBlock(function, "reference.present");
+    const done = c.LLVMAppendBasicBlock(function, "reference.loaded");
+    _ = c.LLVMBuildCondBr(builder, c.LLVMBuildIsNull(builder, storage, "reference.absent"), done, present);
+    c.LLVMPositionBuilderAtEnd(builder, present);
+    const value = c.LLVMBuildLoad2(builder, storageViewType(), storage, "reference.view");
+    _ = c.LLVMBuildBr(builder, done);
+    c.LLVMPositionBuilderAtEnd(builder, done);
+    const result = c.LLVMBuildPhi(builder, storageViewType(), "reference.loaded.view");
+    var values = [_]c.LLVMValueRef{ c.LLVMConstNull(storageViewType()), value };
+    var blocks = [_]c.LLVMBasicBlockRef{ origin, present };
+    c.LLVMAddIncoming(result, &values, &blocks, values.len);
+    return result;
+}
+
+pub fn storeOptional(builder: c.LLVMBuilderRef, storage: c.LLVMValueRef, value: ?c.LLVMValueRef) void {
+    const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(builder));
+    const present = c.LLVMAppendBasicBlock(function, "reference.writable");
+    const done = c.LLVMAppendBasicBlock(function, "reference.stored");
+    _ = c.LLVMBuildCondBr(builder, c.LLVMBuildIsNull(builder, storage, "reference.absent"), done, present);
+    c.LLVMPositionBuilderAtEnd(builder, present);
+    _ = c.LLVMBuildStore(builder, value orelse c.LLVMConstNull(storageViewType()), storage);
+    _ = c.LLVMBuildBr(builder, done);
+    c.LLVMPositionBuilderAtEnd(builder, done);
+}
+
 pub fn valueType(layout: *references.Layout, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) !?c.LLVMTypeRef {
     const count = try layout.count(allocator, graph, ty);
     if (count == 0) return null;
@@ -70,8 +121,9 @@ test "native reference evidence projects distinct sibling ranges through the pri
         const projection: references.Projection = .{ .field = @intCast(index) };
         const input = (try projectStorage(builder, &layout, a, &graph, @enumFromInt(2), input_storage, projection)).?;
         const output = (try projectStorage(builder, &layout, a, &graph, @enumFromInt(2), output_storage, projection)).?;
-        const value = c.LLVMBuildLoad2(builder, storageViewType(), input, "reference.storage.view");
-        _ = c.LLVMBuildStore(builder, value, output);
+        const value = loadOptional(builder, input);
+        const forwarded = try storageView(builder, try cleanupPointer(builder, value), try referencesPointer(builder, value));
+        storeOptional(builder, output, forwarded);
     }
     const output = c.LLVMBuildLoad2(builder, sidecar, output_storage, "returned.evidence");
     try signature.returnWithEvidence(builder, function, signature.input(function), output);

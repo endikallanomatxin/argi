@@ -22,9 +22,10 @@ main() -> (.status_code: Int32 = 0) := {
         owner :: Resource = Resource(.counter = $&counter, .id = 1)
         alias := $&owner
         chain := alias
-        chain&= make(.counter = $&counter, .id = 2)
+        reborrow := $&chain&
+        reborrow&= make(.counter = $&counter, .id = 2)
         if counter.count != 1 or counter.order != 21 { abort }
-        if chain&.id != 2 { abort }
+        if reborrow&.id != 2 { abort }
     }
     if counter.count != 2 or counter.order != 212 { abort }
     {
@@ -55,5 +56,15 @@ main() -> (.status_code: Int32 = 0) := {
         if counter.count != 9 { abort }
     }
     if counter.count != 10 { abort }
+    {
+        first :: Resource = Resource(.counter = $&counter, .id = 1)
+        second :: Resource = Resource(.counter = $&counter, .id = 2)
+        target :: $&Resource = $&first
+        indirect := $&target
+        indirect&= $&second
+        observed := indirect&
+        if observed&.id != 2 { abort }
+    }
+    if counter.count != 12 { abort }
     status_code = 42
 }
