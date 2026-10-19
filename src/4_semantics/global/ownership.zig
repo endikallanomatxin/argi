@@ -634,8 +634,15 @@ pub const Resolver = struct {
         const context = reach_context.Context.fromGlobal(visible, owner_function);
         try self.prepareAutoDeinit(binding, context, module_index);
         const ty = self.graph.node(target).ty orelse return value;
-        var plan = try self.buildAutoDeinit(binding, target, ty, context, module_index) orelse return value;
-        plan.storage = .{ .projected = .{ .binding = binding, .target = target } };
+        const record = self.graph.binding(binding);
+        const plan = try self.buildAutoDeinit(
+            .{ .projected = .{ .binding = binding, .target = target } },
+            target,
+            ty,
+            context,
+            module_index,
+            record.initialization == null and !record.deferred_initialization,
+        ) orelse return value;
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
         try self.graph.auto_deinits.append(self.allocator, plan);
         const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
@@ -919,7 +926,14 @@ pub const Resolver = struct {
                 );
             }
         }
-        const descriptor = try self.buildAutoDeinit(binding, target, record.ty, cleanup_context, module_index);
+        const descriptor = try self.buildAutoDeinit(
+            .{ .binding = binding },
+            target,
+            record.ty,
+            cleanup_context,
+            module_index,
+            record.initialization == null and !record.deferred_initialization,
+        );
         var cleanup_node: ?global_sg.GlobalNodeId = null;
         if (descriptor) |resolved| {
             const auto_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
@@ -934,35 +948,34 @@ pub const Resolver = struct {
 
     fn buildAutoDeinit(
         self: *Resolver,
-        binding: global_sg.GlobalBindingId,
+        storage: @FieldType(global_sg.AutoDeinit, "storage"),
         target: global_sg.GlobalNodeId,
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
+        partial: bool,
     ) !?global_sg.AutoDeinit {
         // References never own their pointee.
         if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
-            const record = self.graph.binding(binding);
             // Vacant records can acquire fields before a whole value exists.
             // Retain their selected structural alternative, but do not expand
             // it for ordinary complete initializers or deferred temporaries.
             return .{
-                .storage = .{ .binding = binding },
+                .storage = storage,
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
-                .fields = if (record.initialization == null and !record.deferred_initialization and global_types.fields(self.graph, ty) != null)
+                .fields = if (partial and global_types.fields(self.graph, ty) != null)
                     try self.buildAutoChildren(target, ty, context, module_index, true)
                 else
                     .{ .start = 0, .len = 0 },
             };
         }
 
-        const record = self.graph.binding(binding);
-        const children = try self.buildAutoChildren(target, ty, context, module_index, record.initialization == null and !record.deferred_initialization);
+        const children = try self.buildAutoChildren(target, ty, context, module_index, partial);
         if (children.len == 0) return null;
-        return .{ .storage = .{ .binding = binding }, .deinit_fn = null, .fields = children };
+        return .{ .storage = storage, .deinit_fn = null, .fields = children };
     }
 
     fn buildAutoField(
