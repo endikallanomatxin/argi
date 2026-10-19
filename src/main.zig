@@ -38,7 +38,7 @@ fn printHelp() void {
     std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
     std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
     std.debug.print("  run --vm <directory>                  Execute the experimental scalar/aggregate bytecode subset\n", .{});
-    std.debug.print("  repl [--sysroot <path>]                Start the experimental persistent bytecode REPL\n", .{});
+    std.debug.print("  repl [flags]                           Start the experimental persistent bytecode REPL\n", .{});
     std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
     std.debug.print("  init [name]                            Create an executable package\n", .{});
     std.debug.print("  init --lib [name]                      Create a library package\n", .{});

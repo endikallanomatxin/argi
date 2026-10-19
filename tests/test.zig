@@ -14084,3 +14084,21 @@ test "feature_tests/execution/115_computed_transient_types" {
     try runExpect("tests/feature_tests/execution/115_computed_transient_types", 42);
     try vmExpect("tests/feature_tests/execution/115_computed_transient_types", 42, null);
 }
+
+test "bytecode CLI execution budgets" {
+    const path = "tests/feature_tests/execution/115_computed_transient_types";
+    const bounded = try runChild(&.{ argi_bin, "run", "--vm", "--frontend-jobs", "1", "--vm-instructions", "0", path });
+    defer std.testing.allocator.free(bounded.stdout);
+    defer std.testing.allocator.free(bounded.stderr);
+    try expect(bounded.term == .exited and bounded.term.exited != 0);
+    try expect(std.mem.indexOf(u8, bounded.stderr, "ExecutionInstructionLimit") != null);
+    const allowed = try runChild(&.{ argi_bin, "run", "--vm", "--frontend-jobs", "1", "--vm-instructions", "1000000", "--vm-call-depth", "128", "--vm-value-cells", "1000000", path });
+    defer std.testing.allocator.free(allowed.stdout);
+    defer std.testing.allocator.free(allowed.stderr);
+    try expect(allowed.term == .exited and allowed.term.exited == 42);
+    const invalid = try runChild(&.{ argi_bin, "repl", "--vm-instructions", "-1" });
+    defer std.testing.allocator.free(invalid.stdout);
+    defer std.testing.allocator.free(invalid.stderr);
+    try expect(invalid.term == .exited and invalid.term.exited != 0);
+    try expect(std.mem.indexOf(u8, invalid.stderr, "InvalidExecutionLimit") != null);
+}

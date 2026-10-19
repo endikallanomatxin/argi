@@ -21,13 +21,17 @@ const help =
 
 pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const []const u8) !void {
     if (args.len == 1 and std.mem.eql(u8, args[0], "--help")) {
-        std.debug.print("Usage: argi repl [--sysroot <path>]\n{s}", .{help});
+        std.debug.print("Usage: argi repl [--sysroot <path>] [execution limits]\nLimits: {s}\n{s}", .{ @import("execution_options.zig").help, help });
         return;
     }
     var options: sf.CoreResolutionOptions = .{ .environ_map = environ };
-    if (args.len != 0) {
-        if (args.len != 2 or !std.mem.eql(u8, args[0], "--sysroot")) return error.InvalidReplArguments;
-        options.explicit_sysroot = args[1];
+    var limits: @import("../execution/vm.zig").Limits = .{};
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        if (try @import("execution_options.zig").consume(&limits, args, &index)) continue;
+        if (!std.mem.eql(u8, args[index], "--sysroot") or index + 1 >= args.len) return error.InvalidReplArguments;
+        index += 1;
+        options.explicit_sysroot = args[index];
     }
     // The frontend owns initial source/module views for the whole session.
     // The host grants only the explicit output adapters installed below.
@@ -45,7 +49,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
         return err;
     };
     var session: interactive.Interactive = undefined;
-    try session.initPrepared(std.heap.page_allocator, diagnostics.source_files, prepared, .{});
+    try session.initPrepared(std.heap.page_allocator, diagnostics.source_files, prepared, limits);
     defer session.deinit();
     try session.enableImports(io, ".");
     var input_buffer: [64 * 1024]u8 = undefined;
@@ -303,4 +307,17 @@ test "REPL standard prelude prints ordinary text across reset" {
         try session.diagnostics.dump();
         return err;
     };
+}
+
+test "REPL configured instruction budget rejects execution and permits reset" {
+    var session: interactive.Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{ .instructions = 0 });
+    defer session.deinit();
+    try std.testing.expectError(error.ExecutionInstructionLimit, session.submitStatements("value ::= 42"));
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "ExecutionInstructionLimit") != null);
+    try session.reset();
+    try std.testing.expectEqual(.fresh, session.runtime.context.state);
+    try std.testing.expectEqual(@as(usize, 0), session.limits.instructions);
+    try std.testing.expectEqual(@as(usize, 0), session.compiler.semantic.resolvers.expressions.session_bindings.items.len);
 }

@@ -15,10 +15,16 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     const allocator = arena.allocator();
     var path: ?[]const u8 = null;
     var jobs: usize = 1;
+    var limits: vm.Limits = .{};
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--vm")) continue;
+        if (std.mem.eql(u8, arg, "--help")) {
+            std.debug.print("Usage: argi run --vm <directory> [--frontend-jobs N] [execution limits]\nLimits: {s}\n", .{@import("execution_options.zig").help});
+            return 0;
+        }
+        if (try @import("execution_options.zig").consume(&limits, args, &index)) continue;
         if (std.mem.eql(u8, arg, "--frontend-jobs")) {
             index += 1;
             if (index >= args.len) return error.InvalidVmArguments;
@@ -74,7 +80,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
         try report(&diagnostics, graph, compiler.source, message);
         return error.CompilationFailed;
     };
-    var executor = vm.Vm.init(allocator, program, .{}) catch |err| {
+    var executor = vm.Vm.init(allocator, program, limits) catch |err| {
         if (err == error.MissingHostBinding or err == error.IncompatibleHostBinding or err == error.AmbiguousHostBinding) {
             const host = @import("../execution/host.zig");
             if (host.findFailure(program, &.{})) |failure| {
@@ -98,17 +104,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     return @intCast(@mod(result[0].integer, 256));
 }
 fn report(diagnostics: *diag.Diagnostics, graph: *const g.GlobalSemanticGraph, source: p.SourceRef, message: []const u8) !void {
-    var location = @import("../2_tokens/token.zig").Location{ .file = @enumFromInt(0), .offset = source.offset };
-    if (source.file_index < graph.files.items.len) {
-        const file = graph.files.items[source.file_index];
-        const dir = graph.text(graph.modules.items[@intFromEnum(file.module)].dir);
-        for (diagnostics.source_db.files, 0..) |candidate, i| {
-            if (std.mem.eql(u8, std.fs.path.basename(candidate.path), graph.text(file.path)) and std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir)) {
-                location.file = diagnostics.source_db.fileId(i);
-                break;
-            }
-        }
-    }
+    const location = @import("../4_semantics/global/source_location.zig").location(graph, diagnostics, source);
     try diagnostics.add(location, .semantic, "{s}", .{message});
     try diagnostics.dump();
 }
