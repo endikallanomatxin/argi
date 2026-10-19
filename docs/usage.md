@@ -179,8 +179,8 @@ or ambiguous adapters reject a command before publication. The logical `ffi`
 capability remains checked by the frontend.
 Callbacks receive integer copies, and results are range-checked before publication.
 Callback failures poison execution. `argi repl` registers stdout/stderr adapters;
-`argi run --vm` currently registers none. Selected core heap acquisition and
-release declarations use context-owned byte storage instead of native allocation;
+`argi run --vm` currently registers none. Registered core heap acquisition and
+release primitives use context-owned byte storage instead of native allocation;
 raw addresses remain virtual tokens. Checked core establishment can form references
 to integers and numeric records/arrays in acquired storage;
 reads require initialized bytes and release invalidates every view. Erased anchor

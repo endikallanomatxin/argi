@@ -41,6 +41,8 @@ pub const specs = [_]Spec{
         "#(.t: Type)(.slot: $&t) -> ()",
     } },
     .{ .primitive = .trusted_opaque_mark_empty, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_mark_empty", .signatures = &.{"#(.t: Type)(.storage: $&t) -> ()"} },
+    .{ .primitive = .raw_released_storage, .path = "core/libc/libc.rg", .name = "_free", .signatures = &.{"(.address: UIntNative) -> ()"}, .declaration = .extern_function },
+    .{ .primitive = .raw_released_storage, .path = "core/libc/libc.rg", .name = "_aligned_free", .signatures = &.{"(.address: UIntNative) -> ()"}, .declaration = .extern_function },
     .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_malloc", .signatures = &.{"(.size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
     .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_aligned_alloc", .signatures = &.{"(.alignment: UIntNative, .size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
 };
@@ -206,6 +208,9 @@ pub const Transfer = struct {
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
         .none, .float_math => .{ .value = .empty },
+        // Physical release identity selects an execution boundary. Language
+        // consumption remains in checked allocation-owner cleanup, not raw ABI.
+        .raw_released_storage => .{ .value = .empty },
         .raw_allocated_storage => .{ .value = .raw_storage },
         // Body-backed page acquisition retains the Argi UIntNative ABI;
         // libc acquisition identity also selects its pointer-return ABI.

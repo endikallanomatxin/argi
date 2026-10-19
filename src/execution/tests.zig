@@ -2072,8 +2072,8 @@ test "bytecode acquired establishment requires a checked primitive and matching 
     });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 1, .len = 1 } });
     var layout: @import("../5_codegen/bytecode/numeric_layout.zig").Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
-    const code = [_]b.Instruction{
-        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 1, .address = 0, .layout = &layout } } },
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 1, .address = 0, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() } } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
     const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(2) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code }};
@@ -2083,4 +2083,52 @@ test "bytecode acquired establishment requires a checked primitive and matching 
     try b.verify(a, program);
     layout.size = 8;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    layout.size = 4;
+    code[0].op.acquired_reference.permission = .read_only;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[0].op.acquired_reference.permission = .read_write;
+    code[0].op.acquired_reference.endian = if (graph.target.stdTarget().cpu.arch.endian() == .little) .big else .little;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}
+
+test "bytecode memory adapters consume registered identities rather than declaration names" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = "_free(.address: UIntNative) -> (): ExternFunction\nmain := () -> () {}" },
+        .{ .path = "core/libc/libc.rg", .origin = .bundled_core, .code = "_free(.address: UIntNative) -> (): ExternFunction\n_aligned_free(.address: UIntNative) -> (): ExternFunction\n_malloc(.size: UIntNative) -> (.address: UIntNative): ExternFunction\n_aligned_alloc(.alignment: UIntNative, .size: UIntNative) -> (.address: UIntNative): ExternFunction" },
+        .{ .path = "ffi_core/main.rg", .origin = .bundled_core, .code = "ForeignFunctionInterface: Type = ()" },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+        try diagnostics.dump();
+        return err;
+    };
+    const memory = @import("../5_codegen/bytecode/memory_boundary.zig");
+    var releases: usize = 0;
+    var ordinary: usize = 0;
+    for (graph.functions.items, 0..) |function, index| {
+        const name = graph.text(graph.declaration(function.declaration).name);
+        if (!std.mem.eql(u8, name, "_free") and !std.mem.eql(u8, name, "_aligned_free")) continue;
+        const id: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(index);
+        if (function.safety_primitive == .raw_released_storage) {
+            try std.testing.expect(memory.classify(graph, id).? == .release);
+            releases += 1;
+            // Classification remains valid with no filename or declaration-name
+            // spelling available after the frontend has selected the identity.
+            const declaration = &graph.declarations.items[@intFromEnum(function.declaration)];
+            declaration.name = .{ .start = 0, .len = 0 };
+            declaration.source.file_index = std.math.maxInt(u32);
+            try std.testing.expect(memory.classify(graph, id).? == .release);
+        } else {
+            try std.testing.expect(memory.classify(graph, id) == null);
+            ordinary += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 2), releases);
+    try std.testing.expectEqual(@as(usize, 1), ordinary);
 }

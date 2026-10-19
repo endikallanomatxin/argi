@@ -438,8 +438,7 @@ pub const Vm = struct {
                     const address = std.math.cast(usize, (try slots.get(x.address)).integer) orelse return error.ExecutionInvalidAcquisition;
                     const storage = &self.context().storage;
                     const range = try storage.acquisitions.resolveAddress(storage, address, x.layout.size, x.layout.alignment);
-                    const permission = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
-                    const reference = try storage.acquiredReference(range.handle, range.offset, x.layout, unit.graph.target.stdTarget().cpu.arch.endian(), permission);
+                    const reference = try storage.acquiredReference(range.handle, range.offset, x.layout, x.endian, x.permission);
                     try slots.put(x.dst, .{ .reference = reference });
                 },
                 .erase_reference => |x| {

@@ -1130,7 +1130,7 @@ const FunctionLower = struct {
                     return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
                 if (self.parent.cleanup_types[@intFromEnum(target.pointer.child)]) return self.parent.reject(node.source, "acquired reference requiring cleanup evidence");
                 const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child) catch return self.parent.reject(node.source, "acquired reference to nonnumeric storage");
-                _ = try self.emit(node.source, .{ .acquired_reference = .{ .dst = dst, .address = source_slot, .layout = layout } });
+                _ = try self.emit(node.source, .{ .acquired_reference = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() } });
             },
             .address_of => |value| {
                 const target = try self.place(value);

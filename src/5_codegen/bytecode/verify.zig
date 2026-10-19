@@ -110,6 +110,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (target != .pointer or !types.isBuiltin(program.graph, f.slots[x.address], .UIntNative)) return error.InvalidBytecode;
                     var arena = std.heap.ArenaAllocator.init(allocator);
                     defer arena.deinit();
+                    if (x.permission != target.pointer.mutability or x.endian != program.graph.target.stdTarget().cpu.arch.endian()) return error.InvalidBytecode;
                     if (owning_types[@intFromEnum(target.pointer.child)]) return error.InvalidBytecode;
                     const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, target.pointer.child) catch return error.InvalidBytecode;
                     if (!@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;

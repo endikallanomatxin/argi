@@ -1,4 +1,3 @@
-const std = @import("std");
 const g = @import("../../4_semantics/global/graph.zig");
 const types = @import("../../4_semantics/global/types.zig");
 
@@ -13,15 +12,10 @@ pub fn classify(graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) ?Op
     for (fields) |field| if (!types.isBuiltin(graph, field.ty, .UIntNative)) return null;
     if (function.safety_primitive == .raw_allocated_storage) {
         if (function.output.len != 1 or !types.isBuiltin(graph, graph.fields.items[function.output.start].ty, .UIntNative)) return null;
-        if (fields.len == 1 and std.mem.eql(u8, graph.text(fields[0].name), "size")) return .{ .allocate = .{ .size = 0, .alignment = null } };
-        if (fields.len == 2 and std.mem.eql(u8, graph.text(fields[0].name), "alignment") and std.mem.eql(u8, graph.text(fields[1].name), "size")) return .{ .allocate = .{ .size = 1, .alignment = 0 } };
+        if (fields.len == 1) return .{ .allocate = .{ .size = 0, .alignment = null } };
+        if (fields.len == 2) return .{ .allocate = .{ .size = 1, .alignment = 0 } };
         return null;
     }
-    if (fields.len != 1 or function.output.len != 0 or !std.mem.eql(u8, graph.text(fields[0].name), "address")) return null;
-    const source = graph.declaration(function.declaration).source;
-    if (source.file_index >= graph.files.items.len) return null;
-    const file = graph.files.items[source.file_index];
-    if (!graph.modules.items[@intFromEnum(file.module)].is_bundled_core or !std.mem.eql(u8, graph.text(file.path), "libc.rg")) return null;
-    const name = graph.text(graph.declaration(function.declaration).name);
-    return if (std.mem.eql(u8, name, "_free") or std.mem.eql(u8, name, "_aligned_free")) .release else null;
+    if (function.safety_primitive == .raw_released_storage and fields.len == 1 and function.output.len == 0) return .release;
+    return null;
 }
