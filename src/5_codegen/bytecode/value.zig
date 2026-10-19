@@ -28,6 +28,8 @@ pub const Value = union(enum) {
     integer: i128,
     boolean: bool,
     unit,
+    // An observed erased value carries no recoverable representation or loan.
+    erased,
     record: []const Value,
     array: []const Value,
     reference: Reference,

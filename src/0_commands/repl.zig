@@ -189,6 +189,7 @@ fn printValue(output: *std.Io.Writer, item: value.Value, depth: usize) std.Io.Wr
         .integer => |number| try output.print("{d}", .{number}),
         .boolean => |boolean| try output.writeAll(if (boolean) "true" else "false"),
         .unit => try output.writeAll("()"),
+        .erased => try output.writeAll("<opaque>"),
         .reference => try output.writeAll("<reference>"),
         .virtual_ => try output.writeAll("<virtual>"),
         .record, .array => |elements| {
@@ -341,6 +342,15 @@ test "REPL checked core allocations use virtual regions and explicit release" {
         try session.diagnostics.dump();
         return err;
     };
+    session.submitStatements("assume error_tracer ::= $&noop_error_tracer\nallocator ::= CAllocator(.ffi = ffi)\n{ result ::= allocate_bytes(.self = $&allocator, .size = 16, .alignment = 8)\nmatch result { ..error _ { abort } ..ok ~memory {} } }") catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
+    // The block's ordinary Allocation cleanup releases only its own region.
+    const regions = session.runtime.context.storage.acquisitions.entries.items;
+    try std.testing.expectEqual(@as(usize, 2), regions.len);
+    try std.testing.expect(regions[0].live);
+    try std.testing.expect(!regions[1].live);
     const raw = (try session.submitInput("address")).?.value.integer;
     try std.testing.expect(raw != 0);
     const range = try session.runtime.context.storage.acquisitions.resolveAddress(&session.runtime.context.storage, @intCast(raw), 16, 8);

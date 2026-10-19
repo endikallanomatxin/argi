@@ -124,7 +124,9 @@ pub const Instruction = struct {
         borrow: struct { dst: Slot, place: Place },
         load: struct { dst: Slot, place: Place },
         check_place: Place,
-        capture_write: struct { dst: Destination, place: Place, activate_cleanup: bool = false },
+        // Initialization activation and old-value destruction are independent:
+        // scalar fields can carry initialization flags without owning resources.
+        capture_write: struct { dst: Destination, place: Place, activate_cleanup: bool = false, require_cleanup: bool = true },
         // Lowering emits these three consecutively after RHS preparation.
         // Activation consumes the captured destination; store changes only data.
         check_write_cleanup: Destination,
@@ -178,7 +180,7 @@ pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize
     if (depth > 64 or @intFromEnum(ty) >= graph.types.items.len) return false;
     if (integerBounds(graph, ty) != null) return true;
     const semantic = graph.semanticType(ty);
-    if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void;
+    if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void or semantic.builtin == .Any;
     if (semantic == .virtual) return true;
     if (semantic == .pointer) return types.isBuiltin(graph, semantic.pointer.child, .Any) or supportedType(graph, semantic.pointer.child, depth + 1);
     if (types.arrayElement(graph, ty)) |element| return supportedType(graph, element, depth + 1);
@@ -214,6 +216,7 @@ pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bo
         .integer => |n| if (integerBounds(graph, ty)) |b| n >= b.minimum and n <= b.maximum else false,
         .boolean => graph.semanticType(ty) == .builtin and graph.semanticType(ty).builtin == .Bool,
         .unit => graph.semanticType(ty) == .builtin and graph.semanticType(ty).builtin == .Void,
+        .erased => types.isBuiltin(graph, ty, .Any),
         .array => |values| blk: {
             const element = types.arrayElement(graph, ty) orelse break :blk false;
             if (types.arrayLength(graph, ty).? != values.len) break :blk false;

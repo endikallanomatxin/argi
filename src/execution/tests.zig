@@ -765,6 +765,16 @@ test "bytecode write destinations capture aliases before later writes" {
     var tracked = try vm.Vm.init(a, program, .{});
     defer tracked.deinit();
     try std.testing.expect((try tracked.run(@enumFromInt(0), &.{}))[0].boolean);
+    // Initialization flags also describe scalar fields. Replacing an already
+    // initialized scalar must preserve activation without requiring destruction.
+    code[2].op.constant.value = .{ .boolean = true };
+    try std.testing.expectError(error.ExecutionPendingCleanup, tracked.run(@enumFromInt(0), &.{}));
+    code[5].op.capture_write.require_cleanup = false;
+    var scalar_replacement = try vm.Vm.init(a, program, .{});
+    defer scalar_replacement.deinit();
+    try std.testing.expect((try scalar_replacement.run(@enumFromInt(0), &.{}))[0].boolean);
+    code[5].op.capture_write.require_cleanup = true;
+    code[2].op.constant.value = .{ .boolean = false };
     var bounded = try vm.Vm.init(a, program, .{ .instructions = 11 });
     defer bounded.deinit();
     try std.testing.expectError(error.ExecutionInstructionLimit, bounded.run(@enumFromInt(0), &.{}));

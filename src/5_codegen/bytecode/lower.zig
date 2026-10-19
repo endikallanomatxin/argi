@@ -689,7 +689,7 @@ const FunctionLower = struct {
     fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type, activate_cleanup: bool) !b.Destination {
         const destination: b.Destination = @intCast(self.write_destinations.items.len);
         try self.write_destinations.append(self.parent.allocator, ty);
-        _ = try self.emit(source, .{ .capture_write = .{ .dst = destination, .place = place_, .activate_cleanup = activate_cleanup } });
+        _ = try self.emit(source, .{ .capture_write = .{ .dst = destination, .place = place_, .activate_cleanup = activate_cleanup, .require_cleanup = self.parent.cleanup_types[@intFromEnum(ty)] } });
         return destination;
     }
     fn addressedPlace(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {

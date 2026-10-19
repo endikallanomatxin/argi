@@ -182,7 +182,10 @@ Callback failures poison execution. `argi repl` registers stdout/stderr adapters
 `argi run --vm` currently registers none. Selected core heap acquisition and
 release declarations use context-owned byte storage instead of native allocation;
 raw addresses remain virtual tokens. Checked core establishment can form integer references into acquired storage;
-reads require initialized bytes and release invalidates every view. Aggregate and
+reads require initialized bytes and release invalidates every view. Erased anchor
+reads check the backing value but expose no concrete representation. Core
+`CAllocator` allocations execute ordinary `Allocation` cleanup and release their
+context-owned regions. Aggregate and
 resource-bearing elements still require additional establishment lowering. Compile-time evaluation continues to
 reject foreign calls.
 

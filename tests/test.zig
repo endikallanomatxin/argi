@@ -14120,3 +14120,9 @@ test "feature_tests/execution/118_acquired_scalar_reference" {
     try runExpect("tests/feature_tests/execution/118_acquired_scalar_reference", 42);
     try vmExpect("tests/feature_tests/execution/118_acquired_scalar_reference", 42, null);
 }
+
+test "feature_tests/execution/119_allocation_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/119_allocation_cleanup");
+    try runExpect("tests/feature_tests/execution/119_allocation_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/119_allocation_cleanup", 42, null);
+}

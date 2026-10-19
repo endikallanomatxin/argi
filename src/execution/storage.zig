@@ -58,6 +58,7 @@ pub const WriteDestination = struct {
     // Index in this target frame's immutable compiler-selected layout. This
     // belongs to the referent, never to the local slot holding a reference.
     cleanup_entry: ?usize,
+    require_cleanup: bool = true,
 };
 
 // Context-local storage. Its allocator is an execution arena; references can neither
@@ -587,6 +588,7 @@ pub const Storage = struct {
     // Validate compiler-selected cleanup state independently of value storage.
     // The executor orders this check, the write and subsequent activation.
     pub fn checkWriteCleanup(self: *Storage, destination: WriteDestination) !usize {
+        if (!destination.require_cleanup) return 0;
         var checked: usize = 0;
         if (destination.cleanup_entry) |index| {
             try self.validateContext(destination.reference);

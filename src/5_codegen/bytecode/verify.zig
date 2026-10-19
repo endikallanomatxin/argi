@@ -15,6 +15,8 @@ const choiceVariant = b.choiceVariant;
 // Structural validation precedes dataflow: even unreachable instructions may
 // never address invalid slots, call signatures or branch targets.
 pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
+    const owning_types = try @import("../cleanup_layout.zig").owningTypes(allocator, program.graph);
+    defer allocator.free(owning_types);
     if (!program.graph.target.isNative()) return error.UnsupportedExecutionTarget;
     if (program.functions.len != program.graph.functions.items.len) return error.InvalidBytecode;
     if (program.session) |session| {
@@ -244,6 +246,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (x.dst >= f.write_destinations.len) return error.InvalidBytecode;
                     const target = try placeInfo(program, f.slots, x.place);
                     if (!target.writable or !types.equal(program.graph, f.write_destinations[x.dst], target.ty)) return error.InvalidBytecode;
+                    if (!x.require_cleanup and owning_types[@intFromEnum(target.ty)]) return error.InvalidBytecode;
                 },
                 .check_write_cleanup, .activate_write_cleanup => |destination| {
                     if (destination >= f.write_destinations.len) return error.InvalidBytecode;

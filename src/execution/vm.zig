@@ -541,6 +541,9 @@ pub const Vm = struct {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, true);
                     var value = try self.context().storage.read(reference);
+                    // Reading an erased anchor checks its actual referent, but
+                    // cannot expose that referent's concrete representation.
+                    if (types.isBuiltin(unit.graph, f.slots[x.dst], .Any)) value = .erased;
                     // Immutable byte backing is compact and untyped. A typed
                     // load interprets CChar signedness using the target width.
                     if (value == .integer and self.context().storage.frames.items[@intFromEnum(reference.frame)].duration == .static) {
@@ -558,7 +561,9 @@ pub const Vm = struct {
                 .capture_write => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, false);
-                    current.write_destinations[x.dst] = try self.context().storage.captureResolvedWrite(reference, x.activate_cleanup);
+                    var destination = try self.context().storage.captureResolvedWrite(reference, x.activate_cleanup);
+                    destination.require_cleanup = x.require_cleanup;
+                    current.write_destinations[x.dst] = destination;
                 },
                 .check_write_cleanup => |id| {
                     const destination = current.write_destinations[id] orelse return error.UninitializedBytecodeDestination;
