@@ -1,5 +1,6 @@
 const cleanup_plan = @import("../cleanup_plan.zig");
 const reference_evidence = @import("reference_evidence.zig");
+const reference_layout = @import("../reference_layout.zig");
 const std = @import("std");
 const integer = @import("../integer_arithmetic.zig");
 const cleanup_layout = @import("../cleanup_layout.zig");
@@ -147,6 +148,7 @@ pub const CodeGenerator = struct {
     trace_locations: std.ArrayList(primitives.SourceRef) = .empty,
     cleanup_counts: cleanup_layout.Counts = .{},
     cleanup_refresh: cleanup_state.RefreshFunctions = .{},
+    reference_layouts: reference_layout.Layout = .{},
     cleanup_bindings: []const bool,
     default_location_source: ?primitives.SourceRef = null,
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
@@ -197,6 +199,7 @@ pub const CodeGenerator = struct {
         self.trace_locations.deinit(self.allocator);
         self.cleanup_counts.deinit(self.allocator);
         self.cleanup_refresh.deinit(self.allocator);
+        self.reference_layouts.deinit(self.allocator);
         self.allocator.free(self.cleanup_bindings);
     }
 
@@ -935,13 +938,18 @@ pub const CodeGenerator = struct {
     // Reference evidence has separate storage from the pointer slot's own
     // initialization flags. Copies snapshot it; retargeting updates only the
     // selected binding. The entry allocation also covers conditional writes.
+    fn referenceValueType(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !c.LLVMTypeRef {
+        if (self.graph.semanticType(ty) == .pointer) return reference_evidence.storageViewType();
+        return (try reference_evidence.valueType(&self.reference_layouts, self.allocator, self.graph, ty)) orelse error.InvalidReferenceEvidenceStorage;
+    }
+
     fn referenceViewStorage(self: *CodeGenerator, binding: graph_mod.GlobalBindingId) !c.LLVMValueRef {
         if (self.bindings.get(binding).?.reference_view) |storage| return storage;
-        if (self.graph.semanticType(self.graph.binding(binding).ty) != .pointer) return error.InvalidReferenceEvidenceStorage;
+        const evidence_type = try self.referenceValueType(self.graph.binding(binding).ty);
         if (self.global_bindings.contains(binding)) {
-            const storage = c.LLVMAddGlobal(self.module, reference_evidence.storageViewType(), "reference.view");
+            const storage = c.LLVMAddGlobal(self.module, evidence_type, "reference.view");
             c.LLVMSetLinkage(storage, c.LLVMInternalLinkage);
-            c.LLVMSetInitializer(storage, c.LLVMConstNull(reference_evidence.storageViewType()));
+            c.LLVMSetInitializer(storage, c.LLVMConstNull(evidence_type));
             self.bindings.getPtr(binding).?.reference_view = storage;
             return storage;
         }
@@ -950,15 +958,36 @@ pub const CodeGenerator = struct {
         const builder = c.LLVMCreateBuilder() orelse return CodegenError.ModuleCreationFailed;
         defer c.LLVMDisposeBuilder(builder);
         if (c.LLVMGetFirstInstruction(entry)) |first| c.LLVMPositionBuilderBefore(builder, first) else c.LLVMPositionBuilderAtEnd(builder, entry);
-        const storage = c.LLVMBuildAlloca(builder, reference_evidence.storageViewType(), "reference.view");
-        _ = c.LLVMBuildStore(builder, c.LLVMConstNull(reference_evidence.storageViewType()), storage);
+        const storage = c.LLVMBuildAlloca(builder, evidence_type, "reference.view");
+        _ = c.LLVMBuildStore(builder, c.LLVMConstNull(evidence_type), storage);
         self.bindings.getPtr(binding).?.reference_view = storage;
         return storage;
     }
 
     fn storeReferenceView(self: *CodeGenerator, binding: graph_mod.GlobalBindingId, view: ?c.LLVMValueRef) !void {
         const storage = self.bindings.get(binding).?.reference_view orelse if (view != null) try self.referenceViewStorage(binding) else return;
-        _ = c.LLVMBuildStore(self.builder, view orelse c.LLVMConstNull(reference_evidence.storageViewType()), storage);
+        const evidence_type = try self.referenceValueType(self.graph.binding(binding).ty);
+        _ = c.LLVMBuildStore(self.builder, view orelse c.LLVMConstNull(evidence_type), storage);
+    }
+
+    // Companion storage follows semantic projections, independently of the
+    // address occupied by the language value (including zero-sized fields).
+    fn referenceStorageForNode(self: *CodeGenerator, id: graph_mod.GlobalNodeId) anyerror!?c.LLVMValueRef {
+        return switch (self.graph.node(id).content) {
+            .binding_use => |binding| if (self.bindings.get(binding)) |storage| storage.reference_view else null,
+            .struct_field_access => |field| blk: {
+                const parent = try self.referenceStorageForNode(field.value) orelse break :blk null;
+                break :blk try reference_evidence.projectStorage(self.builder, &self.reference_layouts, self.allocator, self.graph, self.graph.node(field.value).ty.?, parent, .{ .field = field.field_index });
+            },
+            else => null,
+        };
+    }
+
+    fn storeProjectedReferenceView(self: *CodeGenerator, target: ?graph_mod.GlobalNodeId, value: TypedValue) !void {
+        const node = target orelse return;
+        const storage = try self.referenceStorageForNode(node) orelse return;
+        const evidence_type = try self.referenceValueType(self.graph.node(node).ty.?);
+        _ = c.LLVMBuildStore(self.builder, value.reference_view orelse c.LLVMConstNull(evidence_type), storage);
     }
 
     fn genBlock(self: *CodeGenerator, block_id: graph_mod.GlobalBlockId) !?TypedValue {
@@ -1152,7 +1181,7 @@ pub const CodeGenerator = struct {
             .type_ref = storage.type_ref,
             .ty = storage.ty,
             .reference_view = if (storage.reference_view) |view|
-                c.LLVMBuildLoad2(self.builder, reference_evidence.storageViewType(), view, "reference.view.copy")
+                c.LLVMBuildLoad2(self.builder, try self.referenceValueType(storage.ty), view, "reference.view.copy")
             else
                 null,
         };
@@ -1247,6 +1276,7 @@ pub const CodeGenerator = struct {
         }
         if (literal.fields.len > range.len) return CodegenError.InvalidType;
         var aggregate = c.LLVMConstNull(type_ref);
+        var evidence: ?c.LLVMValueRef = null;
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value_field, position| {
             const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;
             // Ordinary struct storage is positional. Source labels are useful
@@ -1254,8 +1284,12 @@ pub const CodeGenerator = struct {
             // type its LLVM layout follows the field order. C unions remain
             // name-selected above because only one member is active.
             aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, @intCast(position), "struct.field");
+            if (value.reference_view) |child| {
+                const slice = try self.reference_layouts.project(self.allocator, self.graph, ty, .{ .field = @intCast(position) });
+                evidence = try reference_evidence.insertValue(self.builder, evidence orelse c.LLVMConstNull(try self.referenceValueType(ty)), child, slice.offset);
+            }
         }
-        return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = ty };
+        return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = ty, .reference_view = evidence };
     }
 
     fn fieldAccess(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId, access: anytype) !TypedValue {
@@ -1267,7 +1301,16 @@ pub const CodeGenerator = struct {
         };
         if (maybe_pointer) |pointer| {
             const type_ref = try self.toLLVMType(field_ty);
-            return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, pointer.value_ref, "field"), .type_ref = type_ref, .ty = field_ty };
+            const storage = try self.referenceStorageForNode(node_id);
+            return .{
+                .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, pointer.value_ref, "field"),
+                .type_ref = type_ref,
+                .ty = field_ty,
+                .reference_view = if (storage) |evidence|
+                    c.LLVMBuildLoad2(self.builder, try self.referenceValueType(field_ty), evidence, "field.evidence")
+                else
+                    null,
+            };
         }
         const aggregate = (try self.visitNode(access.value)) orelse return CodegenError.ValueNotFound;
         const type_ref = try self.toLLVMType(field_ty);
@@ -1279,7 +1322,15 @@ pub const CodeGenerator = struct {
             const pointer = try lowerer.buildUnionFieldPointer(self.builder, temp, field_ty, "union.result.field");
             return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, pointer, "union.field"), .type_ref = type_ref, .ty = field_ty };
         };
-        return .{ .value_ref = c.LLVMBuildExtractValue(self.builder, aggregate.value_ref, access.field_index, "field"), .type_ref = type_ref, .ty = field_ty };
+        return .{
+            .value_ref = c.LLVMBuildExtractValue(self.builder, aggregate.value_ref, access.field_index, "field"),
+            .type_ref = type_ref,
+            .ty = field_ty,
+            .reference_view = if (aggregate.reference_view) |evidence|
+                try reference_evidence.projectValue(self.builder, &self.reference_layouts, self.allocator, self.graph, aggregate.ty.?, evidence, .{ .field = access.field_index })
+            else
+                null,
+        };
     }
 
     fn choiceLiteral(self: *CodeGenerator, literal: anytype) !TypedValue {
@@ -1406,6 +1457,7 @@ pub const CodeGenerator = struct {
         const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup };
         const value = try self.prepareWriteValue(store.value, destination);
         try destination.commit(self, value);
+        try self.storeProjectedReferenceView(store.cleanup_target, value);
     }
 
     fn binary(self: *CodeGenerator, operation: anytype) !TypedValue {
@@ -1846,6 +1898,7 @@ pub const CodeGenerator = struct {
         };
         const value = try self.prepareWriteValue(assignment.value, destination);
         try destination.commit(self, value);
+        try self.storeProjectedReferenceView(assignment.cleanup_target, value);
         if (self.graph.semanticType(pointer_type.pointer.child) == .pointer) {
             if (pointer.reference_view) |view|
                 reference_evidence.storeOptional(self.builder, try reference_evidence.referencesPointer(self.builder, view), value.reference_view);

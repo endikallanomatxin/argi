@@ -66,5 +66,14 @@ main() -> (.status_code: Int32 = 0) := {
         if observed&.id != 2 { abort }
     }
     if counter.count != 12 { abort }
+    {
+        owner :: Resource = Resource(.counter = $&counter, .id = 3)
+        references: (.target: $&Resource) = (.target = $&owner)
+        copied := references
+        selected := copied.target
+        selected&= Resource(.counter = $&counter, .id = 4)
+        if counter.count != 13 { abort }
+    }
+    if counter.count != 14 { abort }
     status_code = 42
 }
