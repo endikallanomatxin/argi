@@ -3,6 +3,17 @@ const compilation = @import("compilation_session.zig");
 const execution = @import("vm.zig");
 const bytecode = @import("../5_codegen/bytecode/bytecode.zig");
 const graph = @import("../4_semantics/global/graph.zig");
+const profile = @import("../1_base/profile.zig");
+
+/// Optional retained-session measurements; ordinary AOT paths never use these.
+/// Verification includes host-binding validation performed by VM initialization.
+pub const Stats = struct {
+    lowering_ns: u64 = 0,
+    verification_ns: u64 = 0,
+    execution_ns: u64 = 0,
+    compiled_functions: usize = 0,
+    compiled_instructions: usize = 0,
+};
 
 /// Executes checked command candidates against one persistent context. The
 /// compilation owner must remain at its final address and outlive this owner.
@@ -14,6 +25,8 @@ pub const Session = struct {
     context: execution.Context,
     limits: execution.Limits,
     units: std.ArrayList(*std.heap.ArenaAllocator) = .empty,
+    profile_io: ?std.Io = null,
+    stats: Stats = .{},
 
     pub fn init(allocator: std.mem.Allocator, compiler: *compilation.CompilationSession, limits: execution.Limits) Session {
         return .{ .allocator = allocator, .compiler = compiler, .context = .init(allocator, limits.value_cells), .limits = limits };
@@ -37,7 +50,9 @@ pub const Session = struct {
         const function = candidate.entry orelse return error.InvalidCommand;
         var scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer scratch.deinit();
+        const layout_start = profile.timestamp(self.profile_io);
         const bindings = try @import("../5_codegen/bytecode/session_layout.zig").build(scratch.allocator(), &checked.graph, semantic.resolvers.expressions.session_bindings.items);
+        profile.accumulate(self.profile_io, layout_start, &self.stats.lowering_ns);
         if (candidate.is_exit) return self.executeExit(candidate, function, bindings);
         return self.execute(candidate, function, bindings);
     }
@@ -51,6 +66,7 @@ pub const Session = struct {
         if (@intFromEnum(function) >= checked.functions.items.len) return error.InvalidEntry;
         const command = checked.function(function);
         if (command.input.len != 0 or command.output.len != 0 or candidate.temporal == null or candidate.entry != function) return error.InvalidCommand;
+        const lower_start = profile.timestamp(self.profile_io);
         const arena = try self.allocator.create(std.heap.ArenaAllocator);
         arena.* = .init(self.allocator);
         var published = false;
@@ -77,6 +93,14 @@ pub const Session = struct {
             }
             return err;
         };
+        profile.accumulate(self.profile_io, lower_start, &self.stats.lowering_ns);
+        if (self.profile_io != null) for (program.functions) |function_| {
+            if (function_) |body| {
+                self.stats.compiled_functions += 1;
+                self.stats.compiled_instructions += body.code.len;
+            }
+        };
+        const verify_start = profile.timestamp(self.profile_io);
         var vm = execution.Vm.initShared(self.allocator, program, self.limits, &self.context) catch |err| {
             switch (err) {
                 error.MissingHostBinding, error.IncompatibleHostBinding, error.AmbiguousHostBinding => {
@@ -88,6 +112,7 @@ pub const Session = struct {
                 else => return err,
             }
         };
+        profile.accumulate(self.profile_io, verify_start, &self.stats.verification_ns);
         defer vm.deinit();
         try self.units.ensureUnusedCapacity(self.allocator, 1);
         try self.compiler.accept(candidate);
@@ -95,6 +120,8 @@ pub const Session = struct {
         published = true;
         // After publication the unit and graph belong to their retained owners,
         // even when this invocation traps and poisons the execution context.
+        const execute_start = profile.timestamp(self.profile_io);
+        defer profile.accumulate(self.profile_io, execute_start, &self.stats.execution_ns);
         _ = vm.invoke(function, &.{}) catch |err| {
             if (err == error.OutOfMemory) return err;
             try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, vm.source), .codegen, "bytecode execution failed: {s}", .{@errorName(err)});

@@ -301,3 +301,50 @@ text. Unsupported bytecode operations report their source location.
 A runtime trap retains any writes already executed and poisons the session; use
 `:reset` before continuing. Trapped code cannot be safely unwound. No System/FFI
 capabilities or native calls are implicitly granted by the REPL.
+
+## Measuring retained execution
+
+Build the developer benchmark with `zig build build-execution-benchmark
+-Doptimize=ReleaseSafe`. From the repository root, run
+`./zig-out/bin/execution-benchmark [commands=1000] [minimal|core]
+[update|bindings|calls] [memory-limit-MiB=2048]`. It reports checkpoints at 10,
+100 and 1,000 commands, plus the final count. Run benchmarks separately from tests.
+
+`minimal` isolates session growth; `core` also retains a prepared bundled-core
+module template. Initial preparation, the first binding and teardown are outside
+command timings. Frontend/publication time is total command time minus lowering,
+verification and execution; verification includes host-binding validation.
+Function/instruction totals reveal recompilation across commands.
+
+Live/peak bytes count requested allocator backing, including arena slabs, not
+RSS. Checked-graph payload excludes spare capacity and indexes; code, proof and
+runtime arena counters identify retained components but are not a partition of
+total live memory. Completed frames are counted separately. The memory limit
+bounds tracked requested bytes; a run that reaches it reports the last completed
+command and fails. Successful runs verify retained results and complete teardown.
+
+Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
+ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
+timings are observations, not stable performance thresholds. Memory includes
+bootstrap state and is reported in MiB of requested backing:
+
+| Workload | Commands | Total ms | Live MiB | Source arena MiB | Checked graph payload MiB | Code arenas MiB |
+|---|---:|---:|---:|---:|---:|---:|
+| Minimal update | 10 | 15.9 | 0.85 | 0.25 | 0.04 | 0.10 |
+| Minimal update | 100 | 238.8 | 25.81 | 12.76 | 2.77 | 2.87 |
+| Minimal update | 1,000 | 3,278.5 | 2,517.86 | 1,576.08 | 267.96 | 261.90 |
+| Core update | 100 | 3,199.3 | 739.04 | 23.58 | 333.55 | 38.93 |
+| Minimal calls | 1,000 | 7,636.0 | 2,954.78 | 1,728.70 | 393.37 | 262.39 |
+
+At 1,000 minimal updates, frontend/publication took 3,125.4 ms, lowering 60.2 ms,
+verification 87.3 ms and execution 5.5 ms. Runtime storage retained 898,428 bytes
+and 1,001 dead frames. The call workload compiled 2,000 functions for 1,000
+commands, including the same helper on each command. Source snapshot storage,
+checked graphs and code-unit retention dominate these examples; VM execution
+and dead frame bytes are not the first scaling bottleneck.
+
+The 1,000-command samples used a 4,096 MiB limit, for example
+`./zig-out/bin/execution-benchmark 1000 minimal update 4096`. With the default
+2,048 MiB limit, minimal updates stop after 954 commands; the core workload stops
+after 296 commands. These failures are retained-memory measurements, not VM
+instruction-budget exhaustion.
