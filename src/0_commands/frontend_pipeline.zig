@@ -68,6 +68,7 @@ pub const FrontendPipeline = struct {
     entry_path: ?[]const u8 = null,
     entry_file: ?source_db.FileId = null,
     staged_arena: ?*std.heap.ArenaAllocator = null,
+    prepared_session: ?*global_semantizer.Session = null,
     deferred_entry: bool = false,
 
     pub fn init(
@@ -222,17 +223,37 @@ pub const FrontendPipeline = struct {
         }
     }
 
-    /// Load syntax-free modules without selecting an executable entry or
-    /// constructing a second global graph. The pipeline owns the returned views
-    /// and must outlive retained semantic sessions borrowing them.
-    pub fn prepareModuleFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const module_sg.ModuleSemanticGraph {
+    /// Prepare an immutable semantic template for persistent execution. The
+    /// pipeline owns it and all borrowed source/module artifacts. Consumers
+    /// fork the template; neither commands nor reset mutate its frozen choices.
+    pub fn prepareSessionFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_semantizer.Session {
+        const previous = self.options.semantizing;
+        self.options.semantizing.root_selection = .requests_only;
+        self.options.semantizing.exhaustive_function_bodies = false;
+        defer self.options.semantizing = previous;
         try self.prepareFiles(files, false);
         try self.buildModuleGraphs();
-        for (self.module_graphs.items) |module| if (module.conditions.items.len != 0) {
-            try self.diagnostics.add(.{ .file = self.source_db.fileId(0), .offset = 0 }, .semantic, "computed module conditions require staged source loading", .{});
-            return error.Reported;
-        };
-        return self.module_graphs.items;
+        const session = try self.allocator.create(global_semantizer.Session);
+        errdefer self.allocator.destroy(session);
+        const computed = for (self.module_graphs.items) |module| {
+            if (module.conditions.items.len != 0) break true;
+        } else false;
+        if (computed) {
+            try self.prepareStagedSession(session);
+        } else {
+            try session.init(self.allocator, self.module_graphs.items, .{ .target = self.options.target, .root_selection = .requests_only, .exhaustive_function_bodies = false, .diagnostics = self.diagnostics });
+            errdefer session.deinit();
+            try session.advance();
+        }
+        errdefer session.deinit();
+        // An unresolved condition must fail before interactive publication.
+        var publication: global_semantizer.Session = undefined;
+        try session.fork(&publication, self.allocator, self.diagnostics);
+        defer publication.deinit();
+        var checked = try publication.finish();
+        defer checked.graph.deinit(self.allocator);
+        self.prepared_session = session;
+        return session;
     }
 
     fn prepareFiles(self: *FrontendPipeline, files: []const sf.SourceFile, include_entry: bool) !void {
@@ -596,13 +617,19 @@ pub const FrontendPipeline = struct {
     }
 
     fn buildStagedGlobalGraph(self: *FrontendPipeline) !global_semantizer.Result {
+        var session: global_semantizer.Session = undefined;
+        try self.prepareStagedSession(&session);
+        defer session.deinit();
+        return session.finish();
+    }
+
+    fn prepareStagedSession(self: *FrontendPipeline, session: *global_semantizer.Session) !void {
         const arena = try self.allocator.create(std.heap.ArenaAllocator);
         arena.* = .init(self.allocator);
         self.staged_arena = arena;
         const a = arena.allocator();
         var modules: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
         try modules.appendSlice(a, self.module_graphs.items);
-        var session: global_semantizer.Session = undefined;
         try session.init(self.allocator, modules.items, .{
             .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
@@ -610,7 +637,7 @@ pub const FrontendPipeline = struct {
             .root_selection = self.options.semantizing.root_selection,
             .diagnostics = self.diagnostics,
         });
-        defer session.deinit();
+        errdefer session.deinit();
         var completed: std.AutoHashMapUnmanaged(u64, void) = .empty;
         while (true) {
             var changed = false;
@@ -631,7 +658,7 @@ pub const FrontendPipeline = struct {
                     try selection.resolve(branch, decision);
                     const rendered = try selection.fragment(a, branch, true);
                     const imports = try selection.fragment(a, branch, false);
-                    try self.discoverSelectedImports(a, &session, &modules, path, imports.source);
+                    try self.discoverSelectedImports(a, session, &modules, path, imports.source);
                     const fragment = try self.buildSelectedFragment(a, path, file_id, rendered.source, module.is_bundled_core);
                     try modules.append(a, fragment);
                     try session.appendModuleFragment(modules.items, @enumFromInt(module_index));
@@ -664,7 +691,6 @@ pub const FrontendPipeline = struct {
         try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);
         if (self.diagnostics.hasErrors()) return error.Reported;
         try session.advance();
-        return session.finish();
     }
 
     fn discoverSelectedImports(self: *FrontendPipeline, a: std.mem.Allocator, session: *global_semantizer.Session, modules: *std.ArrayList(module_sg.ModuleSemanticGraph), path: []const u8, source: []const u8) !void {
@@ -802,6 +828,11 @@ pub const FrontendPipeline = struct {
     }
 
     fn clearModuleGraphs(self: *FrontendPipeline) void {
+        if (self.prepared_session) |session| {
+            session.deinit();
+            self.allocator.destroy(session);
+            self.prepared_session = null;
+        }
         if (self.safety_ctx) |*ctx| ctx.deinit();
         self.safety_ctx = null;
         if (self.global_graph) |*graph| graph.deinit(self.allocator);

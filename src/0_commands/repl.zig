@@ -40,12 +40,12 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{});
     defer pipeline.deinit();
-    const modules = pipeline.prepareModuleFiles(files.items) catch |err| {
+    const prepared = pipeline.prepareSessionFiles(files.items) catch |err| {
         try diagnostics.dump();
         return err;
     };
     var session: interactive.Interactive = undefined;
-    try session.initWithSources(std.heap.page_allocator, files.items, modules, .{ .exhaustive_function_bodies = false }, .{});
+    try session.initPrepared(std.heap.page_allocator, diagnostics.source_files, prepared, .{});
     defer session.deinit();
     try session.enableImports(io, ".");
     var input_buffer: [64 * 1024]u8 = undefined;
@@ -276,9 +276,9 @@ test "REPL standard prelude prints ordinary text across reset" {
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
-    const modules = try pipeline.prepareModuleFiles(files.items);
+    const prepared = try pipeline.prepareSessionFiles(files.items);
     var session: interactive.Interactive = undefined;
-    try session.initWithSources(std.testing.allocator, files.items, modules, .{ .exhaustive_function_bodies = false }, .{});
+    try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
     defer session.deinit();
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
@@ -287,7 +287,10 @@ test "REPL standard prelude prints ordinary text across reset" {
     var host_output = @import("repl_host.zig").Output{ .writer = &output.writer, .error_writer = &errors.writer };
     const bindings = host_output.bindings();
     session.runtime.context.host_bindings = &bindings;
-    try session.initializePrelude(prelude);
+    session.initializePrelude(prelude) catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
     try session.submitStatements("print(\"hola\")");
     try std.testing.expectEqualStrings("hola\n", output.written());
     try session.reset();

@@ -9,8 +9,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Extend the ordinary REPL prelude with a persistent allocator through explicit
   checked host adapters.
 - Improve unresolved-name diagnostics in retained sessions.
-- Extend staged module selection to interactive module preparation, preserving
-  the same source identities and namespace ownership as CLI compilation.
+- Extend staged module selection to imports submitted after REPL startup, sharing
+  the initial module loader and preserving source identities and namespaces.
 - Complete staged request diagnostics without a source database. Support temporary
   type recipes without retaining identities from speculative graph tails.
 - Define generic-function access to retained value bindings explicitly; do not

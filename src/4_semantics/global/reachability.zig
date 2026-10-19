@@ -80,12 +80,27 @@ pub fn executionRoots(
             !function.flags.is_test and std.mem.eql(u8, name, "main");
         // Open Errable signatures are completed from their bodies and can be
         // inspected while resolving an otherwise reachable caller.
-        const trace_runtime = (if (graph.moduleForDeclaration(function.declaration)) |owner| graph.modules.items[@intFromEnum(owner)].is_bundled_core else false) and
-            (std.mem.eql(u8, name, "_add_error_context") or std.mem.eql(u8, name, "_add_error_context_text") or std.mem.eql(u8, name, "source_location"));
+        const trace_runtime = isTraceRuntime(graph, function);
         if (entrypoint or trace_runtime or function.flags.is_c_export or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
     }
     return result;
+}
+
+/// Generated propagation and source-location operations call these ordinary
+/// core functions without a source-level call edge. Explicit execution roots
+/// need the same support whether they originate in a program or a REPL command.
+pub fn includeRuntimeSupport(graph: *const graph_mod.GlobalSemanticGraph, functions: *FunctionSet) !void {
+    for (graph.functions.items, 0..) |function, raw| {
+        if (isTraceRuntime(graph, function)) _ = try functions.include(@enumFromInt(@as(u32, @intCast(raw))));
+    }
+}
+
+fn isTraceRuntime(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function) bool {
+    const owner = graph.moduleForDeclaration(function.declaration) orelse return false;
+    if (!graph.modules.items[@intFromEnum(owner)].is_bundled_core) return false;
+    const name = graph.text(graph.declaration(function.declaration).name);
+    return std.mem.eql(u8, name, "_add_error_context") or std.mem.eql(u8, name, "_add_error_context_text") or std.mem.eql(u8, name, "source_location");
 }
 
 /// Extend a root set with every function referenced by its currently

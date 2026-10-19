@@ -21,6 +21,7 @@ pub const Interactive = struct {
     runtime: execution.Session,
     initial_files: []const @import("../1_base/source_files.zig").SourceFile,
     initial_modules: []const module_sg.ModuleSemanticGraph,
+    initial_semantic: ?*const sema.Session = null,
     options: sema.Options,
     limits: vm.Limits,
     closed: bool = false,
@@ -35,9 +36,21 @@ pub const Interactive = struct {
     /// Initial files and module graphs are borrowed together. Submitted sources
     /// extend this diagnostic index without changing initial file identities.
     pub fn initWithSources(self: *Interactive, allocator: std.mem.Allocator, files: []const @import("../1_base/source_files.zig").SourceFile, modules: []const module_sg.ModuleSemanticGraph, options: sema.Options, limits: vm.Limits) !void {
+        return self.initBase(allocator, files, modules, options, limits, null);
+    }
+
+    /// Borrow an immutable prepared module template and its original sources.
+    /// Both must outlive this controller, including every reset. Commands fork
+    /// semantic state; they never modify the template or replay earlier input.
+    pub fn initPrepared(self: *Interactive, allocator: std.mem.Allocator, files: []const @import("../1_base/source_files.zig").SourceFile, template: *const sema.Session, limits: vm.Limits) !void {
+        return self.initBase(allocator, files, template.modules, template.options, limits, template);
+    }
+
+    fn initBase(self: *Interactive, allocator: std.mem.Allocator, files: []const @import("../1_base/source_files.zig").SourceFile, modules: []const module_sg.ModuleSemanticGraph, options: sema.Options, limits: vm.Limits, template: ?*const sema.Session) !void {
         self.allocator = allocator;
         self.initial_files = files;
         self.initial_modules = modules;
+        self.initial_semantic = template;
         self.options = options;
         self.limits = limits;
         self.closed = false;
@@ -53,7 +66,7 @@ pub const Interactive = struct {
         errdefer self.sources.deinit();
         var selected = options;
         selected.diagnostics = &self.diagnostics;
-        self.compiler = try compilation.CompilationSession.init(allocator, modules, selected);
+        self.compiler = if (template) |prepared| try compilation.CompilationSession.initPrepared(allocator, prepared, &self.diagnostics) else try compilation.CompilationSession.init(allocator, modules, selected);
         self.runtime = .init(allocator, &self.compiler, limits);
     }
     pub fn enableImports(self: *Interactive, io: std.Io, directory: []const u8) !void {
@@ -193,7 +206,7 @@ pub const Interactive = struct {
         // Allocate the replacement first: failure cannot discard live owners.
         var options = self.options;
         options.diagnostics = &self.diagnostics;
-        var replacement = try compilation.CompilationSession.init(self.allocator, self.initial_modules, options);
+        var replacement = if (self.initial_semantic) |prepared| try compilation.CompilationSession.initPrepared(self.allocator, prepared, &self.diagnostics) else try compilation.CompilationSession.init(self.allocator, self.initial_modules, options);
         var transferred = false;
         errdefer if (!transferred) replacement.deinit();
         if (self.runtime.context.state != .poisoned) {

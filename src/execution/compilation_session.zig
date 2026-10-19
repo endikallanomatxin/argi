@@ -116,6 +116,16 @@ pub const CompilationSession = struct {
         return .{ .allocator = allocator, .semantic = semantic, .namespace = try allocateNamespace() };
     }
 
+    /// Fork a prepared module template, retaining its graph identities and
+    /// lexical namespaces. The template's borrowed modules must outlive us.
+    pub fn initPrepared(allocator: std.mem.Allocator, template: *const sema.Session, diagnostics: *diagnostics_mod.Diagnostics) !CompilationSession {
+        const semantic = try allocator.create(sema.Session);
+        errdefer allocator.destroy(semantic);
+        try template.fork(semantic, allocator, diagnostics);
+        errdefer semantic.deinit();
+        return .{ .allocator = allocator, .semantic = semantic, .namespace = try allocateNamespace() };
+    }
+
     pub fn deinit(self: *CompilationSession) void {
         if (self.temporal) |proof| proof.release();
         for (self.versions.items) |version| {

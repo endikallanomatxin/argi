@@ -739,11 +739,11 @@ test "module frontend initializes interactive execution without a program entry"
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
-    const modules = try pipeline.prepareModuleFiles(&files);
-    try std.testing.expectEqual(@as(usize, 1), modules.len);
+    const prepared = try pipeline.prepareSessionFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), prepared.modules.len);
     try std.testing.expect(pipeline.global_graph == null);
     var session: @import("../execution/interactive.zig").Interactive = undefined;
-    try session.initWithSources(allocator, &files, modules, .{ .exhaustive_function_bodies = false }, .{});
+    try session.initPrepared(allocator, diagnostics.source_files, prepared, .{});
     defer session.deinit();
     try session.submitStatements("value ::= answer()");
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
@@ -857,4 +857,51 @@ test "computed test discovery excludes main and dormant test bodies" {
     };
     try std.testing.expectEqual(@as(usize, 1), count);
     try std.testing.expect(!diagnostics.hasErrors());
+}
+
+test "prepared interactive modules retain selected namespaces across commands and reset" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { unused_main() }\n#if choose() { answer := () -> (.result: Int32) { result = 42 } } #else { missing := import(\"./missing\") }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source, .origin = .bundled_core }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(&files);
+    const node_count = prepared.relocation.graph.nodes.items.len;
+    var session: @import("../execution/interactive.zig").Interactive = undefined;
+    try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    try session.submitStatements("value ::= answer()");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("value")).?.value.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitStatements("bad ::= missing()"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.reset();
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.integer);
+    try std.testing.expectEqual(node_count, prepared.relocation.graph.nodes.items.len);
+    try session.close();
+}
+
+fn preparedSessionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const files = [_]sf.SourceFile{.{
+        .path = "/project/main.rg",
+        .code = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { answer := () -> (.value: Int32) { value = 42 } }",
+    }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    var invocation = std.heap.ArenaAllocator.init(allocator);
+    defer invocation.deinit();
+    var pipeline = frontend.FrontendPipeline.init(invocation.allocator(), std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.prepareSessionFiles(&files);
+}
+
+test "prepared interactive modules release failed template construction" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, preparedSessionAllocationFailures, .{});
 }

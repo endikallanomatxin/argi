@@ -719,7 +719,10 @@ pub const Session = struct {
     pub fn includeExecutionRoot(self: *Session, function: global_sg.GlobalFunctionId) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         if (@intFromEnum(function) >= self.relocation.graph.functions.items.len) return error.InvalidSafetyContinuation;
-        if (self.reachable) |*set| _ = try set.include(function);
+        if (self.reachable) |*set| {
+            _ = try set.include(function);
+            try reachability_mod.includeRuntimeSupport(&self.relocation.graph, set);
+        }
         self.phase = .ready;
     }
 
