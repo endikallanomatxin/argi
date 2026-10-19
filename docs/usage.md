@@ -344,15 +344,15 @@ checked graphs and code-unit retention dominate these examples; VM execution
 and dead frame bytes are not the first scaling bottleneck.
 
 The 1,000-command samples used a 4,096 MiB limit, for example
-`./zig-out/bin/execution-benchmark 1000 minimal update 4096`. With the default
-2,048 MiB limit, minimal updates stop after 954 commands; the core workload stops
-after 296 commands. These failures are retained-memory measurements, not VM
+`./zig-out/bin/execution-benchmark 1000 minimal update 4096`. In that baseline,
+the default 2,048 MiB limit stops minimal updates after 954 commands and core
+updates after 296 commands. These failures are retained-memory measurements, not VM
 instruction-budget exhaustion.
 
-After sharing append-only module-prefix buffers, the same 1,000 minimal updates
-retain 955.23 MiB, including 13.45 MiB in the source arena. Checked graph payload,
-code arenas and diagnostic arenas remain at 267.96, 261.90 and 242.97 MiB.
-The sample takes 2,515.0 ms (2,365.3 ms frontend/publication); this is still not
-linear retained memory. Core at 100 commands retains 716.97 MiB, with 1.51 MiB
-in the source arena. Earlier snapshots and branched/rejected histories retain
-their original module headers; growth fills only unused buffer slots.
+After sharing append-only module-prefix buffers and growing source indexes
+geometrically, the same 1,000 minimal updates retain 713.14 MiB: source arena
+13.45 MiB, diagnostic arena 0.87 MiB, checked graph payload 267.96 MiB and code
+arenas 261.90 MiB. The sample takes 2,328.1 ms (2,181.5 ms frontend/publication).
+Core at 100 commands retains 708.11 MiB. Retained memory is still not linear.
+Earlier snapshots and branched/rejected histories keep their original module
+headers; source IDs and original diagnostic buffers remain unchanged.

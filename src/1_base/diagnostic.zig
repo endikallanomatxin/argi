@@ -28,11 +28,12 @@ pub const SourceMap = struct {
 /// A small *bag* allocated from an `Allocator` (an arena works well).
 pub const Diagnostics = struct {
     arena: *const std.mem.Allocator,
-    source_files: []const sf.SourceFile, // slice inmutable
+    source_files: []const sf.SourceFile, // Immutable initialized prefix.
     source_db: source_db.SourceDb,
     owned_source_files: ?[]sf.SourceFile = null,
     owns_source_db: bool = true,
     source_maps: []const SourceMap = &.{},
+    source_map_capacity: usize = 0,
     list: std.array_list.Managed(Diagnostic),
 
     pub fn init(
@@ -64,21 +65,25 @@ pub const Diagnostics = struct {
         self.list.deinit();
         if (self.owns_source_db) {
             self.source_db.deinit(self.arena.*);
-            self.arena.free(self.source_maps);
+            self.arena.free(self.source_maps.ptr[0..@max(self.source_map_capacity, self.source_maps.len)]);
         }
         if (self.owned_source_files) |files| self.arena.free(files);
     }
 
     pub fn appendSource(self: *Diagnostics, source: sf.SourceFile) !source_db.FileId {
         std.debug.assert(self.owns_source_db);
-        const files = try self.arena.alloc(sf.SourceFile, self.source_files.len + 1);
-        errdefer self.arena.free(files);
-        @memcpy(files[0..self.source_files.len], self.source_files);
+        const count = try std.math.add(usize, self.source_files.len, 1);
+        const previous: []sf.SourceFile = self.owned_source_files orelse &.{};
+        const grow = previous.len < count;
+        const capacity = if (grow) try std.math.ceilPowerOfTwo(usize, @max(count, 4)) else previous.len;
+        const files = if (grow) try self.arena.alloc(sf.SourceFile, capacity) else previous;
+        errdefer if (grow) self.arena.free(files);
+        if (grow) @memcpy(files[0..self.source_files.len], self.source_files);
         files[self.source_files.len] = source;
         const id = try self.source_db.append(self.arena.*, source);
-        if (self.owned_source_files) |previous| self.arena.free(previous);
+        if (grow) self.arena.free(previous);
         self.owned_source_files = files;
-        self.source_files = files;
+        self.source_files = files[0..count];
         return id;
     }
 
@@ -105,11 +110,16 @@ pub const Diagnostics = struct {
             // and original buffers are never themselves generated buffers.
             if (existing.generated == map.generated or existing.original == map.generated or existing.generated == map.original) return error.InvalidDiagnosticSourceMap;
         }
-        const maps = try self.arena.alloc(SourceMap, self.source_maps.len + 1);
-        @memcpy(maps[0..self.source_maps.len], self.source_maps);
+        const count = try std.math.add(usize, self.source_maps.len, 1);
+        const previous = @constCast(self.source_maps.ptr)[0..@max(self.source_map_capacity, self.source_maps.len)];
+        const grow = previous.len < count;
+        const capacity = if (grow) try std.math.ceilPowerOfTwo(usize, @max(count, 4)) else previous.len;
+        const maps = if (grow) try self.arena.alloc(SourceMap, capacity) else previous;
+        if (grow) @memcpy(maps[0..self.source_maps.len], self.source_maps);
         maps[self.source_maps.len] = map;
-        self.arena.free(self.source_maps);
-        self.source_maps = maps;
+        if (grow) self.arena.free(previous);
+        self.source_map_capacity = maps.len;
+        self.source_maps = maps[0..count];
     }
 
     pub fn presentedLocation(self: *const Diagnostics, loc: tok.Location) tok.Location {
@@ -226,4 +236,34 @@ test "diagnostics retain errors without source metadata" {
     try std.testing.expectEqualStrings("invalid value 42", diagnostic.msg);
     try std.testing.expectEqualStrings("<unknown>", diagnostics.path(diagnostic.loc));
     try std.testing.expectEqual(@as(u32, 1), diagnostics.lineColumn(diagnostic.loc).line);
+}
+
+fn exerciseDiagnosticIndexAllocationFailures(allocator: std.mem.Allocator) !void {
+    var diagnostics = Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    for (0..8) |_| {
+        const original = diagnostics.appendSource(.{ .path = "original.rg", .code = "42" }) catch |err| {
+            try std.testing.expectEqual(diagnostics.source_files.len, diagnostics.source_db.files.len);
+            return err;
+        };
+        const before = diagnostics.source_files.len;
+        const generated = diagnostics.appendSource(.{ .path = "generated.rg", .code = "wrap42" }) catch |err| {
+            try std.testing.expectEqual(before, diagnostics.source_files.len);
+            try std.testing.expectEqual(before, diagnostics.source_db.files.len);
+            try std.testing.expectEqualStrings("42", diagnostics.source_db.get(original).source);
+            return err;
+        };
+        const maps = diagnostics.source_maps.len;
+        diagnostics.addSourceMap(.{ .generated = generated, .original = original, .offset = 4, .length = 2 }) catch |err| {
+            try std.testing.expectEqual(maps, diagnostics.source_maps.len);
+            return err;
+        };
+        const location = diagnostics.presentedLocation(.{ .file = generated, .offset = 5 });
+        try std.testing.expectEqual(original, location.file);
+        try std.testing.expectEqual(@as(u32, 1), location.offset);
+    }
+}
+
+test "diagnostic source and mapping growth remains atomic on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, exerciseDiagnosticIndexAllocationFailures, .{});
 }
