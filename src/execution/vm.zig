@@ -62,6 +62,7 @@ pub const Context = struct {
     globals: std.AutoHashMapUnmanaged(GlobalKey, runtime_value.FrameId) = .empty,
     literal_bytes: std.StringHashMapUnmanaged(runtime_value.Reference) = .empty,
     trace_locations: std.ArrayList(b.TraceLocation) = .empty,
+    acquisitions: @import("acquisitions.zig").Regions = .{},
 
     pub fn init(allocator: std.mem.Allocator, value_cells: usize) Context {
         return .{ .arena = .init(allocator), .allocator = allocator, .limit = value_cells };
@@ -80,6 +81,18 @@ pub const Context = struct {
         try self.ensureStorage();
         return self.storage.enterSession(count, cleanup);
     }
+    /// Host-side acquisition protocol only. These receipts cannot be supplied
+    /// as language references or frozen into compile-time constants.
+    pub fn acquireRegion(self: *Context, length: usize, alignment: usize) !@import("acquisitions.zig").Handle {
+        if (self.running) return error.ExecutionContextBusy;
+        try self.ensureStorage();
+        return self.acquisitions.acquire(&self.storage, length, alignment);
+    }
+    pub fn releaseRegion(self: *Context, handle: @import("acquisitions.zig").Handle) !void {
+        if (self.running) return error.ExecutionContextBusy;
+        try self.ensureStorage();
+        return self.acquisitions.release(&self.storage, handle);
+    }
     pub fn deinit(self: *Context) void {
         std.debug.assert(!self.running);
         self.arena.deinit();
@@ -97,6 +110,7 @@ pub const Context = struct {
         self.globals = .empty;
         self.literal_bytes = .empty;
         self.trace_locations = .empty;
+        self.acquisitions = .{};
         return previous;
     }
 

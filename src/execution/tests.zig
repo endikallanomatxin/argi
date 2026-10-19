@@ -2023,3 +2023,23 @@ test "bytecode cooperative cancellation poisons execution and permits explicit r
     const values = try executor.invoke(@enumFromInt(0), &.{.{ .integer = 42 }});
     try std.testing.expectEqual(@as(i128, 42), values[0].integer);
 }
+
+test "execution context reset retires acquisition identities without refunding live quotas" {
+    var context = vm.Context.init(std.testing.allocator, 20);
+    defer context.deinit();
+    const old = try context.acquireRegion(8, 8);
+    const charged = context.storage.cells;
+    try context.releaseRegion(old);
+    try std.testing.expectEqual(charged, context.storage.cells);
+    const live = try context.acquireRegion(8, 8);
+    try std.testing.expect(live.region != old.region);
+    context.running = true;
+    try std.testing.expectError(error.ExecutionContextBusy, context.acquireRegion(0, 1));
+    try std.testing.expectError(error.ExecutionContextBusy, context.releaseRegion(live));
+    context.running = false;
+    context.reset();
+    const fresh = try context.acquireRegion(8, 8);
+    try std.testing.expect(fresh.context != live.context);
+    try std.testing.expectError(error.ExecutionForeignReference, context.releaseRegion(live));
+    try context.releaseRegion(fresh);
+}

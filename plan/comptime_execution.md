@@ -15,8 +15,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Extend partial layouts to choices and connect owning array elements to
   indexed cleanup identities.
-- Extend acquired storage and release identities before enabling the allocator
-  prelude; scalar host handles alone do not establish allocation receipts.
+- Connect context-owned acquisition/release identities to backing storage,
+  checked bytecode establishment operations and allocator host adapters before
+  enabling the allocator prelude. Region receipts alone grant no typed access.
 
 ## Execution coverage
 
