@@ -246,9 +246,9 @@ pub const Vm = struct {
         }
         return self.execute(&self.program, function, inputs);
     }
-    fn chargeCleanup(self: *Vm, updated: usize) !void {
-        if (updated > self.limits.instructions - self.steps) return error.ExecutionInstructionLimit;
-        self.steps += updated;
+    fn chargeCleanup(self: *Vm, work: usize) !void {
+        if (work > self.limits.instructions - self.steps) return error.ExecutionInstructionLimit;
+        self.steps += work;
     }
     fn allocate(self: *Vm, count: usize) ![]b.Value {
         return self.context().storage.allocate(count);

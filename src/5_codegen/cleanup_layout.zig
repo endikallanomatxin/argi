@@ -17,7 +17,7 @@ pub fn requiredBindings(allocator: std.mem.Allocator, graph: *const g.GlobalSema
 // companion can point at that range without depending on value addresses.
 pub const Counts = struct {
     pub const Span = struct { offset: usize, ty: g.GlobalTypeId };
-    pub const Description = struct { count: usize, children: []const ?Span };
+    pub const Description = struct { count: usize, children: []const ?Span, is_record: bool };
     values: std.AutoHashMapUnmanaged(g.GlobalTypeId, Description) = .empty,
 
     pub fn deinit(self: *Counts, allocator: std.mem.Allocator) void {
@@ -39,7 +39,7 @@ pub const Counts = struct {
             span.* = .{ .offset = result, .ty = child.ty };
             result = try std.math.add(usize, result, try self.count(allocator, graph, child.ty));
         };
-        try self.values.put(allocator, ty, .{ .count = result, .children = children });
+        try self.values.put(allocator, ty, .{ .count = result, .children = children, .is_record = shape == .fields });
         return result;
     }
 

@@ -13945,5 +13945,11 @@ test "feature_tests/execution/89_partial_local_records_vm" {
 }
 
 test "feature_tests/execution/90X_partial_local_owner_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/90X_partial_local_owner_vm_boundary");
+    try runExpect("tests/feature_tests/execution/90X_partial_local_owner_vm_boundary", 42);
     try vmExpect("tests/feature_tests/execution/90X_partial_local_owner_vm_boundary", 1, "UninitializedBytecodeSlot");
+}
+
+test "feature_tests/execution/91X_partial_owner_child_cleanup_vm_boundary" {
+    try vmExpect("tests/feature_tests/execution/91X_partial_owner_child_cleanup_vm_boundary", 1, "UninitializedBytecodeSlot");
 }

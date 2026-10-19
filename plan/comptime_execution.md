@@ -20,10 +20,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Extend partial layouts to session bindings and scalar initialization targets,
   then arrays and choices. Keep unavailable storage separate from values.
-- Fix shared whole-owner cleanup activation after field initialization. The
-  resource-counter case in `90X_partial_local_owner_vm_boundary` currently skips
-  its nominal destructor in AOT too; VM rejects this incomplete path before execution.
-  Cover early errors and structural field cleanup before enabling local owners.
+- Add structural fallback cleanup for incomplete nominal owners. The child-counter
+  case in `91X_partial_owner_child_cleanup_vm_boundary` still leaks in AOT; VM
+  rejects field-wise local owner construction until this is modeled. Preserve
+  whole-owner destruction when initialization completes and test early errors.
 - Extend acquired storage and release identities before enabling the allocator
   prelude; scalar host handles alone do not establish allocation receipts.
 

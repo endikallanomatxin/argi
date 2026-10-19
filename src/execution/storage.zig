@@ -477,6 +477,7 @@ pub const Storage = struct {
         const flag = self.frames.items[@intFromEnum(reference.frame)].cleanup[index].flag;
         return (try (try self.slots(reference.frame)).get(flag)).boolean;
     }
+    // Returns work units for execution metering, including ancestor inspection.
     pub fn cleanupSet(self: *Storage, reference: v.Reference, enabled: bool) !usize {
         try self.validateWritable(reference);
         return self.cleanupSetAt(reference, try self.cleanupEntry(reference), enabled);
@@ -489,6 +490,33 @@ pub const Storage = struct {
             if (!b.cleanupContains(layout[index], entry)) break;
             try values.put(entry.flag, .{ .boolean = enabled });
             updated += 1;
+        }
+        if (enabled) {
+            var ancestor = index;
+            while (ancestor != 0) {
+                ancestor -= 1;
+                updated += 1;
+                const parent = layout[ancestor];
+                if (parent.root != layout[index].root) break;
+                if (!b.cleanupContains(parent, layout[index]) or parent.path.len >= layout[index].path.len) continue;
+                var has_fields = false;
+                var complete = true;
+                for (layout[ancestor + 1 ..]) |entry| {
+                    updated += 1;
+                    if (!b.cleanupContains(parent, entry)) break;
+                    if (entry.path.len != parent.path.len + 1) continue;
+                    if (entry.path[entry.path.len - 1] != .field) {
+                        complete = false;
+                        break;
+                    }
+                    has_fields = true;
+                    if (!(try values.get(entry.flag)).boolean) complete = false;
+                }
+                if (has_fields and complete) {
+                    try values.put(parent.flag, .{ .boolean = true });
+                    updated += 1;
+                }
+            }
         }
         return updated;
     }
@@ -534,6 +562,7 @@ pub const Storage = struct {
         try self.store(destination.reference, value);
     }
 
+    // Like cleanupSet, this reports traversal work rather than changed flags.
     pub fn activateWriteCleanup(self: *Storage, destination: WriteDestination) !usize {
         if (destination.cleanup_entry) |index| {
             try self.validateContext(destination.reference);
@@ -711,4 +740,31 @@ test "lexical record reset clears values only after cleanup is discharged" {
     try std.testing.expectEqual(cells, storage.cells);
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(field));
     try std.testing.expectEqual(@as(i128, 42), snapshot.record[0].integer);
+}
+
+test "field cleanup activation completes record ancestors but not choices" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const frame = try storage.enterCleanup(7, &.{
+        .{ .root = 0, .path = &.{}, .flag = 1 },
+        .{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 2 },
+        .{ .root = 0, .path = &.{.{ .field = 1 }}, .flag = 3 },
+        .{ .root = 4, .path = &.{}, .flag = 5 },
+        .{ .root = 4, .path = &.{.{ .variant = 0 }}, .flag = 6 },
+    });
+    const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    var field = root;
+    field.path = &.{.{ .field = 0 }};
+    _ = try storage.cleanupSet(field, true);
+    try std.testing.expect(!try storage.cleanupTest(root));
+    field.path = &.{.{ .field = 1 }};
+    _ = try storage.cleanupSet(field, true);
+    try std.testing.expect(try storage.cleanupTest(root));
+    var choice = root;
+    choice.root = 4;
+    var payload = choice;
+    payload.path = &.{.{ .variant = 0 }};
+    _ = try storage.cleanupSet(payload, true);
+    try std.testing.expect(!try storage.cleanupTest(choice));
 }

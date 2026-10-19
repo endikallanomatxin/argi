@@ -9,6 +9,9 @@ pub const View = struct {
     flag_ref: c.LLVMValueRef,
     layouts: *const layout.Counts,
     ty: g.GlobalTypeId,
+    owner_flags: c.LLVMValueRef = null,
+    owner_type: ?g.GlobalTypeId = null,
+    offset: usize = 0,
 
     pub fn allocate(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, counts: *layout.Counts, ty: g.GlobalTypeId, builder: c.LLVMBuilderRef) !View {
         const flag_count = try counts.count(allocator, graph, ty);
@@ -21,7 +24,7 @@ pub const View = struct {
         if (c.LLVMGetTypeKind(c.LLVMTypeOf(flags)) != c.LLVMPointerTypeKind or c.LLVMIsNull(flags) != 0)
             return error.InvalidCleanupEvidence;
         _ = try counts.count(allocator, graph, ty);
-        return .{ .flag_ref = flags, .layouts = counts, .ty = ty };
+        return .{ .flag_ref = flags, .layouts = counts, .ty = ty, .owner_flags = flags, .owner_type = ty };
     }
 
     pub fn count(self: View) usize {
@@ -37,6 +40,9 @@ pub const View = struct {
             .flag_ref = c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), self.flag_ref, &offset, offset.len, "needs.deinit"),
             .layouts = self.layouts,
             .ty = child.ty,
+            .owner_flags = self.owner_flags orelse self.flag_ref,
+            .owner_type = self.owner_type orelse self.ty,
+            .offset = self.offset + child.offset,
         };
     }
 
@@ -53,6 +59,33 @@ pub const View = struct {
             const byte = c.LLVMBuildZExt(builder, enabled, c.LLVMInt8Type(), "cleanup.flag.byte");
             _ = c.LLVMBuildMemSet(builder, self.flag_ref, byte, c.LLVMConstInt(c.LLVMInt64Type(), self.count(), 0), 1);
         }
+        if (self.offset != 0) self.promoteRecords(builder, self.owner_type.?, 0);
+    }
+
+    fn flagAt(self: View, builder: c.LLVMBuilderRef, offset: usize) c.LLVMValueRef {
+        var indices = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), offset, 0)};
+        return c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), self.owner_flags, &indices, 1, "cleanup.owner.flag");
+    }
+    fn promoteRecords(self: View, builder: c.LLVMBuilderRef, ty: g.GlobalTypeId, base: usize) void {
+        if (base == self.offset) return;
+        const description = self.layouts.description(ty);
+        for (description.children) |maybe_child| if (maybe_child) |child| {
+            const start = base + child.offset;
+            if (self.offset >= start and self.offset < start + self.layouts.description(child.ty).count) {
+                self.promoteRecords(builder, child.ty, start);
+                break;
+            }
+        };
+        if (!description.is_record or description.children.len == 0) return;
+        var complete = c.LLVMConstInt(c.LLVMInt1Type(), 1, 0);
+        for (description.children) |maybe_child| {
+            const child = maybe_child orelse return;
+            const flag = c.LLVMBuildLoad2(builder, c.LLVMInt1Type(), self.flagAt(builder, base + child.offset), "cleanup.field.ready");
+            complete = c.LLVMBuildAnd(builder, complete, flag, "cleanup.record.ready");
+        }
+        const parent = self.flagAt(builder, base);
+        const previous = c.LLVMBuildLoad2(builder, c.LLVMInt1Type(), parent, "cleanup.owner.ready");
+        _ = c.LLVMBuildStore(builder, c.LLVMBuildOr(builder, previous, complete, "cleanup.owner.active"), parent);
     }
 };
 
