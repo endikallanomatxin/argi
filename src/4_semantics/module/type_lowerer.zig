@@ -167,7 +167,12 @@ pub const Context = struct {
     }
 
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
-        if (self.hasAssociatedConstant(generic.arguments)) {
+        const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
+        const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
+        // Choice unions are computed type expressions, including in the
+        // underlying type of a nominal declaration. They have no ordinary
+        // generic declaration for external name resolution to select.
+        if (self.hasAssociatedConstant(generic.arguments) or std.mem.eql(u8, base_name, "choice_union")) {
             const external_start = self.graph.semantic.external_refs.items.len;
             const computed = try @import("parameterized/lowerer.zig").lowerConcreteTypeExpression(self.graph, self.writer, self.file_index, self.tree, self.source, owner);
             // Preserve lexical import aliases in the anonymous expression.
@@ -193,8 +198,6 @@ pub const Context = struct {
             return self.writer.addExternalType(reference);
         }
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
-        const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
-        const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
         if (base == .name and base.name.qualifier_token == null and
             std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Array"))
         {

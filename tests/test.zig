@@ -13377,3 +13377,8 @@ test "feature_tests/collections/151_factory_owner_mutation" {
     try expectSuccessfulBuild("tests/feature_tests/collections/151_factory_owner_mutation");
     try runExpect("tests/feature_tests/collections/151_factory_owner_mutation", 0);
 }
+
+test "feature_tests/errors/110_named_choice_union" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/110_named_choice_union");
+    try runExpect("tests/feature_tests/errors/110_named_choice_union", 0);
+}
