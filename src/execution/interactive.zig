@@ -1096,3 +1096,32 @@ test "interactive computed imports share staged selection without replaying acce
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.answer()")).?.value.integer);
     try session.close();
 }
+
+test "interactive unknown names report original input without publishing bindings" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("retained :: Int32 = 42");
+    for ([_][]const u8{ "unknown_value", "copy ::= unknown_value", "retained = unknown_value" }) |input| {
+        const revision = session.compiler.revision;
+        const count = session.compiler.semantic.resolvers.expressions.session_bindings.items.len;
+        try std.testing.expectError(error.Reported, session.submitInput(input));
+        try std.testing.expectEqual(revision, session.compiler.revision);
+        try std.testing.expectEqual(count, session.compiler.semantic.resolvers.expressions.session_bindings.items.len);
+        const diagnostic = session.diagnostics.list.items[0];
+        try std.testing.expectEqualStrings("unknown name 'unknown_value' in this scope", diagnostic.msg);
+        const original = session.diagnostics.source_db.get(diagnostic.loc.file);
+        try std.testing.expectEqualStrings(input, original.source);
+        try std.testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, input, "unknown_value").?)), diagnostic.loc.offset);
+        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("retained")).?.value.integer);
+    }
+    // Ordinary lazy checking still permits an unused definition. Calling it
+    // checks its body and reports the original definition's missing name.
+    try session.submitDefinitions("unused := () -> (.value: Int32) { value = unknown_value }");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("unused()"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqualStrings("unknown name 'unknown_value' in this scope", session.diagnostics.list.items[0].msg);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("retained")).?.value.integer);
+    try session.close();
+}

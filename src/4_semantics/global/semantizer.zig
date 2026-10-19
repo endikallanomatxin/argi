@@ -876,6 +876,8 @@ pub const Session = struct {
                     );
                     return error.Reported;
                 }
+                if (try diagnoseUnknownNames(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, core, diagnostics))
+                    return error.Reported;
                 if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, generic_functions, contracts, diagnostics))
                     return error.Reported;
                 if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
@@ -2437,6 +2439,50 @@ fn diagnoseContractRuntimeBindings(
             .{ name, name },
         );
         return true;
+    }
+    return false;
+}
+
+fn diagnoseUnknownNames(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    core: *const core_mod.Resolver,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        operations: for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const value = switch (operation) {
+                .resolve_name_use => |item| item,
+                else => continue,
+            };
+            if (value.module_path != null or resolved[flat]) continue;
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |item| globalizer.globalFunction(offsets[module_index], item) else null
+            else
+                null;
+            if (reachable != null and owner != null and !reachable.?.contains(owner.?)) continue;
+            const name = module.text(value.name);
+            // A visible declaration can still be waiting for its type or a
+            // selector. Preserve its more specific diagnostic rather than
+            // misreporting a declared name as absent.
+            for (graph.declarations.items, 0..) |declaration, raw| {
+                if (std.mem.eql(u8, graph.text(declaration.name), name) and
+                    core.declarationVisible(module_index, @enumFromInt(@as(u32, @intCast(raw))), null)) continue :operations;
+            }
+            for (graph.types.items) |ty| switch (ty) {
+                .builtin => |builtin| if (std.mem.eql(u8, @tagName(builtin), name)) {
+                    continue :operations;
+                },
+                else => {},
+            };
+            try diagnostics.add(diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], value.source)), .semantic, "unknown name '{s}' in this scope", .{name});
+            return true;
+        }
     }
     return false;
 }

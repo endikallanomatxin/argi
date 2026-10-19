@@ -14059,3 +14059,12 @@ test "feature_tests/testing/31_computed_module_selection" {
     try argiTestExpectStderr("tests/feature_tests/testing/31_computed_module_selection", &.{}, 0, "PASS selected\n");
     try argiTestExpectStderr("tests/feature_tests/testing/31_computed_module_selection", &.{ "--filter", "discarded" }, 1, "No tests found\n");
 }
+
+test "feature_tests/execution/111X_unknown_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/111X_unknown_value", "unknown name 'unknown_value' in this scope", "global sema unresolved");
+    try vmExpect("tests/feature_tests/execution/111X_unknown_value", 1, "unknown name 'unknown_value' in this scope");
+}
+
+test "feature_tests/execution/112X_comptime_unknown_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/112X_comptime_unknown_value", "unknown name 'unknown_value' in this scope", "global sema unresolved");
+}
