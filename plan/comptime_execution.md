@@ -10,8 +10,6 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   checked host adapters.
 - Complete staged request diagnostics without a source database. Support temporary
   type recipes without retaining identities from speculative graph tails.
-- Define generic-function access to retained value bindings explicitly; do not
-  introduce accidental captures or treat runtime session values as constants.
 
 ## Partial storage
 

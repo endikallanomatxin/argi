@@ -13873,7 +13873,7 @@ test "feature_tests/execution/77_computed_test_condition" {
 }
 
 test "feature_tests/execution/78X_computed_discarded_binding" {
-    try buildExpectFail("tests/feature_tests/execution/78X_computed_discarded_binding", "cannot materialize body");
+    try buildExpectFail("tests/feature_tests/execution/78X_computed_discarded_binding", "unknown name 'missing' in this scope");
 }
 
 test "feature_tests/execution/79_string_literals_vm" {
@@ -14067,4 +14067,14 @@ test "feature_tests/execution/111X_unknown_value" {
 
 test "feature_tests/execution/112X_comptime_unknown_value" {
     try buildExpectFailWithoutNoise("tests/feature_tests/execution/112X_comptime_unknown_value", "unknown name 'unknown_value' in this scope", "global sema unresolved");
+}
+
+test "feature_tests/execution/113_generic_global_scope" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/113_generic_global_scope");
+    try runExpect("tests/feature_tests/execution/113_generic_global_scope", 42);
+    try vmExpect("tests/feature_tests/execution/113_generic_global_scope", 42, null);
+}
+
+test "feature_tests/execution/114X_generic_inaccessible_global" {
+    try buildExpectFail("tests/feature_tests/execution/114X_generic_inaccessible_global", "unknown name 'foreign_value' in this scope");
 }

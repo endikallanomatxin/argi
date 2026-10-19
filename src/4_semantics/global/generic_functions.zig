@@ -478,7 +478,7 @@ pub const Resolver = struct {
                     error.DeferredGenericFunction => return .deferred,
                     error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
+                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName => return err,
                     else => return .deferred,
                 }
             else
@@ -487,7 +487,7 @@ pub const Resolver = struct {
                     error.DeferredGenericFunction => return .deferred,
                     error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
+                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName => return err,
                     error.ConflictingGenericArgument => return err,
                     else => return .deferred,
                 };
@@ -2654,6 +2654,11 @@ pub const Resolver = struct {
                 const record = self.resolver.graph.bindings.items[@intFromEnum(binding)];
                 return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = record.ty, .content = .{ .binding_use = binding } };
             }
+            if (self.resolver.generics.comptime_failure == null) self.resolver.generics.comptime_failure = .{
+                .source = self.resolver.sourceFor(self.module_index, value.source),
+                .reason = "unknown name in this scope",
+                .unknown_name = name,
+            };
             return error.UnknownParameterizedName;
         }
 
@@ -3600,14 +3605,9 @@ pub const Resolver = struct {
                 const binding = self.conditional_bindings.items[index].global;
                 if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(binding).name), name)) return binding;
             }
-            // Other functions' local bindings are never a name lookup scope.
-            for (self.resolver.graph.roots.items) |root| {
-                const node = self.resolver.graph.node(root);
-                if (node.content != .binding_declaration) continue;
-                const binding = node.content.binding_declaration;
-                if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(binding).name), name)) return binding;
-            }
-            return null;
+            // A specialization has the defining module's namespace, never
+            // another function's locals or an unrelated module's globals.
+            return @import("name_lookup.zig").binding(self.resolver.graph, self.resolver.modules, self.resolver.offsets, self.module_index, name);
         }
 
         fn copyString(self: *InstanceContext, range: primitives.StringRange) !primitives.StringRange {

@@ -25,7 +25,12 @@ pub const Stats = struct {
     type_intern_ns_by_tag: [tag_count]u64 = @splat(0),
 };
 
-pub const ComptimeFailure = struct { source: primitives.SourceRef, reason: []const u8 };
+pub const ComptimeFailure = struct {
+    source: primitives.SourceRef,
+    reason: []const u8,
+    // Borrow the original module token; rendering happens after rollback.
+    unknown_name: ?[]const u8 = null,
+};
 
 pub const Resolver = struct {
     const PointerKey = struct {

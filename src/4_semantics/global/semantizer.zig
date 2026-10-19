@@ -3780,7 +3780,9 @@ test "call diagnostic type names tolerate unresolved slots" {
 fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
     const failure = generics.comptime_failure orelse return;
     if (diagnostics) |bag| {
-        try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
+        if (failure.unknown_name) |name| {
+            try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "unknown name '{s}' in this scope", .{name});
+        } else try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
         return error.Reported;
     }
 }

@@ -1125,3 +1125,28 @@ test "interactive unknown names report original input without publishing binding
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("retained")).?.value.integer);
     try session.close();
 }
+
+test "interactive generic functions use explicit inputs without capturing retained values" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("retained :: Int32 = 42");
+    try session.submitDefinitions("identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }");
+    try session.submitDefinitions("read#(.T: Type) := (.value: T) -> (.result: Int32) { result = retained }");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("identity(.value = retained)")).?.value.integer);
+    try session.submitStatements("fixed: Int32 = 7");
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("#run identity(.value = fixed)")).?.value.integer);
+    try session.submitStatements("loan ::= identity(.value = &retained)");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("read(.value = true)"));
+    try std.testing.expectEqualStrings("unknown name 'retained' in this scope", session.diagnostics.list.items[0].msg);
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectError(error.Reported, session.submitInput("#run identity(.value = retained)"));
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "runtime values cannot be used") != null);
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("loan&")).?.value.integer);
+    try session.submitStatements("retained = 7");
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("loan&")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("identity(.value = retained)")).?.value.integer);
+    try session.close();
+}

@@ -243,7 +243,11 @@ _2 = 49
 Each line is one submission. Use `:begin` and `:end` around multiline definitions
 or statement blocks. Submit definitions separately from executable statements.
 Functions, types and contracts remain available to subsequent submissions;
-redefining accepted names is rejected. Imports use the normal folder-module loader;
+redefining accepted names is rejected. Functions use their defining module scope;
+session locals enter through parameters or ordinary capability inputs, without
+implicit captures. `#run` uses
+compiler-known constant expressions, never a snapshot of runtime session storage.
+Imports use the normal folder-module loader;
 relative paths start at the directory where the REPL was launched. Dependencies
 are retained across submissions and reimports; reset allows fresh source loading.
 Module-level computed `#if` selects declarations and imports through the same
