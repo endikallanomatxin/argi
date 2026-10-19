@@ -62,7 +62,6 @@ pub const Context = struct {
     globals: std.AutoHashMapUnmanaged(GlobalKey, runtime_value.FrameId) = .empty,
     literal_bytes: std.StringHashMapUnmanaged(runtime_value.Reference) = .empty,
     trace_locations: std.ArrayList(b.TraceLocation) = .empty,
-    acquisitions: @import("acquisitions.zig").Regions = .{},
 
     pub fn init(allocator: std.mem.Allocator, value_cells: usize) Context {
         return .{ .arena = .init(allocator), .allocator = allocator, .limit = value_cells };
@@ -86,22 +85,22 @@ pub const Context = struct {
     pub fn acquireRegion(self: *Context, length: usize, alignment: usize) !@import("acquisitions.zig").Handle {
         if (self.running) return error.ExecutionContextBusy;
         try self.ensureStorage();
-        return self.acquisitions.acquire(&self.storage, length, alignment);
+        return self.storage.acquisitions.acquire(&self.storage, length, alignment);
     }
     pub fn readRegion(self: *Context, handle: @import("acquisitions.zig").Handle, offset: usize, destination: []u8) !void {
         if (self.running) return error.ExecutionContextBusy;
         try self.ensureStorage();
-        return self.acquisitions.read(&self.storage, handle, offset, destination);
+        return self.storage.acquisitions.read(&self.storage, handle, offset, destination);
     }
     pub fn writeRegion(self: *Context, handle: @import("acquisitions.zig").Handle, offset: usize, source: []const u8) !void {
         if (self.running) return error.ExecutionContextBusy;
         try self.ensureStorage();
-        return self.acquisitions.write(&self.storage, handle, offset, source);
+        return self.storage.acquisitions.write(&self.storage, handle, offset, source);
     }
     pub fn releaseRegion(self: *Context, handle: @import("acquisitions.zig").Handle) !void {
         if (self.running) return error.ExecutionContextBusy;
         try self.ensureStorage();
-        return self.acquisitions.release(&self.storage, handle);
+        return self.storage.acquisitions.release(&self.storage, handle);
     }
     pub fn deinit(self: *Context) void {
         std.debug.assert(!self.running);
@@ -120,7 +119,6 @@ pub const Context = struct {
         self.globals = .empty;
         self.literal_bytes = .empty;
         self.trace_locations = .empty;
-        self.acquisitions = .{};
         return previous;
     }
 

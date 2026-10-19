@@ -2,6 +2,8 @@ const std = @import("std");
 const b = @import("../5_codegen/bytecode/bytecode.zig");
 const v = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
+const acquired = @import("acquisitions.zig");
+const numeric = @import("../5_codegen/bytecode/numeric_layout.zig");
 const partial = @import("partial_storage.zig");
 
 const Frame = struct {
@@ -10,7 +12,7 @@ const Frame = struct {
     cleanup: []const b.Cleanup = &.{},
     bytes: []const u8 = &.{},
     alive: bool = true,
-    duration: enum { call, session, static } = .call,
+    duration: enum { call, session, static, acquired } = .call,
 };
 
 // Slots contain either a complete value (including Void) or no value. This is
@@ -66,6 +68,36 @@ pub const Storage = struct {
     limit: usize,
     cells: usize = 0,
     frames: std.ArrayList(Frame) = .empty,
+    acquisitions: acquired.Regions = .{},
+    acquired_views: std.AutoHashMapUnmanaged(v.FrameId, AcquiredView) = .empty,
+
+    const AcquiredView = struct {
+        handle: acquired.Handle,
+        offset: usize,
+        layout: *const numeric.Layout,
+        endian: std.builtin.Endian,
+    };
+
+    /// Execution-side establishment only. Checked bytecode must separately
+    /// provide the language authorization; a handle or integer is not that proof.
+    /// Layout metadata must outlive this storage, like other compiled layouts.
+    pub fn acquiredScalar(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability) !v.Reference {
+        if (layout.shape != .integer or layout.size == 0 or layout.size > 8 or !std.math.isPowerOfTwo(layout.size) or layout.alignment > layout.size) return error.ExecutionInvalidReference;
+        _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
+        const frame = try self.enter(1);
+        try self.acquired_views.put(self.allocator, frame, .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian });
+        self.frames.items[@intFromEnum(frame)].duration = .acquired;
+        return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
+    }
+
+    fn acquiredView(self: *Storage, reference: v.Reference) !?AcquiredView {
+        _ = try self.frameValues(reference.frame);
+        if (self.frames.items[@intFromEnum(reference.frame)].duration != .acquired) return null;
+        const view = self.acquired_views.get(reference.frame) orelse return error.ExecutionInvalidReference;
+        if (reference.root != 0 or reference.path.len != 0) return error.ExecutionInvalidReference;
+        _ = try self.acquisitions.range(self, view.handle, view.offset, view.layout.size, view.layout.alignment);
+        return view;
+    }
 
     pub fn init(allocator: std.mem.Allocator, limit: usize) !Storage {
         var next = next_context.load(.monotonic);
@@ -349,6 +381,8 @@ pub const Storage = struct {
             base.byte_view = null;
             return .{ .integer = try @import("../5_codegen/bytecode/numeric_layout.zig").readByte(view.layout, try self.read(base), view.offset, view.endian) };
         }
+        if (try self.acquiredView(reference)) |view|
+            return .{ .integer = try self.acquisitions.loadInteger(self, view.handle, view.offset, view.layout, view.endian) };
         _ = try self.frameValues(reference.frame);
         const frame = self.frames.items[@intFromEnum(reference.frame)];
         if (frame.duration == .static) {
@@ -431,6 +465,7 @@ pub const Storage = struct {
     }
     fn validateStorageAddress(self: *Storage, reference: v.Reference) !void {
         try self.validateContext(reference);
+        if (try self.acquiredView(reference) != null) return;
         const slots_ = try self.slots(reference.frame);
         if (reference.root >= (try slots_.cells()).len) return error.ExecutionInvalidReference;
         if (reference.path.len != 0) {
@@ -464,6 +499,7 @@ pub const Storage = struct {
     fn cleanupEntry(self: *Storage, reference: v.Reference) !usize {
         if (reference.byte_view != null) return error.ExecutionInvalidReference;
         try self.validateContext(reference);
+        if (try self.acquiredView(reference) != null) return error.ExecutionMissingCleanup;
         _ = try self.slots(reference.frame);
         const layout = self.frames.items[@intFromEnum(reference.frame)].cleanup;
         const key = b.Cleanup{ .root = reference.root, .path = reference.path, .flag = 0 };
@@ -589,6 +625,10 @@ pub const Storage = struct {
             const updated = try @import("../5_codegen/bytecode/numeric_layout.zig").writeByte(self.allocator, view.layout, try self.read(base), view.offset, @intCast(value.integer), view.endian);
             return self.store(base, updated);
         }
+        if (try self.acquiredView(reference)) |view| {
+            if (value != .integer) return error.ExecutionInvalidReference;
+            return self.acquisitions.storeInteger(self, view.handle, view.offset, view.layout, value.integer, view.endian);
+        }
         const values = try self.slots(reference.frame);
         if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |record| {
             const prefix = try record.aggregatePrefix(reference.path);
@@ -656,7 +696,6 @@ pub const Storage = struct {
 };
 
 test "numeric byte storage views retain identity permissions and frame lifetime" {
-    const numeric = @import("../5_codegen/bytecode/numeric_layout.zig");
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 4096);
@@ -788,4 +827,37 @@ test "compact partial array layouts charge concrete cells before allocation" {
     } }));
     try std.testing.expectEqual(before, storage.cells);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+}
+
+test "acquired scalar frames use ordinary references and reject release or permission violations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const region = try storage.acquisitions.acquire(&storage, 8, 8);
+    const reference = try storage.acquiredScalar(region, 4, &layout, .little, .read_write);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(reference));
+    // Addressing vacant storage is valid; borrowing a readable value is not.
+    _ = try storage.address(reference, .read_write);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.borrow(reference, .read_only));
+    const destination = try storage.captureResolvedWrite(reference, false);
+    _ = try storage.checkWriteCleanup(destination);
+    try storage.write(destination, .{ .integer = 42 });
+    _ = try storage.activateWriteCleanup(destination);
+    const readonly = (try storage.borrow(reference, .read_only)).reference;
+    const copy = try storage.cloneValues(&.{.{ .reference = readonly }});
+    try std.testing.expectEqual(@as(i128, 42), (try storage.read(copy[0].reference)).integer);
+    const byte_reference = try storage.numericBytes(readonly, &layout, .little);
+    try std.testing.expectEqual(@as(i128, 42), (try storage.read(byte_reference)).integer);
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.store(byte_reference, .{ .integer = 7 }));
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.store(readonly, .{ .integer = 7 }));
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.address(readonly, .read_write));
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(reference));
+    try storage.acquisitions.release(&storage, region);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(copy[0].reference));
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(byte_reference));
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.store(reference, .{ .integer = 7 }));
+    const replacement = try storage.acquisitions.acquire(&storage, 8, 8);
+    _ = try storage.acquiredScalar(replacement, 4, &layout, .little, .read_write);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(reference));
 }
