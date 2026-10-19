@@ -780,7 +780,7 @@ pub const Resolver = struct {
     /// Zero construction supports numeric zeros, null callbacks, and arrays;
     /// zero bytes cannot establish references or arbitrary resource invariants.
     pub fn makeZeroed(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
-        const ty = self.typeArgument(input) orelse return null;
+        const ty = self.typeArgument(input, false) orelse return null;
         if (self.graph.isTypeUnresolved(ty)) return null;
         return try self.zeroValue(ty, source);
     }
@@ -815,13 +815,13 @@ pub const Resolver = struct {
     }
 
     fn makeSizeOf(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
-        const measured = self.typeArgument(input) orelse return null;
+        const measured = self.typeArgument(input, true) orelse return null;
         const size = types.sizeOf(self.graph, measured) catch return null;
         return try self.typeInfoLiteral(source, size);
     }
 
     fn makeAlignmentOf(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
-        const measured = self.typeArgument(input) orelse return null;
+        const measured = self.typeArgument(input, true) orelse return null;
         const alignment = types.alignmentOf(self.graph, measured) catch return null;
         return try self.typeInfoLiteral(source, alignment);
     }
@@ -832,25 +832,23 @@ pub const Resolver = struct {
             else => return null,
         };
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-            if (!std.mem.eql(u8, self.graph.text(field.name), "value")) continue;
+            if (!std.mem.eql(u8, self.graph.text(field.name), "value") and !(literal.fields.len == 1 and field.name.len == 0)) continue;
             const value_ty = self.graph.node(field.value).ty orelse return null;
             return .{ .source = source, .ty = try self.builtin(.Type), .content = .{ .type_literal = value_ty } };
         }
         return null;
     }
 
-    fn typeArgument(self: *const Resolver, input: global_sg.GlobalNodeId) ?global_sg.GlobalTypeId {
+    fn typeArgument(self: *const Resolver, input: global_sg.GlobalNodeId, allow_value: bool) ?global_sg.GlobalTypeId {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |value| value,
             else => return null,
         };
         var measured: ?global_sg.GlobalTypeId = null;
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-            if (!std.mem.eql(u8, self.graph.text(field.name), "type")) continue;
-            measured = switch (self.graph.nodes.items[@intFromEnum(field.value)].content) {
-                .type_literal => |ty| ty,
-                else => return null,
-            };
+            const unnamed = allow_value and literal.fields.len == 1 and field.name.len == 0;
+            if (!std.mem.eql(u8, self.graph.text(field.name), "type") and !unnamed) continue;
+            measured = types.typeValue(self.graph, field.value) orelse if (unnamed) self.graph.node(field.value).ty else null;
             break;
         }
         return measured;

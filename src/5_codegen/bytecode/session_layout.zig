@@ -1,4 +1,5 @@
 const std = @import("std");
+const types = @import("../../4_semantics/global/types.zig");
 const g = @import("../../4_semantics/global/graph.zig");
 const b = @import("bytecode.zig");
 const shape = @import("../cleanup_layout.zig");
@@ -15,10 +16,12 @@ pub fn build(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, 
     const boolean: ?g.GlobalTypeId = for (graph.types.items, 0..) |ty, index| {
         if (ty == .builtin and ty.builtin == .Bool) break @enumFromInt(index);
     } else null;
-    const result = try allocator.alloc(b.SessionBinding, bindings.len);
-    for (bindings, result, 0..) |binding, *out, index| {
+    var result: std.ArrayList(b.SessionBinding) = .empty;
+    errdefer result.deinit(allocator);
+    for (bindings, 0..) |binding, index| {
         if (@intFromEnum(binding) >= graph.bindings.items.len) return error.InvalidSessionBinding;
         if (std.mem.indexOfScalar(g.GlobalBindingId, bindings[0..index], binding) != null) return error.DuplicateSessionBinding;
+        if (types.staticTypeBinding(graph, binding) != null) continue;
         const ty = graph.binding(binding).ty;
         const flags = if (required[@intFromEnum(binding)]) try counts.count(allocator, graph, ty) else 0;
         const slot_count = try std.math.add(usize, flags, 1);
@@ -30,9 +33,9 @@ pub fn build(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, 
         var cursor: usize = 0;
         if (flags != 0) try fill(allocator, graph, ty, &.{}, cleanup, &cursor, 0);
         std.debug.assert(cursor == flags);
-        out.* = .{ .binding = binding, .slots = slots, .cleanup = cleanup };
+        try result.append(allocator, .{ .binding = binding, .slots = slots, .cleanup = cleanup });
     }
-    return result;
+    return result.toOwnedSlice(allocator);
 }
 
 fn fill(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, path: []const value.Projection, cleanup: []b.Cleanup, cursor: *usize, depth: usize) anyerror!void {

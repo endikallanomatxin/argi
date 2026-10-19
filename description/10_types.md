@@ -13,7 +13,10 @@ element type. See [Compile-time parameters](132_generics.md).
 ## Type queries
 
 `type_of(.value = expression)` obtains the type of an expression. `size_of`
-and `alignment_of` query a type's size and alignment:
+and `alignment_of` query a type's size and alignment. Single positional forms
+`type_of(expression)`, `size_of(expression)` and `alignment_of(expression)`
+are also accepted. Layout queries accept either a type constant or a value
+whose type is measured; `.type =` explicitly requires a type constant:
 
 ```rg
 element_type : Type = type_of(.value = point)

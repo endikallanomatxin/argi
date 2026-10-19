@@ -3550,7 +3550,7 @@ fn appendReachAlternatives(
     }
 }
 
-fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) anyerror!void {
+pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) anyerror!void {
     // Candidate signatures may still contain unresolved slots while reporting
     // a failed call. Their poison payload is not a declaration to inspect.
     if (graph.isTypeUnresolved(ty)) {

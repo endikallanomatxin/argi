@@ -14132,3 +14132,9 @@ test "feature_tests/execution/120_acquired_aggregate_reference" {
     try runExpect("tests/feature_tests/execution/120_acquired_aggregate_reference", 42);
     try vmExpect("tests/feature_tests/execution/120_acquired_aggregate_reference", 42, null);
 }
+
+test "feature_tests/execution/121_type_queries" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/121_type_queries");
+    try runExpect("tests/feature_tests/execution/121_type_queries", 42);
+    try vmExpect("tests/feature_tests/execution/121_type_queries", 42, null);
+}

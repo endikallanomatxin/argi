@@ -764,7 +764,8 @@ const Context = struct {
         if (try @import("../target_predicate.zig").evaluate(self.allocator, self.tree, self.source, node, self.graph.target, self.diagnostics)) |matched|
             return self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = matched });
         const previous_suppression = self.suppress_implicit_copies;
-        if (std.mem.eql(u8, name_text, "is") or std.mem.eql(u8, name_text, "type_of"))
+        if (std.mem.eql(u8, name_text, "is") or std.mem.eql(u8, name_text, "type_of") or
+            std.mem.eql(u8, name_text, "size_of") or std.mem.eql(u8, name_text, "alignment_of"))
             self.suppress_implicit_copies = true;
         defer self.suppress_implicit_copies = previous_suppression;
         var callee_value: ?entities.ModuleNodeId = null;

@@ -109,7 +109,10 @@ pub const Interactive = struct {
     pub const PresentedValue = struct {
         name: []const u8,
         ty: @import("../4_semantics/global/graph.zig").GlobalTypeId,
-        value: @import("../5_codegen/bytecode/value.zig").Value,
+        value: union(enum) {
+            runtime: @import("../5_codegen/bytecode/value.zig").Value,
+            type_: @import("../4_semantics/global/graph.zig").GlobalTypeId,
+        },
     };
 
     pub fn submit(self: *Interactive, source: []const u8) !void {
@@ -127,19 +130,22 @@ pub const Interactive = struct {
             .statements => try self.submitStatements(source),
             .expression => {
                 const name = try self.nextResultName();
-                const statement = try std.fmt.allocPrint(self.allocator, "{s} ::= {s}\n", .{ name, source });
+                const statement = try std.fmt.allocPrint(self.allocator, "{s} := {s}\n", .{ name, source });
                 defer self.allocator.free(statement);
                 var command = try self.sources.prepareCommandOrigin(&self.compiler, &self.diagnostics, statement, .{
                     .text = source,
-                    .offset = name.len + " ::= ".len,
+                    .offset = name.len + " := ".len,
                 });
                 defer command.deinit();
                 try self.runtime.executeCommand(&command.candidate);
                 const bindings = self.compiler.semantic.resolvers.expressions.session_bindings.items;
                 const binding = bindings[bindings.len - 1];
+                const graph = &self.compiler.semantic.relocation.graph;
+                if (@import("../4_semantics/global/types.zig").staticTypeBinding(graph, binding)) |type_value|
+                    return .{ .name = name, .ty = graph.binding(binding).ty, .value = .{ .type_ = type_value } };
                 const frame = self.runtime.context.bindings.get(binding) orelse return error.UninitializedBinding;
                 const slots = try self.runtime.context.storage.slots(frame);
-                return .{ .name = name, .ty = self.compiler.semantic.relocation.graph.binding(binding).ty, .value = try slots.get(0) };
+                return .{ .name = name, .ty = self.compiler.semantic.relocation.graph.binding(binding).ty, .value = .{ .runtime = try slots.get(0) } };
             },
         }
         return null;
@@ -344,22 +350,22 @@ test "interactive expression results retain names skip conflicts and reset" {
     try session.submit("_0 ::= 7");
     const first = (try session.submitInput("42")).?;
     try std.testing.expectEqualStrings("_1", first.name);
-    try std.testing.expectEqual(@as(i128, 42), first.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), first.value.runtime.integer);
     const second = (try session.submitInput("_1")).?;
     try std.testing.expectEqualStrings("_2", second.name);
-    try std.testing.expectEqual(@as(i128, 42), second.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), second.value.runtime.integer);
     try session.submit("answer := () -> (.result: Int32) { result = 12 }");
     const call = (try session.submitInput("answer()")).?;
-    try std.testing.expectEqual(@as(i128, 12), call.value.integer);
+    try std.testing.expectEqual(@as(i128, 12), call.value.runtime.integer);
     try session.submit("called :: Bool = false");
     try session.submit("nothing := (.called: $&Bool) -> () { if called& { abort } called& = true }");
     const unit = (try session.submitInput("nothing(.called = $&called)")).?;
-    try std.testing.expect(unit.value == .unit or (unit.value == .record and unit.value.record.len == 0));
-    try std.testing.expect((try session.submitInput("called")).?.value.boolean);
+    try std.testing.expect(unit.value.runtime == .unit or (unit.value.runtime == .record and unit.value.runtime.record.len == 0));
+    try std.testing.expect((try session.submitInput("called")).?.value.runtime.boolean);
     try session.reset();
     const reset = (try session.submitInput("true")).?;
     try std.testing.expectEqualStrings("_0", reset.name);
-    try std.testing.expect(reset.value.boolean);
+    try std.testing.expect(reset.value.runtime.boolean);
     try session.close();
 }
 
@@ -369,11 +375,11 @@ test "interactive presented references retain checked session storage" {
     defer session.deinit();
     try session.submit("source :: Int32 = 42");
     const borrowed = (try session.submitInput("&source")).?;
-    try std.testing.expect(borrowed.value == .reference);
-    const target = borrowed.value.reference;
+    try std.testing.expect(borrowed.value.runtime == .reference);
+    const target = borrowed.value.runtime.reference;
     try std.testing.expectEqual(.session, session.runtime.context.storage.frames.items[@intFromEnum(target.frame)].duration);
     const read = (try session.submitInput("_0&")).?;
-    try std.testing.expectEqual(@as(i128, 42), read.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), read.value.runtime.integer);
     try session.close();
 }
 
@@ -417,9 +423,9 @@ test "interactive submissions share staged run and conditional execution" {
             "}\n",
     );
     const runtime = (try session.submitInput("choose()")).?;
-    try std.testing.expectEqual(@as(i128, 42), runtime.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), runtime.value.runtime.integer);
     const comptime_value = (try session.submitInput("#run choose()")).?;
-    try std.testing.expectEqual(@as(i128, 42), comptime_value.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), comptime_value.value.runtime.integer);
     try session.close();
 }
 
@@ -434,7 +440,7 @@ test "interactive classification rejects mixed submissions and unresolved import
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "interactive imports require a configured source loader") != null);
     const result = (try session.submitInput("42")).?;
-    try std.testing.expectEqual(@as(i128, 42), result.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), result.value.runtime.integer);
     try session.close();
 }
 
@@ -512,7 +518,7 @@ test "interactive definition batches keep dependency modules outside the session
     try std.testing.expectEqualStrings("answer", resolver.graph.text(resolver.graph.declaration(namespace.declarations.items[0]).name));
     try std.testing.expect(!resolver.sameDeclarationNamespace(0, 1));
     try session.compiler.accept(&candidate);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -529,7 +535,7 @@ test "interactive imported aliases survive subsequent submissions without export
     var candidate = try session.compiler.prepareDefinitions(prefix, &session.diagnostics);
     defer candidate.deinit();
     try session.compiler.accept(&candidate);
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("library.helper()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("library.helper()")).?.value.runtime.integer);
     const resolver = &session.compiler.semantic.resolvers.core;
     const namespace = resolver.session_namespace.?;
     try std.testing.expectEqualStrings("library", resolver.graph.text(resolver.graph.declaration(namespace.declarations.items[0]).name));
@@ -547,15 +553,15 @@ test "interactive assumptions persist without leaking nested scopes or rejected 
     defer session.deinit();
     try session.submitDefinitions("observe := (.capability: &Bool) -> (.result: Bool) { result = capability& }\n");
     try session.submitStatements("enabled ::= true\nassume capability ::= &enabled");
-    try std.testing.expect((try session.submitInput("observe()")).?.value.boolean);
+    try std.testing.expect((try session.submitInput("observe()")).?.value.runtime.boolean);
     try session.submitStatements("nested_result :: Bool = true\nif true {\nlocal ::= false\nassume capability ::= &local\nnested_result = observe()\n}");
-    try std.testing.expect(!(try session.submitInput("nested_result")).?.value.boolean);
+    try std.testing.expect(!(try session.submitInput("nested_result")).?.value.runtime.boolean);
     try std.testing.expectError(error.Reported, session.submitStatements("if true {\ncapability ::= &enabled\nignored ::= observe()\n}"));
-    try std.testing.expect((try session.submitInput("observe()")).?.value.boolean);
+    try std.testing.expect((try session.submitInput("observe()")).?.value.runtime.boolean);
     const assumptions = session.compiler.semantic.resolvers.core.session_namespace.?.assumptions.items.len;
     try std.testing.expectError(error.Reported, session.submitStatements("assume rejected ::= true\nmissing()"));
     try std.testing.expectEqual(assumptions, session.compiler.semantic.resolvers.core.session_namespace.?.assumptions.items.len);
-    try std.testing.expect((try session.submitInput("observe()")).?.value.boolean);
+    try std.testing.expect((try session.submitInput("observe()")).?.value.runtime.boolean);
     try session.reset();
     try session.submitDefinitions("observe := (.capability: &Bool) -> (.result: Bool) { result = capability& }\n");
     try std.testing.expectError(error.Reported, session.submitInput("observe()"));
@@ -578,7 +584,7 @@ test "interactive inherited assumptions supply selected nested cleanup" {
     try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .capability: $&(.used: Bool) = reach capability) -> () { capability&.used = true })");
     try session.submitStatements("state :: (.used: Bool) = (.used = false)\nassume capability ::= $&state");
     try session.submitStatements("if true {\nresource :: Resource = ()\n}");
-    try std.testing.expect((try session.submitInput("state.used")).?.value.boolean);
+    try std.testing.expect((try session.submitInput("state.used")).?.value.runtime.boolean);
     try session.close();
 }
 
@@ -592,10 +598,10 @@ test "interactive virtual values retain their creation unit across submissions" 
     try session.submit("implement Readable#(Box) (.read = read_box)");
     try session.submitStatements("box :: Box = (.value = 42)\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
     const first = (try session.submitInput("Readable#().read(&erased).result")).?;
-    try std.testing.expectEqual(@as(i128, 42), first.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), first.value.runtime.integer);
     try session.submitStatements("box.value = 7");
     const second = (try session.submitInput("Readable#().read(&erased).result")).?;
-    try std.testing.expectEqual(@as(i128, 7), second.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), second.value.runtime.integer);
     try session.close();
 }
 
@@ -612,7 +618,7 @@ test "interactive virtual calls can enter older and newer code units" {
     try session.submit("implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })");
     try session.submitStatements("box :: Box = (.value = 42)\nreader_handle ::= to_virtual#(.contract: Readable)(.value = &box)");
     const result = (try session.submitInput("Relay#().relay(&relay_handle, &reader_handle).result")).?;
-    try std.testing.expectEqual(@as(i128, 42), result.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), result.value.runtime.integer);
     try session.close();
 }
 
@@ -634,7 +640,7 @@ test "interactive source IDs retain original metadata across commands" {
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    const first = (try session.submitInput("error_location_id()")).?.value.record[0].integer;
+    const first = (try session.submitInput("error_location_id()")).?.value.runtime.record[0].integer;
     try std.testing.expectEqual(@as(usize, 1), session.runtime.context.trace_locations.items.len);
     const original = session.runtime.context.trace_locations.items[@intCast(first)];
     try std.testing.expectEqualStrings("error_location_id()", original.source_line);
@@ -651,7 +657,7 @@ test "interactive source IDs retain original metadata across commands" {
     const core_default = session.runtime.context.trace_locations.items[3];
     try std.testing.expectEqualStrings("core_located()", core_default.source_line);
     try std.testing.expectEqual(@as(u32, 1), core_default.column);
-    const recovered = (try session.submitInput("source_location(_0)")).?.value.record;
+    const recovered = (try session.submitInput("source_location(_0)")).?.value.runtime.record;
     try std.testing.expectEqual(@as(i128, 1), recovered[2].integer);
     try std.testing.expectEqual(@as(i128, 1), recovered[3].integer);
     for ("error_location_id()", 0..) |byte, index| {
@@ -688,15 +694,15 @@ test "interactive imports load folder dependencies transactionally and retain ac
     defer session.deinit();
     try session.enableImports(io, base);
     try session.submit("library := import(\"./library\")");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.integer);
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("library.extra()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("library.extra()")).?.value.runtime.integer);
     // Already-published dependencies are immutable, even when another new
     // module imports them after the files have changed or become invalid.
     try tmp.dir.writeFile(io, .{ .sub_path = "dependency/main.rg", .data = "broken := () -> () {" });
     try session.submit("again := import(\"./library\")");
     try session.submit("later := import(\"./later\")");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.answer()")).?.value.integer);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("later.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.answer()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("later.answer()")).?.value.runtime.integer);
     const revision = session.compiler.revision;
     try std.testing.expectError(error.ExpectedRightBrace, session.submit("bad := import(\"./broken\")"));
     try std.testing.expectEqual(revision, session.compiler.revision);
@@ -704,14 +710,14 @@ test "interactive imports load folder dependencies transactionally and retain ac
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectError(error.UnknownModuleReference, session.compiler.semantic.resolvers.core.findModuleForQualifier(0, "bad"));
     try std.testing.expectError(error.Reported, session.submitInput("answer()"));
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.runtime.integer);
     try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "answer := () -> (.result: Int32) { result = 11 }" });
     try session.submit("bad := import(\"./broken\")");
-    try std.testing.expectEqual(@as(i128, 11), (try session.submitInput("bad.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 11), (try session.submitInput("bad.answer()")).?.value.runtime.integer);
     try tmp.dir.writeFile(io, .{ .sub_path = "dependency/main.rg", .data = "answer := () -> (.result: Int32) { result = 99 }" });
     try session.reset();
     try session.submit("library := import(\"./library\")");
-    try std.testing.expectEqual(@as(i128, 99), (try session.submitInput("library.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 99), (try session.submitInput("library.answer()")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -729,12 +735,12 @@ test "interactive imported globals initialize once and retain mutation across un
     defer session.deinit();
     try session.enableImports(io, base);
     try session.submit("library := import(\"./library\")");
-    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("library.advance()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("library.advance()")).?.value.runtime.integer);
     try session.submit("again := import(\"./library\")");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.advance()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.advance()")).?.value.runtime.integer);
     try session.reset();
     try session.submit("library := import(\"./library\")");
-    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("library.advance()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("library.advance()")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -748,15 +754,15 @@ test "interactive prelude executes checked assumptions again after reset" {
     const source = "enabled :: Bool = true\nassume capability ::= &enabled";
     try session.initializePrelude(source);
     try session.submit("observe := (.capability: &Bool) -> (.result: Bool) { result = capability& }");
-    try std.testing.expect((try session.submitInput("observe()")).?.value.boolean);
+    try std.testing.expect((try session.submitInput("observe()")).?.value.runtime.boolean);
     try session.submitStatements("enabled = false");
-    try std.testing.expect(!(try session.submitInput("observe()")).?.value.boolean);
+    try std.testing.expect(!(try session.submitInput("observe()")).?.value.runtime.boolean);
     try std.testing.expectError(error.PreludeRequiresFreshSession, session.initializePrelude("unwanted ::= true"));
     try session.reset();
     try std.testing.expectEqualStrings(source, session.prelude.?);
     try session.submit("observe := (.capability: &Bool) -> (.result: Bool) { result = capability& }");
     const result = (try session.submitInput("observe()")).?;
-    try std.testing.expect(result.value.boolean);
+    try std.testing.expect(result.value.runtime.boolean);
     try std.testing.expectEqualStrings("_0", result.name);
     try session.close();
 }
@@ -773,7 +779,7 @@ test "interactive reset retains the new compiler when prelude execution traps" {
     try std.testing.expectEqual(.poisoned, session.runtime.context.state);
     session.limits.instructions = 1_000_000;
     try session.reset();
-    try std.testing.expect((try session.submitInput("enabled")).?.value.boolean);
+    try std.testing.expect((try session.submitInput("enabled")).?.value.runtime.boolean);
     try session.close();
 }
 
@@ -790,7 +796,7 @@ test "interactive once consumption survives commands and rejected candidates" {
     try std.testing.expectError(error.Reported, session.submitStatements("first ::= acquire()\nsecond ::= acquire()"));
     try session.submit("helper := () -> (.result: Int32) { result = acquire() }");
     try std.testing.expectError(error.Reported, session.submitStatements("first ::= helper()\nsecond ::= helper()"));
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("acquire()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("acquire()")).?.value.runtime.integer);
     const revision = session.compiler.revision;
     try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
     try std.testing.expectEqual(revision, session.compiler.revision);
@@ -798,10 +804,10 @@ test "interactive once consumption survives commands and rejected candidates" {
     try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "consumed more than once") != null);
     try session.submit("again := () -> (.result: Int32) { result = acquire() }");
     try std.testing.expectError(error.Reported, session.submitInput("again()"));
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("7")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("7")).?.value.runtime.integer);
     try session.reset();
     try session.submit(definition);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("acquire()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("acquire()")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -811,8 +817,8 @@ test "interactive once capabilities retain deferred temporary storage" {
     defer session.deinit();
     try session.submitDefinitions("Token: Type = (.value: Int32)\nonce acquire := () -> (.result: Token) { result = (.value = 42) }\nobserve := (.capability: &Token) -> (.result: Int32) { result = capability&.value }");
     try session.submitStatements("assume capability ::= $&acquire()");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.integer);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
     try session.close();
 }
@@ -832,7 +838,7 @@ test "interactive deferred owners retain their checked cleanup" {
     try session.submitDefinitions("Resource: Type = (.value: Int32)\nonce acquire := () -> (.result: Resource) { result = (.value = 42) }\nobserve := (.resource: &Resource) -> (.result: Int32) { result = resource&.value }");
     try session.submitDefinitions("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
     try session.submitStatements("assume resource ::= $&acquire()");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
     const frame = session.runtime.context.bindings.get(binding).?;
     const slots = try session.runtime.context.storage.slots(frame);
@@ -851,7 +857,7 @@ test "interactive deferred condition storage can be initialized repeatedly" {
     try session.submitDefinitions("produce := (.state: $&(.used: Bool)) -> (.result: Bool) { if state&.used { result = false } else { state&.used = true\nresult = true } }\nobserve := (.value: &Bool) -> (.result: Bool) { result = value& }");
     try session.submitStatements("state :: (.used: Bool) = (.used = false)");
     try session.submitStatements("while observe(.value = &produce(.state = $&state)) {}");
-    try std.testing.expect((try session.submitInput("state.used")).?.value.boolean);
+    try std.testing.expect((try session.submitInput("state.used")).?.value.runtime.boolean);
     try session.close();
 }
 
@@ -860,8 +866,8 @@ test "interactive once defaults consume only completed call arguments" {
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitDefinitions("once acquire := () -> (.result: Int32) { result = 42 }\nwith_default := (.value: Int32 = acquire()) -> (.result: Int32) { result = value }");
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("with_default(.value = 7)")).?.value.integer);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("with_default()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("with_default(.value = 7)")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("with_default()")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
     try session.close();
 }
@@ -892,9 +898,9 @@ test "interactive generic diagnostics explain omitted reachable capabilities" {
         try std.testing.expect(std.mem.indexOf(u8, message, ".writer uses reach writer") != null);
         try std.testing.expect(std.mem.indexOf(u8, message, "explicitly") != null);
         try session.submitStatements("destination :: (.used: Bool) = (.used = false)");
-        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42, .writer = $&destination)")).?.value.integer);
+        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42, .writer = $&destination)")).?.value.runtime.integer);
         try session.submitStatements("assume writer ::= $&destination");
-        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42)")).?.value.integer);
+        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42)")).?.value.runtime.integer);
         try session.close();
     }
 }
@@ -949,7 +955,7 @@ test "interactive scalar host calls require explicit bindings before publication
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(@as(usize, 0), state.calls);
     session.runtime.context.host_bindings = &bindings;
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("host_increment(.value = 41)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("host_increment(.value = 41)")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(usize, 1), state.calls);
     try std.testing.expectError(error.Reported, session.submitInput("#run host_increment(.value = 41)"));
     try std.testing.expectEqual(@as(usize, 1), state.calls);
@@ -964,7 +970,7 @@ test "interactive scalar host calls require explicit bindings before publication
     try std.testing.expectEqual(.fresh, session.runtime.context.state);
     try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability");
     state.invalid_result = false;
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("host_increment(.value = 41)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("host_increment(.value = 41)")).?.value.runtime.integer);
     state.fail = true;
     try std.testing.expectError(error.TestHostFailure, session.submitInput("host_increment(.value = 41)"));
     try std.testing.expectEqual(.poisoned, session.runtime.context.state);
@@ -981,20 +987,20 @@ test "interactive vacant records retain partial initialization across commands" 
     try std.testing.expectError(error.Reported, session.submitInput("pair.first"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try session.submitStatements("pair.first = 41");
-    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("pair.first")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("pair.first")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("pair.second"));
     try std.testing.expectError(error.Reported, session.submitInput("pair"));
     try session.submitStatements("pair.second = 42");
     const complete = (try session.submitInput("pair")).?;
-    try std.testing.expectEqual(@as(i128, 42), complete.value.record[1].integer);
+    try std.testing.expectEqual(@as(i128, 42), complete.value.runtime.record[1].integer);
     try session.submitStatements("number :: Int32");
     try std.testing.expectError(error.Reported, session.submitInput("number"));
     try session.submitStatements("number = 42");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("number")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("number")).?.value.runtime.integer);
     try session.submitStatements("empty :: (.leaf: ())");
     try std.testing.expectError(error.Reported, session.submitInput("empty"));
     try session.submitStatements("empty.leaf = ()");
-    try std.testing.expectEqual(@as(usize, 1), (try session.submitInput("empty")).?.value.record.len);
+    try std.testing.expectEqual(@as(usize, 1), (try session.submitInput("empty")).?.value.runtime.record.len);
     try session.close();
 }
 
@@ -1036,14 +1042,14 @@ test "interactive arrays retain initialized elements across commands" {
         try session.diagnostics.dump();
         return err;
     };
-    try std.testing.expectEqual(@as(i128, 40), (try session.submitInput("numbers[0]")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 40), (try session.submitInput("numbers[0]")).?.value.runtime.integer);
     const revision = session.compiler.revision;
     try std.testing.expectError(error.Reported, session.submitInput("numbers[1]"));
     try std.testing.expectError(error.Reported, session.submitInput("numbers"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try session.submitStatements("numbers[1] = 42");
     const complete = (try session.submitInput("numbers")).?;
-    try std.testing.expectEqual(@as(i128, 42), complete.value.array[1].integer);
+    try std.testing.expectEqual(@as(i128, 42), complete.value.runtime.array[1].integer);
     try session.close();
 }
 
@@ -1065,8 +1071,8 @@ test "interactive computed imports share staged selection without replaying acce
     try session.enableImports(io, base);
     try session.submitStatements("retained :: Int32 = 7");
     try session.submit("library := import(\"./library\")");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.integer);
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("retained")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("retained")).?.value.runtime.integer);
     const revision = session.compiler.revision;
     const module_count = session.compiler.semantic.modules.len;
     try std.testing.expectError(error.Reported, session.submit("bad := import(\"./broken\")"));
@@ -1090,10 +1096,10 @@ test "interactive computed imports share staged selection without replaying acce
     try std.testing.expectEqual(module_count, session.compiler.semantic.modules.len);
     try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { answer := () -> (.value: Int32) { value = 11 } }" });
     try session.submit("fixed := import(\"./broken\")");
-    try std.testing.expectEqual(@as(i128, 11), (try session.submitInput("fixed.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 11), (try session.submitInput("fixed.answer()")).?.value.runtime.integer);
     try tmp.dir.writeFile(io, .{ .sub_path = "library/main.rg", .data = "broken := () -> () {" });
     try session.submit("again := import(\"./library\")");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.answer()")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -1113,7 +1119,7 @@ test "interactive unknown names report original input without publishing binding
         const original = session.diagnostics.source_db.get(diagnostic.loc.file);
         try std.testing.expectEqualStrings(input, original.source);
         try std.testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, input, "unknown_value").?)), diagnostic.loc.offset);
-        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("retained")).?.value.integer);
+        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("retained")).?.value.runtime.integer);
     }
     // Ordinary lazy checking still permits an unused definition. Calling it
     // checks its body and reports the original definition's missing name.
@@ -1122,7 +1128,7 @@ test "interactive unknown names report original input without publishing binding
     try std.testing.expectError(error.Reported, session.submitInput("unused()"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqualStrings("unknown name 'unknown_value' in this scope", session.diagnostics.list.items[0].msg);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("retained")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("retained")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -1133,9 +1139,9 @@ test "interactive generic functions use explicit inputs without capturing retain
     try session.submitStatements("retained :: Int32 = 42");
     try session.submitDefinitions("identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }");
     try session.submitDefinitions("read#(.T: Type) := (.value: T) -> (.result: Int32) { result = retained }");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("identity(.value = retained)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("identity(.value = retained)")).?.value.runtime.integer);
     try session.submitStatements("fixed: Int32 = 7");
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("#run identity(.value = fixed)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("#run identity(.value = fixed)")).?.value.runtime.integer);
     try session.submitStatements("loan ::= identity(.value = &retained)");
     const revision = session.compiler.revision;
     try std.testing.expectError(error.Reported, session.submitInput("read(.value = true)"));
@@ -1144,10 +1150,10 @@ test "interactive generic functions use explicit inputs without capturing retain
     try std.testing.expectError(error.Reported, session.submitInput("#run identity(.value = retained)"));
     try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "runtime values cannot be used") != null);
     try std.testing.expectEqual(revision, session.compiler.revision);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("loan&")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("loan&")).?.value.runtime.integer);
     try session.submitStatements("retained = 7");
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("loan&")).?.value.integer);
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("identity(.value = retained)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("loan&")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("identity(.value = retained)")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -1162,14 +1168,14 @@ test "interactive computed conditions retain reconstructed type bindings across 
             "outer#(.T: Type) := (.value: T) -> (.result: Int32) { result = choose#(.T: &T)(.value = &value) }",
     );
     try session.submitStatements("cell :: Cell = (.value = 1)");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = cell)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = cell)")).?.value.runtime.integer);
     const revision = session.compiler.revision;
     try std.testing.expectError(error.Reported, session.submitInput("missing_value"));
     try std.testing.expectEqual(revision, session.compiler.revision);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = cell)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = cell)")).?.value.runtime.integer);
     try session.submitDefinitions("Other: Type = (.flag: Bool)");
     try session.submitStatements("other :: Other = (.flag = true)");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = other)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = other)")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -1231,10 +1237,32 @@ test "interactive choice payload writes preserve vacant record siblings and snap
     try std.testing.expectError(error.Reported, session.submitInput("record.later"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try session.submitStatements("observed :: Int32 = 0\nmatch saved { ..empty { abort } ..some payload { observed = payload.value } }");
-    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("observed")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("observed")).?.value.runtime.integer);
     try session.submitStatements("record.later = 7\nmatch record.choice { ..empty { abort } ..some payload { observed = payload.value } }");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observed")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observed")).?.value.runtime.integer);
     try session.submitStatements("record.choice = ..empty\nmatch record.choice { ..empty {} ..some payload { abort } }");
-    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("record.later")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("record.later")).?.value.runtime.integer);
+    try session.close();
+}
+
+test "interactive introspection retains compiler type constants without runtime storage" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("a :: Int32 = 42");
+    const result = session.submitInput("type_of(a)") catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
+    const reflected = if (result.?.value == .type_) result.?.value.type_ else return error.MissingTypePresentation;
+    try std.testing.expect(@import("../4_semantics/global/types.zig").isBuiltin(&session.compiler.semantic.relocation.graph, reflected, .Int32));
+    try std.testing.expectEqual(@as(usize, 1), session.runtime.context.bindings.count());
+    const size = (try session.submitInput("size_of(a)")).?;
+    try std.testing.expectEqual(@as(i128, 4), size.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 4), (try session.submitInput("size_of(.type = _0)")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 4), (try session.submitInput("alignment_of(_0)")).?.value.runtime.integer);
+    const again = (try session.submitInput("_0")).?;
+    try std.testing.expect(again.value == .type_);
+    try session.reset();
     try session.close();
 }

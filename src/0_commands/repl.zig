@@ -146,9 +146,15 @@ fn evaluate(session: *interactive.Interactive, output: *std.Io.Writer, source: [
     if (try session.submitInput(source)) |result| {
         try output.print("{s} = ", .{result.name});
         const graph = &session.compiler.semantic.relocation.graph;
-        if (@import("../4_semantics/global/types.zig").isStringView(graph, result.ty)) {
-            const reference = result.value.record[0].reference;
-            const length = std.math.cast(usize, result.value.record[1].integer) orelse return error.ExecutionInvalidReference;
+        if (result.value == .type_) {
+            const ty = result.value.type_;
+            var text = std.array_list.Managed(u8).init(session.allocator);
+            defer text.deinit();
+            try @import("../4_semantics/global/semantizer.zig").appendTypeName(&text, graph, ty);
+            try output.writeAll(text.items);
+        } else if (@import("../4_semantics/global/types.zig").isStringView(graph, result.ty)) {
+            const reference = result.value.runtime.record[0].reference;
+            const length = std.math.cast(usize, result.value.runtime.record[1].integer) orelse return error.ExecutionInvalidReference;
             try output.writeByte('"');
             var scalars: usize = 0;
             for (0..length) |index| {
@@ -171,7 +177,7 @@ fn evaluate(session: *interactive.Interactive, output: *std.Io.Writer, source: [
                 }
             }
             try output.writeByte('"');
-        } else try printValue(output, result.value, 0);
+        } else try printValue(output, result.value.runtime, 0);
         try output.writeByte('\n');
     }
 }
@@ -351,14 +357,14 @@ test "REPL checked core allocations use virtual regions and explicit release" {
     try std.testing.expectEqual(@as(usize, 2), regions.len);
     try std.testing.expect(regions[0].live);
     try std.testing.expect(!regions[1].live);
-    const raw = (try session.submitInput("address")).?.value.integer;
+    const raw = (try session.submitInput("address")).?.value.runtime.integer;
     try std.testing.expect(raw != 0);
     const range = try session.runtime.context.storage.acquisitions.resolveAddress(&session.runtime.context.storage, @intCast(raw), 16, 8);
     session.submitStatements("anchor :: UInt8 = 0\nraw ::= raw_pointer#(.t: Int32)(.address = address).raw\nreference ::= trusted_establish_inherited_reference#(.t: Int32)(.raw = raw, .root = erase_reference#(.t: UInt8)(.base = &anchor).reference).reference\nreference&= 42") catch |err| {
         try session.diagnostics.dump();
         return err;
     };
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("reference&")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("reference&")).?.value.runtime.integer);
     try session.submitStatements("aligned_free(.address = address)");
     try std.testing.expectError(error.ExecutionReleasedAcquisition, session.runtime.context.storage.acquisitions.range(&session.runtime.context.storage, range.handle, 0, 0, 1));
     const revision = session.compiler.revision;
@@ -368,4 +374,15 @@ test "REPL checked core allocations use virtual regions and explicit release" {
     try std.testing.expectEqual(.poisoned, session.runtime.context.state);
     try session.reset();
     try session.close();
+}
+
+test "REPL presents compiler types and reuses them in layout queries" {
+    var session: interactive.Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    var input = std.Io.Reader.fixed("a :: Int32 = 42\ntype_of(a)\nsize_of(a)\nsize_of(.type = _0)\n:quit\n");
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try interact(&session, &input, &output.writer, false);
+    try std.testing.expectEqualStrings("_0 = Int32\n_1 = 4\n_2 = 4\n", output.written());
 }

@@ -875,12 +875,12 @@ test "prepared interactive modules retain selected namespaces across commands an
     try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
     defer session.deinit();
     try session.submitStatements("value ::= answer()");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("value")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("value")).?.value.runtime.integer);
     const revision = session.compiler.revision;
     try std.testing.expectError(error.Reported, session.submitStatements("bad ::= missing()"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try session.reset();
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.runtime.integer);
     try std.testing.expectEqual(node_count, prepared.relocation.graph.nodes.items.len);
     try session.close();
 }

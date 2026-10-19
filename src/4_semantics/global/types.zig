@@ -643,3 +643,26 @@ pub fn isStringView(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
     return pointer == .pointer and pointer.pointer.mutability == .read_only and
         isBuiltin(graph, pointer.pointer.child, .UInt8) and isBuiltin(graph, length.ty, .UIntNative);
 }
+
+/// Resolve compiler-owned type constants without introducing runtime type values.
+pub fn typeValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalTypeId {
+    var node = initial;
+    for (0..64) |_| {
+        switch (graph.node(node).content) {
+            .type_literal => |ty| return ty,
+            .binding_use => |id| {
+                const binding = graph.binding(id);
+                if (binding.mutability != .constant or binding.deferred_initialization) return null;
+                node = binding.initialization orelse return null;
+            },
+            else => return null,
+        }
+    }
+    return null;
+}
+
+pub fn staticTypeBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.GlobalTypeId {
+    const binding = graph.binding(id);
+    if (binding.mutability != .constant or binding.deferred_initialization or !isBuiltin(graph, binding.ty, .Type)) return null;
+    return typeValue(graph, binding.initialization orelse return null);
+}

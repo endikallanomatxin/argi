@@ -466,6 +466,7 @@ const FunctionLower = struct {
         switch (node.content) {
             .binding_declaration => |binding_id| {
                 const binding_ = self.parent.graph.binding(binding_id);
+                if (types.staticTypeBinding(self.parent.graph, binding_id) != null) return;
                 if (self.parent.sessionIndex(binding_id)) |index| {
                     if (binding_.deferred_initialization or binding_.initialization == null) {
                         const layout = if (binding_.deferred_initialization) null else try self.parent.partialLayout(node.source, binding_.ty);

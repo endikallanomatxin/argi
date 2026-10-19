@@ -986,6 +986,7 @@ pub const CodeGenerator = struct {
             .argument_default => CodegenError.InvalidType,
             .declaration, .reach_directive, .type_literal => null,
             .binding_declaration => |binding| blk: {
+                if (types.staticTypeBinding(self.graph, binding) != null) break :blk null;
                 if (self.global_bindings.contains(binding)) {
                     try self.ensureGlobalInitialized(binding);
                 } else {
