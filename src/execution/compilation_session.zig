@@ -529,7 +529,7 @@ test "continuation scopes retain direct owners and clean nested owners" {
         for (graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| {
             if (graph.node(node).content != .auto_deinit_binding) continue;
             const cleanup = graph.auto_deinits.items[@intFromEnum(graph.node(node).content.auto_deinit_binding)];
-            const name = graph.text(graph.binding(cleanup.binding).name);
+            const name = graph.text(graph.binding(cleanup.ownerBinding().?).name);
             if (std.mem.eql(u8, name, "retained")) persistent_cleanup += 1;
             if (std.mem.eql(u8, name, "temporary")) temporary_cleanup += 1;
         }
@@ -554,7 +554,7 @@ test "continuation scopes retain direct owners and clean nested owners" {
     try std.testing.expect(exit_body.nodes.len != 0);
     const first = exit_graph.node_refs.items[exit_body.nodes.start];
     try std.testing.expect(exit_graph.node(first).content == .auto_deinit_binding);
-    try std.testing.expectEqual(binding, exit_graph.auto_deinits.items[@intFromEnum(exit_graph.node(first).content.auto_deinit_binding)].binding);
+    try std.testing.expectEqual(binding, exit_graph.auto_deinits.items[@intFromEnum(exit_graph.node(first).content.auto_deinit_binding)].ownerBinding().?);
     try runtime.executeCommand(&exit);
     try std.testing.expectEqual(.fresh, runtime.context.state);
     try std.testing.expectError(error.InvalidSafetyContinuation, session.prepareExit(&modules, &diagnostics, @enumFromInt(@intFromEnum(command)), &.{binding}));

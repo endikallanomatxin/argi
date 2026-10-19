@@ -9,9 +9,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Complete acquired aggregate/resource storage and partial choice initialization.
   Share identity, projections, initialization and validity rules with ordinary
   storage without requiring identical physical representations.
-- Complete evaluated cleanup identities for indexed, indirect and retargetable
-  destinations in both backends. Preserve capture, RHS evaluation, old cleanup,
-  commit and activation as one checked replacement plan.
+- Transport evaluated cleanup identities for indexed, indirect and retargetable
+  destinations in both backends. A retargeted owning-reference probe currently
+  performs two native drops instead of three; VM lowering rejects it. Preserve
+  capture, RHS evaluation, old cleanup, commit and activation in one checked plan.
 - Enable the persistent REPL allocator only after its ordinary initialization,
   resource operations and reset/exit cleanup work end to end.
 

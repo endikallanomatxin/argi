@@ -66,7 +66,8 @@ pub const Lower = struct {
             const node = self.graph.node(id);
             if (node.content != .auto_deinit_binding) return error.InvalidBytecode;
             const cleanup = self.graph.auto_deinits.items[@intFromEnum(node.content.auto_deinit_binding)];
-            if (self.sessionIndex(cleanup.binding) == null) return error.InvalidBytecode;
+            const binding = cleanup.ownerBinding() orelse return error.InvalidBytecode;
+            if (self.sessionIndex(binding) == null) return error.InvalidBytecode;
         }
         var function = FunctionLower{ .parent = self };
         return self.finish(try function.compileCleanup(nodes));
@@ -366,16 +367,17 @@ const FunctionLower = struct {
     }
     fn autoDeinit(self: *FunctionLower, id: g.GlobalAutoDeinitId) anyerror!void {
         const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
-        if (auto.target) |target| {
+        if (auto.storage == .indirect) return self.parent.reject(self.parent.source, "indirect cleanup identity transport");
+        if (auto.targetNode()) |target| {
             const drop = self.nodeDrop(target) orelse return error.InvalidBytecode;
             return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?, drop);
         }
-        if (self.parent.sessionIndex(auto.binding)) |index| {
-            const drop = self.drops.get(auto.binding) orelse return error.InvalidBytecode;
-            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = index, .region = .session, .path = &.{} }, self.parent.graph.binding(auto.binding).ty, drop);
+        if (self.parent.sessionIndex(auto.ownerBinding().?)) |index| {
+            const drop = self.drops.get(auto.ownerBinding().?) orelse return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = index, .region = .session, .path = &.{} }, self.parent.graph.binding(auto.ownerBinding().?).ty, drop);
         }
-        const root = self.bindings.get(auto.binding) orelse return error.InvalidBytecode;
-        try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root], self.drops.get(auto.binding).?);
+        const root = self.bindings.get(auto.ownerBinding().?) orelse return error.InvalidBytecode;
+        try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root], self.drops.get(auto.ownerBinding().?).?);
     }
     fn cleanupStorage(self: *FunctionLower, callee: ?g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32, fields: p.Range(g.GlobalAutoDeinitFieldId), target: b.Place, ty: b.Type, drop: DropState) anyerror!void {
         try cleanup_plan.emit(CleanupEmitter{ .lower = self }, self.parent.graph, .{

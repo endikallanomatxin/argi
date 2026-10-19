@@ -52,22 +52,23 @@ pub fn plan(graph: *const g.GlobalSemanticGraph, id: g.GlobalNodeId) !Plan {
         !types.equal(graph, result.ty orelse return error.InvalidReplacementPlan, binding.ty))
         return error.InvalidReplacementPlan;
     const selected = graph.auto_deinits.items[@intFromEnum(cleanup.auto_deinit_binding)];
-    const previous_type = if (selected.target) |target|
+    const previous_type = if (selected.targetNode()) |target|
         graph.node(target).ty orelse return error.InvalidReplacementPlan
     else
-        graph.binding(selected.binding).ty;
-    if (selected.binding == prepared or !types.equal(graph, previous_type, binding.ty))
+        graph.binding(selected.ownerBinding().?).ty;
+    if (selected.ownerBinding() == prepared or !types.equal(graph, previous_type, binding.ty))
         return error.InvalidReplacementPlan;
     switch (write.content) {
         .assignment => |x| {
-            if (selected.binding != x.binding or selected.target != null or
+            if (selected.ownerBinding() != x.binding or selected.targetNode() != null or
                 !types.equal(graph, graph.binding(x.binding).ty, binding.ty))
                 return error.InvalidReplacementDestination;
         },
         inline .pointer_assignment, .struct_field_store => |x| {
             const target = x.cleanup_target orelse return error.InvalidReplacementDestination;
-            const chosen = selected.target orelse return error.InvalidReplacementDestination;
-            if (lexical.root(graph, target) != selected.binding or !lexical.equal(graph, chosen, target))
+            const chosen = selected.targetNode() orelse return error.InvalidReplacementDestination;
+            const owner = selected.ownerBinding() orelse return error.InvalidReplacementDestination;
+            if (lexical.root(graph, target) != owner or !lexical.equal(graph, chosen, target))
                 return error.InvalidReplacementDestination;
         },
         else => unreachable,
@@ -77,7 +78,7 @@ pub fn plan(graph: *const g.GlobalSemanticGraph, id: g.GlobalNodeId) !Plan {
     for (nodes[3..]) |tail| {
         const content = graph.node(tail).content;
         if (content != .auto_deinit_binding or
-            graph.auto_deinits.items[@intFromEnum(content.auto_deinit_binding)].binding != prepared)
+            graph.auto_deinits.items[@intFromEnum(content.auto_deinit_binding)].ownerBinding() != prepared)
             return error.InvalidReplacementPlan;
     }
     return .{ .block = block_id, .write = write_id, .value = value_id, .prepared = prepared, .cleanup = cleanup.auto_deinit_binding, .result = nodes[2] };
@@ -96,8 +97,8 @@ test "checked replacement owns its destination preparation cleanup and commit" {
         .{ .name = name, .source = source, .ty = @enumFromInt(0), .mutability = .constant, .initialization = @enumFromInt(0) },
     });
     try graph.auto_deinits.appendSlice(a, &.{
-        .{ .binding = @enumFromInt(0), .deinit_fn = null },
-        .{ .binding = @enumFromInt(1), .deinit_fn = null },
+        .{ .storage = .{ .binding = @enumFromInt(0) }, .deinit_fn = null },
+        .{ .storage = .{ .binding = @enumFromInt(1) }, .deinit_fn = null },
     });
     try graph.nodes.appendSlice(a, &.{
         .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } },
@@ -137,15 +138,15 @@ test "checked replacement owns its destination preparation cleanup and commit" {
     try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(1) } });
     const pointer: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
     try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .address_of = target } });
-    graph.auto_deinits.items[0].target = target;
+    graph.auto_deinits.items[0].storage = .{ .projected = .{ .binding = @enumFromInt(0), .target = target } };
     graph.nodes.items[@intFromEnum(write)].content = .{ .pointer_assignment = .{ .pointer = pointer, .value = value, .cleanup_target = target } };
     _ = try plan(&graph, replacement);
     graph.nodes.items[@intFromEnum(write)].content.pointer_assignment.cleanup_target = null;
     try std.testing.expectError(error.InvalidReplacementDestination, plan(&graph, replacement));
     graph.nodes.items[@intFromEnum(write)].content.pointer_assignment.cleanup_target = target;
-    graph.auto_deinits.items[0].target = other;
+    graph.auto_deinits.items[0].storage.projected.target = other;
     try std.testing.expectError(error.InvalidReplacementDestination, plan(&graph, replacement));
-    graph.auto_deinits.items[0].target = null;
+    graph.auto_deinits.items[0].storage = .{ .binding = @enumFromInt(0) };
     graph.nodes.items[@intFromEnum(write)].content = .{ .assignment = .{ .binding = @enumFromInt(0), .value = value } };
     // A generic value sequence is not by itself a lifecycle transition.
     try std.testing.expectError(error.InvalidReplacementPlan, plan(&graph, value));
@@ -162,6 +163,6 @@ test "checked replacement owns its destination preparation cleanup and commit" {
     graph.nodes.items[6].content.auto_deinit_binding = @enumFromInt(0);
     try std.testing.expectError(error.InvalidReplacementPlan, plan(&graph, replacement));
     graph.nodes.items[6].content.auto_deinit_binding = @enumFromInt(1);
-    graph.auto_deinits.items[0].binding = @enumFromInt(1);
+    graph.auto_deinits.items[0].storage = .{ .binding = @enumFromInt(1) };
     try std.testing.expectError(error.InvalidReplacementPlan, plan(&graph, replacement));
 }

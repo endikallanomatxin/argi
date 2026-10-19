@@ -439,15 +439,34 @@ pub fn AutoDeinitField(comptime Ids: type) type {
 
 pub fn AutoDeinit(comptime Ids: type) type {
     return struct {
-        binding: Ids.BindingId,
-        /// Optional subplace of the owning binding, evaluated without reading it.
-        target: ?Ids.NodeId = null,
+        /// Cleanup belongs to storage. An indirect place carries no invented
+        /// lexical owner; its identity must come from the evaluated reference.
+        storage: union(enum) {
+            binding: Ids.BindingId,
+            projected: struct { binding: Ids.BindingId, target: Ids.NodeId },
+            indirect: Ids.NodeId,
+        },
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
         /// Structural cleanup, or incomplete-storage fallback when deinit_fn
         /// is present. Never execute both for the same value.
         fields: Range(Ids.AutoDeinitFieldId) = .{ .start = 0, .len = 0 },
+        pub fn ownerBinding(self: @This()) ?Ids.BindingId {
+            return switch (self.storage) {
+                .binding => |id| id,
+                .projected => |place| place.binding,
+                .indirect => null,
+            };
+        }
+
+        pub fn targetNode(self: @This()) ?Ids.NodeId {
+            return switch (self.storage) {
+                .binding => null,
+                .projected => |place| place.target,
+                .indirect => |node| node,
+            };
+        }
     };
 }
 

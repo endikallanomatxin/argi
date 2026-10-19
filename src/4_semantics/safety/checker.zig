@@ -1689,7 +1689,7 @@ pub const SafetyChecker = struct {
                 (post.initializedness != .maybe_initialized or post.target.projections.len != 0)) continue;
             if (!post.ends_previous_roots and !post.requires_available_destination and !relocation_source and !initializing_unavailable) continue;
             var owns_cleanup = false;
-            for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+            for (self.graph.auto_deinits.items) |cleanup| if (cleanup.ownerBinding() == target.root) {
                 owns_cleanup = true;
                 break;
             };
@@ -1743,7 +1743,7 @@ pub const SafetyChecker = struct {
                 };
                 if (unconditional) continue;
                 const node = try self.cleanupNodeForPlace(target) orelse {
-                    for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+                    for (self.graph.auto_deinits.items) |cleanup| if (cleanup.ownerBinding() == target.root) {
                         try self.report(self.graph.binding(target.root).source, "conditional consumption needs a lexical cleanup place; move the indexed or indirect owner into a local value first", .{});
                         break;
                     };
@@ -1902,7 +1902,7 @@ pub const SafetyChecker = struct {
             if (try self.cleanupNodeForPlace(target)) |node| {
                 try nodes.append(node);
             } else {
-                for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+                for (self.graph.auto_deinits.items) |cleanup| if (cleanup.ownerBinding() == target.root) {
                     try self.report(self.graph.binding(target.root).source, "cannot consume this indexed or indirect owner through a borrow; move it into a lexical owner before consuming it", .{});
                     break;
                 };
@@ -5000,7 +5000,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
-        const storage = if (cleanup.target) |target| try self.resolvePlace(target, state) orelse return else facts.Place{ .root = cleanup.binding };
+        const storage = if (cleanup.targetNode()) |target| try self.resolvePlace(target, state) orelse return else facts.Place{ .root = cleanup.ownerBinding().? };
         try self.evaluateCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, storage, state);
     }
 
@@ -7342,8 +7342,7 @@ test "structural auto deinit marks nested fields and parent dead" {
         .deinit_fn = null,
     });
     try graph.auto_deinits.append(allocator, .{
-        .binding = @enumFromInt(0),
-        .deinit_fn = null,
+        .storage = .{ .binding = @enumFromInt(0) }, .deinit_fn = null,
         .fields = .{ .start = 0, .len = 1 },
     });
 

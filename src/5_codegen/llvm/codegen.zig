@@ -2528,18 +2528,19 @@ pub const CodeGenerator = struct {
 
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {
         const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
+        if (auto.storage == .indirect) return error.UnsupportedCleanupEvidence;
         if (self.replacement) |captured| if (captured.plan.cleanup == auto_id) {
             // Use exactly the address and flag range captured before the RHS.
             // Do not resolve the cleanup target again after its effects.
             const destination = captured.destination orelse return error.MissingReplacementDestination;
             return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, destination.address, captured.ty, destination.cleanup.?);
         };
-        if (auto.target) |target| {
+        if (auto.targetNode()) |target| {
             const drop = self.dropStateForNode(target) orelse return CodegenError.InvalidType;
             const pointer = try self.addressablePointer(target);
             return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, pointer.value_ref, self.graph.node(target).ty.?, drop);
         }
-        const storage = self.bindings.get(auto.binding) orelse return;
+        const storage = self.bindings.get(auto.ownerBinding().?) orelse return;
         const drop = storage.drop_state orelse return;
         try self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, storage.ref, storage.ty, drop);
     }

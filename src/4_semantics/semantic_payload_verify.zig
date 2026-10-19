@@ -141,8 +141,8 @@ pub fn autoDeinitField(comptime Ids: type, value: primitives.AutoDeinitField(Ids
 }
 
 pub fn autoDeinit(comptime Ids: type, value: primitives.AutoDeinit(Ids), bounds: Bounds) !void {
-    if (value.target) |id| try require(verify.idFits(id, bounds.nodes));
-    try require(verify.idFits(value.binding, bounds.bindings));
+    if (value.targetNode()) |id| try require(verify.idFits(id, bounds.nodes));
+    if (value.ownerBinding()) |id| try require(verify.idFits(id, bounds.bindings));
     try require(verify.optionalIdFits(value.deinit_fn, bounds.functions));
     try require(verify.optionalIdFits(value.input, bounds.nodes));
     try require(verify.rangeFits(value.fields, bounds.auto_deinit_fields));

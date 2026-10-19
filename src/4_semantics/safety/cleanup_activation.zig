@@ -383,7 +383,7 @@ const Scanner = struct {
             .break_statement, .continue_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| {
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-                const target = if (cleanup.target) |node_id| try self.resolvePlace(node_id) orelse return else facts.Place{ .root = cleanup.binding };
+                const target = if (cleanup.targetNode()) |node_id| try self.resolvePlace(node_id) orelse return else facts.Place{ .root = cleanup.ownerBinding().? };
                 if (!flow.skips(target)) {
                     try self.activation.roots.put(auto_id, {});
                     try self.cleanupFields(cleanup.fields, target, flow);

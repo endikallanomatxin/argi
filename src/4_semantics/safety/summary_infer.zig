@@ -2539,7 +2539,7 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = if (cleanup.target) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.binding);
+        const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
         try self.applyCleanupInputPostStates(function_id, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, binding_effect, states);
     }
 
@@ -3085,7 +3085,7 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = if (cleanup.target) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.binding);
+        const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
         try self.applyCleanupOpaqueEffects(function_id, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, binding_effect, effects, state);
     }
 
@@ -4028,7 +4028,7 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = if (cleanup.target) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.binding);
+        const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
         if (cleanup.input) |input| {
             try self.inferRequiredLiveInputsNode(function_id, input, required);
             if (cleanup.deinit_fn) |deinit_fn| {

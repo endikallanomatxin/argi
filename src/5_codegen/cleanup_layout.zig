@@ -9,7 +9,9 @@ pub const Child = struct { projection: Projection, ty: g.GlobalTypeId };
 pub fn requiredBindings(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) ![]bool {
     const required = try allocator.alloc(bool, graph.bindings.items.len);
     @memset(required, false);
-    for (graph.auto_deinits.items) |plan| required[@intFromEnum(plan.binding)] = true;
+    for (graph.auto_deinits.items) |plan| if (plan.ownerBinding()) |binding| {
+        required[@intFromEnum(binding)] = true;
+    };
     return required;
 }
 
@@ -187,4 +189,30 @@ pub fn owningTypes(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticG
         }
     }
     return cleanup_types;
+}
+
+test "indirect cleanup storage never manufactures flags on its reference slot" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } } });
+    try graph.bindings.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(0), .mutability = .variable },
+        .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable },
+    });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(1) } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .dereference = .{ .pointer = @enumFromInt(0), .ty = @enumFromInt(0), .pointer_type = @enumFromInt(1) } } },
+    });
+    try graph.auto_deinits.append(a, .{ .storage = .{ .indirect = @enumFromInt(1) }, .deinit_fn = null });
+    const indirect = try requiredBindings(a, &graph);
+    defer a.free(indirect);
+    try std.testing.expect(!indirect[0] and !indirect[1]);
+    try std.testing.expect(graph.auto_deinits.items[0].ownerBinding() == null);
+    try std.testing.expectEqual(@as(g.GlobalNodeId, @enumFromInt(1)), graph.auto_deinits.items[0].targetNode().?);
+    graph.auto_deinits.items[0].storage = .{ .projected = .{ .binding = @enumFromInt(0), .target = @enumFromInt(1) } };
+    const projected = try requiredBindings(a, &graph);
+    defer a.free(projected);
+    try std.testing.expect(projected[0] and !projected[1]);
 }

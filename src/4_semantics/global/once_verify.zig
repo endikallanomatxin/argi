@@ -134,7 +134,7 @@ const State = struct {
             .assignment => |assignment| try self.walkNode(assignment.value),
             .auto_deinit_binding => |auto_id| {
                 const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-                if (auto.target) |target| try self.walkNode(target);
+                if (auto.targetNode()) |target| try self.walkNode(target);
                 if (auto.input) |input| try self.walkNode(input);
                 if (auto.deinit_fn) |callee| try self.walkCall(node_id, callee);
             },

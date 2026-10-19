@@ -635,7 +635,7 @@ pub const Resolver = struct {
         try self.prepareAutoDeinit(binding, context, module_index);
         const ty = self.graph.node(target).ty orelse return value;
         var plan = try self.buildAutoDeinit(binding, target, ty, context, module_index) orelse return value;
-        plan.target = target;
+        plan.storage = .{ .projected = .{ .binding = binding, .target = target } };
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
         try self.graph.auto_deinits.append(self.allocator, plan);
         const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
@@ -948,7 +948,7 @@ pub const Resolver = struct {
             // Retain their selected structural alternative, but do not expand
             // it for ordinary complete initializers or deferred temporaries.
             return .{
-                .binding = binding,
+                .storage = .{ .binding = binding },
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
@@ -962,7 +962,7 @@ pub const Resolver = struct {
         const record = self.graph.binding(binding);
         const children = try self.buildAutoChildren(target, ty, context, module_index, record.initialization == null and !record.deferred_initialization);
         if (children.len == 0) return null;
-        return .{ .binding = binding, .deinit_fn = null, .fields = children };
+        return .{ .storage = .{ .binding = binding }, .deinit_fn = null, .fields = children };
     }
 
     fn buildAutoField(

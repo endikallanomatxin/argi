@@ -270,8 +270,8 @@ const State = struct {
             },
             .auto_deinit_binding => |id| {
                 const value = self.graph.auto_deinits.items[@intFromEnum(id)];
-                try self.functions.bindings.put(value.binding, {});
-                if (value.target) |target| try self.walkNode(target);
+                if (value.ownerBinding()) |binding| try self.functions.bindings.put(binding, {});
+                if (value.targetNode()) |target| try self.walkNode(target);
                 if (value.input) |input| try self.walkNode(input);
                 if (value.deinit_fn) |callee| try self.includeCleanupFunction(callee);
                 try self.includeAutoDeinitFields(value.fields);
