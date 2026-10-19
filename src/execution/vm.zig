@@ -9,9 +9,27 @@ const runtime_value = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 const host = @import("host.zig");
 
+/// Host-owned cooperative cancellation. Sharing this flag grants no permission
+/// to share language values or mutate an executing context from another thread.
+/// The token must outlive every invocation borrowing it; reset only while idle.
+pub const Cancellation = struct {
+    requested: std.atomic.Value(bool) = .init(false),
+
+    pub fn cancel(self: *Cancellation) void {
+        self.requested.store(true, .monotonic);
+    }
+    pub fn reset(self: *Cancellation) void {
+        self.requested.store(false, .monotonic);
+    }
+    pub fn isCancelled(self: *const Cancellation) bool {
+        return self.requested.load(.monotonic);
+    }
+};
+
 pub const Limits = struct {
     instructions: usize = 1_000_000,
     call_depth: usize = 128,
+    cancellation: ?*const Cancellation = null,
     // Cumulative value cells, including frames and record snapshots. This bounds
     // the execution arena even when a loop repeatedly creates short-lived values.
     value_cells: usize = 1_000_000,
@@ -320,6 +338,9 @@ pub const Vm = struct {
             const slots = try self.context().storage.slots(current.storage);
             const inst = f.code[current.pc];
             self.source = inst.source;
+            // Stop only between verified instructions. Host adapters must
+            // provide their own interruption for a blocking native operation.
+            if (self.limits.cancellation) |token| if (token.isCancelled()) return error.ExecutionCancelled;
             if (self.steps >= self.limits.instructions) return error.ExecutionInstructionLimit;
             self.steps += 1;
             current.pc += 1;

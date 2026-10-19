@@ -200,8 +200,12 @@ semantic resolution. Computed `#if` in function bodies uses the same evaluator;
 only the selected arm is materialized for each specialization. See [compile-time computation](../description/50_comptime.md).
 
 Execution is limited to one million instructions, 128 nested calls, and one
-million cumulative value cells. These are initial fixed limits, not a general
-sandbox or a stable resource policy. No host I/O or native handles are exposed.
+million cumulative value cells by default. Embedders can configure `vm.Limits`
+and supply a host-owned `vm.Cancellation` token. Cancellation is checked between
+bytecode instructions; blocking host adapters require their own interruption.
+Cancelled execution poisons its context until reset, without running user cleanup.
+These limits are not a general sandbox or a stable resource policy. Compile-time
+evaluation exposes no host I/O or native handles.
 `--vm` selects runtime execution; `#run` and computed conditions execute during
 compilation regardless of that option. JIT remains deferred.
 

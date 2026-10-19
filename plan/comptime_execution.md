@@ -25,8 +25,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   storage and unresolved/retargetable references, shared with native lowering.
 - Extend scalar representations and explicit host-call capabilities only through
   checked signatures and evidence.
-- Add configurable quotas and cancellation at safe points. Measure repeated
-  execution and retained memory before considering JIT.
+- Expose execution quotas and cancellation in CLI/session controls. Embedding
+  APIs already accept limits and cooperative cancellation tokens. Measure
+  repeated execution and retained memory before considering JIT.
 
 ## Invariants
 

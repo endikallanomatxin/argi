@@ -944,6 +944,10 @@ test "compile-time evaluation exports aggregate constants and rejects escaping r
             try std.testing.expectEqual(@as(usize, 0), budget.instructions);
             try std.testing.expectEqual(nodes, graph.nodes.items.len);
             try std.testing.expectError(error.ExecutionInstructionLimit, evaluate(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, .{ .instructions = 1 }));
+            var cancellation: vm.Cancellation = .{};
+            cancellation.cancel();
+            try std.testing.expectError(error.ExecutionCancelled, evaluate(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, .{ .cancellation = &cancellation }));
+            try std.testing.expectEqual(nodes, graph.nodes.items.len);
             try std.testing.expectEqual(nodes, graph.nodes.items.len);
         } else if (std.mem.eql(u8, name, "borrow")) {
             const nodes = graph.nodes.items.len;
@@ -1994,4 +1998,28 @@ test "bytecode reserved scalar storage rejects reads before initialization" {
     var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }, .{});
     defer executor.deinit();
     try std.testing.expectError(error.ExecutionUninitializedStorage, executor.runExpression(&.{}));
+}
+
+test "bytecode cooperative cancellation poisons execution and permits explicit reset" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
+    const code = [_]b.Instruction{.{ .source = .{ .file_index = 0, .offset = 17 }, .op = .{ .ret = &.{0} } }};
+    const functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
+    var cancellation: vm.Cancellation = .{};
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functions }, .{ .cancellation = &cancellation });
+    defer executor.deinit();
+    cancellation.cancel();
+    try std.testing.expectError(error.ExecutionCancelled, executor.run(@enumFromInt(0), &.{.{ .integer = 42 }}));
+    try std.testing.expectEqual(@as(usize, 0), executor.steps);
+    try std.testing.expectEqual(@as(u32, 17), executor.source.offset);
+    try std.testing.expectEqual(.poisoned, executor.context().state);
+    cancellation.reset();
+    try std.testing.expectError(error.ExecutionContextPoisoned, executor.invoke(@enumFromInt(0), &.{.{ .integer = 42 }}));
+    executor.reset();
+    const values = try executor.invoke(@enumFromInt(0), &.{.{ .integer = 42 }});
+    try std.testing.expectEqual(@as(i128, 42), values[0].integer);
 }

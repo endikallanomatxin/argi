@@ -227,6 +227,7 @@ const Context = struct {
             error.ExecutionAborted => "#run evaluation aborted",
             error.ExecutionIndexOutOfBounds => "#run array index is out of bounds",
             error.ExecutionInstructionLimit => "#run evaluation exceeded its instruction limit",
+            error.ExecutionCancelled => "#run evaluation was cancelled",
             error.ExecutionCallDepthLimit => "#run evaluation exceeded its call depth limit",
             error.ExecutionMemoryLimit => "#run evaluation exceeded its storage limit",
             error.UnfreezableEvaluationInput => "#run arguments cannot contain references or values requiring cleanup",
