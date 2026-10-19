@@ -18,9 +18,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Partial storage
 
-- Extend record output layouts to local/session bindings and scalar initialization
-  targets, then arrays and choices. Keep unavailable storage separate from values.
-- Validate partially initialized owners across early errors, loops and cleanup.
+- Extend partial layouts to session bindings and scalar initialization targets,
+  then arrays and choices. Keep unavailable storage separate from values.
+- Fix shared whole-owner cleanup activation after field initialization. The
+  resource-counter case in `90X_partial_local_owner_vm_boundary` currently skips
+  its nominal destructor in AOT too; VM rejects this incomplete path before execution.
+  Cover early errors and structural field cleanup before enabling local owners.
 - Extend acquired storage and release identities before enabling the allocator
   prelude; scalar host handles alone do not establish allocation receipts.
 

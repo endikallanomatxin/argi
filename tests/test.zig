@@ -13937,3 +13937,13 @@ test "feature_tests/execution/88_partial_record_outputs_vm" {
     try runExpect("tests/feature_tests/execution/88_partial_record_outputs_vm", 42);
     try vmExpect("tests/feature_tests/execution/88_partial_record_outputs_vm", 42, null);
 }
+
+test "feature_tests/execution/89_partial_local_records_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/89_partial_local_records_vm");
+    try runExpect("tests/feature_tests/execution/89_partial_local_records_vm", 42);
+    try vmExpect("tests/feature_tests/execution/89_partial_local_records_vm", 42, null);
+}
+
+test "feature_tests/execution/90X_partial_local_owner_vm_boundary" {
+    try vmExpect("tests/feature_tests/execution/90X_partial_local_owner_vm_boundary", 1, "UninitializedBytecodeSlot");
+}

@@ -328,7 +328,11 @@ pub const Vm = struct {
             self.steps += 1;
             current.pc += 1;
             switch (inst.op) {
-                .reserve_record => |x| try self.context().storage.prepareRecord(current.storage, x.dst, x.layout),
+                .reserve_record => |x| {
+                    if (x.reset) {
+                        try self.chargeCleanup(try self.context().storage.resetRecord(current.storage, x.dst, x.layout));
+                    } else try self.context().storage.prepareRecord(current.storage, x.dst, x.layout);
+                },
                 .borrow_storage => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, false);

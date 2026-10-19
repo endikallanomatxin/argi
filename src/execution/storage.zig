@@ -91,6 +91,25 @@ pub const Storage = struct {
         const record = try partial.Storage.init(self.allocator, layout);
         try self.frames.items[@intFromEnum(frame)].partial_records.put(self.allocator, root, record);
     }
+    /// Re-enter lexical record storage after its previous cleanup has finished.
+    /// Existing leaf cells are reused; no old initialized value survives entry.
+    pub fn resetRecord(self: *Storage, frame: v.FrameId, root: b.Slot, layout: partial.Layout) !usize {
+        const slots_ = try self.slots(frame);
+        const values = try slots_.cells();
+        if (root >= values.len) return error.ExecutionInvalidReference;
+        for (self.frames.items[@intFromEnum(frame)].cleanup) |entry|
+            if (entry.root == root and (try slots_.get(entry.flag)).boolean) return error.ExecutionPendingCleanup;
+        if (self.frames.items[@intFromEnum(frame)].partial_records.getPtr(root)) |record| {
+            if (record.layout.nodes.len != layout.nodes.len) return error.ExecutionInvalidReference;
+            for (record.layout.nodes, layout.nodes) |old, new| if (!std.meta.eql(old, new)) return error.ExecutionInvalidReference;
+            @memset(record.values, null);
+            values[root] = null;
+        } else {
+            values[root] = null;
+            try self.prepareRecord(frame, root, layout);
+        }
+        return layout.nodes.len;
+    }
     pub fn allocate(self: *Storage, count: usize) ![]b.Value {
         try self.charge(count);
         return self.allocator.alloc(b.Value, count);
@@ -668,4 +687,28 @@ test "partial record storage reads initialized projected fields only" {
     try std.testing.expectEqual(complete_cells, storage.cells);
     storage.leave(frame);
     try std.testing.expectError(error.ExecutionDeadReference, storage.read(field));
+}
+
+test "lexical record reset clears values only after cleanup is discharged" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const frame = try storage.enterCleanup(2, &.{.{ .root = 0, .path = &.{}, .flag = 1 }});
+    const layout: partial.Layout = .{ .nodes = &.{ .{ .record = true, .first = 1, .count = 1 }, .{} } };
+    _ = try storage.resetRecord(frame, 0, layout);
+    const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    var field = root;
+    field.path = &.{.{ .field = 0 }};
+    try storage.store(field, .{ .integer = 42 });
+    const snapshot = try storage.read(root);
+    const slots_ = try storage.slots(frame);
+    try slots_.put(1, .{ .boolean = true });
+    try std.testing.expectError(error.ExecutionPendingCleanup, storage.resetRecord(frame, 0, layout));
+    try std.testing.expectEqual(@as(i128, 42), (try storage.read(field)).integer);
+    try slots_.put(1, .{ .boolean = false });
+    const cells = storage.cells;
+    _ = try storage.resetRecord(frame, 0, layout);
+    try std.testing.expectEqual(cells, storage.cells);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(field));
+    try std.testing.expectEqual(@as(i128, 42), snapshot.record[0].integer);
 }

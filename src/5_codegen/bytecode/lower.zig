@@ -463,6 +463,11 @@ const FunctionLower = struct {
                     if (binding_.initialization) |value| {
                         try self.copyTo(node.source, dst, try self.expression(value));
                         if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
+                    } else if (types.fields(self.parent.graph, binding_.ty) != null and !self.parent.cleanup_types[@intFromEnum(binding_.ty)]) {
+                        // Owners keep the existing whole-value initialization
+                        // path until field-wise cleanup activation is checked.
+                        const layout = try @import("storage_layout.zig").compile(self.parent.allocator, self.parent.graph, binding_.ty);
+                        _ = try self.emit(node.source, .{ .reserve_record = .{ .dst = dst, .layout = layout, .reset = true } });
                     }
                 }
             },
