@@ -133,6 +133,8 @@ pub const Node = primitives.Node(Ids);
 pub const File = struct {
     module: GlobalModuleId,
     path: StringRange,
+    // Original source version; null only for synthetic graphs without a buffer.
+    content_hash: ?u64 = null,
 };
 
 pub const Module = struct {

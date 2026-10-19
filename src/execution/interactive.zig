@@ -1072,6 +1072,19 @@ test "interactive computed imports share staged selection without replaying acce
     try std.testing.expectError(error.Reported, session.submit("bad := import(\"./broken\")"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(module_count, session.compiler.semantic.modules.len);
+    const unsafe_revision = "\n\nchoose := () -> (.ok: Bool) { flag: Bool\n ok = flag }\n#if choose() { answer := () -> (.value: Int32) { value = 11 } }";
+    try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = unsafe_revision });
+    try std.testing.expectError(error.Reported, session.submit("bad := import(\"./broken\")"));
+    var found_current_source = false;
+    for (session.diagnostics.list.items) |diagnostic| {
+        const file = session.diagnostics.source_db.get(diagnostic.loc.file);
+        if (std.mem.endsWith(u8, file.path, "/broken/main.rg")) {
+            try std.testing.expectEqualStrings(unsafe_revision, file.source);
+            found_current_source = true;
+        }
+    }
+    try std.testing.expect(found_current_source);
+    try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectError(error.Reported, session.submit("cycle := import(\"./cycle\")"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(module_count, session.compiler.semantic.modules.len);

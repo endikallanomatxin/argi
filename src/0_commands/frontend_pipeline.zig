@@ -670,7 +670,7 @@ pub const FrontendPipeline = struct {
             const a = self.allocator;
             const module = session.modules[module_index];
             const path = try std.fs.path.join(a, &.{ module.module_dir, module.text(module.file_offsets.items[condition.source.file_index].path) });
-            const file_id = pipeline.source_db.findPath(path) orelse return error.InvalidModuleConditionSource;
+            const file_id = pipeline.source_db.findVersion(path, module.file_offsets.items[condition.source.file_index].content_hash) orelse return error.InvalidModuleConditionSource;
             const selection = &pipeline.source_selections.items[@intFromEnum(file_id)];
             const branch = for (selection.plan.branches.items, 0..) |candidate, branch_index| {
                 if (candidate.extent.start == condition.source.offset) break @as(@import("../1_base/conditional_source.zig").BranchId, @enumFromInt(branch_index));

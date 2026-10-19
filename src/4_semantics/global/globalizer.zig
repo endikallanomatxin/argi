@@ -176,6 +176,7 @@ fn appendModule(
     for (module.file_offsets.items) |file| try result.files.append(allocator, .{
         .module = module_id,
         .path = try relocateString(module, file.path, o.string_base),
+        .content_hash = file.content_hash,
     });
 
     try appendDeclarations(allocator, result, module, o);

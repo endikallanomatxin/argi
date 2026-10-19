@@ -1,14 +1,19 @@
 const std = @import("std");
 const sf = @import("source_files.zig");
 
-/// Stable identity of a source buffer within one frontend invocation. The
-/// numeric representation is deliberately suitable for persisted frontend
-/// artifacts; paths remain SourceDb metadata rather than token payload.
+/// Stable identity of a source buffer within one frontend invocation. Retained
+/// and cached semantic graphs match paths and content hashes instead of storing
+/// this invocation-local index. Tokens keep compact indices into this database.
 pub const FileId = enum(u32) { _ };
+
+pub fn contentHash(source: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, source);
+}
 
 pub const File = struct {
     path: []const u8,
     source: []const u8,
+    content_hash: u64,
     origin: sf.SourceFile.Origin,
     /// Byte starts for one-based diagnostic lines. This is metadata, not part
     /// of a token or syntax artifact, and lets locations stay offset-only.
@@ -31,6 +36,7 @@ pub const SourceDb = struct {
             files[index] = .{
                 .path = source.path,
                 .source = source.code,
+                .content_hash = contentHash(source.code),
                 .origin = source.origin,
                 .line_starts = try collectLineStarts(allocator, source.code),
             };
@@ -45,6 +51,7 @@ pub const SourceDb = struct {
         files[self.files.len] = .{
             .path = source.path,
             .source = source.code,
+            .content_hash = contentHash(source.code),
             .origin = source.origin,
             .line_starts = try collectLineStarts(allocator, source.code),
         };
@@ -69,6 +76,7 @@ pub const SourceDb = struct {
             files[index] = .{
                 .path = file.path,
                 .source = file.source,
+                .content_hash = file.content_hash,
                 .origin = file.origin,
                 .line_starts = try allocator.dupe(u32, file.line_starts),
             };
@@ -85,7 +93,12 @@ pub const SourceDb = struct {
     }
 
     pub fn findPath(self: *const SourceDb, wanted_path: []const u8) ?FileId {
+        return self.findVersion(wanted_path, null);
+    }
+
+    pub fn findVersion(self: *const SourceDb, wanted_path: []const u8, content_hash: ?u64) ?FileId {
         for (self.files, 0..) |file, index| {
+            if (content_hash) |hash| if (file.content_hash != hash) continue;
             if (std.mem.eql(u8, file.path, wanted_path)) return self.fileId(index);
         }
         return null;

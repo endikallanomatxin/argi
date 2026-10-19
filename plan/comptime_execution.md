@@ -8,8 +8,7 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Extend the ordinary REPL prelude with a persistent allocator through explicit
   checked host adapters.
-- Improve unresolved-name diagnostics and retain source versions when rejected
-  imports are edited and retried.
+- Improve unresolved-name diagnostics in retained sessions.
 - Complete staged request diagnostics without a source database. Support temporary
   type recipes without retaining identities from speculative graph tails.
 - Define generic-function access to retained value bindings explicitly; do not

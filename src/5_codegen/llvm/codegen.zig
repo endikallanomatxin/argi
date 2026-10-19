@@ -1951,16 +1951,7 @@ pub const CodeGenerator = struct {
 
     fn traceMetadata(self: *CodeGenerator, source: primitives.SourceRef) !TraceMetadata {
         if (source.file_index >= self.graph.files.items.len) return CodegenError.InvalidType;
-        const graph_file = self.graph.files.items[source.file_index];
-        const name = self.graph.text(graph_file.path);
-        const module_dir = self.graph.text(self.graph.modules.items[@intFromEnum(graph_file.module)].dir);
-        const file_id = blk: {
-            for (self.diags.source_files, 0..) |file, index| {
-                if (std.mem.eql(u8, std.fs.path.basename(file.path), name) and
-                    std.mem.eql(u8, std.fs.path.dirname(file.path) orelse ".", module_dir)) break :blk self.diags.source_db.fileId(index);
-            }
-            return CodegenError.InvalidType;
-        };
+        const file_id = (@import("../../4_semantics/global/source_location.zig").find(self.graph, &self.diags.source_db, source) orelse return CodegenError.InvalidType).file;
         const position = self.diags.source_db.lineColumn(file_id, source.offset);
         const file = self.diags.source_db.get(file_id);
         const remaining = file.source[file.line_starts[position.line - 1]..];
@@ -2951,19 +2942,7 @@ pub const CodeGenerator = struct {
     }
 
     fn location(self: *CodeGenerator, source: primitives.SourceRef) tok.Location {
-        // Global files are grouped by module; generated entry sources need
-        // not occupy the same ordinal in the diagnostics source database.
-        if (source.file_index < self.graph.files.items.len) {
-            const file = self.graph.files.items[source.file_index];
-            const basename = self.graph.text(file.path);
-            const dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
-            for (self.diags.source_db.files, 0..) |candidate, index| {
-                if (std.mem.eql(u8, std.fs.path.basename(candidate.path), basename) and
-                    std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir))
-                    return .{ .file = self.diags.source_db.fileId(index), .offset = source.offset };
-            }
-        }
-        return .{ .file = @enumFromInt(0), .offset = source.offset };
+        return @import("../../4_semantics/global/source_location.zig").location(self.graph, self.diags, source);
     }
 
     fn report(self: *CodeGenerator, source: primitives.SourceRef, comptime format: []const u8, args: anytype) !void {

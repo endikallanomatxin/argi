@@ -3621,17 +3621,7 @@ fn argumentFieldLocation(
 }
 
 fn diagnosticLocation(graph: *const global_sg.GlobalSemanticGraph, diagnostics: *const diagnostics_mod.Diagnostics, source: @import("../primitives/schema.zig").SourceRef) tok.Location {
-    if (source.file_index < graph.files.items.len) {
-        const graph_file = graph.files.items[source.file_index];
-        const wanted_name = graph.text(graph_file.path);
-        const wanted_dir = graph.text(graph.modules.items[@intFromEnum(graph_file.module)].dir);
-        for (diagnostics.source_files, 0..) |file, index| {
-            if (std.mem.eql(u8, std.fs.path.basename(file.path), wanted_name) and
-                std.mem.eql(u8, std.fs.path.dirname(file.path) orelse ".", wanted_dir))
-                return .{ .file = @enumFromInt(@as(u32, @intCast(index))), .offset = source.offset };
-        }
-    }
-    return .{ .file = @enumFromInt(0), .offset = source.offset };
+    return @import("source_location.zig").location(graph, diagnostics, source);
 }
 
 fn dumpUnresolved(

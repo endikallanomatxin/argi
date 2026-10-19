@@ -72,7 +72,7 @@ pub const Session = struct {
         lower.diagnostics = diagnostics;
         const program = lower.compile(function) catch |err| {
             if (err == error.UnsupportedExecution) {
-                try diagnostics.add(@import("diagnostics.zig").location(checked, diagnostics, lower.source), .codegen, "bytecode execution does not support {s}", .{lower.unsupported});
+                try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, lower.source), .codegen, "bytecode execution does not support {s}", .{lower.unsupported});
                 return error.Reported;
             }
             return err;
@@ -82,7 +82,7 @@ pub const Session = struct {
                 error.MissingHostBinding, error.IncompatibleHostBinding, error.AmbiguousHostBinding => {
                     const host = @import("host.zig");
                     const failure = host.findFailure(program, self.context.host_bindings) orelse return err;
-                    try diagnostics.add(@import("diagnostics.zig").location(checked, diagnostics, failure.source), .codegen, "bytecode host binding for '{s}' is unavailable: {s}", .{ host.symbol(checked, failure.function), @errorName(failure.reason) });
+                    try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, failure.source), .codegen, "bytecode host binding for '{s}' is unavailable: {s}", .{ host.symbol(checked, failure.function), @errorName(failure.reason) });
                     return error.Reported;
                 },
                 else => return err,
@@ -97,7 +97,7 @@ pub const Session = struct {
         // even when this invocation traps and poisons the execution context.
         _ = vm.invoke(function, &.{}) catch |err| {
             if (err == error.OutOfMemory) return err;
-            try diagnostics.add(@import("diagnostics.zig").location(checked, diagnostics, vm.source), .codegen, "bytecode execution failed: {s}", .{@errorName(err)});
+            try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, vm.source), .codegen, "bytecode execution failed: {s}", .{@errorName(err)});
             return err;
         };
     }

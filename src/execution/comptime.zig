@@ -219,17 +219,7 @@ const Context = struct {
     }
 
     fn report(self: *Context, source: p.SourceRef, err: anyerror) !void {
-        var location = @import("../2_tokens/token.zig").Location{ .file = @enumFromInt(0), .offset = source.offset };
-        if (source.file_index < self.graph.files.items.len) {
-            const file = self.graph.files.items[source.file_index];
-            const dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
-            for (self.diagnostics.source_db.files, 0..) |candidate, raw| {
-                if (std.mem.eql(u8, std.fs.path.basename(candidate.path), self.graph.text(file.path)) and std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir)) {
-                    location.file = self.diagnostics.source_db.fileId(raw);
-                    break;
-                }
-            }
-        }
+        const location = @import("../4_semantics/global/source_location.zig").location(self.graph, self.diagnostics, source);
         const message: ?[]const u8 = switch (err) {
             error.NonConstantCompileTimeArgument => "#run arguments must be compile-time constants; runtime values cannot be used",
             error.CompileTimeDependencyDepthLimit => "#run dependencies exceeded their nesting limit",

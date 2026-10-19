@@ -266,13 +266,7 @@ pub const Sources = struct {
             const a = sources.arena.allocator();
             const module = session.modules[module_index];
             const path = try std.fs.path.join(a, &.{ module.module_dir, module.text(module.file_offsets.items[condition.source.file_index].path) });
-            // A rejected import can be edited and loaded again at the same
-            // path. Its current plan belongs to the newest retained source.
-            var cursor = self.diagnostics.source_files.len;
-            const file: FileId = while (cursor > 0) {
-                cursor -= 1;
-                if (std.mem.eql(u8, self.diagnostics.source_files[cursor].path, path)) break self.diagnostics.source_db.fileId(cursor);
-            } else return error.InvalidModuleConditionSource;
+            const file = self.diagnostics.source_db.findVersion(path, module.file_offsets.items[condition.source.file_index].content_hash) orelse return error.InvalidModuleConditionSource;
             const selection = sources.selections.getPtr(file) orelse return error.InvalidModuleConditionSource;
             const branch = for (selection.plan.branches.items, 0..) |candidate, index| {
                 if (candidate.extent.start == condition.source.offset) break @as(selection_mod.Prepared.BranchId, @enumFromInt(index));

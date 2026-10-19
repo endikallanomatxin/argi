@@ -105,17 +105,7 @@ pub const Resolver = struct {
 
     fn callbackError(self: *Resolver, source: primitives.SourceRef, message: []const u8) !resolution.Result {
         if (self.diagnostics) |diagnostics| {
-            var file_id: u32 = 0;
-            const file = self.graph.files.items[source.file_index];
-            const name = self.graph.text(file.path);
-            const dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
-            for (diagnostics.source_files, 0..) |candidate, index| {
-                if (std.mem.eql(u8, std.fs.path.basename(candidate.path), name) and std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir)) {
-                    file_id = @intCast(index);
-                    break;
-                }
-            }
-            try diagnostics.add(.{ .file = @enumFromInt(file_id), .offset = source.offset }, .semantic, "{s}", .{message});
+            try diagnostics.add(@import("source_location.zig").location(self.graph, diagnostics, source), .semantic, "{s}", .{message});
         }
         return error.Reported;
     }
@@ -480,21 +470,7 @@ pub const Resolver = struct {
 
     fn reportConstructorError(self: *Resolver, source: primitives.SourceRef, message: []const u8) !void {
         if (self.diagnostics) |diagnostics| {
-            var file_id: u32 = 0;
-            if (source.file_index < self.graph.files.items.len) {
-                const file = self.graph.files.items[source.file_index];
-                const name = self.graph.text(file.path);
-                const dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
-                for (diagnostics.source_files, 0..) |candidate, index| {
-                    if (std.mem.eql(u8, std.fs.path.basename(candidate.path), name) and
-                        std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir))
-                    {
-                        file_id = @intCast(index);
-                        break;
-                    }
-                }
-            }
-            try diagnostics.add(.{ .file = @enumFromInt(file_id), .offset = source.offset }, .semantic, "{s}", .{message});
+            try diagnostics.add(@import("source_location.zig").location(self.graph, diagnostics, source), .semantic, "{s}", .{message});
             return error.Reported;
         }
     }

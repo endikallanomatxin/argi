@@ -771,7 +771,7 @@ const FunctionLower = struct {
     fn traceLocationValue(self: *FunctionLower, source: p.SourceRef, ty: b.Type) !b.Slot {
         const graph = self.parent.graph;
         const diagnostics = self.parent.diagnostics orelse return self.parent.reject(source, "source location metadata without a source database");
-        const location = diagnostics.presentedLocation(@import("../../execution/diagnostics.zig").location(graph, diagnostics, source));
+        const location = diagnostics.presentedLocation(@import("../../4_semantics/global/source_location.zig").location(graph, diagnostics, source));
         const position_ = diagnostics.source_db.lineColumn(location.file, location.offset);
         const file = diagnostics.source_db.get(location.file);
         const line = file.source[file.line_starts[position_.line - 1]..];

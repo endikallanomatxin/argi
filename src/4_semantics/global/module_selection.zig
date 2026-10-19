@@ -27,7 +27,7 @@ pub fn resolve(allocator: std.mem.Allocator, session: *sema.Session, first_modul
     }
     if (try @import("module_linker.zig").cycleSource(allocator, &session.relocation.graph)) |source| {
         const diagnostics = session.options.diagnostics orelse return error.MissingCompileTimeDiagnostics;
-        try diagnostics.add(@import("../../execution/diagnostics.zig").location(&session.relocation.graph, diagnostics, source), .semantic, "import cycle detected after compile-time selection", .{});
+        try diagnostics.add(@import("source_location.zig").location(&session.relocation.graph, diagnostics, source), .semantic, "import cycle detected after compile-time selection", .{});
         return error.Reported;
     }
 }

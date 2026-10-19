@@ -299,18 +299,7 @@ const State = struct {
     }
 
     fn location(self: *const State, source: @import("../primitives/schema.zig").SourceRef) tok.Location {
-        if (@as(usize, source.file_index) < self.graph.files.items.len) {
-            const graph_file = self.graph.files.items[source.file_index];
-            const module = self.graph.modules.items[@intFromEnum(graph_file.module)];
-            const wanted_dir = self.graph.text(module.dir);
-            const wanted_name = self.graph.text(graph_file.path);
-            for (self.diagnostics.source_files, 0..) |file, index| {
-                if (!std.mem.eql(u8, std.fs.path.basename(file.path), wanted_name)) continue;
-                const dir = std.fs.path.dirname(file.path) orelse ".";
-                if (!std.mem.eql(u8, dir, wanted_dir)) continue;
-                return .{ .file = @enumFromInt(@as(u32, @intCast(index))), .offset = source.offset };
-            }
-        }
+        if (@import("source_location.zig").find(self.graph, &self.diagnostics.source_db, source)) |found| return found;
         const fallback: u32 = if (self.diagnostics.source_files.len == 0)
             0
         else

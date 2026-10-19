@@ -74,6 +74,7 @@ pub const Declaration = struct {
 
 pub const FileOffsets = struct {
     path: StringRange,
+    content_hash: ?u64 = null,
     declaration_base: u32,
     declaration_count: u32,
     type_reference_base: u32,
@@ -258,6 +259,14 @@ pub const ModuleSemanticGraphBuilder = struct {
             try discoverFile(self.allocator, &self.graph, file, @intCast(module_file_index));
             self.graph.file_offsets.appendAssumeCapacity(.{
                 .path = try self.graph.addString(self.allocator, std.fs.path.basename(file.path)),
+                // Selected source fragments retain the original buffer's version.
+                .content_hash = if (file.diagnostics) |diagnostics| blk: {
+                    if (@intFromEnum(file.tree.file_id) < diagnostics.source_db.files.len) {
+                        const original = diagnostics.source_db.get(file.tree.file_id);
+                        if (std.mem.eql(u8, original.path, file.path)) break :blk original.content_hash;
+                    }
+                    break :blk @import("../../1_base/source_db.zig").contentHash(file.source);
+                } else @import("../../1_base/source_db.zig").contentHash(file.source),
                 .declaration_base = declaration_base,
                 .declaration_count = @intCast(self.graph.declarations.items.len - declaration_base),
                 .type_reference_base = type_reference_base,

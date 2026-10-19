@@ -6709,18 +6709,19 @@ pub const SafetyChecker = struct {
     }
 
     fn location(self: *SafetyChecker, source: primitives.SourceRef) ?tok.Location {
+        if (@import("../global/source_location.zig").find(self.graph, &self.diagnostics.source_db, source)) |found| return found;
         if (source.file_index >= self.graph.files.items.len) return null;
         const file = self.graph.files.items[source.file_index];
+        if (file.content_hash != null) return null;
         const basename = self.graph.text(file.path);
-        const module_dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
 
+        // Source-less synthetic graphs may identify their one diagnostic file
+        // by basename. A known source version never falls back to another one.
         var basename_match: ?@TypeOf(self.diagnostics.source_db.fileId(0)) = null;
         for (self.diagnostics.source_db.files, 0..) |candidate, index| {
             if (!std.mem.eql(u8, std.fs.path.basename(candidate.path), basename)) continue;
-            const id = self.diagnostics.source_db.fileId(index);
-            if (std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", module_dir))
-                return .{ .file = id, .offset = source.offset };
-            if (basename_match == null) basename_match = id else basename_match = null;
+            if (basename_match != null) return null;
+            basename_match = self.diagnostics.source_db.fileId(index);
         }
         return if (basename_match) |id| .{ .file = id, .offset = source.offset } else null;
     }
