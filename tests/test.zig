@@ -13858,8 +13858,10 @@ test "feature_tests/execution/74X_computed_condition_safety" {
     try buildExpectFail("tests/feature_tests/execution/74X_computed_condition_safety", "consumption requires an initialized owner");
 }
 
-test "feature_tests/execution/75X_computed_module_condition_boundary" {
-    try buildExpectFail("tests/feature_tests/execution/75X_computed_module_condition_boundary", "computed #if at module scope is not yet supported");
+test "feature_tests/execution/75_computed_module_condition" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/75_computed_module_condition");
+    try runExpect("tests/feature_tests/execution/75_computed_module_condition", 42);
+    try vmExpect("tests/feature_tests/execution/75_computed_module_condition", 42, null);
 }
 
 test "feature_tests/execution/76X_computed_condition_cycle" {
@@ -14033,4 +14035,22 @@ test "feature_tests/execution/105X_partial_array_reference_lifetime" {
 test "feature_tests/execution/106X_partial_array_explicit_dependency" {
     try buildExpectFail("tests/feature_tests/execution/106X_partial_array_explicit_dependency", "depends on a root that has ended");
     try vmExpect("tests/feature_tests/execution/106X_partial_array_explicit_dependency", 1, "depends on a root that has ended");
+}
+
+test "feature_tests/execution/107_computed_module_imports" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/107_computed_module_imports");
+    try runExpect("tests/feature_tests/execution/107_computed_module_imports", 42);
+    try vmExpect("tests/feature_tests/execution/107_computed_module_imports", 42, null);
+}
+
+test "feature_tests/execution/108X_module_condition_nonboolean" {
+    try buildExpectFail("tests/feature_tests/execution/108X_module_condition_nonboolean", "compile-time condition requires a Bool result");
+}
+
+test "feature_tests/execution/109X_module_condition_safety" {
+    try buildExpectFail("tests/feature_tests/execution/109X_module_condition_safety", "deinitialized");
+}
+
+test "feature_tests/execution/110X_computed_import_cycle" {
+    try buildExpectFail("tests/feature_tests/execution/110X_computed_import_cycle", "import cycle detected after compile-time selection");
 }

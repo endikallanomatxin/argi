@@ -42,9 +42,11 @@ branch is compiled. This differs from running an ordinary `if` inside
 > Selected statements belong to the containing scope, like target selection;
 > use an explicit nested block when a separate lifetime is needed.
 > Runtime inputs cannot determine a compile-time condition.
-> At module scope, `#if` still accepts only the target predicates below, combined
-> with `not`, `and`, `or`, and parentheses. Computed declaration/import selection
-> remains pending.
+> CLI compilation also evaluates closed module-level conditions before adding
+> the selected declarations and discovering their imports. Nested selections
+> retain original source offsets; inactive imports need not exist. Program entry
+> discovery follows selection, so `main` can be declared in a selected arm.
+> Interactive module preparation does not yet use this staged source loader.
 
 The experimental `argi run --vm <directory>` command uses the shared bytecode
 executor for runtime execution. Explicit `#run` requests use that executor during

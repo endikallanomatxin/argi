@@ -66,6 +66,8 @@ pub const FrontendPipeline = struct {
     entry_source: ?[]const u8 = null,
     entry_path: ?[]const u8 = null,
     entry_file: ?source_db.FileId = null,
+    staged_arena: ?*std.heap.ArenaAllocator = null,
+    deferred_entry: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -204,6 +206,10 @@ pub const FrontendPipeline = struct {
     pub fn prepareModuleFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const module_sg.ModuleSemanticGraph {
         try self.prepareFiles(files, false);
         try self.buildModuleGraphs();
+        for (self.module_graphs.items) |module| if (module.conditions.items.len != 0) {
+            try self.diagnostics.add(.{ .file = self.source_db.fileId(0), .offset = 0 }, .semantic, "computed module conditions require staged source loading", .{});
+            return error.Reported;
+        };
         return self.module_graphs.items;
     }
 
@@ -220,13 +226,14 @@ pub const FrontendPipeline = struct {
             self.options.semantizing.include_tests,
             self.options.semantizing.selected_test_name,
         );
+        var computed_module = false;
         for (self.syntax_files.items) |*file| for (file.roots) |root| {
             if (file.ifStatement(root)) |conditional| if (conditional.comptime_selection) {
-                try self.diagnostics.add(file.location(root), .semantic, "computed #if at module scope is not yet supported", .{});
-                return error.Reported;
+                computed_module = true;
             };
         };
-        if (include_entry) try self.appendProgramEntry();
+        self.deferred_entry = include_entry and computed_module;
+        if (include_entry and !computed_module) try self.appendProgramEntry();
         try self.validateFunctionSignatures();
         try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);
         if (self.diagnostics.hasErrors()) return error.Reported;
@@ -257,8 +264,24 @@ pub const FrontendPipeline = struct {
         // Bootstrap reporting only when requested. Creating FFI/terminal
         // owners in otherwise pure entries changes once and capability checks.
         var needs_reporting = self.options.semantizing.selected_test_name != null;
-        for (self.syntax_files.items) |*file| for (file.tokens.items(.content)) |content| {
-            if (content == .triple_bang) needs_reporting = true;
+        for (self.syntax_files.items) |*file| for (file.tokens.items(.content), 0..) |content, token_index| {
+            if (content != .triple_bang) continue;
+            const offset = file.tokenLocation(@enumFromInt(token_index)).offset;
+            // Retained original trees still contain module directives. Their
+            // selected declarations live in separate fragment trees; only those
+            // declarations can introduce entry reporting requirements.
+            const deferred = for (file.roots) |root| {
+                const conditional = file.ifStatement(root) orelse continue;
+                if (!conditional.comptime_selection) continue;
+                const file_index = @intFromEnum(file.file_id);
+                if (file_index >= self.source_selections.items.len) continue;
+                const selection = &self.source_selections.items[file_index];
+                for (selection.plan.branches.items) |branch| {
+                    if (branch.extent.start == file.location(root).offset and offset >= branch.extent.start and offset < branch.extent.end) break;
+                } else continue;
+                break true;
+            } else false;
+            if (!deferred) needs_reporting = true;
         };
         for (self.syntax_files.items) |*file| {
             const source = self.source_db.get(file.file_id);
@@ -528,7 +551,10 @@ pub const FrontendPipeline = struct {
     fn buildGlobalGraph(self: *FrontendPipeline) !void {
         try self.buildModuleGraphs();
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
+        const has_conditions = for (self.module_graphs.items) |module| {
+            if (module.conditions.items.len != 0) break true;
+        } else false;
+        const result = if (has_conditions) try self.buildStagedGlobalGraph() else try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
             .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
@@ -544,6 +570,148 @@ pub const FrontendPipeline = struct {
             self.options.semantizing.selected_test_name,
         );
         self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
+    }
+
+    fn buildStagedGlobalGraph(self: *FrontendPipeline) !global_semantizer.Result {
+        const arena = try self.allocator.create(std.heap.ArenaAllocator);
+        arena.* = .init(self.allocator);
+        self.staged_arena = arena;
+        const a = arena.allocator();
+        var modules: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
+        try modules.appendSlice(a, self.module_graphs.items);
+        var session: global_semantizer.Session = undefined;
+        try session.init(self.allocator, modules.items, .{
+            .target = self.options.target,
+            .selected_test_name = self.options.semantizing.selected_test_name,
+            .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
+            .diagnostics = self.diagnostics,
+        });
+        defer session.deinit();
+        var completed: std.AutoHashMapUnmanaged(u64, void) = .empty;
+        while (true) {
+            var changed = false;
+            const count = modules.items.len;
+            for (0..count) |module_index| {
+                // Appending a fragment can move the module view table.
+                const module = modules.items[module_index];
+                for (module.conditions.items, 0..) |condition, index| {
+                    const key = (@as(u64, @intCast(module_index)) << 32) | @as(u32, @intCast(index));
+                    if (completed.contains(key)) continue;
+                    const decision = try session.evaluateModuleCondition(module_index, condition.expression) orelse continue;
+                    const path = try std.fs.path.join(a, &.{ module.module_dir, module.text(module.file_offsets.items[condition.source.file_index].path) });
+                    const file_id = self.source_db.findPath(path) orelse return error.InvalidModuleConditionSource;
+                    const selection = &self.source_selections.items[@intFromEnum(file_id)];
+                    const branch = for (selection.plan.branches.items, 0..) |candidate, branch_index| {
+                        if (candidate.extent.start == condition.source.offset) break @as(@import("../1_base/conditional_source.zig").BranchId, @enumFromInt(branch_index));
+                    } else return error.InvalidModuleConditionSource;
+                    try selection.resolve(branch, decision);
+                    const rendered = try selection.fragment(a, branch, true);
+                    const imports = try selection.fragment(a, branch, false);
+                    try self.discoverSelectedImports(a, &session, &modules, path, imports.source);
+                    const fragment = try self.buildSelectedFragment(a, path, file_id, rendered.source, module.is_bundled_core);
+                    try modules.append(a, fragment);
+                    try session.appendModuleFragment(modules.items, @enumFromInt(module_index));
+                    try completed.put(a, key, {});
+                    changed = true;
+                }
+            }
+            if (!changed) break;
+        }
+        if (try module_linker.cycleSource(self.allocator, &session.relocation.graph)) |source| {
+            try self.diagnostics.add(@import("../execution/diagnostics.zig").location(&session.relocation.graph, self.diagnostics, source), .semantic, "import cycle detected after compile-time selection", .{});
+            return error.Reported;
+        }
+        try module_test_declaration_verify.validate(self.syntax_files.items, self.source_db, self.diagnostics, self.options.semantizing.include_tests, self.options.semantizing.selected_test_name);
+        if (self.deferred_entry) {
+            const before = self.syntax_files.items.len;
+            try self.appendProgramEntry();
+            if (self.syntax_files.items.len != before) {
+                const file = &self.syntax_files.items[before];
+                const input = module_sg.FileInput{ .path = self.entry_path.?, .tree = file, .source = self.entry_source.?, .is_entry = true, .diagnostics = self.diagnostics };
+                const result = try module_semantizer.buildForTarget(a, self.options.entry_module_dir.?, &.{input}, self.options.target);
+                const owner = for (modules.items, 0..) |module, index| {
+                    if (std.mem.eql(u8, module.module_dir, self.options.entry_module_dir.?)) break @as(global_sg.GlobalModuleId, @enumFromInt(index));
+                } else return error.InvalidEntryModule;
+                try modules.append(a, result.graph);
+                try session.appendModuleFragment(modules.items, owner);
+            }
+        }
+        try self.validateFunctionSignatures();
+        try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        try session.advance();
+        return session.finish();
+    }
+
+    fn discoverSelectedImports(self: *FrontendPipeline, a: std.mem.Allocator, session: *global_semantizer.Session, modules: *std.ArrayList(module_sg.ModuleSemanticGraph), path: []const u8, source: []const u8) !void {
+        if (sf.firstImportDirectiveOffset(source) == null) return;
+        const dirs = try a.alloc([]const u8, modules.items.len);
+        for (dirs, modules.items) |*dir, module| dir.* = module.module_dir;
+        const loaded = try sf.collectImportedModules(&a, self.io, .{ .path = path, .code = source }, dirs, .{ .target = self.options.target, .source_overrides = self.diagnostics.source_files });
+        try self.syntax_files.ensureUnusedCapacity(loaded.items.len);
+        var start: usize = 0;
+        while (start < loaded.items.len) {
+            const dir = std.fs.path.dirname(loaded.items[start].path) orelse ".";
+            var end = start + 1;
+            while (end < loaded.items.len and std.mem.eql(u8, std.fs.path.dirname(loaded.items[end].path) orelse ".", dir)) : (end += 1) {}
+            var inputs: std.ArrayList(module_sg.FileInput) = .empty;
+            try inputs.ensureTotalCapacity(a, end - start);
+            for (loaded.items[start..end]) |file| {
+                const file_id = try self.diagnostics.appendSource(file);
+                var offset: usize = 0;
+                var selection = @import("../1_base/target_selection.zig").Prepared.init(self.allocator, file.code, self.options.target, &offset, .computed) catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    try self.diagnostics.add(.{ .file = file_id, .offset = @intCast(offset) }, .syntax, "invalid target selection: {s}", .{@import("../1_base/target_selection.zig").errorMessage(err)});
+                    return error.Reported;
+                };
+                errdefer selection.deinit(self.allocator);
+                const rendered = try selection.syntax(a);
+                var tokens = tokenizer.Tokenizer.init(self.allocator, self.diagnostics, rendered.source, file_id);
+                defer tokens.deinit();
+                _ = try tokens.tokenize();
+                var parser = syntaxer.Syntaxer.initFile(self.allocator, st.FileSyntaxTree.initOwnedTokens(file_id, tokens.takeTokens()), rendered.source, self.diagnostics);
+                defer parser.deinit();
+                var tree = try parser.parse();
+                errdefer tree.deinit(self.allocator);
+                try self.validateSelectedSyntax(&tree);
+                if (@intFromEnum(file_id) != self.source_selections.items.len) return error.InvalidModuleConditionSource;
+                try self.source_selections.append(self.allocator, selection);
+                self.syntax_files.appendAssumeCapacity(tree);
+                inputs.appendAssumeCapacity(.{ .path = file.path, .tree = &self.syntax_files.items[self.syntax_files.items.len - 1], .source = file.code, .diagnostics = self.diagnostics });
+            }
+            const built = try module_semantizer.buildForTarget(a, dir, inputs.items, self.options.target);
+            try modules.append(a, built.graph);
+            try session.appendModules(modules.items);
+            start = end;
+        }
+    }
+
+    fn buildSelectedFragment(self: *FrontendPipeline, a: std.mem.Allocator, path: []const u8, file_id: source_db.FileId, source: []const u8, bundled: bool) !module_sg.ModuleSemanticGraph {
+        var tokens = tokenizer.Tokenizer.init(self.allocator, self.diagnostics, source, file_id);
+        defer tokens.deinit();
+        _ = try tokens.tokenize();
+        var parser = syntaxer.Syntaxer.initFile(self.allocator, st.FileSyntaxTree.initOwnedTokens(file_id, tokens.takeTokens()), source, self.diagnostics);
+        defer parser.deinit();
+        var tree = try parser.parse();
+        errdefer tree.deinit(self.allocator);
+        try self.validateSelectedSyntax(&tree);
+        const input = module_sg.FileInput{ .path = path, .tree = &tree, .source = source, .is_bundled_core = bundled, .diagnostics = self.diagnostics };
+        const result = try module_semantizer.buildForTarget(a, std.fs.path.dirname(path) orelse ".", &.{input}, self.options.target);
+        try self.syntax_files.append(tree);
+        return result.graph;
+    }
+
+    fn validateSelectedSyntax(self: *FrontendPipeline, tree: *const st.FileSyntaxTree) !void {
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        try module_test_declaration_verify.validate(&.{tree.*}, self.source_db, self.diagnostics, self.options.semantizing.include_tests, self.options.semantizing.selected_test_name);
+        const source = self.source_db.get(tree.file_id).source;
+        for (tree.roots) |root| {
+            const function = tree.functionDeclaration(root) orelse continue;
+            try self.validateFunctionSignatureFields(tree, source, function.input, "input");
+            try self.validateFunctionSignatureFields(tree, source, function.output, "output");
+        }
+        try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, &.{tree.*}, self.source_db, self.diagnostics);
+        if (self.diagnostics.hasErrors()) return error.Reported;
     }
 
     const ModuleJob = struct {
@@ -625,6 +793,11 @@ pub const FrontendPipeline = struct {
             self.module_arenas.clearRetainingCapacity();
         }
         self.module_graphs.clearRetainingCapacity();
+        if (self.staged_arena) |arena| {
+            arena.deinit();
+            self.allocator.destroy(arena);
+            self.staged_arena = null;
+        }
     }
 
     pub fn moduleSemanticStorageBytes(self: *const FrontendPipeline) usize {

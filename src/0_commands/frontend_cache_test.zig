@@ -784,3 +784,56 @@ fn retainFrontendSelections(allocator: std.mem.Allocator) !void {
 test "frontend retains source selection plans and releases failed preparation" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFrontendSelections, .{});
 }
+
+test "frontend evaluates module conditions before selecting main and program entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "noop_error_tracer :: () = ()\nchoose := () -> (.ok: Bool) { ok = true }\n#if choose() { main := () -> (.status_code: Int32) { status_code = 42 } } #else { main := () -> () { missing()!!! } }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .entry_module_dir = "/project" });
+    defer pipeline.deinit();
+    const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+        try diagnostics.dump();
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 1), (try @constCast(graph).functionsNamed(a, "main")).len);
+    try std.testing.expectEqual(@as(usize, 1), (try @constCast(graph).functionsNamed(a, "__argi_entry")).len);
+}
+
+test "frontend module condition cache reuse preserves selected declarations" {
+    const files = [_]sf.SourceFile{.{
+        .path = "/project/main.rg",
+        .code = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { main := () -> (.status_code: Int32) { status_code = 42 } } #else { main := () -> () { missing() } }",
+    }};
+    var cache = ModuleCache.init(std.testing.allocator, .{});
+    defer cache.deinit();
+    const first = try expectCleanEquivalent(&files, &cache);
+    defer first.deinit();
+    const second = try expectCleanEquivalent(&files, &cache);
+    defer second.deinit();
+    try std.testing.expectEqual(@as(usize, 1), second.hits);
+}
+
+fn stagedFrontendAllocationFailures(allocator: std.mem.Allocator) !void {
+    const source = "#if true { main := () -> (.status_code: Int32) { status_code = 42 } }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    // Frontend safety facts share the invocation arena, as in CLI compilation.
+    // Inject failure into arena growth and verify the whole invocation releases.
+    var invocation = std.heap.ArenaAllocator.init(allocator);
+    defer invocation.deinit();
+    var pipeline = frontend.FrontendPipeline.init(invocation.allocator(), std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.semantizeGlobalFiles(&files);
+}
+
+test "staged frontend releases failed module condition preparation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, stagedFrontendAllocationFailures, .{});
+}

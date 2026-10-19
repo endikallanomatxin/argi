@@ -9,16 +9,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Extend the ordinary REPL prelude with a persistent allocator through explicit
   checked host adapters.
 - Improve unresolved-name diagnostics in retained sessions.
-- Wire the source loader to retained selections and checked module-condition
-  requests, then resume import/declaration discovery. The semantic session can
-  evaluate closed Boolean recipes and retry after appending dependencies.
-  ModuleSG retains directive source identities and recipes through cache
-  serialization; the frontend retains source selection decisions independently
-  of syntax trees.
-  Do not analyze inactive branches or replace original source identities with
-  rendered buffers.
-  Append selected declarations through explicit module fragments, preserving
-  physical graph ranges and the original module's lexical namespace.
+- Extend staged module selection to interactive module preparation and test
+  discovery. CLI compilation selects declarations and imports before generating
+  program entry; retain original source identities throughout both paths.
 - Complete staged request diagnostics without a source database. Support temporary
   type recipes without retaining identities from speculative graph tails.
 - Define generic-function access to retained value bindings explicitly; do not

@@ -66,20 +66,20 @@ pub const Resolver = struct {
                 module.text(path),
             ) catch return false;
             const target_index: usize = @intFromEnum(target);
-            if (target_index != module_index and std.mem.startsWith(u8, name, "_")) return false;
-            const binding = name_lookup.bindingInModule(self.modules, self.offsets, target_index, name) orelse return false;
+            if (!self.graph.sameModuleNamespace(target, @enumFromInt(module_index)) and std.mem.startsWith(u8, name, "_")) return false;
+            const binding = name_lookup.bindingInNamespace(self.graph, self.modules, self.offsets, target_index, name) orelse return false;
             return self.patchNameUse(o, value.node, binding, value.source);
         }
         if (self.sessionBinding(name)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
-        if (name_lookup.binding(self.modules, self.offsets, module_index, name)) |binding|
+        if (name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
         return self.patchTypeExpression(module_index, o, value.node, name);
     }
 
     fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) bool {
         const name = self.modules[module_index].text(value.name);
-        const binding = self.sessionBinding(name) orelse name_lookup.binding(self.modules, self.offsets, module_index, name) orelse return false;
+        const binding = self.sessionBinding(name) orelse name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name) orelse return false;
         const target = globalizer.globalNode(o, value.node);
         var source = value.source;
         source.file_index += o.file_base;
@@ -131,7 +131,7 @@ pub const Resolver = struct {
             if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             const owner = self.graph.moduleForDeclaration(id) orelse continue;
-            if (@intFromEnum(owner) != module_index and !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
+            if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
             if (found != null) return false;
             found = declaration.type_id orelse continue;
         }
@@ -157,6 +157,8 @@ test "expression resolver preserves global binding reads and assignments" {
     const allocator = std.testing.allocator;
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
+    try graph.modules.appendNTimes(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 0 } }, 2);
+    graph.modules.items[1].is_bundled_core = true;
 
     var app: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "app") };
     defer app.deinit(allocator);
