@@ -91,6 +91,42 @@ pub fn valueType(layout: *references.Layout, allocator: std.mem.Allocator, graph
     return c.LLVMArrayType2(storageViewType(), count);
 }
 
+// Value evidence is a flat immutable array. Packing and projection use the
+// same semantic slices as addressable storage, without reading value memory.
+pub fn insertValue(builder: c.LLVMBuilderRef, aggregate: c.LLVMValueRef, child: c.LLVMValueRef, offset: usize) !c.LLVMValueRef {
+    const aggregate_type = c.LLVMTypeOf(aggregate);
+    const child_type = c.LLVMTypeOf(child);
+    if (c.LLVMGetTypeKind(aggregate_type) != c.LLVMArrayTypeKind) return error.InvalidReferenceEvidenceStorage;
+    if (c.LLVMGetElementType(aggregate_type) != storageViewType()) return error.InvalidReferenceEvidenceStorage;
+    const single = child_type == storageViewType();
+    if (!single and c.LLVMGetTypeKind(child_type) != c.LLVMArrayTypeKind) return error.InvalidReferenceEvidenceStorage;
+    if (!single and c.LLVMGetElementType(child_type) != storageViewType()) return error.InvalidReferenceEvidenceStorage;
+    const count = if (single) 1 else c.LLVMGetArrayLength2(child_type);
+    if (offset > c.LLVMGetArrayLength2(aggregate_type) or count > c.LLVMGetArrayLength2(aggregate_type) - offset)
+        return error.InvalidReferenceEvidenceStorage;
+    var result = aggregate;
+    for (0..count) |index| {
+        const value = if (single) child else c.LLVMBuildExtractValue(builder, child, @intCast(index), "reference.leaf");
+        result = c.LLVMBuildInsertValue(builder, result, value, @intCast(offset + index), "reference.pack");
+    }
+    return result;
+}
+
+pub fn projectValue(builder: c.LLVMBuilderRef, layout: *references.Layout, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, aggregate: c.LLVMValueRef, projection: references.Projection) !?c.LLVMValueRef {
+    const slice = try layout.project(allocator, graph, ty, projection);
+    if (slice.count == 0) return null;
+    const expected = (try valueType(layout, allocator, graph, ty)).?;
+    if (c.LLVMTypeOf(aggregate) != expected) return error.InvalidReferenceEvidenceStorage;
+    if (try references.Layout.shape(graph, slice.ty) == .reference)
+        return c.LLVMBuildExtractValue(builder, aggregate, @intCast(slice.offset), "reference.project");
+    var result = c.LLVMConstNull((try valueType(layout, allocator, graph, slice.ty)).?);
+    for (0..slice.count) |index| {
+        const value = c.LLVMBuildExtractValue(builder, aggregate, @intCast(slice.offset + index), "reference.leaf");
+        result = c.LLVMBuildInsertValue(builder, result, value, @intCast(index), "reference.project");
+    }
+    return result;
+}
+
 // Project the sidecar by semantic identity, never by the physical value's
 // address. The same projection is usable for caller storage and callee inputs.
 // Bounds and active-payload checks belong to the checked value access; this
@@ -147,7 +183,13 @@ test "native reference evidence projects distinct sibling ranges through the pri
         storeOptional(builder, output, forwarded);
     }
     const output = c.LLVMBuildLoad2(builder, sidecar, output_storage, "returned.evidence");
-    try signature.returnWithEvidence(builder, function, signature.input(function), output);
+    var reassembled = c.LLVMConstNull(sidecar);
+    for (0..2) |index| {
+        const leaf = (try projectValue(builder, &layout, a, &graph, @enumFromInt(2), output, .{ .field = @intCast(index) })).?;
+        reassembled = try insertValue(builder, reassembled, leaf, index);
+    }
+    try std.testing.expectError(error.InvalidReferenceEvidenceStorage, insertValue(builder, reassembled, reassembled, 1));
+    try signature.returnWithEvidence(builder, function, signature.input(function), reassembled);
     var message: [*c]u8 = null;
     defer if (message != null) c.LLVMDisposeMessage(message);
     const invalid = c.LLVMVerifyModule(module, c.LLVMReturnStatusAction, &message);
