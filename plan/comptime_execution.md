@@ -9,8 +9,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Extend the ordinary REPL prelude with a persistent allocator through explicit
   checked host adapters.
 - Improve unresolved-name diagnostics in retained sessions.
-- Resolve computed module-level `#if` before discovering selected imports and
-  declarations. Preserve source identities and do not analyze inactive branches.
+- Connect retained source selections to semantic module-condition requests and
+  resume import/declaration discovery. Do not analyze inactive branches or
+  replace original source identities with rendered buffers.
 - Complete staged request diagnostics without a source database. Support temporary
   type recipes without retaining identities from speculative graph tails.
 - Define generic-function access to retained value bindings explicitly; do not

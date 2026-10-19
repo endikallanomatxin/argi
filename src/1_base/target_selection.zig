@@ -41,33 +41,83 @@ pub fn selectSyntax(allocator: std.mem.Allocator, source: []const u8, target: ta
 
 const Mode = enum { target_only, imports, syntax };
 
-fn selectMode(allocator: std.mem.Allocator, source: []const u8, target: target_mod.Config, error_offset: *usize, mode: Mode) ![]u8 {
-    var plan = try @import("conditional_source.zig").Plan.parse(allocator, source, error_offset);
-    defer plan.deinit(allocator);
-    const decisions = try allocator.alloc(?bool, plan.branches.items.len);
-    defer allocator.free(decisions);
-    // Keep validating target conditions in discarded branches, as before.
-    for (plan.branches.items, decisions) |branch, *decision| {
-        var selector = Selector{ .source = source[0..branch.condition.end], .target = target, .offset = branch.condition.start };
-        decision.* = selector.condition() catch |err| {
-            if (mode != .target_only and err == error.InvalidTargetCondition) {
-                decision.* = null;
-                continue;
+pub const Prepared = struct {
+    plan: @import("conditional_source.zig").Plan,
+    decisions: []?bool,
+
+    pub const Policy = enum { target_only, computed };
+    pub const BranchId = @import("conditional_source.zig").BranchId;
+    pub const Selection = @import("conditional_source.zig").Selection;
+
+    /// Own target decisions while borrowing immutable source. A staged source
+    /// loader can retain this owner and bind computed results without reparsing
+    /// branch topology or changing source offsets. No Argi execution occurs here.
+    /// Function-body conditions remain unresolved here and are specialized by
+    /// ordinary semantic materialization, not bound globally by the loader.
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, target: target_mod.Config, error_offset: *usize, policy: Policy) !Prepared {
+        var plan = try @import("conditional_source.zig").Plan.parse(allocator, source, error_offset);
+        errdefer plan.deinit(allocator);
+        const decisions = try allocator.alloc(?bool, plan.branches.items.len);
+        errdefer allocator.free(decisions);
+        // Keep validating target predicates in discarded branches, as before.
+        for (plan.branches.items, decisions) |branch, *decision| {
+            var selector = Selector{ .source = source[0..branch.condition.end], .target = target, .offset = branch.condition.start };
+            decision.* = selector.condition() catch |err| {
+                if (policy == .computed and err == error.InvalidTargetCondition) {
+                    decision.* = null;
+                    continue;
+                }
+                error_offset.* = selector.offset;
+                return err;
+            };
+            selector.skipTrivia();
+            if (selector.offset != branch.condition.end) {
+                if (policy == .computed) {
+                    decision.* = null;
+                    continue;
+                }
+                error_offset.* = selector.offset;
+                return error.InvalidTargetCondition;
             }
-            error_offset.* = selector.offset;
-            return err;
-        };
-        selector.skipTrivia();
-        if (selector.offset != branch.condition.end) {
-            if (mode != .target_only) {
-                decision.* = null;
-                continue;
-            }
-            error_offset.* = selector.offset;
-            return error.InvalidTargetCondition;
         }
+        return .{ .plan = plan, .decisions = decisions };
     }
-    const selection = if (mode == .syntax) try plan.selectSyntax(allocator, decisions) else try plan.select(allocator, decisions);
+
+    pub fn deinit(self: *Prepared, allocator: std.mem.Allocator) void {
+        allocator.free(self.decisions);
+        self.plan.deinit(allocator);
+        self.* = undefined;
+    }
+
+    pub fn imports(self: *const Prepared, allocator: std.mem.Allocator) !Selection {
+        return self.plan.select(allocator, self.decisions);
+    }
+
+    pub fn syntax(self: *const Prepared, allocator: std.mem.Allocator) !Selection {
+        return self.plan.selectSyntax(allocator, self.decisions);
+    }
+
+    /// Publish one computed result only after all enclosing selections agree.
+    /// Inactive dependencies must not be executed merely to decide another arm.
+    pub fn resolve(self: *Prepared, branch: BranchId, value: bool) !void {
+        const index = @intFromEnum(branch);
+        if (index >= self.decisions.len) return error.InvalidConditionalBranch;
+        if (self.decisions[index] != null) return error.ConditionalAlreadyResolved;
+        var current = self.plan.branches.items[index];
+        while (current.parent != .none) {
+            const parent = @intFromEnum(current.parent);
+            if (self.decisions[parent] == null or self.decisions[parent].? != current.parent_arm)
+                return error.InactiveConditionalBranch;
+            current = self.plan.branches.items[parent];
+        }
+        self.decisions[index] = value;
+    }
+};
+
+fn selectMode(allocator: std.mem.Allocator, source: []const u8, target: target_mod.Config, error_offset: *usize, mode: Mode) ![]u8 {
+    var prepared = try Prepared.init(allocator, source, target, error_offset, if (mode == .target_only) .target_only else .computed);
+    defer prepared.deinit(allocator);
+    const selection = if (mode == .syntax) try prepared.syntax(allocator) else try prepared.imports(allocator);
     allocator.free(selection.pending);
     return selection.source;
 }
@@ -224,4 +274,56 @@ test "computed conditions retain syntax but withhold imports" {
     const syntax = try selectSyntax(a, source, .{}, &offset);
     defer a.free(syntax);
     try std.testing.expectEqualStrings(source, syntax);
+}
+
+fn exerciseRetainedSelection(allocator: std.mem.Allocator) !void {
+    const source =
+        "#if choose() {\n" ++
+        "    first := import(\"./first\")\n" ++
+        "    #if nested() { second := import(\"./second\") }\n" ++
+        "} #else { discarded := import(\"./missing\") }\n";
+    var offset: usize = 0;
+    var prepared = try Prepared.init(allocator, source, .{}, &offset, .computed);
+    defer prepared.deinit(allocator);
+    const before = try prepared.imports(allocator);
+    defer before.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), before.pending.len);
+    try std.testing.expect(std.mem.indexOf(u8, before.source, "import") == null);
+    try std.testing.expectError(error.InactiveConditionalBranch, prepared.resolve(@enumFromInt(1), true));
+    try std.testing.expect(prepared.decisions[1] == null);
+    try prepared.resolve(before.pending[0], true);
+    const outer = try prepared.imports(allocator);
+    defer outer.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), outer.pending.len);
+    try std.testing.expect(std.mem.indexOf(u8, outer.source, "./first") != null);
+    try std.testing.expect(std.mem.indexOf(u8, outer.source, "./second") == null);
+    try std.testing.expect(std.mem.indexOf(u8, outer.source, "./missing") == null);
+    try prepared.resolve(outer.pending[0], true);
+    const complete = try prepared.syntax(allocator);
+    defer complete.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), complete.pending.len);
+    try std.testing.expectEqual(source.len, complete.source.len);
+    try std.testing.expectEqual(std.mem.indexOf(u8, source, "./second"), std.mem.indexOf(u8, complete.source, "./second"));
+    try std.testing.expect(std.mem.indexOf(u8, complete.source, "./missing") == null);
+    try std.testing.expectError(error.ConditionalAlreadyResolved, prepared.resolve(@enumFromInt(0), false));
+    try std.testing.expectError(error.InvalidConditionalBranch, prepared.resolve(.none, false));
+}
+
+test "retained target selection resumes active computed imports with stable offsets" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, exerciseRetainedSelection, .{});
+}
+
+test "retained selection cannot resolve children of discarded computed branches" {
+    const allocator = std.testing.allocator;
+    const source = "#if choose() { #if hidden() { missing := import(\"./missing\") } } #else { answer := 42 }";
+    var offset: usize = 0;
+    var prepared = try Prepared.init(allocator, source, .{}, &offset, .computed);
+    defer prepared.deinit(allocator);
+    try prepared.resolve(@enumFromInt(0), false);
+    try std.testing.expectError(error.InactiveConditionalBranch, prepared.resolve(@enumFromInt(1), true));
+    const selected = try prepared.imports(allocator);
+    defer selected.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), selected.pending.len);
+    try std.testing.expect(std.mem.indexOf(u8, selected.source, "./missing") == null);
+    try std.testing.expect(std.mem.indexOf(u8, selected.source, "answer") != null);
 }
