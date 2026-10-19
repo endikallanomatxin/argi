@@ -5,7 +5,23 @@ const v = @import("../5_codegen/bytecode/value.zig");
 pub const RegionId = enum(u32) { _ };
 pub const Handle = struct { context: v.ContextId, region: RegionId };
 pub const Range = struct { handle: Handle, offset: usize, length: usize };
-const Region = struct { length: usize, alignment: usize, bytes: []u8, initialized: []u8, live: bool = true };
+const Region = struct { address: usize, length: usize, alignment: usize, bytes: []u8, initialized: []u8, live: bool = true };
+
+// Virtual byte addresses are process-unique tokens, never native pointers.
+// Include an unused byte after each range so one-past and empty addresses can
+// never become the start of another allocation, even across context resets.
+var next_address = std.atomic.Value(usize).init(1);
+
+fn reserveAddress(length: usize, alignment: usize) !usize {
+    var next = next_address.load(.monotonic);
+    while (true) {
+        const padded = std.math.add(usize, next, alignment - 1) catch return error.ExecutionAddressLimit;
+        const base = padded & ~(alignment - 1);
+        const end = std.math.add(usize, base, @max(length, 1)) catch return error.ExecutionAddressLimit;
+        const following = std.math.add(usize, end, 1) catch return error.ExecutionAddressLimit;
+        next = next_address.cmpxchgWeak(next, following, .monotonic, .monotonic) orelse return base;
+    }
+}
 
 /// Concrete acquisition identities, separate from lexical slots and host
 /// addresses. A receipt proves a live byte extent, never initialized typed data
@@ -14,8 +30,10 @@ const Region = struct { length: usize, alignment: usize, bytes: []u8, initialize
 /// describe concrete bytes only, without reproducing static lifetime proofs.
 pub const Regions = struct {
     entries: std.ArrayList(Region) = .empty,
+    context: ?v.ContextId = null,
 
     pub fn acquire(self: *Regions, storage: *storage_mod.Storage, length: usize, alignment: usize) !Handle {
+        if (self.context) |owner| if (owner != storage.context) return error.ExecutionForeignReference;
         if (alignment == 0 or !std.math.isPowerOfTwo(alignment)) return error.ExecutionInvalidAlignment;
         const id: RegionId = @enumFromInt(std.math.cast(u32, self.entries.items.len) orelse return error.ExecutionAcquisitionLimit);
         const bitmap_length = length / 8 + @intFromBool(length % 8 != 0);
@@ -29,9 +47,39 @@ pub const Regions = struct {
         const initialized = try storage.allocator.alloc(u8, bitmap_length);
         errdefer storage.allocator.free(initialized);
         @memset(initialized, 0);
+        const address_ = try reserveAddress(length, alignment);
         try storage.charge(charge);
-        self.entries.appendAssumeCapacity(.{ .length = length, .alignment = alignment, .bytes = bytes, .initialized = initialized });
+        self.entries.appendAssumeCapacity(.{ .address = address_, .length = length, .alignment = alignment, .bytes = bytes, .initialized = initialized });
+        self.context = storage.context;
         return .{ .context = storage.context, .region = id };
+    }
+
+    /// Raw address transport retains byte arithmetic without exposing a host
+    /// pointer. It supplies no safe-reference validity or acquisition authority.
+    pub fn address(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize) !usize {
+        const region = try self.get(storage, handle);
+        if (offset > region.length) return error.ExecutionIndexOutOfBounds;
+        return region.address + offset;
+    }
+
+    /// Recover only the concrete region and checked byte range. Establishing a
+    /// language reference still requires compiler-selected acquisition evidence.
+    pub fn resolveAddress(self: *const Regions, storage: *const storage_mod.Storage, address_: usize, length: usize, alignment: usize) !Range {
+        if (self.context == null or self.context.? != storage.context) return error.ExecutionForeignReference;
+        var low: usize = 0;
+        var high = self.entries.items.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (self.entries.items[middle].address <= address_) low = middle + 1 else high = middle;
+        }
+        if (low == 0) return error.ExecutionInvalidAcquisition;
+        const index = low - 1;
+        const region = self.entries.items[index];
+        const offset = address_ - region.address;
+        // Reject gaps before inspecting liveness, to avoid attributing a token
+        // outside this region to its previous, possibly released allocation.
+        if (offset > region.length) return error.ExecutionInvalidAcquisition;
+        return self.range(storage, .{ .context = storage.context, .region = @enumFromInt(@as(u32, @intCast(index))) }, offset, length, alignment);
     }
 
     pub fn range(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, length: usize, alignment: usize) !Range {
@@ -91,7 +139,7 @@ pub const Regions = struct {
     }
 
     fn get(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle) !Region {
-        if (handle.context != storage.context) return error.ExecutionForeignReference;
+        if (self.context == null or self.context.? != storage.context or handle.context != storage.context) return error.ExecutionForeignReference;
         const index = @intFromEnum(handle.region);
         if (index >= self.entries.items.len) return error.ExecutionInvalidAcquisition;
         const region = self.entries.items[index];
@@ -189,4 +237,33 @@ test "acquired scalar access shares layouts without manufacturing initialization
     try std.testing.expectError(error.ExecutionInvalidAlignment, regions.loadInteger(&storage, handle, 1, &layout, .big));
     try regions.release(&storage, handle);
     try std.testing.expectError(error.ExecutionReleasedAcquisition, regions.loadInteger(&storage, handle, 4, &layout, .big));
+}
+
+test "virtual acquisition addresses preserve offsets and never alias another context" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try storage_mod.Storage.init(arena.allocator(), 100);
+    var regions: Regions = .{};
+    const first = try regions.acquire(&storage, 16, 16);
+    const base = try regions.address(&storage, first, 0);
+    try std.testing.expectEqual(@as(usize, 0), base % 16);
+    const inside = try regions.resolveAddress(&storage, base + 8, 8, 8);
+    try std.testing.expectEqualDeep(first, inside.handle);
+    try std.testing.expectEqual(@as(usize, 8), inside.offset);
+    _ = try regions.resolveAddress(&storage, base + 16, 0, 1);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, regions.resolveAddress(&storage, base + 16, 1, 1));
+    try std.testing.expectError(error.ExecutionInvalidAlignment, regions.resolveAddress(&storage, base + 1, 1, 8));
+    const empty = try regions.acquire(&storage, 0, 1);
+    const empty_address = try regions.address(&storage, empty, 0);
+    try std.testing.expect(empty_address > base + 16);
+    try std.testing.expectError(error.ExecutionInvalidAcquisition, regions.resolveAddress(&storage, empty_address + 1, 0, 1));
+    try regions.release(&storage, first);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, regions.resolveAddress(&storage, base + 8, 1, 1));
+    var other = try storage_mod.Storage.init(arena.allocator(), 100);
+    try std.testing.expectError(error.ExecutionForeignReference, regions.resolveAddress(&other, base, 1, 1));
+    try std.testing.expectError(error.ExecutionForeignReference, regions.acquire(&other, 1, 1));
+    var other_regions: Regions = .{};
+    const fresh = try other_regions.acquire(&other, 16, 16);
+    try std.testing.expect((try other_regions.address(&other, fresh, 0)) != base);
+    try std.testing.expectError(error.ExecutionInvalidAcquisition, other_regions.resolveAddress(&other, base, 1, 1));
 }
