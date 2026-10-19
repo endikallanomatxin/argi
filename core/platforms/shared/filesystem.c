@@ -320,3 +320,21 @@ void _argi_fs_temp_cleanup(uintptr_t handle) {
     (void)_argi_fs_rmdir((const uint8_t *)path, strlen(path));
     free(path);
 }
+
+/* Borrow the process endpoints; callers must never close these handles. */
+uintptr_t _argi_standard_stream(int32_t descriptor) {
+    switch (descriptor) {
+        case 0: return (uintptr_t)stdin;
+        case 1: return (uintptr_t)stdout;
+        case 2: return (uintptr_t)stderr;
+        default: return 0;
+    }
+}
+int32_t _argi_file_write_byte(uintptr_t stream, uint8_t byte) {
+    if (!stream) return -1;
+    return fputc(byte, (FILE *)stream) == EOF ? -1 : 0;
+}
+int32_t _argi_file_flush(uintptr_t stream) {
+    if (!stream) return -1;
+    return fflush((FILE *)stream) == 0 ? 0 : -1;
+}

@@ -30,7 +30,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
         options.explicit_sysroot = args[1];
     }
     // The frontend owns initial source/module views for the whole session.
-    // Runtime capabilities and native calls are not granted by this host loop.
+    // The host grants only the explicit output adapters installed below.
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -52,6 +52,11 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     var input = std.Io.File.stdin().reader(io, &input_buffer);
     var output_buffer: [4096]u8 = undefined;
     var output = std.Io.File.stdout().writer(io, &output_buffer);
+    var error_output = std.Io.File.stderr().writer(io, &.{});
+    defer error_output.interface.flush() catch {};
+    var host_output = @import("repl_host.zig").Output{ .writer = &output.interface, .error_writer = &error_output.interface };
+    const host_bindings = host_output.bindings();
+    session.runtime.context.host_bindings = &host_bindings;
     const terminal = try std.Io.File.stdin().isTty(io) and try std.Io.File.stdout().isTty(io);
     session.initializePrelude(prelude) catch |err| {
         if (session.diagnostics.hasErrors()) try session.diagnostics.dump();
@@ -259,4 +264,37 @@ test "REPL presents persistent string literals as escaped text" {
     defer output.deinit();
     try interact(&session, &input, &output.writer, false);
     try std.testing.expectEqualStrings("_0 = \"hello\"\n_1 = \"hello\"\n_2 = \"ñ€\"\n_3 = \"\"\n", output.written());
+}
+
+test "REPL standard prelude prints ordinary text across reset" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .explicit_sysroot = "zig-out" });
+    defer sf.freeList(&allocator, &files);
+    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const modules = try pipeline.prepareModuleFiles(files.items);
+    var session: interactive.Interactive = undefined;
+    try session.initWithSources(std.testing.allocator, files.items, modules, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    var errors = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer errors.deinit();
+    var host_output = @import("repl_host.zig").Output{ .writer = &output.writer, .error_writer = &errors.writer };
+    const bindings = host_output.bindings();
+    session.runtime.context.host_bindings = &bindings;
+    try session.initializePrelude(prelude);
+    try session.submitStatements("print(\"hola\")");
+    try std.testing.expectEqualStrings("hola\n", output.written());
+    try session.reset();
+    try session.submitStatements("print(\"ñ después\")");
+    try std.testing.expectEqualStrings("hola\nñ después\n", output.written());
+    try session.submitStatements("init_stderr(.p = $&_repl_output)\nprint(\"error output\")");
+    try std.testing.expectEqualStrings("error output\n", errors.written());
+    try std.testing.expectEqualStrings("hola\nñ después\n", output.written());
+    try session.close();
 }

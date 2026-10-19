@@ -162,11 +162,13 @@ Globals requiring cleanup and globals without explicit initializers remain rejec
 
 Embedding hosts can register explicit integer-only foreign-call adapters with
 `Vm.initWithHost` or a retained context's `host_bindings` (up to 32 integer
-inputs and outputs). Symbols and complete integer signatures must match; missing or ambiguous adapters reject a command
-before publication. The logical `ffi` capability remains checked by the frontend.
+inputs and outputs). Symbols and complete integer signatures must match; missing
+or ambiguous adapters reject a command before publication. The logical `ffi`
+capability remains checked by the frontend.
 Callbacks receive integer copies, and results are range-checked before publication.
-Callback failures poison execution. The CLI currently registers no adapters;
-compile-time evaluation continues to reject foreign calls.
+Callback failures poison execution. `argi repl` registers stdout/stderr adapters;
+`argi run --vm` currently registers none. Compile-time evaluation continues to
+reject foreign calls.
 
 Raw pointers, C enums, floating point, complete trace reporting,
 partial initialization through output references, owning globals, closures, general foreign calls,
@@ -199,7 +201,8 @@ subset and execution limits described above apply. `--sysroot <path>` selects an
 installation prefix. Input can come from a terminal or a pipe.
 At startup, ordinary checked Argi statements create a buffered `error_tracer`.
 The terminal displays that prelude; `:reset` cleans the session and executes it
-again. Allocator and terminal writer capabilities are not supplied yet.
+again. The prelude also acquires `ffi` and a borrowed stdout `File` as `writer`,
+so `print("hola")` works directly. Allocator capabilities are not supplied yet.
 In a terminal, Up/Down recall earlier lines and restore the unfinished draft.
 Recalled lines can be edited before submission; Ctrl-C cancels the current line
 and Ctrl-D on an empty line exits. History lasts for the current REPL process.

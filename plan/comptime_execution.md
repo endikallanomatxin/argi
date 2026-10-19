@@ -6,8 +6,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Next
 
-- Extend the ordinary REPL prelude with persistent allocator and output
-  capabilities through explicit checked host adapters. A fresh REPL must accept `print("hola")`.
+- Extend the ordinary REPL prelude with a persistent allocator through explicit
+  checked host adapters.
 - Improve unresolved-name diagnostics in retained sessions.
 - Resolve computed module-level `#if` before discovering selected imports and
   declarations. Preserve source identities and do not analyze inactive branches.

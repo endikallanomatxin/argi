@@ -17,4 +17,7 @@ uintptr_t _argi_fs_temp_length(uintptr_t);
 int32_t _argi_fs_temp_copy(uintptr_t, uint8_t *, uintptr_t);
 int32_t _argi_fs_temp_close(uintptr_t);
 void _argi_fs_temp_cleanup(uintptr_t);
+uintptr_t _argi_standard_stream(int32_t);
+int32_t _argi_file_write_byte(uintptr_t, uint8_t);
+int32_t _argi_file_flush(uintptr_t);
 #endif
