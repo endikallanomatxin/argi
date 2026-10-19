@@ -208,7 +208,9 @@ per command, while value cells accumulate until reset. These flags do not change
 compile-time evaluation budgets. Embedders can configure `vm.Limits`
 and supply a host-owned `vm.Cancellation` token. Cancellation is checked between
 bytecode instructions; blocking host adapters require their own interruption.
-Cancelled execution poisons its context until reset, without running user cleanup.
+Cancelled execution preserves completed writes and host effects, poisons its
+context until reset, and does not run user cleanup. Clear the host-owned token
+while idle before executing again; context reset does not clear that token.
 These limits are not a general sandbox or a stable resource policy. Compile-time
 evaluation exposes no host I/O or native handles.
 `--vm` selects runtime execution; `#run` and computed conditions execute during

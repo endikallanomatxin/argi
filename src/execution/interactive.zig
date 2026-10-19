@@ -1172,3 +1172,50 @@ test "interactive computed conditions retain reconstructed type bindings across 
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = other)")).?.value.integer);
     try session.close();
 }
+
+test "interactive cancellation preserves completed effects and stops later host calls" {
+    const a = std.testing.allocator;
+    var sources = submissions.Sources.init(a);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "ForeignFunctionInterface: Type = ()\nhost_step() -> (): ExternFunction");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var cancellation: vm.Cancellation = .{};
+    var session: Interactive = undefined;
+    try session.initWithSources(a, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{ .cancellation = &cancellation });
+    defer session.deinit();
+    const HostState = struct {
+        cancellation: *vm.Cancellation,
+        calls: usize = 0,
+        cancel: bool = true,
+        fn step(data: ?*anyopaque, _: []const i128, _: []i128) !void {
+            const self: *@This() = @ptrCast(@alignCast(data.?));
+            self.calls += 1;
+            if (self.cancel) self.cancellation.cancel();
+        }
+    };
+    var host_state: HostState = .{ .cancellation = &cancellation };
+    const bindings = [_]@import("host.zig").Binding{.{ .symbol = "host_step", .inputs = &.{}, .outputs = &.{}, .data = &host_state, .call = HostState.step }};
+    session.runtime.context.host_bindings = &bindings;
+    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability\nnumber :: Int32 = 1");
+    const number = session.compiler.semantic.resolvers.expressions.session_bindings.items[2];
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.ExecutionCancelled, session.submitStatements("number = 7\nhost_step()\nnumber = 99\nhost_step()"));
+    try std.testing.expectEqual(@as(usize, 1), host_state.calls);
+    // Published effects are not rolled back on cancellation. The context is
+    // inspectable by its host, but cannot execute any more language code.
+    const slots = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(number).?);
+    try std.testing.expectEqual(@as(i128, 7), (try slots.get(0)).integer);
+    try std.testing.expectEqual(revision + 1, session.compiler.revision);
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try std.testing.expectError(error.ExecutionContextPoisoned, session.submitInput("number"));
+    cancellation.reset();
+    try session.reset();
+    host_state.cancel = false;
+    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability");
+    try session.submitStatements("host_step()");
+    try std.testing.expectEqual(@as(usize, 2), host_state.calls);
+    try session.close();
+}
