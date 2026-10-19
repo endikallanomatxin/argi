@@ -1111,6 +1111,8 @@ fn advanceResolution(
     while (true) {
         while (changed) {
             staged_execution.stable_type_count = graph.types.items.len;
+            staged_execution.stable_declaration_count = graph.declarations.items.len;
+            staged_execution.stable_node_count = graph.nodes.items.len;
             progress.profile_rounds += 1;
             changed = false;
             // Published operation signatures do not make their bodies roots.

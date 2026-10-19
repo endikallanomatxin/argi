@@ -34,7 +34,10 @@ branch is compiled. This differs from running an ordinary `if` inside
 > and nested requests are resolved before their callers. Integer results can
 > determine type and function specialization arguments: semantic resolution
 > waits for the selected dependency bodies, proves their safety, and resumes
-> with the frozen result.
+> with the frozen result. Suspended specializations preserve temporary pointer,
+> array, record, choice and generic type descriptions across selection rollback.
+> Defaults, inferred choice identities and declaration origins must already be
+> stable; otherwise the request remains pending.
 > Within function bodies, computed `#if` conditions accept closed Boolean calls,
 > integer comparisons, and scalar or aggregate projections in that same subset.
 > Generic conditions are evaluated separately for each specialization. Both arms

@@ -14078,3 +14078,9 @@ test "feature_tests/execution/113_generic_global_scope" {
 test "feature_tests/execution/114X_generic_inaccessible_global" {
     try buildExpectFail("tests/feature_tests/execution/114X_generic_inaccessible_global", "unknown name 'foreign_value' in this scope");
 }
+
+test "feature_tests/execution/115_computed_transient_types" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/115_computed_transient_types");
+    try runExpect("tests/feature_tests/execution/115_computed_transient_types", 42);
+    try vmExpect("tests/feature_tests/execution/115_computed_transient_types", 42, null);
+}

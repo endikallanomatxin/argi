@@ -3,17 +3,22 @@ const g = @import("graph.zig");
 const ir = @import("../module/parameterized/ir.zig");
 const Generics = @import("generics.zig").Resolver;
 const Functions = @import("generic_functions.zig").Resolver;
+const TypeRecipe = @import("type_recipe.zig").Recipe;
 const reachability = @import("reachability.zig");
 
 // Requests retain recipes independently of speculative graph tails. Only this
 // coordinator publishes executable nodes, between ordinary resolution passes.
-// Bound graph types must predate the current resolution pass before a recipe
-// can retain their identities across a losing selection's rollback.
+// Transient types are captured as owned descriptions; only the coordinator
+// publishes reconstructed identities outside a losing selection's rollback.
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
     functions: *Functions,
     stable_type_count: usize,
+    stable_declaration_count: usize = 0,
+    stable_node_count: usize = 0,
     requests: std.ArrayList(Request) = .empty,
+    // Sparse descriptions do not enlarge every ordinary request record.
+    type_recipes: std.ArrayList(TypeRecipe) = .empty,
 
     const Request = struct {
         module: usize,
@@ -22,6 +27,8 @@ pub const Scheduler = struct {
         node: ?g.GlobalNodeId = null,
         kind: Kind = .integer,
         value: ?Value = null,
+        type_recipe: ?u32 = null,
+        types_published: bool = true,
     };
 
     const Kind = enum { integer, boolean };
@@ -31,13 +38,22 @@ pub const Scheduler = struct {
     /// The caller supplies the resolver bound to its cloned semantic graph;
     /// materialized node/type identities remain valid because graph IDs match.
     pub fn clone(self: *const Scheduler, allocator: std.mem.Allocator, functions: *Functions) !Scheduler {
-        var result: Scheduler = .{ .allocator = allocator, .functions = functions, .stable_type_count = self.stable_type_count };
+        var result: Scheduler = .{ .allocator = allocator, .functions = functions, .stable_type_count = self.stable_type_count, .stable_declaration_count = self.stable_declaration_count, .stable_node_count = self.stable_node_count };
         errdefer result.deinit();
+        for (self.type_recipes.items) |*recipe| {
+            var copy = try recipe.clone(allocator);
+            result.type_recipes.append(allocator, copy) catch |err| {
+                copy.deinit(allocator);
+                return err;
+            };
+        }
         for (self.requests.items) |request| {
             try result.enqueue(request.module, request.expression, &request.bindings, request.kind);
             const retained = &result.requests.items[result.requests.items.len - 1];
             retained.node = request.node;
             retained.value = request.value;
+            retained.type_recipe = request.type_recipe;
+            retained.types_published = request.types_published;
         }
         return result;
     }
@@ -45,6 +61,8 @@ pub const Scheduler = struct {
     pub fn deinit(self: *Scheduler) void {
         for (self.requests.items) |*request| request.bindings.deinit(self.allocator);
         self.requests.deinit(self.allocator);
+        for (self.type_recipes.items) |*recipe| recipe.deinit(self.allocator);
+        self.type_recipes.deinit(self.allocator);
     }
 
     pub fn checkpoint(context: *anyopaque) usize {
@@ -54,10 +72,14 @@ pub const Scheduler = struct {
 
     pub fn rollback(context: *anyopaque, saved: usize) void {
         const self: *Scheduler = @ptrCast(@alignCast(context));
+        var first_recipe = self.type_recipes.items.len;
         for (self.requests.items[saved..]) |*request| {
             std.debug.assert(request.node == null);
             request.bindings.deinit(self.allocator);
+            if (request.type_recipe) |id| first_recipe = @min(first_recipe, id);
         }
+        for (self.type_recipes.items[first_recipe..]) |*recipe| recipe.deinit(self.allocator);
+        self.type_recipes.shrinkRetainingCapacity(first_recipe);
         self.requests.shrinkRetainingCapacity(saved);
     }
 
@@ -71,15 +93,37 @@ pub const Scheduler = struct {
 
     fn requestValue(context: *anyopaque, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings, kind: Kind) !Value {
         const self: *Scheduler = @ptrCast(@alignCast(context));
-        for (bindings.types) |ty| if (ty) |id| {
-            if (@intFromEnum(id) >= self.stable_type_count) return error.ComptimeExecutionPending;
-        };
         for (self.requests.items) |request| {
             if (request.module != module or request.expression != expression or request.kind != kind) continue;
-            if (!equalBindings(request.bindings, bindings.*)) continue;
+            if (!std.mem.eql(?i64, request.bindings.ints, bindings.ints)) continue;
+            if (request.type_recipe) |id| {
+                if (!try self.type_recipes.items[id].matches(self.allocator, self.functions.graph, bindings.types)) continue;
+            } else if (!std.mem.eql(?g.GlobalTypeId, request.bindings.types, bindings.types)) continue;
             return request.value orelse error.ComptimeExecutionPending;
         }
+        const temporary = for (bindings.types) |ty| {
+            if (ty) |id| if (@intFromEnum(id) >= self.stable_type_count) break true;
+        } else false;
+        var types: ?TypeRecipe = if (temporary) TypeRecipe.capture(self.allocator, self.functions.graph, .{ .types = self.stable_type_count, .declarations = self.stable_declaration_count, .nodes = self.stable_node_count }, bindings.types) catch |err| switch (err) {
+            error.ComptimeTypeRecipePending => return error.ComptimeExecutionPending,
+            else => return err,
+        } else null;
+        errdefer if (types) |*owned| owned.deinit(self.allocator);
+        const recipe_id = if (types != null) blk: {
+            const id = std.math.cast(u32, self.type_recipes.items.len) orelse return error.SemanticGraphTooLarge;
+            try self.type_recipes.ensureUnusedCapacity(self.allocator, 1);
+            break :blk id;
+        } else null;
         try self.enqueue(module, expression, bindings, kind);
+        const request = &self.requests.items[self.requests.items.len - 1];
+        request.type_recipe = recipe_id;
+        request.types_published = types == null;
+        // No temporary type ID may remain in the retained substitution table.
+        if (types) |owned| {
+            self.type_recipes.appendAssumeCapacity(owned);
+            @memset(request.bindings.types, null);
+        }
+        types = null; // The retained sparse pool owns the suspended description.
         return error.ComptimeExecutionPending;
     }
 
@@ -91,23 +135,33 @@ pub const Scheduler = struct {
         try self.requests.append(self.allocator, .{ .module = module, .expression = expression, .kind = kind, .bindings = .{ .types = types, .ints = ints } });
     }
 
-    fn equalBindings(left: Generics.Bindings, right: Generics.Bindings) bool {
-        if (left.ints.len != right.ints.len or left.types.len != right.types.len) return false;
-        for (left.ints, right.ints) |a, b| if (a != b) return false;
-        for (left.types, right.types) |a, b| if (a != b) return false;
-        return true;
-    }
-
     pub fn materialize(self: *Scheduler) !bool {
         var changed = false;
         const count = self.requests.items.len;
         for (0..count) |index| {
             // Instantiation can request other integers and grow this table.
+            if (self.requests.items[index].node != null) continue;
+            if (!self.requests.items[index].types_published) {
+                var publication = self.functions.beginSpeculation();
+                defer publication.deinit();
+                var request = &self.requests.items[index];
+                const published = try self.allocator.alloc(?g.GlobalTypeId, request.bindings.types.len);
+                defer self.allocator.free(published);
+                try self.type_recipes.items[request.type_recipe.?].publish(self.allocator, self.functions.generics, published);
+                publication.commit();
+                @memcpy(request.bindings.types, published);
+                request.types_published = true;
+                changed = true;
+            }
             const request = self.requests.items[index];
-            if (request.node != null) continue;
             var speculation = self.functions.beginSpeculation();
             defer speculation.deinit();
-            var bindings = request.bindings;
+            var bindings = Generics.Bindings{
+                .types = try self.allocator.dupe(?g.GlobalTypeId, request.bindings.types),
+                .ints = &.{},
+            };
+            defer bindings.deinit(self.allocator);
+            bindings.ints = try self.allocator.dupe(?i64, request.bindings.ints);
             const node = self.functions.instantiateComptimeExpression(request.module, request.expression, &bindings) catch |err| switch (err) {
                 error.ComptimeExecutionPending => {
                     speculation.retainPendingExecution();
@@ -239,9 +293,6 @@ test "staged integer requests retain bindings across pending retries" {
     bindings.ints[0] = 7;
     try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
     try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
-    bindings.types[1] = @enumFromInt(1);
-    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
-    try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
 }
 
 test "staged request registration rolls back rejected selection demand" {
@@ -344,4 +395,64 @@ fn cloneStagedRequests(allocator: std.mem.Allocator) !void {
 
 test "staged execution clones isolate recipes and retain frozen results" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneStagedRequests, .{});
+}
+
+test "staged requests own transient type descriptions after selection rollback" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinitReachedCalls();
+    var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var functions = Functions{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };
+    var scheduler = Scheduler{ .allocator = a, .functions = &functions, .stable_type_count = 1 };
+    defer scheduler.deinit();
+    const checkpoint_ = graph.checkpoint();
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    var binding_types = [_]?g.GlobalTypeId{@enumFromInt(1)};
+    const bindings = Generics.Bindings{ .types = &binding_types, .ints = &.{} };
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+    try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
+    try std.testing.expectEqual(null, scheduler.requests.items[0].bindings.types[0]);
+    graph.rollback(checkpoint_);
+    try graph.types.append(a, .{ .array = .{ .length = 2, .element = @enumFromInt(0) } });
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+    try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
+    graph.rollback(checkpoint_);
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    scheduler.requests.items[0].value = .{ .boolean = true };
+    try std.testing.expect(try Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+}
+
+fn transientRequestFailures(a: std.mem.Allocator) !void {
+    const graph_allocator = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(graph_allocator);
+    try graph.types.appendSlice(graph_allocator, &.{ .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } });
+    var core = @import("core.zig").Resolver{ .allocator = graph_allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinitReachedCalls();
+    var generics = Generics{ .allocator = graph_allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var functions = Functions{ .allocator = graph_allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };
+    var scheduler = Scheduler{ .allocator = a, .functions = &functions, .stable_type_count = 1 };
+    defer scheduler.deinit();
+    var types = [_]?g.GlobalTypeId{@enumFromInt(1)};
+    const bindings = Generics.Bindings{ .types = &types, .ints = &.{} };
+    _ = Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings) catch |err| switch (err) {
+        error.ComptimeExecutionPending => false,
+        else => return err,
+    };
+    var cloned = try scheduler.clone(a, &functions);
+    defer cloned.deinit();
+    cloned.requests.items[0].value = .{ .boolean = true };
+    try std.testing.expect(try Scheduler.boolean(&cloned, 0, @enumFromInt(0), &bindings));
+    Scheduler.rollback(&cloned, 0);
+    try std.testing.expectEqual(@as(usize, 0), cloned.type_recipes.items.len);
+    try std.testing.expectEqual(@as(usize, 1), scheduler.type_recipes.items.len);
+}
+
+test "staged transient requests release failed capture cloning and rollback" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, transientRequestFailures, .{});
 }

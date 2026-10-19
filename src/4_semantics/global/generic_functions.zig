@@ -1796,7 +1796,10 @@ pub const Resolver = struct {
             };
             break;
         }
-        const size = global_types.sizeOf(self.graph, measured_type orelse return error.SizeOfTypeMissing) catch return null;
+        const size = global_types.sizeOf(self.graph, measured_type orelse return error.SizeOfTypeMissing) catch |err| switch (err) {
+            error.UnmaterializedGlobalType, error.UnmaterializedGenericType => return error.ComptimeExecutionPending,
+            else => return null,
+        };
         return .{
             .source = source,
             .ty = try self.generics.internType(.{ .builtin = .UIntNative }),
@@ -1822,7 +1825,10 @@ pub const Resolver = struct {
             };
             break;
         }
-        const alignment = global_types.alignmentOf(self.graph, measured_type orelse return error.AlignmentOfTypeMissing) catch return null;
+        const alignment = global_types.alignmentOf(self.graph, measured_type orelse return error.AlignmentOfTypeMissing) catch |err| switch (err) {
+            error.UnmaterializedGlobalType, error.UnmaterializedGenericType => return error.ComptimeExecutionPending,
+            else => return null,
+        };
         return .{
             .source = source,
             .ty = try self.generics.internType(.{ .builtin = .UIntNative }),

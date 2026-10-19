@@ -81,6 +81,8 @@ pub const Context = struct {
             .allocator = allocator,
             .functions = &self.generic_functions,
             .stable_type_count = graph.types.items.len,
+            .stable_declaration_count = graph.declarations.items.len,
+            .stable_node_count = graph.nodes.items.len,
         };
         self.generics.execution_context = &self.staged_execution;
         self.generics.checkpoint_execution = execution.Scheduler.checkpoint;

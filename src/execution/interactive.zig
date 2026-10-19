@@ -1150,3 +1150,25 @@ test "interactive generic functions use explicit inputs without capturing retain
     try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("identity(.value = retained)")).?.value.integer);
     try session.close();
 }
+
+test "interactive computed conditions retain reconstructed type bindings across commands" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions(
+        "Cell: Type = (.value: Int32)\n" ++
+            "decide#(.T: Type) := () -> (.ok: Bool) { width ::= size_of(.type = T)\n ok = true }\n" ++
+            "choose#(.T: Type) := (.value: T) -> (.result: Int32) { #if decide#(.T: T)() { result = 42 } #else { result = 0 } }\n" ++
+            "outer#(.T: Type) := (.value: T) -> (.result: Int32) { result = choose#(.T: &T)(.value = &value) }",
+    );
+    try session.submitStatements("cell :: Cell = (.value = 1)");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = cell)")).?.value.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("missing_value"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = cell)")).?.value.integer);
+    try session.submitDefinitions("Other: Type = (.flag: Bool)");
+    try session.submitStatements("other :: Other = (.flag = true)");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = other)")).?.value.integer);
+    try session.close();
+}
