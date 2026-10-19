@@ -133,13 +133,17 @@ pub const Context = struct {
         return .{ .record = fields };
     }
 
-    fn initializeBinding(self: *Context, binding: b.SessionBinding, value: b.Value) !void {
+    fn declareBinding(self: *Context, binding: b.SessionBinding) !void {
         if (self.bindings.contains(binding.binding)) return error.ExecutionInitializedStorage;
         try self.storage.charge(1);
         try self.bindings.ensureUnusedCapacity(self.arena.allocator(), 1);
         const target = try self.storage.enterSession(binding.slots.len, binding.cleanup);
-        try self.storage.initializeSession(target, 0, value);
         self.bindings.putAssumeCapacity(binding.binding, target.frame);
+    }
+    fn initializeBinding(self: *Context, binding: b.SessionBinding, value: b.Value, reinitialize: bool) !void {
+        if (!self.bindings.contains(binding.binding)) try self.declareBinding(binding);
+        const target = try self.storage.slots(self.bindings.get(binding.binding).?);
+        if (reinitialize) try self.storage.reinitializeSession(target, 0, value) else try self.storage.initializeSession(target, 0, value);
     }
     fn borrowBinding(self: *Context, binding: b.SessionBinding, permission: p.PointerMutability) !b.Value {
         const frame = self.bindings.get(binding.binding) orelse return error.ExecutionUninitializedStorage;
@@ -372,7 +376,8 @@ pub const Vm = struct {
                     try frames.append(self.allocator, try self.frame(&virtual.program, callee, values, x.outputs));
                 },
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
-                .session_initialize => |x| try self.context().initializeBinding(unit.session.?.bindings[x.binding], try slots.get(x.value)),
+                .session_declare => |index| try self.context().declareBinding(unit.session.?.bindings[index]),
+                .session_initialize => |x| try self.context().initializeBinding(unit.session.?.bindings[x.binding], try slots.get(x.value), x.reinitialize),
                 .session_borrow => |x| try slots.put(x.dst, try self.context().borrowBinding(unit.session.?.bindings[x.binding], unit.graph.semanticType(f.slots[x.dst]).pointer.mutability)),
                 .readonly => |x| {
                     var reference = (try slots.get(x.src)).reference;
@@ -451,6 +456,11 @@ pub const Vm = struct {
                     const destination = current.write_destinations[id] orelse return error.UninitializedBytecodeDestination;
                     current.write_destinations[id] = null;
                     try self.chargeCleanup(try self.context().storage.activateWriteCleanup(destination));
+                },
+                .branch_cleanup => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, false);
+                    current.pc = if (try self.context().storage.cleanupTest(reference)) x.yes else x.no;
                 },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;

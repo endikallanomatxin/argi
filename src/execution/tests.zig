@@ -1878,3 +1878,30 @@ test "equivalent borrowed choices use representation tags rather than semantic I
     defer executor.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try executor.runExpression(&.{}))[0].integer);
 }
+
+test "bytecode cleanup branches refine only the active storage edge" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .builtin = .Bool });
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .branch_cleanup = .{ .place = .{ .root = 0, .path = &.{} }, .yes = 1, .no = 3 } } },
+        .{ .source = source, .op = .{ .copy = .{ .dst = 2, .src = 0 } } },
+        .{ .source = source, .op = .{ .jump = 4 } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 2, .value = .{ .integer = 42 } } } },
+        .{ .source = source, .op = .{ .ret = &.{2} } },
+    };
+    const expression: b.Function = .{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{2}, .code = &code, .cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 1 }} };
+    const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &expression };
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expectEqual(@as(i128, 42), (try executor.runExpression(&.{}))[0].integer);
+    code[3].op = .{ .copy = .{ .dst = 2, .src = 0 } };
+    try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, program));
+    code[3].op = .{ .constant = .{ .dst = 2, .value = .{ .integer = 42 } } };
+    code[4].op = .{ .ret = &.{0} };
+    try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, program));
+}

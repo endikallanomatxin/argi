@@ -786,17 +786,53 @@ test "interactive once consumption survives commands and rejected candidates" {
     try session.close();
 }
 
-test "interactive once acquisition rolls back after unsupported deferred publication" {
+test "interactive once capabilities retain deferred temporary storage" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitDefinitions("Token: Type = (.value: Int32)\nonce acquire := () -> (.result: Token) { result = (.value = 42) }\nobserve := (.capability: &Token) -> (.result: Int32) { result = capability&.value }");
-    try std.testing.expectError(error.Reported, session.submitStatements("assume capability ::= $&acquire()"));
-    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "deferred session publication") != null);
-    try session.submitStatements("token ::= acquire()\nassume capability ::= $&token");
+    try session.submitStatements("assume capability ::= $&acquire()");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.integer);
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.integer);
     try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
+    try session.close();
+}
+
+test "interactive deferred owners retain their checked cleanup" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Resource: Type = (.value: Int32)\nonce acquire := () -> (.result: Resource) { result = (.value = 42) }\nobserve := (.resource: &Resource) -> (.result: Int32) { result = resource&.value }");
+    try session.submitDefinitions("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
+    try session.submitStatements("assume resource ::= $&acquire()");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.integer);
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const frame = session.runtime.context.bindings.get(binding).?;
+    const slots = try session.runtime.context.storage.slots(frame);
+    const cleanup = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup;
+    try std.testing.expect(cleanup.len != 0);
+    const flag = cleanup[0].flag;
+    try std.testing.expect((try slots.get(flag)).boolean);
+    try session.close();
+    try std.testing.expect(!(try slots.get(flag)).boolean);
+}
+
+test "interactive deferred condition storage can be initialized repeatedly" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("produce := (.state: $&(.used: Bool)) -> (.result: Bool) { if state&.used { result = false } else { state&.used = true\nresult = true } }\nobserve := (.value: &Bool) -> (.result: Bool) { result = value& }");
+    try session.submitStatements("state :: (.used: Bool) = (.used = false)");
+    try session.submitStatements("while observe(.value = &produce(.state = $&state)) {}");
+    try std.testing.expect((try session.submitInput("state.used")).?.value.boolean);
     try session.close();
 }
 

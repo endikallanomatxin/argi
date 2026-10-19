@@ -139,13 +139,27 @@ pub const Storage = struct {
     /// frontend still proves loans, moves and cleanup transfer; this checks the
     /// concrete lifetime boundary rather than reconstructing those proofs.
     pub fn initializeSession(self: *Storage, target: Slots, index: b.Slot, value: b.Value) !void {
+        return self.publishSession(target, index, value, false);
+    }
+
+    /// Re-evaluated deferred storage may replace a value only after its checked
+    /// cleanup has discharged every obligation. Caller-relative safety remains
+    /// the frontend's responsibility, just as for ordinary checked writes.
+    pub fn reinitializeSession(self: *Storage, target: Slots, index: b.Slot, value: b.Value) !void {
+        return self.publishSession(target, index, value, true);
+    }
+
+    fn publishSession(self: *Storage, target: Slots, index: b.Slot, value: b.Value, reinitialize: bool) !void {
         if (target.storage != self or target.context != self.context) return error.ExecutionForeignReference;
         const values = try target.cells();
         if (self.frames.items[@intFromEnum(target.frame)].duration != .session) return error.ExecutionInvalidReference;
         if (index >= values.len) return error.ExecutionInvalidReference;
         for (self.frames.items[@intFromEnum(target.frame)].cleanup) |entry|
             if (entry.flag == index) return error.ExecutionInvalidReference;
-        if (values[index] != null) return error.ExecutionInitializedStorage;
+        if (values[index] != null and !reinitialize) return error.ExecutionInitializedStorage;
+        for (self.frames.items[@intFromEnum(target.frame)].cleanup) |entry| {
+            if (entry.root == index and (try target.get(entry.flag)).boolean) return error.ExecutionPendingCleanup;
+        }
         try self.validateSessionValues((&value)[0..1], 0);
         const retained = try self.cloneValues((&value)[0..1]);
         values[index] = retained[0];
@@ -554,4 +568,21 @@ test "numeric byte storage views retain identity permissions and frame lifetime"
     try std.testing.expectError(error.ExecutionInvalidReference, storage.captureResolvedWrite(bytes, true));
     storage.leave(frame);
     try std.testing.expectError(error.ExecutionDeadReference, storage.read(bytes));
+}
+
+test "deferred session initialization requires discharged cleanup" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const slots_ = try storage.enterSession(2, &.{.{ .root = 0, .path = &.{}, .flag = 1 }});
+    try std.testing.expectError(error.ExecutionUninitializedStorage, slots_.get(0));
+    try storage.initializeSession(slots_, 0, .{ .integer = 41 });
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.initializeSession(slots_, 0, .{ .integer = 42 }));
+    try slots_.put(1, .{ .boolean = true });
+    try std.testing.expectError(error.ExecutionPendingCleanup, storage.reinitializeSession(slots_, 0, .{ .integer = 42 }));
+    try std.testing.expectEqual(@as(i128, 41), (try slots_.get(0)).integer);
+    try slots_.put(1, .{ .boolean = false });
+    try storage.reinitializeSession(slots_, 0, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(i128, 42), (try slots_.get(0)).integer);
+    try std.testing.expect(!(try slots_.get(1)).boolean);
 }

@@ -202,7 +202,9 @@ consumption history. Compile-time evaluation still rejects `once` calls.
 
 Top-level `assume` declarations remain available to calls and selected cleanup in
 later submissions. Inner blocks keep lexical assumptions local. Rejected
-submissions publish no assumptions; reset clears the session evidence.
+submissions publish no assumptions; reset clears the session evidence. References
+to expression temporaries retain their backing storage until checked session
+cleanup, including temporaries created by `assume capability ::= $&acquire()`.
 
 ```text
 >>> value ::= 40 + 2

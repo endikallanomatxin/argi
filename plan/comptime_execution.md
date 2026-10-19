@@ -8,7 +8,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Extend the ordinary REPL prelude with persistent allocator and output
   capabilities. Add checked host operations rather than injecting unchecked
-  bindings or bypassing safety.
+  bindings or bypassing safety. A fresh REPL must accept `print("hola")`; missing
+  capabilities should be diagnosed explicitly.
 - Improve unresolved-name diagnostics in retained sessions.
 - Resolve computed module-level `#if` before discovering selected imports and
   declarations. Preserve source identities and do not analyze inactive branches.

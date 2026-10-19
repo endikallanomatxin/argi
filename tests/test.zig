@@ -13921,3 +13921,9 @@ test "feature_tests/system/21_once_completed_defaults" {
     try runExpect("tests/feature_tests/system/21_once_completed_defaults", 42);
     try vmExpect("tests/feature_tests/system/21_once_completed_defaults", 42, null);
 }
+
+test "feature_tests/execution/86_deferred_address_temporaries_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/86_deferred_address_temporaries_vm");
+    try runExpect("tests/feature_tests/execution/86_deferred_address_temporaries_vm", 42);
+    try vmExpect("tests/feature_tests/execution/86_deferred_address_temporaries_vm", 42, null);
+}

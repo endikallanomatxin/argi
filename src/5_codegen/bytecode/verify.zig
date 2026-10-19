@@ -141,6 +141,9 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     }
                 },
                 .copy => |x| if (!types.equal(program.graph, f.slots[x.dst], f.slots[x.src])) return error.InvalidBytecode,
+                .session_declare => |index| {
+                    _ = try sessionBinding(program, index);
+                },
                 .session_initialize => |x| {
                     const binding = try sessionBinding(program, x.binding);
                     if (!types.equal(program.graph, binding.slots[0], f.slots[x.value])) return error.InvalidBytecode;
@@ -220,6 +223,10 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 },
                 .store => |x| {
                     if (x.destination >= f.write_destinations.len or !types.equal(program.graph, f.slots[x.value], f.write_destinations[x.destination])) return error.InvalidBytecode;
+                },
+                .branch_cleanup => |x| {
+                    _ = try placeInfo(program, f.slots, x.place);
+                    if (x.yes >= f.code.len or x.no >= f.code.len) return error.InvalidBytecode;
                 },
                 .cleanup_test => |x| {
                     _ = try placeInfo(program, f.slots, x.place);
@@ -313,7 +320,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     successors[0] = target;
                     break :blk 1;
                 },
-                .branch_variant => |x| blk: {
+                inline .branch_cleanup, .branch_variant => |x| blk: {
                     successors = .{ x.yes, x.no };
                     break :blk 2;
                 },
@@ -327,7 +334,27 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     break :blk 1;
                 },
             };
-            for (successors[0..count]) |next| {
+            for (successors[0..count], 0..) |next, edge| {
+                // An active cleanup branch proves that its concrete owner has
+                // storage. Keep this fact on the active edge only; the vacant
+                // path must still initialize the value before ordinary reads.
+                var refined_root: ?Slot = null;
+                if (inst.op == .branch_cleanup and edge == 0) {
+                    const place = inst.op.branch_cleanup.place;
+                    if (place.region == .local) {
+                        var static_path = true;
+                        for (place.path) |projection| if (projection == .dereference or projection == .element) {
+                            static_path = false;
+                        };
+                        if (static_path and initialized[place.root] == 0) {
+                            initialized[place.root] = 1;
+                            refined_root = place.root;
+                        }
+                    }
+                }
+                defer if (refined_root) |root| {
+                    initialized[root] = 0;
+                };
                 var changed = false;
                 if (states[next]) |old| {
                     for (old, initialized) |*was, now| if (was.* != (was.* & now)) {
@@ -406,7 +433,7 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
         .check_place => |place| try readPlace(a, place, out),
         .capture_write => |x| try readPlace(a, x.place, out),
         .store => |x| try out.append(a, x.value),
-        .cleanup_test => |x| try readCleanupPlace(a, x.place, out),
+        inline .cleanup_test, .branch_cleanup => |x| try readCleanupPlace(a, x.place, out),
         .cleanup_set => |x| try readCleanupPlace(a, x.place, out),
         .call => |x| try out.appendSlice(a, x.args),
         .branch => |x| try out.append(a, x.condition),

@@ -237,7 +237,18 @@ const State = struct {
                 if (binding.initialization) |value| try self.walkNode(value);
                 if (binding.cleanup_arguments) |value| try self.walkNode(value);
             },
-            .move_value, .denied_implicit_copy, .address_of => |value| try self.walkNode(value),
+            .move_value, .denied_implicit_copy => |value| try self.walkNode(value),
+            .address_of => |value| {
+                // Materialized address temporaries can be re-evaluated. Their
+                // selected cleanup is executed before the deferred assignment.
+                const child = self.graph.node(value);
+                if (child.content == .assignment) {
+                    const binding = self.graph.binding(child.content.assignment.binding);
+                    if (binding.deferred_initialization) if (binding.reinitialize_cleanup) |cleanup|
+                        try self.walkNode(cleanup);
+                }
+                try self.walkNode(value);
+            },
             .assignment => |value| {
                 try self.functions.bindings.put(value.binding, {});
                 try self.walkNode(value.value);

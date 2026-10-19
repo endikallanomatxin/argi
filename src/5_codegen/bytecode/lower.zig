@@ -353,9 +353,11 @@ const FunctionLower = struct {
 
         pub fn begin(self: @This(), target: Target) !u32 {
             const lower = self.lower;
-            const live = try lower.newSlot(try lower.boolType());
-            _ = try lower.emit(lower.parent.source, .{ .cleanup_test = .{ .dst = live, .place = lower.cleanup.items[@intFromEnum(target.drop)].place } });
-            return lower.emit(lower.parent.source, .{ .branch = .{ .condition = live, .yes = lower.position() + 1, .no = 0 } });
+            return lower.emit(lower.parent.source, .{ .branch_cleanup = .{
+                .place = lower.cleanup.items[@intFromEnum(target.drop)].place,
+                .yes = lower.position() + 1,
+                .no = 0,
+            } });
         }
         pub fn call(self: @This(), target: Target, id: g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32) !void {
             const source = self.lower.parent.source;
@@ -389,7 +391,7 @@ const FunctionLower = struct {
         }
         pub fn finish(self: @This(), target: Target, branch: u32) !void {
             try self.lower.setDrop(target.drop, false);
-            self.lower.code.items[branch].op.branch.no = self.lower.position();
+            self.lower.code.items[branch].op.branch_cleanup.no = self.lower.position();
         }
     };
     fn newSlot(self: *FunctionLower, ty: b.Type) !b.Slot {
@@ -424,7 +426,10 @@ const FunctionLower = struct {
             .binding_declaration => |binding_id| {
                 const binding_ = self.parent.graph.binding(binding_id);
                 if (self.parent.sessionIndex(binding_id)) |index| {
-                    if (binding_.deferred_initialization) return self.parent.reject(node.source, "deferred session publication requires vacant binding plans");
+                    if (binding_.deferred_initialization) {
+                        _ = try self.emit(node.source, .{ .session_declare = index });
+                        return;
+                    }
                     const initializer = binding_.initialization orelse return self.parent.reject(node.source, "session declaration without initialization");
                     const value = try self.coerce(node.source, try self.expression(initializer), binding_.ty);
                     _ = try self.emit(node.source, .{ .session_initialize = .{ .binding = index, .value = value } });
@@ -441,7 +446,14 @@ const FunctionLower = struct {
             },
             .assignment => |x| {
                 if (self.parent.sessionIndex(x.binding)) |index| {
-                    const ty = self.parent.graph.binding(x.binding).ty;
+                    const binding = self.parent.graph.binding(x.binding);
+                    const ty = binding.ty;
+                    if (binding.deferred_initialization) {
+                        const value = try self.coerce(node.source, try self.expression(x.value), ty);
+                        _ = try self.emit(node.source, .{ .session_initialize = .{ .binding = index, .value = value, .reinitialize = true } });
+                        if (self.drops.get(x.binding)) |drop| try self.setDrop(drop, true);
+                        return;
+                    }
                     if (self.parent.cleanup_types[@intFromEnum(ty)]) return self.parent.reject(node.source, "session owner replacement requires a checked cleanup plan");
                     const destination = try self.captureWrite(node.source, .{ .root = index, .region = .session, .path = &.{} }, ty, false);
                     const value = try self.coerce(node.source, try self.expression(x.value), ty);
@@ -654,6 +666,15 @@ const FunctionLower = struct {
         const node = self.parent.graph.node(id);
         self.parent.source = node.source;
         return switch (node.content) {
+            .assignment => |assignment| blk: {
+                const record = self.parent.graph.binding(assignment.binding);
+                if (!record.deferred_initialization) return self.parent.reject(node.source, "address of non-deferred assignment");
+                if (record.reinitialize_cleanup) |cleanup| try self.statement(cleanup);
+                try self.statement(id);
+                if (self.parent.sessionIndex(assignment.binding)) |index|
+                    break :blk .{ .root = index, .region = .session, .path = &.{} };
+                break :blk .{ .root = self.bindings.get(assignment.binding) orelse return error.InvalidBytecode, .path = &.{} };
+            },
             .binding_use => |binding| if (self.parent.sessionIndex(binding)) |index|
                 .{ .root = index, .region = .session, .path = &.{} }
             else if (self.parent.isGlobal(binding)) blk: {
