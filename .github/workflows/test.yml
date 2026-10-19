@@ -8,7 +8,7 @@ name: Test
         type: string
         default: ''
   push:
-    branches: [develop]
+    branches: [develop, feature/bytecode-execution]
   pull_request:
     branches: [develop]
 
