@@ -757,3 +757,56 @@ test "interactive reset retains the new compiler when prelude execution traps" {
     try std.testing.expect((try session.submitInput("enabled")).?.value.boolean);
     try session.close();
 }
+
+test "interactive once consumption survives commands and rejected candidates" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    const definition = "once acquire := () -> (.result: Int32) { result = 42 }";
+    try session.submit(definition);
+    try std.testing.expectError(error.Reported, session.submitInput("#run acquire()"));
+    // Neither unresolved commands nor repeated uses in a rejected candidate
+    // may consume the once identity retained by the accepted session.
+    try std.testing.expectError(error.Reported, session.submitStatements("unused ::= acquire()\nmissing()"));
+    try std.testing.expectError(error.Reported, session.submitStatements("first ::= acquire()\nsecond ::= acquire()"));
+    try session.submit("helper := () -> (.result: Int32) { result = acquire() }");
+    try std.testing.expectError(error.Reported, session.submitStatements("first ::= helper()\nsecond ::= helper()"));
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("acquire()")).?.value.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(.ready, session.runtime.context.state);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "consumed more than once") != null);
+    try session.submit("again := () -> (.result: Int32) { result = acquire() }");
+    try std.testing.expectError(error.Reported, session.submitInput("again()"));
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("7")).?.value.integer);
+    try session.reset();
+    try session.submit(definition);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("acquire()")).?.value.integer);
+    try session.close();
+}
+
+test "interactive once acquisition rolls back after unsupported deferred publication" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Token: Type = (.value: Int32)\nonce acquire := () -> (.result: Token) { result = (.value = 42) }\nobserve := (.capability: &Token) -> (.result: Int32) { result = capability&.value }");
+    try std.testing.expectError(error.Reported, session.submitStatements("assume capability ::= $&acquire()"));
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "deferred session publication") != null);
+    try session.submitStatements("token ::= acquire()\nassume capability ::= $&token");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.integer);
+    try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
+    try session.close();
+}
+
+test "interactive once defaults consume only completed call arguments" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("once acquire := () -> (.result: Int32) { result = 42 }\nwith_default := (.value: Int32 = acquire()) -> (.result: Int32) { result = value }");
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("with_default(.value = 7)")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("with_default()")).?.value.integer);
+    try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
+    try session.close();
+}

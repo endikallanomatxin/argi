@@ -13,6 +13,8 @@ fn allocateNamespace() !bytecode.SessionNamespace {
     }
 }
 
+const once_verify = @import("../4_semantics/global/once_verify.zig");
+
 const Safety = @import("../4_semantics/safety/checker.zig").SafetyChecker;
 
 // Immutable facts can refer to preceding accepted facts. Each candidate owns
@@ -21,6 +23,7 @@ const TemporalProof = struct {
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
     state: Safety.ContinuationState = undefined,
+    once: once_verify.Uses = undefined,
     parent: ?*TemporalProof,
     references: usize = 1,
 
@@ -29,6 +32,8 @@ const TemporalProof = struct {
         errdefer allocator.destroy(proof);
         proof.* = .{ .allocator = allocator, .arena = .init(allocator), .parent = parent };
         errdefer proof.arena.deinit();
+        proof.once = if (parent) |previous| try previous.once.cloneWithAllocator(proof.arena.allocator()) else once_verify.Uses.init(proof.arena.allocator());
+        errdefer proof.once.deinit();
         if (parent) |previous| {
             if (previous.references == std.math.maxInt(usize)) return error.TemporalProofLimit;
             try previous.state.fork(&proof.state, proof.arena.allocator());
@@ -43,6 +48,7 @@ const TemporalProof = struct {
             if (proof.references != 0) return;
             current = proof.parent;
             proof.state.deinit();
+            proof.once.deinit();
             proof.arena.deinit();
             const allocator = proof.allocator;
             allocator.destroy(proof);
@@ -236,6 +242,7 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
     defer safety.deinit();
     if (continuation) |function| {
         try safety.analyzeContinuation(function, &proof.?.state);
+        try once_verify.verifyContinuation(proof_allocator, &result.graph, diagnostics, function, &proof.?.once);
     } else try safety.analyze();
     try @import("comptime.zig").resolve(allocator, &result.graph, diagnostics);
     return .{ .graph = result.graph, .stats = result.stats, .safety_arena = safety_arena };

@@ -3062,6 +3062,7 @@ test "feature_tests/system/15_once_single_use" {
     const test_path = "tests/feature_tests/system/15_once_single_use";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
+    try vmExpect("tests/feature_tests/system/15_once_single_use", 0, null);
 }
 
 test "feature_tests/system/16X_once_duplicate_direct" {
@@ -13913,4 +13914,10 @@ test "feature_tests/execution/85_globals_and_core_tracer_vm" {
     try expectSuccessfulBuild("tests/feature_tests/execution/85_globals_and_core_tracer_vm");
     try runExpect("tests/feature_tests/execution/85_globals_and_core_tracer_vm", 42);
     try vmExpect("tests/feature_tests/execution/85_globals_and_core_tracer_vm", 42, null);
+}
+
+test "feature_tests/system/21_once_completed_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/system/21_once_completed_defaults");
+    try runExpect("tests/feature_tests/system/21_once_completed_defaults", 42);
+    try vmExpect("tests/feature_tests/system/21_once_completed_defaults", 42, null);
 }

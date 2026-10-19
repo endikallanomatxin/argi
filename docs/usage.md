@@ -196,6 +196,10 @@ In a terminal, Up/Down recall earlier lines and restore the unfinished draft.
 Recalled lines can be edited before submission; Ctrl-C cancels the current line
 and Ctrl-D on an empty line exits. History lasts for the current REPL process.
 
+`once` consumption is checked across accepted submissions, including calls through
+ordinary helpers. Rejected candidates consume nothing, and reset starts a fresh
+consumption history. Compile-time evaluation still rejects `once` calls.
+
 Top-level `assume` declarations remain available to calls and selected cleanup in
 later submissions. Inner blocks keep lexical assumptions local. Rejected
 submissions publish no assumptions; reset clears the session evidence.

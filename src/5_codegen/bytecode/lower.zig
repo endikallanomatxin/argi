@@ -19,6 +19,7 @@ pub const Lower = struct {
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
     unsupported: []const u8 = "",
     session: ?b.Session = null,
+    mode: enum { compile_time, runtime } = .compile_time,
     diagnostics: ?*const @import("../../1_base/diagnostic.zig").Diagnostics = null,
 
     pub fn init(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) !Lower {
@@ -34,6 +35,7 @@ pub const Lower = struct {
     pub fn initSession(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, session: b.Session) !Lower {
         var result = try init(a, graph);
         result.session = session;
+        result.mode = .runtime;
         return result;
     }
     fn sessionIndex(self: *const Lower, binding: g.GlobalBindingId) ?u32 {
@@ -212,7 +214,7 @@ const FunctionLower = struct {
         const f = self.parent.graph.function(id);
         const source = self.parent.graph.declaration(f.declaration).source;
         self.parent.source = source;
-        if (f.body == null or f.flags.is_c_abi or f.flags.is_once) return self.parent.reject(source, "foreign or once function");
+        if (f.body == null or f.flags.is_c_abi or (f.flags.is_once and self.parent.mode == .compile_time)) return self.parent.reject(source, "foreign or once function");
         try self.prepareSessionDrops();
         const inputs = try a.alloc(b.Slot, f.input_bindings.len);
         for (inputs, self.parent.graph.binding_refs.items[f.input_bindings.start..][0..f.input_bindings.len]) |*slot, binding| {

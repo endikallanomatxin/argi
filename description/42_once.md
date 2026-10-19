@@ -11,6 +11,10 @@ does not carry a separate single-use state.
 This is a compile-time restriction. It is not a runtime guard, hidden flag, or
 idempotence mechanism.
 
+A retained REPL session extends one consumption history across accepted commands.
+Preparing a rejected command does not consume its functions. Reset starts a new
+history, including any calls made by the ordinary REPL prelude.
+
 
 ## Core idea
 
