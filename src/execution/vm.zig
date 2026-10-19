@@ -434,6 +434,33 @@ pub const Vm = struct {
                     }
                     try frames.append(self.allocator, try self.frame(&virtual.program, callee, values, x.outputs));
                 },
+                .memory_call => |x| {
+                    const operation = @import("../5_codegen/bytecode/memory_boundary.zig").classify(unit.graph, x.function) orelse return error.InvalidBytecode;
+                    const storage = &self.context().storage;
+                    switch (operation) {
+                        .allocate => |signature| {
+                            const size = std.math.cast(usize, (try slots.get(x.args[signature.size])).integer) orelse return error.ExecutionMemoryLimit;
+                            const alignment = if (signature.alignment) |index| std.math.cast(usize, (try slots.get(x.args[index])).integer) orelse return error.ExecutionInvalidAlignment else @alignOf(u128);
+                            const acquired = storage.acquisitions.acquire(storage, size, alignment) catch |err| switch (err) {
+                                error.OutOfMemory => {
+                                    try slots.put(x.outputs[0], .{ .integer = 0 });
+                                    continue;
+                                },
+                                else => return err,
+                            };
+                            const address = try storage.acquisitions.address(storage, acquired, 0);
+                            try slots.put(x.outputs[0], .{ .integer = address });
+                        },
+                        .release => {
+                            const address = std.math.cast(usize, (try slots.get(x.args[0])).integer) orelse return error.ExecutionInvalidAcquisition;
+                            if (address != 0) {
+                                const acquired = try storage.acquisitions.resolveAddress(storage, address, 0, 1);
+                                if (acquired.offset != 0) return error.ExecutionInvalidAcquisition;
+                                try storage.acquisitions.release(storage, acquired.handle);
+                            }
+                        },
+                    }
+                },
                 .host_call => |x| {
                     const binding = try host.resolve(unit.graph, unit.host_functions[x.function], self.context().host_bindings);
                     var arguments: [host.max_values]i128 = undefined;

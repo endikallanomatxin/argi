@@ -252,6 +252,13 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (slots.len != f.outputs.len) return error.InvalidBytecode;
                     for (slots, f.outputs) |slot, output| if (!types.equal(program.graph, f.slots[slot], f.slots[output])) return error.InvalidBytecode;
                 },
+                .memory_call => |x| {
+                    if (@intFromEnum(x.function) >= program.graph.functions.items.len or @import("memory_boundary.zig").classify(program.graph, x.function) == null) return error.InvalidBytecode;
+                    const callee = program.graph.function(x.function);
+                    if (x.args.len != callee.input.len or x.outputs.len != callee.output.len) return error.InvalidBytecode;
+                    for (x.args, program.graph.fields.items[callee.input.start..][0..callee.input.len]) |slot, field| if (!types.equal(program.graph, f.slots[slot], field.ty)) return error.InvalidBytecode;
+                    for (x.outputs, program.graph.fields.items[callee.output.start..][0..callee.output.len]) |slot, field| if (!types.equal(program.graph, f.slots[slot], field.ty)) return error.InvalidBytecode;
+                },
                 .host_call => |x| {
                     if (x.function >= program.host_functions.len) return error.InvalidBytecode;
                     const callee = program.graph.function(program.host_functions[x.function]);
@@ -396,6 +403,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
 fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     if (i.op == .call) return i.op.call.outputs;
     if (i.op == .host_call) return i.op.host_call.outputs;
+    if (i.op == .memory_call) return i.op.memory_call.outputs;
     if (i.op == .virtual_call) return i.op.virtual_call.outputs;
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
@@ -462,6 +470,7 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
         .cleanup_set => |x| try readCleanupPlace(a, x.place, out),
         .call => |x| try out.appendSlice(a, x.args),
         .host_call => |x| try out.appendSlice(a, x.args),
+        .memory_call => |x| try out.appendSlice(a, x.args),
         .branch => |x| try out.append(a, x.condition),
         .ret => |x| try out.appendSlice(a, x),
         else => {},

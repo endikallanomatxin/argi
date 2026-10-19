@@ -321,3 +321,36 @@ test "REPL configured instruction budget rejects execution and permits reset" {
     try std.testing.expectEqual(@as(usize, 0), session.limits.instructions);
     try std.testing.expectEqual(@as(usize, 0), session.compiler.semantic.resolvers.expressions.session_bindings.items.len);
 }
+
+test "REPL checked core allocations use virtual regions and explicit release" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files = try sf.collectCoreWithOptions(&a, std.testing.io, .{ .fallback_core_dir = "core" });
+    defer sf.freeList(&a, &files);
+    var diagnostics = diag.Diagnostics.init(&a, files.items);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(files.items);
+    var session: interactive.Interactive = undefined;
+    try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    try session.submitStatements("assume ffi ::= $&ForeignFunctionInterface()");
+    session.submitStatements("address ::= aligned_alloc(.alignment = 8, .size = 16).address") catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
+    const raw = (try session.submitInput("address")).?.value.integer;
+    try std.testing.expect(raw != 0);
+    const range = try session.runtime.context.storage.acquisitions.resolveAddress(&session.runtime.context.storage, @intCast(raw), 16, 8);
+    try session.submitStatements("aligned_free(.address = address)");
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, session.runtime.context.storage.acquisitions.range(&session.runtime.context.storage, range.handle, 0, 0, 1));
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("#run aligned_alloc(.alignment = 8, .size = 16)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, session.submitStatements("aligned_free(.address = address)"));
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try session.reset();
+    try session.close();
+}

@@ -14108,3 +14108,9 @@ test "feature_tests/execution/116_partial_record_choice_payload" {
     try runExpect("tests/feature_tests/execution/116_partial_record_choice_payload", 42);
     try vmExpect("tests/feature_tests/execution/116_partial_record_choice_payload", 42, null);
 }
+
+test "feature_tests/execution/117_acquired_memory_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/117_acquired_memory_boundary");
+    try runExpect("tests/feature_tests/execution/117_acquired_memory_boundary", 42);
+    try vmExpect("tests/feature_tests/execution/117_acquired_memory_boundary", 42, null);
+}
