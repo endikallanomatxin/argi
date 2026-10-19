@@ -340,13 +340,9 @@ test "checked module decisions select source fragments without evaluating discar
     defer selected.deinit(a);
     try std.testing.expectEqual(@as(usize, 0), selected.pending.len);
     try std.testing.expect(std.mem.indexOf(u8, selected.source, "does_not_exist") == null);
-    // Retain original offsets while isolating the newly selected declaration.
-    // Production discovery will hand this slice to the same fragment API.
-    const body = selection.plan.branches.items[0].then_body;
-    for (selected.source, 0..) |*byte, index| {
-        if ((index < body.start or index >= body.end) and byte.* != '\n' and byte.* != '\r') byte.* = ' ';
-    }
-    var fragment = try build(a, "/project/pkg/selected.rg", selected.source);
+    const fragment_source = try selection.fragment(a, pending.pending[0], true);
+    defer fragment_source.deinit(a);
+    var fragment = try build(a, "/project/pkg/selected.rg", fragment_source.source);
     defer fragment.deinit(a);
     const modules = [_]module.ModuleSemanticGraph{ base, fragment };
     try session.appendModuleFragment(&modules, @enumFromInt(0));
