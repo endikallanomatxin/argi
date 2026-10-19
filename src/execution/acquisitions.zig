@@ -5,23 +5,32 @@ const v = @import("../5_codegen/bytecode/value.zig");
 pub const RegionId = enum(u32) { _ };
 pub const Handle = struct { context: v.ContextId, region: RegionId };
 pub const Range = struct { handle: Handle, offset: usize, length: usize };
-const Region = struct { length: usize, alignment: usize, live: bool = true };
+const Region = struct { length: usize, alignment: usize, bytes: []u8, initialized: []u8, live: bool = true };
 
 /// Concrete acquisition identities, separate from lexical slots and host
 /// addresses. A receipt proves a live byte extent, never initialized typed data
 /// or a language borrow. Released entries remain tombstones until context reset.
-/// The execution arena owns this table; no per-region allocation is retained.
+/// The execution arena owns the table and byte backing. Initialization bits
+/// describe concrete bytes only, without reproducing static lifetime proofs.
 pub const Regions = struct {
     entries: std.ArrayList(Region) = .empty,
 
     pub fn acquire(self: *Regions, storage: *storage_mod.Storage, length: usize, alignment: usize) !Handle {
         if (alignment == 0 or !std.math.isPowerOfTwo(alignment)) return error.ExecutionInvalidAlignment;
         const id: RegionId = @enumFromInt(std.math.cast(u32, self.entries.items.len) orelse return error.ExecutionAcquisitionLimit);
-        // Reserve before charging so allocation failure publishes no receipt.
+        const bitmap_length = length / 8 + @intFromBool(length % 8 != 0);
+        const charge = std.math.add(usize, std.math.add(usize, length, bitmap_length) catch return error.ExecutionMemoryLimit, 1) catch return error.ExecutionMemoryLimit;
+        // Check the quota before allocating large backing, then reserve every
+        // allocation before charging or publishing the complete acquisition.
+        if (charge > storage.limit -| storage.cells) return error.ExecutionMemoryLimit;
         try self.entries.ensureUnusedCapacity(storage.allocator, 1);
-        const charge = std.math.add(usize, length, 1) catch return error.ExecutionMemoryLimit;
+        const bytes = try storage.allocator.alloc(u8, length);
+        errdefer storage.allocator.free(bytes);
+        const initialized = try storage.allocator.alloc(u8, bitmap_length);
+        errdefer storage.allocator.free(initialized);
+        @memset(initialized, 0);
         try storage.charge(charge);
-        self.entries.appendAssumeCapacity(.{ .length = length, .alignment = alignment });
+        self.entries.appendAssumeCapacity(.{ .length = length, .alignment = alignment, .bytes = bytes, .initialized = initialized });
         return .{ .context = storage.context, .region = id };
     }
 
@@ -33,6 +42,26 @@ pub const Regions = struct {
         // ranges are permitted but cannot authorize a nonempty typed access.
         if (offset > region.length or length > region.length - offset) return error.ExecutionIndexOutOfBounds;
         return .{ .handle = handle, .offset = offset, .length = length };
+    }
+
+    /// Copy reads instead of exporting a mutable host slice or an untracked
+    /// language reference. Validate the entire range before touching output.
+    pub fn read(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, destination: []u8) !void {
+        _ = try self.range(storage, handle, offset, destination.len, 1);
+        const region = try self.get(storage, handle);
+        for (offset..offset + destination.len) |index| {
+            const mask = @as(u8, 1) << @as(u3, @intCast(index % 8));
+            if (region.initialized[index / 8] & mask == 0) return error.ExecutionUninitializedStorage;
+        }
+        @memcpy(destination, region.bytes[offset..][0..destination.len]);
+    }
+
+    pub fn write(self: *Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, source: []const u8) !void {
+        _ = try self.range(storage, handle, offset, source.len, 1);
+        const region = try self.get(storage, handle);
+        @memcpy(region.bytes[offset..][0..source.len], source);
+        for (offset..offset + source.len) |index|
+            region.initialized[index / 8] |= @as(u8, 1) << @as(u3, @intCast(index % 8));
     }
 
     pub fn release(self: *Regions, storage: *const storage_mod.Storage, handle: Handle) !void {
@@ -96,4 +125,28 @@ fn failedAcquisition(a: std.mem.Allocator) !void {
 
 test "acquisition allocation failures publish neither receipts nor charges" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, failedAcquisition, .{});
+}
+
+test "acquired byte backing validates complete reads before publishing bytes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try storage_mod.Storage.init(arena.allocator(), 100);
+    var regions: Regions = .{};
+    const handle = try regions.acquire(&storage, 17, 8);
+    var output = [_]u8{99} ** 17;
+    try std.testing.expectError(error.ExecutionUninitializedStorage, regions.read(&storage, handle, 0, &output));
+    try regions.write(&storage, handle, 7, &.{ 41, 42, 43 });
+    try std.testing.expectError(error.ExecutionUninitializedStorage, regions.read(&storage, handle, 6, output[0..4]));
+    try std.testing.expectEqualSlices(u8, &(@as([17]u8, @splat(99))), &output);
+    try regions.read(&storage, handle, 7, output[0..3]);
+    try std.testing.expectEqualSlices(u8, &.{ 41, 42, 43 }, output[0..3]);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, regions.write(&storage, handle, 16, &.{ 1, 2 }));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, regions.read(&storage, handle, 16, output[0..1]));
+    try regions.write(&storage, handle, 16, &.{7});
+    try regions.read(&storage, handle, 16, output[0..1]);
+    try std.testing.expectEqual(@as(u8, 7), output[0]);
+    try regions.read(&storage, handle, 17, output[0..0]);
+    try regions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, regions.read(&storage, handle, 16, output[0..1]));
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, regions.write(&storage, handle, 0, &.{1}));
 }

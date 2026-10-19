@@ -88,6 +88,16 @@ pub const Context = struct {
         try self.ensureStorage();
         return self.acquisitions.acquire(&self.storage, length, alignment);
     }
+    pub fn readRegion(self: *Context, handle: @import("acquisitions.zig").Handle, offset: usize, destination: []u8) !void {
+        if (self.running) return error.ExecutionContextBusy;
+        try self.ensureStorage();
+        return self.acquisitions.read(&self.storage, handle, offset, destination);
+    }
+    pub fn writeRegion(self: *Context, handle: @import("acquisitions.zig").Handle, offset: usize, source: []const u8) !void {
+        if (self.running) return error.ExecutionContextBusy;
+        try self.ensureStorage();
+        return self.acquisitions.write(&self.storage, handle, offset, source);
+    }
     pub fn releaseRegion(self: *Context, handle: @import("acquisitions.zig").Handle) !void {
         if (self.running) return error.ExecutionContextBusy;
         try self.ensureStorage();

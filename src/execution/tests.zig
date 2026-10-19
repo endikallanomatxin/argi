@@ -2033,6 +2033,10 @@ test "execution context reset retires acquisition identities without refunding l
     try std.testing.expectEqual(charged, context.storage.cells);
     const live = try context.acquireRegion(8, 8);
     try std.testing.expect(live.region != old.region);
+    try context.writeRegion(live, 0, &.{ 41, 42 });
+    var bytes: [2]u8 = undefined;
+    try context.readRegion(live, 0, &bytes);
+    try std.testing.expectEqualSlices(u8, &.{ 41, 42 }, &bytes);
     context.running = true;
     try std.testing.expectError(error.ExecutionContextBusy, context.acquireRegion(0, 1));
     try std.testing.expectError(error.ExecutionContextBusy, context.releaseRegion(live));
@@ -2041,5 +2045,7 @@ test "execution context reset retires acquisition identities without refunding l
     const fresh = try context.acquireRegion(8, 8);
     try std.testing.expect(fresh.context != live.context);
     try std.testing.expectError(error.ExecutionForeignReference, context.releaseRegion(live));
+    try std.testing.expectError(error.ExecutionForeignReference, context.readRegion(live, 0, &bytes));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, context.readRegion(fresh, 0, &bytes));
     try context.releaseRegion(fresh);
 }
