@@ -392,7 +392,7 @@ pub const Resolver = struct {
                             else => null,
                         };
                         if (nominal) |declaration| if (self.graph.moduleForDeclaration(declaration)) |owner| {
-                            if (@intFromEnum(owner) != module_index and !(self.modules[module_index].is_bundled_core and self.graph.modules.items[@intFromEnum(owner)].is_bundled_core))
+                            if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and !(self.modules[module_index].is_bundled_core and self.graph.modules.items[@intFromEnum(owner)].is_bundled_core))
                                 return self.domainFailure(source, "storage domain mappings cannot access private fields of another module");
                         };
                     }

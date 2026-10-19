@@ -137,6 +137,8 @@ pub const File = struct {
 
 pub const Module = struct {
     dir: StringRange,
+    // Explicit appended source fragment; physical ranges remain unchanged.
+    namespace: ?GlobalModuleId = null,
     is_bundled_core: bool = false,
     files: primitives.Range(GlobalFileId),
     declarations: DeclRange,
@@ -701,6 +703,15 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn node(self: *const GlobalSemanticGraph, id: GlobalNodeId) Node {
         return self.nodes.items[@intFromEnum(id)];
+    }
+
+    pub fn moduleNamespace(self: *const GlobalSemanticGraph, id: GlobalModuleId) GlobalModuleId {
+        return self.modules.items[@intFromEnum(id)].namespace orelse id;
+    }
+
+    pub fn sameModuleNamespace(self: *const GlobalSemanticGraph, left: GlobalModuleId, right: GlobalModuleId) bool {
+        if (left == right) return true;
+        return self.moduleNamespace(left) == self.moduleNamespace(right);
     }
 
     pub fn moduleForDeclaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) ?GlobalModuleId {

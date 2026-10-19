@@ -61,8 +61,9 @@ pub fn resolveImportPath(
         for (graph.modules.items, 0..) |module, index| {
             const dir = graph.text(module.dir);
             if (!std.mem.eql(u8, dir, resolved)) continue;
-            if (found != null) return error.AmbiguousModuleReference;
-            found = @enumFromInt(@as(u32, @intCast(index)));
+            const candidate = graph.moduleNamespace(@enumFromInt(index));
+            if (found != null and found.? != candidate) return error.AmbiguousModuleReference;
+            found = candidate;
         }
         return found orelse error.UnknownModuleReference;
     }
@@ -72,8 +73,9 @@ pub fn resolveImportPath(
     for (graph.modules.items, 0..) |module, index| {
         const dir = graph.text(module.dir);
         if (!pathEndsWith(dir, suffix)) continue;
-        if (found != null) return error.AmbiguousModuleReference;
-        found = @enumFromInt(@as(u32, @intCast(index)));
+        const candidate = graph.moduleNamespace(@enumFromInt(index));
+        if (found != null and found.? != candidate) return error.AmbiguousModuleReference;
+        found = candidate;
     }
     return found orelse error.UnknownModuleReference;
 }

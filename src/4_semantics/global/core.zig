@@ -82,7 +82,7 @@ pub const Resolver = struct {
     /// Submission modules retain distinct source identities but belong to one
     /// explicit interactive namespace. Imported modules never join it implicitly.
     pub fn sameDeclarationNamespace(self: *const Resolver, left: usize, right: usize) bool {
-        if (left == right) return true;
+        if (self.graph.sameModuleNamespace(@enumFromInt(left), @enumFromInt(right))) return true;
         const namespace = self.session_namespace orelse return false;
         return std.mem.indexOfScalar(global_sg.GlobalModuleId, namespace.modules.items, @enumFromInt(left)) != null and
             std.mem.indexOfScalar(global_sg.GlobalModuleId, namespace.modules.items, @enumFromInt(right)) != null;
@@ -580,7 +580,7 @@ pub const Resolver = struct {
 
     pub fn declarationVisible(self: *const Resolver, current_module: usize, declaration: global_sg.GlobalDeclId, qualified_module: ?global_sg.GlobalModuleId) bool {
         const owner = self.graph.moduleForDeclaration(declaration) orelse return false;
-        const own_module = @intFromEnum(owner) == current_module;
+        const own_module = self.graph.sameModuleNamespace(owner, @enumFromInt(current_module));
         if (self.session_namespace) |namespace| {
             if (qualified_module == null and @intFromEnum(owner) <= current_module and
                 std.mem.indexOfScalar(global_sg.GlobalModuleId, namespace.modules.items, @enumFromInt(current_module)) != null and
@@ -592,7 +592,7 @@ pub const Resolver = struct {
         const core_peer = self.graph.modules.items[current_module].is_bundled_core and
             self.graph.modules.items[@intFromEnum(owner)].is_bundled_core;
         if (!own_module and !core_peer and std.mem.startsWith(u8, name, "_")) return false;
-        if (qualified_module) |wanted| return owner == wanted;
+        if (qualified_module) |wanted| return self.graph.sameModuleNamespace(owner, wanted);
         return own_module or self.graph.modules.items[@intFromEnum(owner)].is_bundled_core;
     }
 
@@ -2130,7 +2130,7 @@ pub const Resolver = struct {
         for (self.graph.module_aliases.items) |alias| {
             // Interactive submissions share aliases only with later members of
             // their explicit namespace. Dependencies retain lexical imports.
-            if (alias.owner != current and
+            if (!self.graph.sameModuleNamespace(alias.owner, current) and
                 (@intFromEnum(alias.owner) > current_module or !self.sameDeclarationNamespace(@intFromEnum(alias.owner), current_module))) continue;
             const declaration = self.graph.declarations.items[@intFromEnum(alias.declaration)];
             if (!std.mem.eql(u8, self.graph.text(declaration.name), qualifier)) continue;

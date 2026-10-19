@@ -125,6 +125,7 @@ comptime {
     _ = module_semantic_complete_verify;
 
     _ = @import("4_semantics/global/comptime_execution.zig");
+    _ = @import("4_semantics/global/module_fragments_test.zig");
     _ = @import("4_semantics/global/resolver_context.zig");
     _ = global_semantic_graph;
     _ = global_semantic_types;

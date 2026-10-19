@@ -24,6 +24,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.module_aliases.items) |alias| {
         try require(verify.idFits(alias.owner, graph.modules.items.len));
         try require(verify.idFits(alias.target, graph.modules.items.len));
+        try require(graph.modules.items[@intFromEnum(alias.target)].namespace == null);
         try require(verify.idFits(alias.declaration, graph.declarations.items.len));
         try require(graph.moduleForDeclaration(alias.declaration) == alias.owner);
         try require(alias.source.file_index < graph.files.items.len);
@@ -309,6 +310,13 @@ fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
     var declaration_cursor: usize = 0;
     for (graph.modules.items, 0..) |module, module_index| {
         try require(verify.stringFits(module.dir, graph.strings.items));
+        if (module.namespace) |namespace| {
+            try require(@intFromEnum(namespace) < module_index);
+            const owner = graph.modules.items[@intFromEnum(namespace)];
+            try require(owner.namespace == null);
+            try require(owner.is_bundled_core == module.is_bundled_core);
+            try require(std.mem.eql(u8, graph.text(owner.dir), graph.text(module.dir)));
+        }
         try require(module.files.start == file_cursor);
         try require(module.declarations.start == declaration_cursor);
         try require(verify.rangeFits(module.files, graph.files.items.len));

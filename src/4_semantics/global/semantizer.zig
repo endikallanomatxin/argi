@@ -523,13 +523,35 @@ pub const Session = struct {
     /// This construction API poisons the session on a preparation failure.
     /// Interactive publication must add a transaction around this operation.
     pub fn appendModules(self: *Session, modules: []const module_sg.ModuleSemanticGraph) !void {
+        return self.appendModuleSuffix(modules, null);
+    }
+
+    /// Extend one logical module without moving existing declaration/file
+    /// ranges. The caller retains the immutable fragment with borrowed ModuleSGs.
+    pub fn appendModuleFragment(self: *Session, modules: []const module_sg.ModuleSemanticGraph, owner: global_sg.GlobalModuleId) !void {
+        return self.appendModuleSuffix(modules, owner);
+    }
+
+    fn appendModuleSuffix(self: *Session, modules: []const module_sg.ModuleSemanticGraph, fragment_owner: ?global_sg.GlobalModuleId) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         const previous = self.modules.len;
         if (modules.len < previous) return error.InvalidSemanticModuleViews;
+        const namespace = if (fragment_owner) |owner| blk: {
+            if (@intFromEnum(owner) >= previous or modules.len != previous + 1) return error.InvalidModuleFragment;
+            const original = self.relocation.graph.modules.items[@intFromEnum(owner)];
+            const fragment = &modules[previous];
+            if (!std.mem.eql(u8, self.relocation.graph.text(original.dir), fragment.module_dir) or original.is_bundled_core != fragment.is_bundled_core)
+                return error.InvalidModuleFragment;
+            break :blk self.relocation.graph.moduleNamespace(owner);
+        } else null;
         if (modules.len == previous) return;
         errdefer self.phase = .failed;
         const allocator = self.allocator;
         try self.relocation.append(allocator, modules[previous..], .allow_holes);
+        if (namespace) |owner| {
+            self.relocation.graph.modules.items[previous].namespace = owner;
+            try self.validateFragmentFunctions(@enumFromInt(previous));
+        }
         self.modules = modules;
         try self.resolvers.extendModuleViews(modules, self.relocation.offsets.items);
         try module_linker.append(allocator, &self.relocation.graph, modules, self.relocation.offsets.items, previous);
@@ -563,6 +585,27 @@ pub const Session = struct {
             while (iterator.next()) |id| _ = try set.include(id.*);
         }
         self.phase = .ready;
+    }
+
+    fn validateFragmentFunctions(self: *Session, fragment: global_sg.GlobalModuleId) !void {
+        const graph = &self.relocation.graph;
+        const range = graph.modules.items[@intFromEnum(fragment)].declarations;
+        for (graph.declarations.items[range.start..][0..range.len], range.start..) |declaration, index| {
+            if (declaration.kind != .function) continue;
+            const name = graph.text(declaration.name);
+            // Generated implementation identities have no source identifier.
+            if (std.mem.indexOfScalar(u8, name, '$') != null) continue;
+            for (try graph.declarationsNamed(self.allocator, name)) |other| {
+                if (@intFromEnum(other) == index or graph.declaration(other).kind != .function) continue;
+                const owner = graph.moduleForDeclaration(other) orelse continue;
+                if (!graph.sameModuleNamespace(owner, fragment)) continue;
+                if (self.options.diagnostics) |diagnostics| {
+                    try diagnostics.add(diagnosticLocation(graph, diagnostics, declaration.source), .semantic, "ordinary function '{s}' has more than one declaration; provide specialized behavior through a contract implementation", .{name});
+                    return error.Reported;
+                }
+                return error.DuplicateOrdinaryFunction;
+            }
+        }
     }
 
     /// Keep an explicitly selected command executable through lazy resolution
@@ -2248,7 +2291,7 @@ fn diagnosePrivateFields(
             const field = global_types.findField(graph, value_ty, name) orelse continue;
             if (field.field.source.file_index >= graph.files.items.len) continue;
             const owner_module = graph.files.items[field.field.source.file_index].module;
-            if (@intFromEnum(owner_module) == module_index) continue;
+            if (graph.sameModuleNamespace(owner_module, @enumFromInt(module_index))) continue;
             if (graph.modules.items[module_index].is_bundled_core and
                 graph.modules.items[@intFromEnum(owner_module)].is_bundled_core) continue;
             try diagnostics.add(
@@ -2290,7 +2333,7 @@ fn diagnosePrivateConstruction(
         if (!std.mem.startsWith(u8, name, "_")) continue;
         if (field.source.file_index >= graph.files.items.len) continue;
         const owner_module = graph.files.items[field.source.file_index].module;
-        if (owner_module == caller_module) continue;
+        if (graph.sameModuleNamespace(owner_module, caller_module)) continue;
         if (graph.modules.items[@intFromEnum(caller_module)].is_bundled_core and
             graph.modules.items[@intFromEnum(owner_module)].is_bundled_core) continue;
         try diagnostics.add(
