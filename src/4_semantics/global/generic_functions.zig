@@ -69,6 +69,7 @@ pub const Resolver = struct {
     ownership_checkpoint: ?*const fn (*anyopaque) [2]usize = null,
     rollback_ownership: ?*const fn (*anyopaque, [2]usize) void = null,
     constraint_diagnostics: ?*std.ArrayList(ConstraintFailure) = null,
+    reach_diagnostics: ?*std.array_list.Managed(u8) = null,
     failed_constraint: ?struct {
         contract_decl: global_sg.GlobalDeclId,
         actual: global_sg.GlobalTypeId,
@@ -779,6 +780,18 @@ pub const Resolver = struct {
                 }
                 if (inferred) break;
             }
+            if (!inferred) if (self.reach_diagnostics) |message| {
+                // Render while the speculative candidate is alive; retain no
+                // inferred type or graph-tail identity in the diagnostic.
+                try message.print("\n  .{s} uses reach ", .{candidate_module.text(field.name)});
+                for (storage.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
+                    if (index != 0) try message.appendSlice(" or ");
+                    for (storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, part| {
+                        if (part != 0) try message.append('.');
+                        try message.appendSlice(candidate_module.text(segment));
+                    }
+                }
+            };
         }
         return true;
     }
@@ -1313,9 +1326,9 @@ pub const Resolver = struct {
     }
 
     /// Diagnostic probes use normal selection and roll back its graph and
-    /// ownership effects. Rejected bounds must not escape a speculative probe
-    /// or become an error when another visible identity actually accepts the call.
-    pub fn collectGenericConstraintFailures(
+    /// ownership effects. Bounds and unavailable reach defaults are explanations
+    /// only; discard them when another visible identity accepts the call.
+    pub fn collectGenericCallFailures(
         self: *Resolver,
         current_module: usize,
         module: *const module_sg.ModuleSemanticGraph,
@@ -1323,6 +1336,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach: ReachInferenceContext,
         failures: *std.ArrayList(ConstraintFailure),
+        missing_reach: *std.array_list.Managed(u8),
         actual_name: *std.array_list.Managed(u8),
         append_type_name: *const fn (*std.array_list.Managed(u8), *const global_sg.GlobalSemanticGraph, global_sg.GlobalTypeId) anyerror!void,
     ) !void {
@@ -1331,6 +1345,7 @@ pub const Resolver = struct {
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
         const saved_diagnostics = self.constraint_diagnostics;
+        const saved_reach_diagnostics = self.reach_diagnostics;
         const saved_failure = self.failed_constraint;
         defer {
             speculation.deinit();
@@ -1338,10 +1353,13 @@ pub const Resolver = struct {
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
             self.constraint_diagnostics = saved_diagnostics;
+            self.reach_diagnostics = saved_reach_diagnostics;
             self.failed_constraint = saved_failure;
         }
         failures.clearRetainingCapacity();
         self.constraint_diagnostics = failures;
+        missing_reach.clearRetainingCapacity();
+        self.reach_diagnostics = missing_reach;
         // TODO: Preserve selected-body instantiation failures separately from
         // selection failures, so rejected bounds do not hide a nested error.
         const selected = selection: {
@@ -1356,6 +1374,7 @@ pub const Resolver = struct {
             // A successful selection is not a constraint error even if other
             // candidates failed their bounds.
             failures.clearRetainingCapacity();
+            missing_reach.clearRetainingCapacity();
         } else if (failures.items.len != 0) {
             // Associated-parameter inference may create temporary types. Render
             // their name before rollback rather than expose their IDs afterward.

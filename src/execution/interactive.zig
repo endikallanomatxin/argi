@@ -846,3 +846,36 @@ test "interactive once defaults consume only completed call arguments" {
     try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
     try session.close();
 }
+
+test "interactive generic diagnostics explain omitted reachable capabilities" {
+    for ([_]bool{ false, true }) |bundled| {
+        const allocator = std.testing.allocator;
+        var sources = submissions.Sources.init(allocator);
+        defer sources.deinit();
+        var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+        defer diagnostics.deinit();
+        const definition = "emit#(.Stream: Type) := (.value: Int32, .writer: $&Stream = reach writer) -> (.result: Int32) { result = value }";
+        const loaded = try sources.loadModule(&diagnostics, definition);
+        var core = loaded.*;
+        core.is_bundled_core = true;
+        var session: Interactive = undefined;
+        if (bundled) {
+            try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+        } else {
+            try session.init(allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+        }
+        defer session.deinit();
+        if (!bundled) try session.submitDefinitions(definition);
+        const revision = session.compiler.revision;
+        try std.testing.expectError(error.Reported, session.submitInput("emit(.value = 42)"));
+        try std.testing.expectEqual(revision, session.compiler.revision);
+        const message = session.diagnostics.list.items[0].msg;
+        try std.testing.expect(std.mem.indexOf(u8, message, ".writer uses reach writer") != null);
+        try std.testing.expect(std.mem.indexOf(u8, message, "explicitly") != null);
+        try session.submitStatements("destination :: (.used: Bool) = (.used = false)");
+        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42, .writer = $&destination)")).?.value.integer);
+        try session.submitStatements("assume writer ::= $&destination");
+        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42)")).?.value.integer);
+        try session.close();
+    }
+}

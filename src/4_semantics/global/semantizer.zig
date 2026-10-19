@@ -2504,33 +2504,18 @@ fn declarationNameExistsInModule(
     return false;
 }
 
-fn functionDeclarationVisibleForDiagnostic(
-    graph: *const global_sg.GlobalSemanticGraph,
-    current_module: usize,
-    declaration: global_sg.GlobalDeclId,
-    qualified_module: ?global_sg.GlobalModuleId,
-) bool {
-    const owner = graph.moduleForDeclaration(declaration) orelse return false;
-    const own_module = @intFromEnum(owner) == current_module;
-    const name = graph.text(graph.declarations.items[@intFromEnum(declaration)].name);
-    const core_peer = graph.modules.items[current_module].is_bundled_core and
-        graph.modules.items[@intFromEnum(owner)].is_bundled_core;
-    if (!own_module and !core_peer and std.mem.startsWith(u8, name, "_")) return false;
-    if (qualified_module) |wanted| return owner == wanted;
-    return own_module or graph.modules.items[@intFromEnum(owner)].is_bundled_core;
-}
-
 fn visibleFunctionNameExists(
-    graph: *const global_sg.GlobalSemanticGraph,
+    core: *const core_mod.Resolver,
     current_module: usize,
     qualified_module: ?global_sg.GlobalModuleId,
     name: []const u8,
 ) bool {
+    const graph = core.graph;
     for (graph.declarations.items, 0..) |declaration, raw| {
         if (declaration.kind != .function and declaration.kind != .test_function) continue;
         if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
         const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
-        if (functionDeclarationVisibleForDiagnostic(graph, current_module, id, qualified_module)) return true;
+        if (core.declarationVisible(current_module, id, qualified_module)) return true;
     }
     return false;
 }
@@ -2935,7 +2920,7 @@ fn diagnoseUnresolvedCall(
             }
             for (try graph.declarationsNamed(allocator, name)) |id| {
                 const declaration = graph.declaration(id);
-                if (declaration.struct_layout != .c_incomplete or !functionDeclarationVisibleForDiagnostic(graph, module_index, id, qualified_module)) continue;
+                if (declaration.struct_layout != .c_incomplete or !generic_functions.core.declarationVisible(module_index, id, qualified_module)) continue;
                 try diagnostics.add(location, .semantic, "CIncomplete type '{s}' cannot be constructed; use RawPointer for foreign handles", .{name});
                 return true;
             }
@@ -2963,7 +2948,7 @@ fn diagnoseUnresolvedCall(
                     );
                     return true;
                 }
-            } else if (!visibleFunctionNameExists(graph, module_index, null, name)) {
+            } else if (!visibleFunctionNameExists(generic_functions.core, module_index, null, name)) {
                 try diagnostics.add(location, .semantic, "no function named '{s}' exists", .{name});
                 return true;
             }
@@ -2978,7 +2963,7 @@ fn diagnoseUnresolvedCall(
             for (graph.functions.items, 0..) |function, raw| {
                 const declaration = graph.declaration(function.declaration);
                 if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
-                if (!functionDeclarationVisibleForDiagnostic(graph, module_index, function.declaration, qualified_module)) continue;
+                if (!generic_functions.core.declarationVisible(module_index, function.declaration, qualified_module)) continue;
                 try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
             }
             var input_complete = true;
@@ -3014,13 +2999,16 @@ fn diagnoseUnresolvedCall(
             defer constraint_failures.deinit(allocator);
             var constraint_actual_name = std.array_list.Managed(u8).init(allocator);
             defer constraint_actual_name.deinit();
-            try generic_functions.collectGenericConstraintFailures(
+            var missing_generic_reach = std.array_list.Managed(u8).init(allocator);
+            defer missing_generic_reach.deinit();
+            try generic_functions.collectGenericCallFailures(
                 module_index,
                 module,
                 reference,
                 input_id,
                 reach_context.Context.fromModule(module, offsets[module_index], call.visible_bindings, call.owner_function),
                 &constraint_failures,
+                &missing_generic_reach,
                 &constraint_actual_name,
                 appendTypeName,
             );
@@ -3080,7 +3068,11 @@ fn diagnoseUnresolvedCall(
                     try mismatch.appendSlice(name);
                     try mismatch.appendSlice("' accepts arguments ");
                     try appendValueShape(&mismatch, graph, input);
-                    try mismatch.appendSlice("; input types and repeated generic dimensions must agree");
+                    if (missing_generic_reach.items.len != 0) {
+                        try mismatch.appendSlice("; omitted inputs have unavailable reach defaults:");
+                        try mismatch.appendSlice(missing_generic_reach.items);
+                        try mismatch.appendSlice("\nPass these inputs explicitly or make the required capabilities reachable in the caller.");
+                    } else try mismatch.appendSlice("; input types and repeated generic dimensions must agree");
                     try diagnostics.add(
                         if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                         .semantic,

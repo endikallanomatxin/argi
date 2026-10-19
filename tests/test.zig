@@ -2812,7 +2812,7 @@ test "feature_tests/io/25_positional_text_helpers" {
 }
 
 test "feature_tests/io/26X_print_without_system" {
-    try buildExpectFail("tests/feature_tests/io/26X_print_without_system", "no generic function named 'print'");
+    try buildExpectFailWithoutNoise("tests/feature_tests/io/26X_print_without_system", ".writer uses reach writer", "panic");
 }
 
 test "feature_tests/text/03_string_buffer_io" {
