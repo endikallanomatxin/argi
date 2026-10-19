@@ -147,10 +147,6 @@ pub const Context = struct {
         const target = try self.storage.slots(self.bindings.get(binding.binding).?);
         if (reinitialize) try self.storage.reinitializeSession(target, 0, value) else try self.storage.initializeSession(target, 0, value);
     }
-    fn borrowBinding(self: *Context, binding: b.SessionBinding, permission: p.PointerMutability) !b.Value {
-        const frame = self.bindings.get(binding.binding) orelse return error.ExecutionUninitializedStorage;
-        return self.storage.borrow(.{ .context = self.storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write }, permission);
-    }
 };
 
 pub const Vm = struct {
@@ -413,7 +409,6 @@ pub const Vm = struct {
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
                 .session_declare => |index| try self.context().declareBinding(unit.session.?.bindings[index]),
                 .session_initialize => |x| try self.context().initializeBinding(unit.session.?.bindings[x.binding], try slots.get(x.value), x.reinitialize),
-                .session_borrow => |x| try slots.put(x.dst, try self.context().borrowBinding(unit.session.?.bindings[x.binding], unit.graph.semanticType(f.slots[x.dst]).pointer.mutability)),
                 .readonly => |x| {
                     var reference = (try slots.get(x.src)).reference;
                     reference.mutability = .read_only;

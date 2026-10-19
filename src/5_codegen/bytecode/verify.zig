@@ -159,11 +159,6 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const binding = try sessionBinding(program, x.binding);
                     if (!types.equal(program.graph, binding.slots[0], f.slots[x.value])) return error.InvalidBytecode;
                 },
-                .session_borrow => |x| {
-                    const binding = try sessionBinding(program, x.binding);
-                    const pointer = program.graph.semanticType(f.slots[x.dst]);
-                    if (pointer != .pointer or !types.equal(program.graph, binding.slots[0], pointer.pointer.child)) return error.InvalidBytecode;
-                },
                 .readonly => |x| {
                     const from = program.graph.semanticType(f.slots[x.src]);
                     const to = program.graph.semanticType(f.slots[x.dst]);
@@ -408,7 +403,6 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
         .numeric_bytes => |x| x.dst,
         .offset_reference => |x| x.dst,
         .copy => |x| x.dst,
-        .session_borrow => |x| x.dst,
         .readonly => |x| x.dst,
         .binary => |x| x.dst,
         .compare => |x| x.dst,

@@ -1434,23 +1434,23 @@ test "bytecode typed session bindings persist across verified program revisions"
     const initialize = [_]b.Instruction{
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .session_initialize = .{ .binding = 0, .value = 0 } } },
-        .{ .source = source, .op = .{ .session_borrow = .{ .binding = 0, .dst = 1 } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .session_initialize = .{ .binding = 1, .value = 1 } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
     const read = [_]b.Instruction{
-        .{ .source = source, .op = .{ .session_borrow = .{ .binding = 0, .dst = 1 } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
     const read_reference = [_]b.Instruction{
-        .{ .source = source, .op = .{ .session_borrow = .{ .binding = 1, .dst = 2 } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 2, .place = .{ .region = .session, .root = 1, .path = &.{} } } } },
         .{ .source = source, .op = .{ .load = .{ .dst = 1, .place = .{ .root = 2, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
     const write = [_]b.Instruction{
-        .{ .source = source, .op = .{ .session_borrow = .{ .binding = 0, .dst = 1 } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 0, .region = .session, .path = &.{} } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 7 } } } },
         .{ .source = source, .op = .{ .check_write_cleanup = 0 } },
@@ -1507,7 +1507,7 @@ test "bytecode typed session bindings persist across verified program revisions"
     malformed.session = .{ .namespace = interface.namespace, .bindings = &wrong_type };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
     var missing_binding_code = read;
-    missing_binding_code[0].op.session_borrow.binding = 99;
+    missing_binding_code[0].op.borrow_storage.place.root = 99;
     const missing_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &missing_binding_code } };
     malformed = .{ .graph = &graph, .functions = &missing_functions, .session = interface };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));

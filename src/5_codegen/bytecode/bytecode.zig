@@ -108,7 +108,6 @@ pub const Instruction = struct {
         copy: struct { dst: Slot, src: Slot },
         session_declare: u32,
         session_initialize: struct { binding: u32, value: Slot, reinitialize: bool = false },
-        session_borrow: struct { binding: u32, dst: Slot },
         readonly: struct { dst: Slot, src: Slot },
         binary: struct { dst: Slot, left: Slot, right: Slot, operator: p.BinaryOperator },
         compare: struct { dst: Slot, left: Slot, right: Slot, operator: p.ComparisonOperator },
