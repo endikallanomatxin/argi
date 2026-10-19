@@ -256,8 +256,10 @@ variant indexes. This is an initial value display, not the text-formatting API.
 
 Scalar and record bindings can be declared without an initial value and written
 in later commands. Initialized record fields can be read independently of vacant
-siblings. Reads of unavailable storage are rejected before publication. Reading
-a whole record after initializing its fields separately remains unsupported.
+siblings. The complete record can be read once every field is initialized,
+including nested fields. Empty record fields require an explicit write; having
+no fields does not initialize vacant storage. Reads of unavailable storage are
+rejected before publication.
 
 `:reset` runs checked cleanup and starts a fresh session; `:quit` or EOF cleans up
 and exits. Preparation failures publish no state and subsequent input can retry.

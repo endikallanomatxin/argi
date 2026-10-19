@@ -968,12 +968,16 @@ test "interactive vacant records retain partial initialization across commands" 
     try std.testing.expectError(error.Reported, session.submitInput("pair.second"));
     try std.testing.expectError(error.Reported, session.submitInput("pair"));
     try session.submitStatements("pair.second = 42");
-    const complete = (try session.submitInput("pair.second")).?;
-    try std.testing.expectEqual(@as(i128, 42), complete.value.integer);
+    const complete = (try session.submitInput("pair")).?;
+    try std.testing.expectEqual(@as(i128, 42), complete.value.record[1].integer);
     try session.submitStatements("number :: Int32");
     try std.testing.expectError(error.Reported, session.submitInput("number"));
     try session.submitStatements("number = 42");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("number")).?.value.integer);
+    try session.submitStatements("empty :: (.leaf: ())");
+    try std.testing.expectError(error.Reported, session.submitInput("empty"));
+    try session.submitStatements("empty.leaf = ()");
+    try std.testing.expectEqual(@as(usize, 1), (try session.submitInput("empty")).?.value.record.len);
     try session.close();
 }
 

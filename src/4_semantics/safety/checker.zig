@@ -1061,7 +1061,7 @@ pub const SafetyChecker = struct {
                 var value: facts.ValueFacts = .{};
                 if (pointer.referenced_place) |storage| {
                     const initializedness = self.initializednessAtPlace(state, storage);
-                    try self.requireInitialized(function, node.source, initializedness);
+                    try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
                     try self.requireDescendantsInitialized(function, node.source, storage, state);
                     value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
                 }
@@ -4981,19 +4981,19 @@ pub const SafetyChecker = struct {
         try self.evaluateCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, storage, state);
     }
 
-    const CleanupReadiness = enum { unavailable, possible, complete };
+    const StorageReadiness = enum { unavailable, possible, complete };
 
     // Completeness can come from one whole write or from authoritative field
     // writes. Empty vacant records do not become initialized vacuously.
-    fn cleanupReadiness(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) anyerror!CleanupReadiness {
+    fn storageReadiness(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) anyerror!StorageReadiness {
         const initializedness = self.initializednessAtPlace(state, storage);
         if (initializedness == .initialized) return .complete;
         const ty = self.domainStorageType(storage) orelse return .unavailable;
         const fields = types.fields(self.graph, ty) orelse return if (initializedness == .maybe_initialized) .possible else .unavailable;
         if (fields.len == 0) return if (initializedness == .maybe_initialized) .possible else .unavailable;
-        var result: CleanupReadiness = .complete;
+        var result: StorageReadiness = .complete;
         for (0..fields.len) |index| {
-            switch (try self.cleanupReadiness(state, try self.project(storage, .{ .field = @intCast(index) }))) {
+            switch (try self.storageReadiness(state, try self.project(storage, .{ .field = @intCast(index) }))) {
                 .unavailable => return if (initializedness == .maybe_initialized) .possible else .unavailable,
                 .possible => result = .possible,
                 .complete => {},
@@ -5058,7 +5058,7 @@ pub const SafetyChecker = struct {
     }
 
     fn evaluateCleanupOperation(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input: ?graph_mod.GlobalNodeId, self_index: u32, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), storage: facts.Place, state: *FunctionState) anyerror!void {
-        const ready = try self.cleanupReadiness(state, storage);
+        const ready = try self.storageReadiness(state, storage);
         if (callee) |id| {
             if (ready == .complete) {
                 if (self.initializednessAtPlace(state, storage) != .initialized)
@@ -5451,6 +5451,10 @@ pub const SafetyChecker = struct {
         initializedness: value_state.Initializedness,
         state: *FunctionState,
     ) !void {
+        // Field writes can complete a vacant record without a whole-value
+        // write. This is a read proof, not a generation change: historical
+        // references must remain invalid after destruction or replacement.
+        if (initializedness == .deinitialized and try self.storageReadiness(state, storage) == .complete) return;
         if (initializedness == .moved) return self.reportMovedPlace(source, storage, state);
         if (initializedness == .maybe_initialized) {
             const name = self.graph.text(self.graph.binding(storage.root).name);

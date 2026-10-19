@@ -3723,7 +3723,7 @@ test "feature_tests/ownership/122_trusted_opaque_relocate" {
 test "feature_tests/ownership/123X_self_referential_move_does_not_retarget" {
     try buildExpectFail(
         "tests/feature_tests/ownership/123X_self_referential_move_does_not_retarget",
-        "value was moved",
+        "place rooted at 'source' is moved and cannot be used",
     );
 }
 
@@ -13987,4 +13987,25 @@ test "feature_tests/execution/97_scalar_reference_initialization_vm" {
     try expectSuccessfulBuild("tests/feature_tests/execution/97_scalar_reference_initialization_vm");
     try runExpect("tests/feature_tests/execution/97_scalar_reference_initialization_vm", 42);
     try vmExpect("tests/feature_tests/execution/97_scalar_reference_initialization_vm", 42, null);
+}
+
+test "feature_tests/execution/98_field_completed_records_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/98_field_completed_records_vm");
+    try runExpect("tests/feature_tests/execution/98_field_completed_records_vm", 42);
+    try vmExpect("tests/feature_tests/execution/98_field_completed_records_vm", 42, null);
+}
+
+test "feature_tests/execution/99X_incomplete_nested_record" {
+    try buildExpectFail("tests/feature_tests/execution/99X_incomplete_nested_record", "deinitialized");
+}
+
+test "feature_tests/execution/100X_completed_record_stale_reference" {
+    try buildExpectFail("tests/feature_tests/execution/100X_completed_record_stale_reference", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/100X_completed_record_stale_reference", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/101_field_completed_owner_move_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/101_field_completed_owner_move_vm");
+    try runExpect("tests/feature_tests/execution/101_field_completed_owner_move_vm", 42);
+    try vmExpect("tests/feature_tests/execution/101_field_completed_owner_move_vm", 42, null);
 }

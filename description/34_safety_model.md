@@ -73,6 +73,12 @@ use(p)            // error: stale reference
 The use check does not require all references to leave scope before a root
 can end.
 
+A vacant record becomes readable when all its fields are initialized, including
+nested fields. Individual initialized fields can be read before their siblings
+are ready. Empty records require an explicit initialization; an empty field list
+alone is not evidence of an available value. Structural completeness proves
+initialization without reviving ended storage generations or stale references.
+
 For a value whose validity relation is not visible in its representation,
 `depend_on#(.t: T)(.value = value, .on = &owner).result` attaches the
 owner's storage generation to the returned value. Its existing cleanup

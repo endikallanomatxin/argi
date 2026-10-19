@@ -18,9 +18,7 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Partial storage
 
-- Extend partial layouts to arrays and choices. Session scalar and record
-  slots retain initialized fields across commands; whole-record reads after
-  field-by-field initialization still need a shared completeness proof.
+- Extend partial layouts to arrays and choices.
 - Extend acquired storage and release identities before enabling the allocator
   prelude; scalar host handles alone do not establish allocation receipts.
 
