@@ -102,7 +102,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const bounds = integerBounds(program.graph, pointer.pointer.child) orelse return error.InvalidBytecode;
                     if (bounds.maximum - bounds.minimum != 255) return error.InvalidBytecode;
                 },
-                .acquired_scalar => |x| {
+                .acquired_reference => |x| {
                     if (fi >= program.graph.functions.items.len) return error.InvalidBytecode;
                     const primitive = program.graph.function(@enumFromInt(@as(u32, @intCast(fi)))).safety_primitive;
                     if (primitive != .establish_inherited_reference and primitive != .establish_allocation_slot) return error.InvalidBytecode;
@@ -110,8 +110,9 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (target != .pointer or !types.isBuiltin(program.graph, f.slots[x.address], .UIntNative)) return error.InvalidBytecode;
                     var arena = std.heap.ArenaAllocator.init(allocator);
                     defer arena.deinit();
+                    if (owning_types[@intFromEnum(target.pointer.child)]) return error.InvalidBytecode;
                     const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, target.pointer.child) catch return error.InvalidBytecode;
-                    if (expected.shape != .integer or !@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;
+                    if (!@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;
                 },
                 .erase_reference => |x| {
                     const from = program.graph.semanticType(f.slots[x.src]);
@@ -433,7 +434,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
         .resolve_location => |x| x.dst,
         .virtualize => |x| x.dst,
         .numeric_bytes => |x| x.dst,
-        .acquired_scalar => |x| x.dst,
+        .acquired_reference => |x| x.dst,
         .erase_reference => |x| x.dst,
         .offset_reference => |x| x.dst,
         .copy => |x| x.dst,
@@ -468,7 +469,7 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
             try out.appendSlice(a, x.args);
         },
         .numeric_bytes => |x| try out.append(a, x.src),
-        .acquired_scalar => |x| try out.append(a, x.address),
+        .acquired_reference => |x| try out.append(a, x.address),
         .erase_reference => |x| try out.append(a, x.src),
         .offset_reference => |x| try out.appendSlice(a, &.{ x.src, x.elements }),
         .session_initialize => |x| try out.append(a, x.value),

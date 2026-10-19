@@ -14126,3 +14126,9 @@ test "feature_tests/execution/119_allocation_cleanup" {
     try runExpect("tests/feature_tests/execution/119_allocation_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/119_allocation_cleanup", 42, null);
 }
+
+test "feature_tests/execution/120_acquired_aggregate_reference" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/120_acquired_aggregate_reference");
+    try runExpect("tests/feature_tests/execution/120_acquired_aggregate_reference", 42);
+    try vmExpect("tests/feature_tests/execution/120_acquired_aggregate_reference", 42, null);
+}

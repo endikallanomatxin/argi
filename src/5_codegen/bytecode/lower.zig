@@ -1127,9 +1127,9 @@ const FunctionLower = struct {
                 if (self.parent.mode != .runtime or target != .pointer or !types.isBuiltin(self.parent.graph, from, .UIntNative) or
                     (self.safety_primitive != .establish_inherited_reference and self.safety_primitive != .establish_allocation_slot))
                     return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
+                if (self.parent.cleanup_types[@intFromEnum(target.pointer.child)]) return self.parent.reject(node.source, "acquired reference requiring cleanup evidence");
                 const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child) catch return self.parent.reject(node.source, "acquired reference to nonnumeric storage");
-                if (layout.shape != .integer) return self.parent.reject(node.source, "acquired reference to aggregate storage");
-                _ = try self.emit(node.source, .{ .acquired_scalar = .{ .dst = dst, .address = source_slot, .layout = layout } });
+                _ = try self.emit(node.source, .{ .acquired_reference = .{ .dst = dst, .address = source_slot, .layout = layout } });
             },
             .address_of => |value| {
                 const target = try self.place(value);

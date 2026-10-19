@@ -2073,7 +2073,7 @@ test "bytecode acquired establishment requires a checked primitive and matching 
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 1, .len = 1 } });
     var layout: @import("../5_codegen/bytecode/numeric_layout.zig").Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
     const code = [_]b.Instruction{
-        .{ .source = source, .op = .{ .acquired_scalar = .{ .dst = 1, .address = 0, .layout = &layout } } },
+        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 1, .address = 0, .layout = &layout } } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
     const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(2) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code }};

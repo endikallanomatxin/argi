@@ -82,8 +82,8 @@ pub const Storage = struct {
     /// Execution-side establishment only. Checked bytecode must separately
     /// provide the language authorization; a handle or integer is not that proof.
     /// Layout metadata must outlive this storage, like other compiled layouts.
-    pub fn acquiredScalar(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability) !v.Reference {
-        if (layout.shape != .integer or layout.size == 0 or layout.size > 8 or !std.math.isPowerOfTwo(layout.size) or layout.alignment > layout.size) return error.ExecutionInvalidReference;
+    pub fn acquiredReference(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability) !v.Reference {
+        if (layout.alignment == 0 or !std.math.isPowerOfTwo(layout.alignment)) return error.ExecutionInvalidReference;
         _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
         const frame = try self.enter(1);
         try self.acquired_views.put(self.allocator, frame, .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian });
@@ -94,8 +94,26 @@ pub const Storage = struct {
     fn acquiredView(self: *Storage, reference: v.Reference) !?AcquiredView {
         _ = try self.frameValues(reference.frame);
         if (self.frames.items[@intFromEnum(reference.frame)].duration != .acquired) return null;
-        const view = self.acquired_views.get(reference.frame) orelse return error.ExecutionInvalidReference;
-        if (reference.root != 0 or reference.path.len != 0) return error.ExecutionInvalidReference;
+        var view = self.acquired_views.get(reference.frame) orelse return error.ExecutionInvalidReference;
+        if (reference.root != 0) return error.ExecutionInvalidReference;
+        for (reference.path) |projection| {
+            switch (projection) {
+                .field => |index| {
+                    if (view.layout.shape != .fields or index >= view.layout.shape.fields.len) return error.ExecutionInvalidReference;
+                    const field = view.layout.shape.fields[index];
+                    view.offset = try std.math.add(usize, view.offset, field.offset);
+                    view.layout = field.layout;
+                },
+                .element => |index| {
+                    if (view.layout.shape != .array) return error.ExecutionInvalidReference;
+                    const array = view.layout.shape.array;
+                    if (index >= array.length) return error.ExecutionIndexOutOfBounds;
+                    view.offset = try std.math.add(usize, view.offset, try std.math.mul(usize, index, array.stride));
+                    view.layout = array.element;
+                },
+                .variant => return error.ExecutionInvalidReference,
+            }
+        }
         _ = try self.acquisitions.range(self, view.handle, view.offset, view.layout.size, view.layout.alignment);
         return view;
     }
@@ -383,7 +401,7 @@ pub const Storage = struct {
             return .{ .integer = try @import("../5_codegen/bytecode/numeric_layout.zig").readByte(view.layout, try self.read(base), view.offset, view.endian) };
         }
         if (try self.acquiredView(reference)) |view|
-            return .{ .integer = try self.acquisitions.loadInteger(self, view.handle, view.offset, view.layout, view.endian) };
+            return @import("acquired_values.zig").read(self, view.handle, view.offset, view.layout, view.endian);
         _ = try self.frameValues(reference.frame);
         const frame = self.frames.items[@intFromEnum(reference.frame)];
         if (frame.duration == .static) {
@@ -446,6 +464,10 @@ pub const Storage = struct {
                 .variant => |variant| .{ .variant = @intFromEnum(variant) },
                 .element => |index| blk: {
                     const array_length = blk_length: {
+                        if (try self.acquiredView(reference)) |view| {
+                            if (view.layout.shape != .array) return error.ExecutionInvalidReference;
+                            break :blk_length view.layout.shape.array.length;
+                        }
                         if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |partial_| {
                             if (try partial_.arrayLength(reference.path)) |count| break :blk_length count;
                         }
@@ -633,8 +655,7 @@ pub const Storage = struct {
             return self.store(base, updated);
         }
         if (try self.acquiredView(reference)) |view| {
-            if (value != .integer) return error.ExecutionInvalidReference;
-            return self.acquisitions.storeInteger(self, view.handle, view.offset, view.layout, value.integer, view.endian);
+            return @import("acquired_values.zig").write(self, view.handle, view.offset, view.layout, value, view.endian);
         }
         const values = try self.slots(reference.frame);
         if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |record| {
@@ -842,7 +863,7 @@ test "acquired scalar frames use ordinary references and reject release or permi
     var storage = try Storage.init(arena.allocator(), 100);
     const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
     const region = try storage.acquisitions.acquire(&storage, 8, 8);
-    const reference = try storage.acquiredScalar(region, 4, &layout, .little, .read_write);
+    const reference = try storage.acquiredReference(region, 4, &layout, .little, .read_write);
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(reference));
     // Addressing vacant storage is valid; borrowing a readable value is not.
     _ = try storage.address(reference, .read_write);
@@ -865,6 +886,56 @@ test "acquired scalar frames use ordinary references and reject release or permi
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(byte_reference));
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.store(reference, .{ .integer = 7 }));
     const replacement = try storage.acquisitions.acquire(&storage, 8, 8);
-    _ = try storage.acquiredScalar(replacement, 4, &layout, .little, .read_write);
+    _ = try storage.acquiredReference(replacement, 4, &layout, .little, .read_write);
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(reference));
+}
+
+test "acquired aggregates preserve partial initialization and validate writes before commit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1000);
+    const byte: numeric.Layout = .{ .size = 1, .alignment = 1, .shape = .{ .integer = .{ .signed = false } } };
+    const word: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const layout: numeric.Layout = .{ .size = 8, .alignment = 4, .shape = .{ .fields = &.{ .{ .offset = 0, .layout = &byte }, .{ .offset = 4, .layout = &word } } } };
+    const region = try storage.acquisitions.acquire(&storage, 8, 4);
+    const root = try storage.acquiredReference(region, 0, &layout, .little, .read_write);
+    var first = root;
+    first.path = &.{.{ .field = 0 }};
+    var second = root;
+    second.path = &.{.{ .field = 1 }};
+    try storage.store(first, .{ .integer = 7 });
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(root));
+    try std.testing.expectError(error.ExecutionIntegerOutOfRange, storage.store(root, .{ .record = &.{ .{ .integer = 9 }, .{ .integer = std.math.maxInt(i32) + @as(i128, 1) } } }));
+    try std.testing.expectEqual(@as(i128, 7), (try storage.read(first)).integer);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(second));
+    try storage.store(second, .{ .integer = 42 });
+    const complete = try storage.read(root);
+    try std.testing.expectEqual(@as(i128, 42), complete.record[1].integer);
+    // Padding remains vacant and is never exposed by a typed aggregate read.
+    var padding: [1]u8 = undefined;
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.acquisitions.read(&storage, region, 1, &padding));
+    try storage.acquisitions.release(&storage, region);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(first));
+}
+
+test "acquired array indices resolve from layout before elements are initialized" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const element: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const layout: numeric.Layout = .{ .size = 8, .alignment = 4, .shape = .{ .array = .{ .element = &element, .length = 2, .stride = 4 } } };
+    const region = try storage.acquisitions.acquire(&storage, 8, 4);
+    const reference = try storage.acquiredReference(region, 0, &layout, .little, .read_write);
+    const frame = try storage.enter(2);
+    const slots_ = try storage.slots(frame);
+    try slots_.put(0, .{ .reference = reference });
+    try slots_.put(1, .{ .integer = 1 });
+    var path: [64]v.Projection = undefined;
+    const place: b.Place = .{ .root = 0, .path = &.{ .dereference, .{ .element = 1 } } };
+    const target = try storage.resolveCleanup(frame, place, &path);
+    try storage.store(target, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(i128, 42), (try storage.read(target)).integer);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(reference));
+    try slots_.put(1, .{ .integer = 2 });
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.resolveCleanup(frame, place, &path));
 }
