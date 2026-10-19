@@ -181,8 +181,9 @@ Callbacks receive integer copies, and results are range-checked before publicati
 Callback failures poison execution. `argi repl` registers stdout/stderr adapters;
 `argi run --vm` currently registers none. Selected core heap acquisition and
 release declarations use context-owned byte storage instead of native allocation;
-raw addresses remain virtual tokens. Typed allocator-backed collections still
-require checked establishment lowering. Compile-time evaluation continues to
+raw addresses remain virtual tokens. Checked core establishment can form integer references into acquired storage;
+reads require initialized bytes and release invalidates every view. Aggregate and
+resource-bearing elements still require additional establishment lowering. Compile-time evaluation continues to
 reject foreign calls.
 
 Raw pointers, C enums, floating point, complete trace reporting,

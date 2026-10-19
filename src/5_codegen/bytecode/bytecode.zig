@@ -101,6 +101,8 @@ pub const Instruction = struct {
         resolve_location: struct { dst: Slot, id: Slot },
         trace_location: struct { dst: Slot, location: *const TraceLocation },
         static_bytes: struct { dst: Slot, bytes: []const u8 },
+        acquired_scalar: struct { dst: Slot, address: Slot, layout: *const @import("numeric_layout.zig").Layout },
+        erase_reference: struct { dst: Slot, src: Slot },
         numeric_bytes: struct { dst: Slot, src: Slot, layout: *const @import("numeric_layout.zig").Layout },
         offset_reference: struct { dst: Slot, src: Slot, elements: Slot },
         virtualize: struct { dst: Slot, receiver: Slot, table: *const VirtualTable },
@@ -178,7 +180,7 @@ pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize
     const semantic = graph.semanticType(ty);
     if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void;
     if (semantic == .virtual) return true;
-    if (semantic == .pointer) return supportedType(graph, semantic.pointer.child, depth + 1);
+    if (semantic == .pointer) return types.isBuiltin(graph, semantic.pointer.child, .Any) or supportedType(graph, semantic.pointer.child, depth + 1);
     if (types.arrayElement(graph, ty)) |element| return supportedType(graph, element, depth + 1);
     if (types.variants(graph, ty)) |variants| {
         if (!regularChoice(graph, ty, depth)) return false;

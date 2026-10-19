@@ -240,7 +240,7 @@ pub const Storage = struct {
         if (depth > 64) return error.ExecutionValueDepthLimit;
         for (values) |value| switch (value) {
             .reference => |reference| {
-                _ = try self.read(reference);
+                try self.validateStorageAddress(reference);
                 if (self.frames.items[@intFromEnum(reference.frame)].duration == .call) return error.ExecutionTemporaryReference;
             },
             .virtual_ => |handle| try self.validateSessionValues(&.{.{ .reference = handle.receiver }}, depth + 1),
@@ -465,6 +465,11 @@ pub const Storage = struct {
     }
     fn validateStorageAddress(self: *Storage, reference: v.Reference) !void {
         try self.validateContext(reference);
+        _ = try self.frameValues(reference.frame);
+        if (reference.byte_view != null or self.frames.items[@intFromEnum(reference.frame)].duration == .static) {
+            _ = try self.read(reference);
+            return;
+        }
         if (try self.acquiredView(reference) != null) return;
         const slots_ = try self.slots(reference.frame);
         if (reference.root >= (try slots_.cells()).len) return error.ExecutionInvalidReference;
@@ -685,8 +690,8 @@ pub const Storage = struct {
     // completed frame is not. This is a runtime backstop, not a second safety checker.
     pub fn validateLive(self: *Storage, values: []const b.Value) anyerror!void {
         for (values) |value| switch (value) {
-            .reference => |reference| _ = try self.read(reference),
-            .virtual_ => |handle| _ = try self.read(handle.receiver),
+            .reference => |reference| try self.validateStorageAddress(reference),
+            .virtual_ => |handle| try self.validateStorageAddress(handle.receiver),
             .choice => |choice| if (choice.payload) |payload| try self.validateLive(payload[0..1]),
             .record => |fields| try self.validateLive(fields),
             .array => |elements| try self.validateLive(elements),

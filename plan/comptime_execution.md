@@ -15,9 +15,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Extend partial layouts to choices and connect owning array elements to
   indexed cleanup identities.
-- Connect context-owned byte backing and scalar acquired frames to checked
-  bytecode establishment operations and the remaining allocator adapters before
-  enabling the allocator prelude. Region receipts alone grant no typed access.
+- Extend checked acquired-scalar establishment to aggregate/resource layouts,
+  opaque anchors and the remaining allocator adapters before enabling the
+  allocator prelude. Region receipts alone grant no typed access.
 
 ## Execution coverage
 

@@ -2049,3 +2049,28 @@ test "execution context reset retires acquisition identities without refunding l
     try std.testing.expectError(error.ExecutionUninitializedStorage, context.readRegion(fresh, 0, &bytes));
     try context.releaseRegion(fresh);
 }
+
+test "bytecode acquired establishment requires a checked primitive and matching numeric layout" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .UIntNative }, .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } } });
+    const source: @import("../4_semantics/primitives/schema.zig").SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.fields.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source },
+        .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(2), .source = source },
+    });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 1, .len = 1 } });
+    var layout: @import("../5_codegen/bytecode/numeric_layout.zig").Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .acquired_scalar = .{ .dst = 1, .address = 0, .layout = &layout } } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+    };
+    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(2) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code }};
+    const program: b.Program = .{ .graph = &graph, .functions = &functions };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    graph.functions.items[0].safety_primitive = .establish_inherited_reference;
+    try b.verify(a, program);
+    layout.size = 8;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}

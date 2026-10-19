@@ -182,6 +182,7 @@ const DropState = enum(u32) { _ };
 const CleanupEntry = struct { place: b.Place, flag: b.Slot, end: u32 };
 const FunctionLower = struct {
     parent: *Lower,
+    safety_primitive: p.SafetyPrimitive = .none,
     slots: std.ArrayList(b.Type) = .empty,
     code: std.ArrayList(b.Instruction) = .empty,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, b.Slot) = .empty,
@@ -235,6 +236,7 @@ const FunctionLower = struct {
         defer self.cleanup.deinit(a);
         defer self.loops.deinit(a);
         const f = self.parent.graph.function(id);
+        self.safety_primitive = f.safety_primitive;
         const source = self.parent.graph.declaration(f.declaration).source;
         self.parent.source = source;
         if (f.body == null or f.flags.is_c_abi or (f.flags.is_once and self.parent.mode == .compile_time)) return self.parent.reject(source, "foreign or once function");
@@ -925,16 +927,24 @@ const FunctionLower = struct {
         if (f.safety_primitive == .reference_offset or f.safety_primitive == .mutable_reference_offset) {
             if (args.len != 2 or outputs.len != 1) return self.parent.reject(node.source, "reference offset signature");
             _ = try self.emit(node.source, .{ .offset_reference = .{ .dst = outputs[0], .src = args[0], .elements = args[1] } });
+        } else if (f.safety_primitive == .read_reference) {
+            if (args.len != 1 or outputs.len != 1) return error.InvalidBytecode;
+            _ = try self.emit(node.source, .{ .readonly = .{ .dst = outputs[0], .src = args[0] } });
         } else if (f.safety_primitive == .reinterpret_reference or f.safety_primitive == .mutable_reinterpret_reference) {
             if (args.len != 1 or outputs.len != 1) return error.InvalidBytecode;
             const from = self.parent.graph.semanticType(self.slots.items[args[0]]);
             const to = self.parent.graph.semanticType(self.slots.items[outputs[0]]);
-            if (from != .pointer or to != .pointer or !types.isBuiltin(self.parent.graph, to.pointer.child, .UInt8)) return self.parent.reject(node.source, "reinterpretation outside numeric byte views");
-            const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, from.pointer.child) catch |err| switch (err) {
-                error.UnsupportedNumericLayout => return self.parent.reject(node.source, "byte reinterpretation of nonnumeric storage"),
-                else => return err,
-            };
-            _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout } });
+            if (from != .pointer or to != .pointer) return error.InvalidBytecode;
+            if (types.isBuiltin(self.parent.graph, to.pointer.child, .Any)) {
+                _ = try self.emit(node.source, .{ .erase_reference = .{ .dst = outputs[0], .src = args[0] } });
+            } else {
+                if (!types.isBuiltin(self.parent.graph, to.pointer.child, .UInt8)) return self.parent.reject(node.source, "reinterpretation outside numeric byte views");
+                const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, from.pointer.child) catch |err| switch (err) {
+                    error.UnsupportedNumericLayout => return self.parent.reject(node.source, "byte reinterpretation of nonnumeric storage"),
+                    else => return err,
+                };
+                _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout } });
+            }
         } else if (self.parent.mode == .runtime and @import("memory_boundary.zig").classify(self.parent.graph, x.callee) != null) {
             _ = try self.emit(node.source, .{ .memory_call = .{ .outputs = outputs, .function = x.callee, .args = args } });
         } else if (f.flags.is_c_abi and self.parent.mode == .runtime) {
@@ -1109,6 +1119,17 @@ const FunctionLower = struct {
                 }
                 table.* = .{ .virtual_type = selected.virtual_type, .concrete_type = selected.concrete_type, .methods = methods };
                 _ = try self.emit(node.source, .{ .virtualize = .{ .dst = dst, .receiver = try self.expression(selected.value), .table = table } });
+            },
+            .explicit_cast => |cast| {
+                const target = self.parent.graph.semanticType(cast.target_type);
+                const source_slot = try self.expression(cast.value);
+                const from = self.slots.items[source_slot];
+                if (self.parent.mode != .runtime or target != .pointer or !types.isBuiltin(self.parent.graph, from, .UIntNative) or
+                    (self.safety_primitive != .establish_inherited_reference and self.safety_primitive != .establish_allocation_slot))
+                    return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
+                const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child) catch return self.parent.reject(node.source, "acquired reference to nonnumeric storage");
+                if (layout.shape != .integer) return self.parent.reject(node.source, "acquired reference to aggregate storage");
+                _ = try self.emit(node.source, .{ .acquired_scalar = .{ .dst = dst, .address = source_slot, .layout = layout } });
             },
             .address_of => |value| {
                 const target = try self.place(value);

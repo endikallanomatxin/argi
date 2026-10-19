@@ -14114,3 +14114,9 @@ test "feature_tests/execution/117_acquired_memory_boundary" {
     try runExpect("tests/feature_tests/execution/117_acquired_memory_boundary", 42);
     try vmExpect("tests/feature_tests/execution/117_acquired_memory_boundary", 42, null);
 }
+
+test "feature_tests/execution/118_acquired_scalar_reference" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/118_acquired_scalar_reference");
+    try runExpect("tests/feature_tests/execution/118_acquired_scalar_reference", 42);
+    try vmExpect("tests/feature_tests/execution/118_acquired_scalar_reference", 42, null);
+}

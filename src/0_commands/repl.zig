@@ -344,6 +344,11 @@ test "REPL checked core allocations use virtual regions and explicit release" {
     const raw = (try session.submitInput("address")).?.value.integer;
     try std.testing.expect(raw != 0);
     const range = try session.runtime.context.storage.acquisitions.resolveAddress(&session.runtime.context.storage, @intCast(raw), 16, 8);
+    session.submitStatements("anchor :: UInt8 = 0\nraw ::= raw_pointer#(.t: Int32)(.address = address).raw\nreference ::= trusted_establish_inherited_reference#(.t: Int32)(.raw = raw, .root = erase_reference#(.t: UInt8)(.base = &anchor).reference).reference\nreference&= 42") catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("reference&")).?.value.integer);
     try session.submitStatements("aligned_free(.address = address)");
     try std.testing.expectError(error.ExecutionReleasedAcquisition, session.runtime.context.storage.acquisitions.range(&session.runtime.context.storage, range.handle, 0, 0, 1));
     const revision = session.compiler.revision;

@@ -434,6 +434,18 @@ pub const Vm = struct {
                     }
                     try frames.append(self.allocator, try self.frame(&virtual.program, callee, values, x.outputs));
                 },
+                .acquired_scalar => |x| {
+                    const address = std.math.cast(usize, (try slots.get(x.address)).integer) orelse return error.ExecutionInvalidAcquisition;
+                    const storage = &self.context().storage;
+                    const range = try storage.acquisitions.resolveAddress(storage, address, x.layout.size, x.layout.alignment);
+                    const permission = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
+                    const reference = try storage.acquiredScalar(range.handle, range.offset, x.layout, unit.graph.target.stdTarget().cpu.arch.endian(), permission);
+                    try slots.put(x.dst, .{ .reference = reference });
+                },
+                .erase_reference => |x| {
+                    const original = (try slots.get(x.src)).reference;
+                    try slots.put(x.dst, try self.context().storage.address(original, .read_only));
+                },
                 .memory_call => |x| {
                     const operation = @import("../5_codegen/bytecode/memory_boundary.zig").classify(unit.graph, x.function) orelse return error.InvalidBytecode;
                     const storage = &self.context().storage;
