@@ -3,25 +3,46 @@ const c = @import("llvm.zig").c;
 const g = @import("../../4_semantics/global/graph.zig");
 const references = @import("../reference_layout.zig");
 
-// Each reference carries access to two independent parts of its referent's
-// storage: its cleanup flags, and the evidence of reference-valued leaves
-// stored inside it. Null describes absent state, never invented permission.
+// Reference evidence separates cleanup state from reference-valued leaves.
+// Cleanup includes the owner and logical projection so field writes can update
+// ancestor initialization without recovering identity from value addresses.
+// Null describes absent state, never invented permission.
 // This companion is private metadata; the language reference remains a pointer.
 pub fn storageViewType() c.LLVMTypeRef {
     const pointer = c.LLVMPointerType(c.LLVMInt8Type(), 0);
-    var fields = [_]c.LLVMTypeRef{ pointer, pointer };
+    var fields = [_]c.LLVMTypeRef{ pointer, pointer, pointer, pointer, c.LLVMInt64Type() };
     return c.LLVMStructType(&fields, fields.len, 0);
 }
 
 /// Construct the private view without turning missing state into permission.
-pub fn storageView(builder: c.LLVMBuilderRef, cleanup: ?c.LLVMValueRef, references_: ?c.LLVMValueRef) !c.LLVMValueRef {
+pub const Storage = struct {
+    cleanup: ?c.LLVMValueRef = null,
+    references: ?c.LLVMValueRef = null,
+    owner: ?@import("cleanup_state.zig").RuntimeOwner = null,
+};
+
+pub fn storageView(builder: c.LLVMBuilderRef, storage: Storage) !c.LLVMValueRef {
     var result = c.LLVMConstNull(storageViewType());
-    for ([_]?c.LLVMValueRef{ cleanup, references_ }, 0..) |pointer, index| if (pointer) |value| {
+    for ([_]?c.LLVMValueRef{ storage.cleanup, storage.references }, 0..) |pointer, index| if (pointer) |value| {
         if (value == null) continue;
         if (c.LLVMGetTypeKind(c.LLVMTypeOf(value)) != c.LLVMPointerTypeKind) return error.InvalidReferenceEvidenceStorage;
         result = c.LLVMBuildInsertValue(builder, result, value, @intCast(index), "reference.storage.view");
     };
+    if (storage.owner) |owner| {
+        result = c.LLVMBuildInsertValue(builder, result, owner.flags, 2, "reference.owner.flags");
+        result = c.LLVMBuildInsertValue(builder, result, owner.refresh, 3, "reference.owner.refresh");
+        result = c.LLVMBuildInsertValue(builder, result, owner.offset, 4, "reference.owner.offset");
+    }
     return result;
+}
+
+pub fn runtimeOwner(builder: c.LLVMBuilderRef, view: c.LLVMValueRef) !@import("cleanup_state.zig").RuntimeOwner {
+    if (c.LLVMTypeOf(view) != storageViewType()) return error.InvalidReferenceEvidenceStorage;
+    return .{
+        .flags = c.LLVMBuildExtractValue(builder, view, 2, "reference.owner.flags"),
+        .refresh = c.LLVMBuildExtractValue(builder, view, 3, "reference.owner.refresh"),
+        .offset = c.LLVMBuildExtractValue(builder, view, 4, "reference.owner.offset"),
+    };
 }
 
 pub fn cleanupPointer(builder: c.LLVMBuilderRef, view: c.LLVMValueRef) !c.LLVMValueRef {
@@ -122,7 +143,7 @@ test "native reference evidence projects distinct sibling ranges through the pri
         const input = (try projectStorage(builder, &layout, a, &graph, @enumFromInt(2), input_storage, projection)).?;
         const output = (try projectStorage(builder, &layout, a, &graph, @enumFromInt(2), output_storage, projection)).?;
         const value = loadOptional(builder, input);
-        const forwarded = try storageView(builder, try cleanupPointer(builder, value), try referencesPointer(builder, value));
+        const forwarded = try storageView(builder, .{ .cleanup = try cleanupPointer(builder, value), .references = try referencesPointer(builder, value), .owner = try runtimeOwner(builder, value) });
         storeOptional(builder, output, forwarded);
     }
     const output = c.LLVMBuildLoad2(builder, sidecar, output_storage, "returned.evidence");

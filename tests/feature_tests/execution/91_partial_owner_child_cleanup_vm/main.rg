@@ -31,6 +31,14 @@ build_partial := (.counter: $&Counter, .early: Bool) -> () {
     parent.missing = 1
 }
 
+replace_partial := (.counter: $&Counter) -> () {
+    parent :: Parent
+    parent.child = Child(.counter = counter)
+    child := $&parent.child
+    child&= Child(.counter = counter)
+    parent.missing = 1
+}
+
 build_conditional := (.counter: $&Counter, .complete: Bool) -> () {
     parent :: Parent
     parent.child = Child(.counter = counter)
@@ -67,6 +75,8 @@ probe := () -> (.result: Int32) {
     build_conditional_child(.counter = $&counter, .present = false)
     build_conditional_child(.counter = $&counter, .present = true)
     if counter.count != 38 { abort }
+    replace_partial(.counter = $&counter)
+    if counter.count != 50 { abort }
     result = 42
 }
 

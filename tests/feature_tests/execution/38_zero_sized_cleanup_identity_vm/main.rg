@@ -23,7 +23,8 @@ main() -> (.status_code: Int32 = 0) := {
     if counter.count != 2 { abort }
     {
         pair :: Pair = (.first = (), .second = ())
-        pair.first = Empty()
+        first := $&pair.first
+        first&= Empty()
         if counter.count != 3 { abort }
     }
     if counter.count != 5 { abort }

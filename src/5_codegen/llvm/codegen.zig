@@ -40,7 +40,8 @@ const TypedValue = struct {
     reference_view: ?c.LLVMValueRef = null,
 };
 
-const DropState = @import("cleanup_state.zig").View;
+const cleanup_state = @import("cleanup_state.zig");
+const DropState = cleanup_state.View;
 
 const BindingStorage = struct {
     ref: llvm.c.LLVMValueRef,
@@ -145,6 +146,7 @@ pub const CodeGenerator = struct {
     virtual_table_counter: u32 = 0,
     trace_locations: std.ArrayList(primitives.SourceRef) = .empty,
     cleanup_counts: cleanup_layout.Counts = .{},
+    cleanup_refresh: cleanup_state.RefreshFunctions = .{},
     cleanup_bindings: []const bool,
     default_location_source: ?primitives.SourceRef = null,
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
@@ -194,6 +196,7 @@ pub const CodeGenerator = struct {
         self.loop_stack.deinit();
         self.trace_locations.deinit(self.allocator);
         self.cleanup_counts.deinit(self.allocator);
+        self.cleanup_refresh.deinit(self.allocator);
         self.allocator.free(self.cleanup_bindings);
     }
 
@@ -1720,7 +1723,11 @@ pub const CodeGenerator = struct {
             else => null,
         };
         if (cleanup != null or nested != null)
-            pointer.reference_view = try reference_evidence.storageView(self.builder, if (cleanup) |drop| drop.flag_ref else null, nested);
+            pointer.reference_view = try reference_evidence.storageView(self.builder, .{
+                .cleanup = if (cleanup) |drop| drop.flag_ref else null,
+                .references = nested,
+                .owner = if (cleanup) |drop| try self.dropRuntimeOwner(drop) else null,
+            });
         return pointer;
     }
 
@@ -1795,14 +1802,35 @@ pub const CodeGenerator = struct {
         return (try self.visitNode(value)) orelse CodegenError.ValueNotFound;
     }
 
-    // A lexical cleanup proof still supplies the owner/subrange shape. Use the
-    // reference's captured flag pointer when present, retaining the proof as
-    // the fallback for paths whose private evidence is not yet transported.
+    fn dropRuntimeOwner(self: *CodeGenerator, state: DropState) !cleanup_state.RuntimeOwner {
+        if (state.runtime_owner) |owner| return owner;
+        const root = state.owner_type orelse state.ty;
+        return .{
+            .flags = state.owner_flags orelse state.flag_ref,
+            .refresh = if (self.cleanup_counts.description(root).count > 1)
+                try self.cleanup_refresh.get(self.allocator, &self.cleanup_counts, self.module, root)
+            else
+                c.LLVMConstNull(c.LLVMPointerType(c.LLVMInt8Type(), 0)),
+            .offset = c.LLVMConstInt(c.LLVMInt64Type(), state.offset, 0),
+        };
+    }
+
+    // A lexical proof supplies the fallback until all private ABI boundaries
+    // transport evidence. When supplied, borrow the complete runtime owner;
+    // replacing only its flag pointer would leave stale ancestor identities.
     fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId) !?DropState {
         var state = self.dropStateForNode(target) orelse return null;
         if (pointer.reference_view) |view| {
             const flags = try reference_evidence.cleanupPointer(self.builder, view);
-            state.flag_ref = c.LLVMBuildSelect(self.builder, c.LLVMBuildIsNull(self.builder, flags, "reference.cleanup.absent"), state.flag_ref, flags, "reference.cleanup.flags");
+            const absent = c.LLVMBuildIsNull(self.builder, flags, "reference.cleanup.absent");
+            const fallback = try self.dropRuntimeOwner(state);
+            const owner = try reference_evidence.runtimeOwner(self.builder, view);
+            state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, state.ty, c.LLVMBuildSelect(self.builder, absent, state.flag_ref, flags, "reference.cleanup.flags"));
+            state.runtime_owner = .{
+                .flags = c.LLVMBuildSelect(self.builder, absent, fallback.flags, owner.flags, "reference.owner.flags"),
+                .refresh = c.LLVMBuildSelect(self.builder, absent, fallback.refresh, owner.refresh, "reference.owner.refresh"),
+                .offset = c.LLVMBuildSelect(self.builder, absent, fallback.offset, owner.offset, "reference.owner.offset"),
+            };
         }
         return state;
     }

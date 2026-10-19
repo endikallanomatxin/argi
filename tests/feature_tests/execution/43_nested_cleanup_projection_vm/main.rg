@@ -25,7 +25,8 @@ main() -> (.status_code: Int32 = 0) := {
         )
         owner.choice = ..none
         if counter.count != 2 { abort }
-        owner.after = Leaf(.id = 5)
+        after := $&owner.after
+        after&= Leaf(.id = 5)
         if counter.count != 3 { abort }
         taken ::= ~owner.before
         owner.choice = ..some(.pair = (.first = Leaf(.id = 6), .second = Leaf(.id = 7)))
