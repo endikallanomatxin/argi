@@ -8,12 +8,17 @@ implement Deinit#(Resource) (
     }
 )
 
-main := () -> (.status_code: Int32 = 0) {
+probe := () -> (.result: Int32) {
     counter :: Counter = (.count = 0)
     {
         resource :: Resource
         resource.counter = $&counter
     }
     if counter.count != 1 { abort }
-    status_code = 42
+    result = 42
+}
+
+main := () -> (.status_code: Int32) {
+    if #run probe() != 42 { abort }
+    status_code = probe()
 }

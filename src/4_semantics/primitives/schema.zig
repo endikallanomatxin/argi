@@ -430,6 +430,8 @@ pub fn AutoDeinitField(comptime Ids: type) type {
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
+        /// With deinit_fn, these are fallback operations for incomplete storage.
+        /// Whole-value destruction and fallback fields are mutually exclusive.
         fields: Range(Ids.AutoDeinitFieldId) = .{ .start = 0, .len = 0 },
     };
 }
@@ -442,6 +444,8 @@ pub fn AutoDeinit(comptime Ids: type) type {
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
+        /// Structural cleanup, or incomplete-storage fallback when deinit_fn
+        /// is present. Never execute both for the same value.
         fields: Range(Ids.AutoDeinitFieldId) = .{ .start = 0, .len = 0 },
     };
 }

@@ -4978,43 +4978,123 @@ pub const SafetyChecker = struct {
     ) !void {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
         const storage = if (cleanup.target) |target| try self.resolvePlace(target, state) orelse return else facts.Place{ .root = cleanup.binding };
-        switch (self.initializednessAtPlace(state, storage)) {
-            .initialized => if (cleanup.deinit_fn != null) {
-                try self.evaluateResolvedAutoDeinit(function, cleanup, storage, state);
-            } else if (cleanup.fields.len == 0) {
-                if (self.getPlace(state, storage)) |owned_value| {
-                    const source = self.graph.bindings.items[@intFromEnum(cleanup.binding)].source;
-                    var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-                    defer roots.deinit();
-                    try collectOwnedRoots(owned_value.value, &roots);
-                    if (!try self.endRoots(source, state, roots.items)) return;
-                }
-                try self.setPlace(state, storage, .deinitialized, .{});
-            } else {
-                const diagnostic_count = self.diagnostics.list.items.len;
-                try self.evaluateStructuralAutoDeinit(function, cleanup.fields, storage, state);
-                if (self.diagnostics.list.items.len == diagnostic_count)
-                    try self.setPlace(state, storage, .deinitialized, .{});
-            },
-            .maybe_initialized, .moved, .deinitialized => {},
+        try self.evaluateCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, storage, state);
+    }
+
+    const CleanupReadiness = enum { unavailable, possible, complete };
+
+    // Completeness can come from one whole write or from authoritative field
+    // writes. Empty vacant records do not become initialized vacuously.
+    fn cleanupReadiness(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) anyerror!CleanupReadiness {
+        const initializedness = self.initializednessAtPlace(state, storage);
+        if (initializedness == .initialized) return .complete;
+        const ty = self.domainStorageType(storage) orelse return .unavailable;
+        const fields = types.fields(self.graph, ty) orelse return if (initializedness == .maybe_initialized) .possible else .unavailable;
+        if (fields.len == 0) return if (initializedness == .maybe_initialized) .possible else .unavailable;
+        var result: CleanupReadiness = .complete;
+        for (0..fields.len) |index| {
+            switch (try self.cleanupReadiness(state, try self.project(storage, .{ .field = @intCast(index) }))) {
+                .unavailable => return if (initializedness == .maybe_initialized) .possible else .unavailable,
+                .possible => result = .possible,
+                .complete => {},
+            }
+        }
+        return result;
+    }
+
+    // Keep child facts when refining the whole-value branch. This is a branch
+    // assumption, never a storage write or permission to revive a generation.
+    fn refineCleanupComplete(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !void {
+        const original = if (self.getPlace(state, storage)) |entry| entry.value else facts.ValueFacts{};
+        const value = try self.reconstructPlaceValue(state, storage, original);
+        const conditional_consumption = self.initializednessAtPlace(state, storage) == .maybe_initialized;
+        // A selected active cleanup flag is the preserving side of a tracked
+        // conditional consumption. Use the same current-generation guard as
+        // result refinement; unrelated and historical roots stay unavailable.
+        for (state.storage_generations.items) |generation| {
+            if (!conditional_consumption) break;
+            if (!generation.storage.eql(storage) or generation.needs_current_generation) continue;
+            const root = state.tracker.roots.items[@intFromEnum(generation.generation)];
+            if (root.state != .maybe_alive or root.outcome_guard == 0) break;
+            var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer owned.deinit();
+            try collectOwnedRoots(value, &owned);
+            var outcomes = std.array_list.Managed(facts.GenerationOutcome).init(self.allocator);
+            defer outcomes.deinit();
+            try outcomes.append(.{
+                .storage = storage,
+                .generation = generation.generation,
+                .guard = root.outcome_guard,
+                .invalidates = false,
+                .resource_state = .initialized,
+                .owned_roots = owned.items,
+            });
+            for (state.storage_generations.items) |child| {
+                if (child.storage.eql(storage) or !storage.isPrefixOf(child.storage) or child.needs_current_generation) continue;
+                try outcomes.append(.{ .storage = child.storage, .generation = child.generation, .guard = root.outcome_guard, .invalidates = false });
+            }
+            try self.activate_conditional_resources(state, .{ .generation_outcomes = outcomes.items });
+            break;
+        }
+        try self.activate_conditional_owner_roots(state, value);
+        try self.activate_conditional_capabilities(state, value);
+        for (state.places.items) |*entry| {
+            if (storage.isPrefixOf(entry.storage) and entry.initializedness == .maybe_initialized)
+                entry.initializedness = .initialized;
+        }
+        if (self.getPlace(state, storage)) |entry| {
+            entry.initializedness = .initialized;
+            entry.value = value;
+        } else try state.places.append(.{ .storage = storage, .initializedness = .initialized, .value = value });
+        for (state.storage_generations.items) |*generation| {
+            if (!generation.storage.eql(storage)) continue;
+            const root = state.tracker.roots.items[@intFromEnum(generation.generation)];
+            // Construction on only one incoming path can leave no common
+            // value generation. The cleanup branch borrows the current value;
+            // establish its identity on demand instead of reviving an old one.
+            if (root.state == .maybe_alive or root.state == .dead)
+                generation.needs_current_generation = true;
         }
     }
 
-    fn evaluateResolvedAutoDeinit(
-        self: *SafetyChecker,
-        function: graph_mod.GlobalFunctionId,
-        cleanup: graph_mod.AutoDeinit,
-        storage: facts.Place,
-        state: *FunctionState,
-    ) !void {
-        return self.evaluateResolvedDeinit(
-            function,
-            cleanup.deinit_fn orelse return,
-            cleanup.input orelse return,
-            cleanup.self_field_index,
-            storage,
-            state,
-        );
+    fn evaluateCleanupOperation(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input: ?graph_mod.GlobalNodeId, self_index: u32, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), storage: facts.Place, state: *FunctionState) anyerror!void {
+        const ready = try self.cleanupReadiness(state, storage);
+        if (callee) |id| {
+            if (ready == .complete) {
+                if (self.initializednessAtPlace(state, storage) != .initialized)
+                    try self.refineCleanupComplete(state, storage);
+                return self.evaluateResolvedDeinit(function, id, input orelse return, self_index, storage, state);
+            }
+            if (ready == .possible) {
+                var whole = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                defer whole.deinit();
+                var partial = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                defer partial.deinit();
+                try self.refineCleanupComplete(&whole, storage);
+                try self.evaluateResolvedDeinit(function, id, input orelse return, self_index, storage, &whole);
+                try self.evaluateStructuralAutoDeinit(function, fields, storage, &partial);
+                return self.joinState(state, &whole, &partial);
+            }
+        }
+        // A choice needs an initialized discriminant before any payload can
+        // be selected. Incomplete-record fallback must not inspect a moved
+        // choice and reactivate the resources already transferred out of it.
+        if (ready == .unavailable) {
+            const ty = self.domainStorageType(storage) orelse return;
+            if (types.variants(self.graph, ty) != null) return;
+        }
+        const diagnostic_count = self.diagnostics.list.items.len;
+        try self.evaluateStructuralAutoDeinit(function, fields, storage, state);
+        if (ready == .complete and self.diagnostics.list.items.len == diagnostic_count) {
+            if (fields.len == 0) if (self.getPlace(state, storage)) |owned_value| {
+                const source = self.graph.binding(storage.root).source;
+                var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer roots.deinit();
+                try collectOwnedRoots(owned_value.value, &roots);
+                if (!try self.endRoots(source, state, roots.items)) return;
+            };
+            try self.setPlace(state, storage, .deinitialized, .{});
+        }
     }
 
     fn evaluateStructuralAutoDeinit(
@@ -5065,20 +5145,7 @@ pub const SafetyChecker = struct {
     }
 
     fn evaluateAutoDeinitField(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, field: graph_mod.AutoDeinitField, field_storage: facts.Place, state: *FunctionState) anyerror!void {
-        if (self.initializednessAtPlace(state, field_storage) != .initialized) return;
-        if (field.deinit_fn) |deinit_fn| {
-            try self.evaluateResolvedDeinit(
-                function,
-                deinit_fn,
-                field.input orelse return,
-                field.self_field_index,
-                field_storage,
-                state,
-            );
-        } else {
-            try self.evaluateStructuralAutoDeinit(function, field.fields, field_storage, state);
-            try self.setPlace(state, field_storage, .deinitialized, .{});
-        }
+        try self.evaluateCleanupOperation(function, field.deinit_fn, field.input, field.self_field_index, field.fields, field_storage, state);
     }
 
     fn evaluateResolvedDeinit(

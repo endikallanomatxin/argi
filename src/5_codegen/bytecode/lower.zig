@@ -412,8 +412,11 @@ const FunctionLower = struct {
             return .{ .place = try self.lower.project(target.place, projection), .ty = selected.ty, .drop = self.lower.dropChild(target.drop, projection) orelse return error.InvalidBytecode };
         }
         pub fn finish(self: @This(), target: Target, branch: u32) !void {
-            try self.lower.setDrop(target.drop, false);
+            try self.clear(target);
             self.lower.code.items[branch].op.branch_cleanup.no = self.lower.position();
+        }
+        pub fn clear(self: @This(), target: Target) !void {
+            try self.lower.setDrop(target.drop, false);
         }
     };
     fn newSlot(self: *FunctionLower, ty: b.Type) !b.Slot {
@@ -463,9 +466,7 @@ const FunctionLower = struct {
                     if (binding_.initialization) |value| {
                         try self.copyTo(node.source, dst, try self.expression(value));
                         if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
-                    } else if (types.fields(self.parent.graph, binding_.ty) != null and !self.parent.cleanup_types[@intFromEnum(binding_.ty)]) {
-                        // Owners keep the existing whole-value initialization
-                        // path until field-wise cleanup activation is checked.
+                    } else if (types.fields(self.parent.graph, binding_.ty) != null) {
                         const layout = try @import("storage_layout.zig").compile(self.parent.allocator, self.parent.graph, binding_.ty);
                         _ = try self.emit(node.source, .{ .reserve_record = .{ .dst = dst, .layout = layout, .reset = true } });
                     }

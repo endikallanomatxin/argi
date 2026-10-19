@@ -1771,11 +1771,7 @@ pub const Infer = struct {
             .auto_deinit_binding => |id| {
                 if (self.cleanup) |active| if (!active.roots.contains(id)) return;
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
-                if (cleanup.input) |input| {
-                    try self.infer_capability_node(function, input, flow, exits);
-                    if (cleanup.deinit_fn) |callee| if (self.structArguments(input)) |arguments| try self.infer_capability_call(function, callee, arguments, flow);
-                }
-                try self.infer_cleanup_capabilities(function, cleanup.fields, flow, exits);
+                try self.infer_cleanup_operation_capabilities(function, cleanup.deinit_fn, cleanup.input, cleanup.fields, flow, exits);
             },
             .return_statement => |ret| {
                 if (ret.expression) |value| try self.infer_capability_node(function, value, flow, exits);
@@ -1887,11 +1883,20 @@ pub const Infer = struct {
     }
 
     fn infer_cleanup_capability_field(self: *Infer, function: graph_mod.GlobalFunctionId, field: graph_mod.AutoDeinitField, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
-        if (field.input) |input| {
-            try self.infer_capability_node(function, input, flow, exits);
-            if (field.deinit_fn) |callee| if (self.structArguments(input)) |arguments| try self.infer_capability_call(function, callee, arguments, flow);
+        try self.infer_cleanup_operation_capabilities(function, field.deinit_fn, field.input, field.fields, flow, exits);
+    }
+
+    fn infer_cleanup_operation_capabilities(self: *Infer, function: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input: ?graph_mod.GlobalNodeId, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
+        const alternative = callee != null and fields.len != 0;
+        var whole = if (alternative) try flow.clone(self.allocator) else CapabilityFlow.init(self.allocator);
+        defer whole.deinit();
+        const selected = if (alternative) &whole else flow;
+        if (input) |node| {
+            try self.infer_capability_node(function, node, selected, exits);
+            if (callee) |id| if (self.structArguments(node)) |arguments| try self.infer_capability_call(function, id, arguments, selected);
         }
-        try self.infer_cleanup_capabilities(function, field.fields, flow, exits);
+        try self.infer_cleanup_capabilities(function, fields, flow, exits);
+        if (alternative) try self.join_capability_fallthrough(flow, &whole, flow);
     }
 
     const SymbolicInputOverride = struct {
@@ -2535,18 +2540,31 @@ pub const Infer = struct {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = if (cleanup.target) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.binding);
-        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
+        try self.applyCleanupInputPostStates(function_id, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, binding_effect, states);
+    }
+
+    fn applyCleanupInputPostStates(self: *Infer, function_id: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input_node: ?graph_mod.GlobalNodeId, self_index: u32, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), receiver: ?facts.ValueEffect, states: *std.array_list.Managed(facts.PlacePostState)) anyerror!void {
+        // Whole destruction clears all child flags. Fallback fields describe
+        // the other branch, so definite effects must survive a join, not a
+        // sequential application of both alternatives.
+        const alternative = callee != null and fields.len != 0;
+        var whole = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer whole.deinit();
+        if (alternative) try whole.appendSlice(states.items);
+        const selected = if (alternative) &whole else states;
+        if (callee) |deinit_fn| if (input_node) |input| {
             if (self.engine.summaryFor(deinit_fn)) |summary|
                 try self.applyInputPostStatesFromSummary(
                     function_id,
                     summary,
                     input,
-                    states,
-                    if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
+                    selected,
+                    if (receiver) |effect| .{ .input_index = self_index, .effect = effect } else null,
                 );
         };
-        if (binding_effect) |effect|
-            try self.applyAutoDeinitFieldInputPostStates(function_id, cleanup.fields, states, effect);
+        if (receiver) |effect|
+            try self.applyAutoDeinitFieldInputPostStates(function_id, fields, states, effect);
+        if (alternative) try self.joinInputPostStates(states, &whole, states);
     }
 
     fn applyAutoDeinitFieldInputPostStates(
@@ -2565,17 +2583,7 @@ pub const Infer = struct {
                 .{ .variant = field.field_index }
             else
                 .{ .field = field.field_index });
-            if (field.deinit_fn) |deinit_fn| if (field.input) |input| {
-                if (self.engine.summaryFor(deinit_fn)) |summary|
-                    try self.applyInputPostStatesFromSummary(
-                        function_id,
-                        summary,
-                        input,
-                        states,
-                        .{ .input_index = field.self_field_index, .effect = field_effect },
-                    );
-            };
-            try self.applyAutoDeinitFieldInputPostStates(function_id, field.fields, states, field_effect);
+            try self.applyCleanupInputPostStates(function_id, field.deinit_fn, field.input, field.self_field_index, field.fields, field_effect, states);
         }
     }
 
@@ -3078,19 +3086,28 @@ pub const Infer = struct {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = if (cleanup.target) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.binding);
-        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
+        try self.applyCleanupOpaqueEffects(function_id, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, binding_effect, effects, state);
+    }
+
+    fn applyCleanupOpaqueEffects(self: *Infer, function_id: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input_node: ?graph_mod.GlobalNodeId, self_index: u32, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), receiver: ?facts.ValueEffect, effects: *std.array_list.Managed(facts.OpaqueStorageEffect), state: *OpaqueEmptyState) anyerror!void {
+        const alternative = callee != null and fields.len != 0;
+        var whole = if (alternative) try state.clone(self.allocator) else OpaqueEmptyState.init(self.allocator);
+        defer whole.deinit();
+        const selected = if (alternative) &whole else state;
+        if (callee) |deinit_fn| if (input_node) |input| {
             if (self.engine.summaryFor(deinit_fn)) |summary|
                 try self.applyOpaqueEmptySummary(
                     function_id,
                     summary,
                     input,
                     effects,
-                    state,
-                    if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
+                    selected,
+                    if (receiver) |effect| .{ .input_index = self_index, .effect = effect } else null,
                 );
         };
-        if (binding_effect) |effect|
-            try self.applyAutoDeinitFieldOpaqueEffects(function_id, cleanup.fields, effects, state, effect);
+        if (receiver) |effect|
+            try self.applyAutoDeinitFieldOpaqueEffects(function_id, fields, effects, state, effect);
+        if (alternative) try self.joinOpaqueEmptyFallthrough(state, &whole, state);
     }
 
     fn applyAutoDeinitFieldOpaqueEffects(
@@ -3110,18 +3127,7 @@ pub const Infer = struct {
                 .{ .variant = field.field_index }
             else
                 .{ .field = field.field_index });
-            if (field.deinit_fn) |deinit_fn| if (field.input) |input| {
-                if (self.engine.summaryFor(deinit_fn)) |summary|
-                    try self.applyOpaqueEmptySummary(
-                        function_id,
-                        summary,
-                        input,
-                        effects,
-                        state,
-                        .{ .input_index = field.self_field_index, .effect = field_effect },
-                    );
-            };
-            try self.applyAutoDeinitFieldOpaqueEffects(function_id, field.fields, effects, state, field_effect);
+            try self.applyCleanupOpaqueEffects(function_id, field.deinit_fn, field.input, field.self_field_index, field.fields, field_effect, effects, state);
         }
     }
 

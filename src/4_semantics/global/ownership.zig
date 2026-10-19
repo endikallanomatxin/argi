@@ -937,15 +937,24 @@ pub const Resolver = struct {
         // References never own their pointee.
         if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
+            const record = self.graph.binding(binding);
+            // Vacant records can acquire fields before a whole value exists.
+            // Retain their selected structural alternative, but do not expand
+            // it for ordinary complete initializers or deferred temporaries.
             return .{
                 .binding = binding,
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
+                .fields = if (record.initialization == null and !record.deferred_initialization and global_types.fields(self.graph, ty) != null)
+                    try self.buildAutoChildren(target, ty, context, module_index, true)
+                else
+                    .{ .start = 0, .len = 0 },
             };
         }
 
-        const children = try self.buildAutoChildren(target, ty, context, module_index);
+        const record = self.graph.binding(binding);
+        const children = try self.buildAutoChildren(target, ty, context, module_index, record.initialization == null and !record.deferred_initialization);
         if (children.len == 0) return null;
         return .{ .binding = binding, .deinit_fn = null, .fields = children };
     }
@@ -957,6 +966,7 @@ pub const Resolver = struct {
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
+        partial: bool,
     ) anyerror!?global_sg.AutoDeinitField {
         if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
@@ -965,9 +975,13 @@ pub const Resolver = struct {
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
+                .fields = if (partial and global_types.fields(self.graph, ty) != null)
+                    try self.buildAutoChildren(target, ty, context, module_index, true)
+                else
+                    .{ .start = 0, .len = 0 },
             };
         }
-        const children = try self.buildAutoChildren(target, ty, context, module_index);
+        const children = try self.buildAutoChildren(target, ty, context, module_index, partial);
         if (children.len == 0) return null;
         return .{ .field_index = field_index, .deinit_fn = null, .fields = children };
     }
@@ -978,6 +992,7 @@ pub const Resolver = struct {
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
+        partial: bool,
     ) anyerror!primitives.Range(global_sg.GlobalAutoDeinitFieldId) {
         var children: std.ArrayList(global_sg.AutoDeinitField) = .empty;
         defer children.deinit(self.allocator);
@@ -994,7 +1009,7 @@ pub const Resolver = struct {
                     .variant = id,
                     .payload_type = payload,
                 } });
-                if (try self.buildAutoField(@intCast(index), projected, payload, context, module_index)) |resolved| {
+                if (try self.buildAutoField(@intCast(index), projected, payload, context, module_index, false)) |resolved| {
                     var child = resolved;
                     child.is_variant = true;
                     try children.append(self.allocator, child);
@@ -1008,7 +1023,7 @@ pub const Resolver = struct {
                     .field_name = field.name,
                     .field_index = @intCast(index),
                 } });
-                if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |child|
+                if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index, partial)) |child|
                     try children.append(self.allocator, child);
             }
         }

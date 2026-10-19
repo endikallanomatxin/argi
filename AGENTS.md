@@ -392,6 +392,10 @@ feature first.
   and earlier record copies retain their old generations.
 
 - Structural automatic cleanup follows record fields and active choice payloads.
+  Vacant local records retain selected field cleanup beneath nominal Deinit as
+  an incomplete-value fallback. Whole destruction clears all child flags before
+  that walk; summaries join the two alternatives instead of sequencing them.
+  Cleanup branch proofs retain current generation guards and never revive old aliases.
   AutoDeinitField keeps variant projections distinct from record fields; preserve
   that distinction in summary substitution, checker state branches, relocation,
   and codegen. Moving a match payload disables the source choice's cleanup.

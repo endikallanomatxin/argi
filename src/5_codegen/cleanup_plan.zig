@@ -130,20 +130,35 @@ pub const Operation = struct {
 };
 
 pub fn emit(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operation, target: anytype) anyerror!void {
-    const active = try backend.begin(target);
     if (plan.deinit_fn) |callee| {
+        const active = try backend.begin(target);
         try backend.call(target, callee, plan.input, plan.self_field_index);
+        // Successful whole-value destruction clears its complete subtree.
+        // The same field walk therefore runs only for incomplete values.
+        try backend.finish(target, active);
+        try emitFields(backend, graph, plan, target);
+    } else if (types.fields(graph, target.ty) != null) {
+        // An incomplete record can still contain live owning fields. Its root
+        // flag must not suppress their individually guarded cleanup.
+        try emitFields(backend, graph, plan, target);
+        try backend.clear(target);
     } else {
-        for (graph.auto_deinit_fields.items[plan.fields.start..][0..plan.fields.len]) |field| {
-            const selected = try child(graph, target.ty, field);
-            if (selected.variant != null) {
-                const variant = try backend.beginVariant(target, field, selected);
-                try emit(backend, graph, Operation.fromField(field), try backend.project(target, field, selected));
-                try backend.endVariant(variant);
-            } else {
-                try emit(backend, graph, Operation.fromField(field), try backend.project(target, field, selected));
-            }
+        // Choices need a live discriminant before selecting a payload.
+        const active = try backend.begin(target);
+        try emitFields(backend, graph, plan, target);
+        try backend.finish(target, active);
+    }
+}
+
+fn emitFields(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operation, target: anytype) anyerror!void {
+    for (graph.auto_deinit_fields.items[plan.fields.start..][0..plan.fields.len]) |field| {
+        const selected = try child(graph, target.ty, field);
+        if (selected.variant != null) {
+            const variant = try backend.beginVariant(target, field, selected);
+            try emit(backend, graph, Operation.fromField(field), try backend.project(target, field, selected));
+            try backend.endVariant(variant);
+        } else {
+            try emit(backend, graph, Operation.fromField(field), try backend.project(target, field, selected));
         }
     }
-    try backend.finish(target, active);
 }

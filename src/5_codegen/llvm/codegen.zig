@@ -2615,8 +2615,11 @@ pub const CodeGenerator = struct {
             return .{ .storage = storage, .ty = selected.ty, .drop = drop };
         }
         pub fn finish(self: @This(), target: Target, done: c.LLVMBasicBlockRef) !void {
-            self.generator.storeDropState(target.drop, false);
+            try self.clear(target);
             try self.endVariant(done);
+        }
+        pub fn clear(self: @This(), target: Target) !void {
+            self.generator.storeDropState(target.drop, false);
         }
     };
 

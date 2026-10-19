@@ -13944,12 +13944,35 @@ test "feature_tests/execution/89_partial_local_records_vm" {
     try vmExpect("tests/feature_tests/execution/89_partial_local_records_vm", 42, null);
 }
 
-test "feature_tests/execution/90X_partial_local_owner_vm_boundary" {
-    try expectSuccessfulBuild("tests/feature_tests/execution/90X_partial_local_owner_vm_boundary");
-    try runExpect("tests/feature_tests/execution/90X_partial_local_owner_vm_boundary", 42);
-    try vmExpect("tests/feature_tests/execution/90X_partial_local_owner_vm_boundary", 1, "UninitializedBytecodeSlot");
+test "feature_tests/execution/90_partial_local_owner_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/90_partial_local_owner_vm");
+    try runExpect("tests/feature_tests/execution/90_partial_local_owner_vm", 42);
+    try vmExpect("tests/feature_tests/execution/90_partial_local_owner_vm", 42, null);
 }
 
-test "feature_tests/execution/91X_partial_owner_child_cleanup_vm_boundary" {
-    try vmExpect("tests/feature_tests/execution/91X_partial_owner_child_cleanup_vm_boundary", 1, "UninitializedBytecodeSlot");
+test "feature_tests/execution/91_partial_owner_child_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/91_partial_owner_child_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/91_partial_owner_child_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/91_partial_owner_child_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/92X_partial_owner_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/execution/92X_partial_owner_cleanup_borrow", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/92X_partial_owner_cleanup_borrow", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/93X_field_completed_owner_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/execution/93X_field_completed_owner_cleanup_borrow", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/93X_field_completed_owner_cleanup_borrow", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/94_partial_owner_error_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/94_partial_owner_error_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/94_partial_owner_error_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/94_partial_owner_error_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/95_partial_owner_allocated_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/95_partial_owner_allocated_cleanup");
+    try runExpect("tests/feature_tests/execution/95_partial_owner_allocated_cleanup", 42);
 }
