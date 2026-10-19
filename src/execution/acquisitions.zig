@@ -64,6 +64,25 @@ pub const Regions = struct {
             region.initialized[index / 8] |= @as(u8, 1) << @as(u3, @intCast(index % 8));
     }
 
+    /// Checked physical scalar access is deliberately distinct from safe
+    /// reference establishment. The compiler must supply a numeric layout;
+    /// receipts and initialized bytes alone never establish language loans.
+    pub fn loadInteger(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, layout: *const @import("../5_codegen/bytecode/numeric_layout.zig").Layout, endian: std.builtin.Endian) !i128 {
+        if (layout.size > 8) return error.ExecutionInvalidReference;
+        _ = try self.range(storage, handle, offset, layout.size, layout.alignment);
+        var bytes: [8]u8 = undefined;
+        try self.read(storage, handle, offset, bytes[0..layout.size]);
+        return @import("../5_codegen/bytecode/numeric_layout.zig").decodeInteger(layout, bytes[0..layout.size], endian);
+    }
+
+    pub fn storeInteger(self: *Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, layout: *const @import("../5_codegen/bytecode/numeric_layout.zig").Layout, value: i128, endian: std.builtin.Endian) !void {
+        if (layout.size > 8) return error.ExecutionInvalidReference;
+        _ = try self.range(storage, handle, offset, layout.size, layout.alignment);
+        var bytes: [8]u8 = undefined;
+        try @import("../5_codegen/bytecode/numeric_layout.zig").encodeInteger(layout, value, bytes[0..layout.size], endian);
+        try self.write(storage, handle, offset, bytes[0..layout.size]);
+    }
+
     pub fn release(self: *Regions, storage: *const storage_mod.Storage, handle: Handle) !void {
         _ = try self.get(storage, handle);
         self.entries.items[@intFromEnum(handle.region)].live = false;
@@ -149,4 +168,25 @@ test "acquired byte backing validates complete reads before publishing bytes" {
     try regions.release(&storage, handle);
     try std.testing.expectError(error.ExecutionReleasedAcquisition, regions.read(&storage, handle, 16, output[0..1]));
     try std.testing.expectError(error.ExecutionReleasedAcquisition, regions.write(&storage, handle, 0, &.{1}));
+}
+
+test "acquired scalar access shares layouts without manufacturing initialization" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try storage_mod.Storage.init(arena.allocator(), 100);
+    var regions: Regions = .{};
+    const handle = try regions.acquire(&storage, 16, 8);
+    const numeric = @import("../5_codegen/bytecode/numeric_layout.zig");
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    try std.testing.expectError(error.ExecutionUninitializedStorage, regions.loadInteger(&storage, handle, 4, &layout, .little));
+    try std.testing.expectError(error.ExecutionIntegerOutOfRange, regions.storeInteger(&storage, handle, 4, &layout, std.math.maxInt(i32) + @as(i128, 1), .little));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, regions.loadInteger(&storage, handle, 4, &layout, .little));
+    try regions.storeInteger(&storage, handle, 4, &layout, -2, .big);
+    try std.testing.expectEqual(@as(i128, -2), try regions.loadInteger(&storage, handle, 4, &layout, .big));
+    var bytes: [4]u8 = undefined;
+    try regions.read(&storage, handle, 4, &bytes);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 255, 255, 254 }, &bytes);
+    try std.testing.expectError(error.ExecutionInvalidAlignment, regions.loadInteger(&storage, handle, 1, &layout, .big));
+    try regions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, regions.loadInteger(&storage, handle, 4, &layout, .big));
 }

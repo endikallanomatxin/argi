@@ -109,6 +109,41 @@ pub fn readByte(layout: *const Layout, value: b.Value, offset: usize, endian: st
     };
 }
 
+/// Decode a scalar from physical bytes using the same layout as byte views.
+/// These routines accept numeric layouts only; bytes cannot reconstruct loans,
+/// virtual evidence, resource identities or initialized reference values.
+pub fn decodeInteger(layout: *const Layout, bytes: []const u8, endian: std.builtin.Endian) !i128 {
+    try requireInteger(layout);
+    if (bytes.len != layout.size) return error.ExecutionInvalidReference;
+    var bits: u64 = 0;
+    for (bytes, 0..) |byte, index| {
+        const shift: u6 = @intCast(8 * (if (endian == .little) index else bytes.len - 1 - index));
+        bits |= @as(u64, byte) << shift;
+    }
+    const width: u7 = @intCast(layout.size * 8);
+    const limit = @as(i128, 1) << width;
+    const value: i128 = bits;
+    return if (layout.shape.integer.signed and value >= @divExact(limit, 2)) value - limit else value;
+}
+
+pub fn encodeInteger(layout: *const Layout, value: i128, bytes: []u8, endian: std.builtin.Endian) !void {
+    try requireInteger(layout);
+    if (bytes.len != layout.size) return error.ExecutionInvalidReference;
+    const width: u7 = @intCast(layout.size * 8);
+    const limit = @as(i128, 1) << width;
+    const minimum = if (layout.shape.integer.signed) -@divExact(limit, 2) else 0;
+    const maximum = if (layout.shape.integer.signed) @divExact(limit, 2) - 1 else limit - 1;
+    if (value < minimum or value > maximum) return error.ExecutionIntegerOutOfRange;
+    for (bytes, 0..) |*byte, index| byte.* = try readByte(layout, .{ .integer = value }, index, endian);
+}
+
+fn requireInteger(layout: *const Layout) !void {
+    if (layout.shape != .integer or layout.size == 0 or layout.size > 8 or
+        !std.math.isPowerOfTwo(layout.size) or layout.alignment == 0 or
+        !std.math.isPowerOfTwo(layout.alignment) or layout.alignment > layout.size)
+        return error.ExecutionInvalidReference;
+}
+
 /// Produce an updated value without mutating shared aggregate slices. The
 /// caller commits it through its evaluated storage destination afterwards.
 pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
@@ -207,4 +242,22 @@ test "numeric byte writes preserve siblings and interpret signed boundaries" {
     try std.testing.expectEqual(@as(i128, 0), values[0].integer);
     const big = try writeByte(arena.allocator(), &number, .{ .integer = 0 }, 0, 128, .big);
     try std.testing.expectEqual(@as(i128, -2147483648), big.integer);
+}
+
+test "numeric scalar codecs agree with byte views across widths and endianness" {
+    for ([_]usize{ 1, 2, 4, 8 }) |size| for ([_]bool{ false, true }) |signed| {
+        const layout: Layout = .{ .size = size, .alignment = size, .shape = .{ .integer = .{ .signed = signed } } };
+        const limit = @as(i128, 1) << @as(u7, @intCast(size * 8));
+        const minimum = if (signed) -@divExact(limit, 2) else 0;
+        const maximum = if (signed) @divExact(limit, 2) - 1 else limit - 1;
+        for ([_]std.builtin.Endian{ .little, .big }) |endian| for ([_]i128{ minimum, 0, 42, maximum }) |value| {
+            var bytes: [8]u8 = undefined;
+            try encodeInteger(&layout, value, bytes[0..size], endian);
+            try std.testing.expectEqual(value, try decodeInteger(&layout, bytes[0..size], endian));
+            for (bytes[0..size], 0..) |byte, index| try std.testing.expectEqual(byte, try readByte(&layout, .{ .integer = value }, index, endian));
+            @memset(&bytes, 99);
+            try std.testing.expectError(error.ExecutionIntegerOutOfRange, encodeInteger(&layout, maximum + 1, bytes[0..size], endian));
+            try std.testing.expectEqualSlices(u8, &(@as([8]u8, @splat(99))), &bytes);
+        };
+    };
 }
