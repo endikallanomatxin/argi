@@ -6,6 +6,7 @@ const types = @import("../../4_semantics/global/types.zig");
 const cleanup_layout = @import("../cleanup_layout.zig");
 const error_plan = @import("../error_plan.zig");
 const cleanup_plan = @import("../cleanup_plan.zig");
+const replacement = @import("../../4_semantics/global/replacement.zig");
 
 pub const Lower = struct {
     allocator: std.mem.Allocator,
@@ -193,6 +194,7 @@ const FunctionLower = struct {
     cleanup: std.ArrayList(CleanupEntry) = .empty,
     write_destinations: std.ArrayList(b.Type) = .empty,
     loops: std.ArrayList(Loop) = .empty,
+    replacement: ?struct { plan: replacement.Plan, target: ?b.Place = null, ty: ?b.Type = null } = null,
 
     precomputed: []const struct { node: g.GlobalNodeId, slot: b.Slot } = &.{},
 
@@ -367,6 +369,10 @@ const FunctionLower = struct {
     }
     fn autoDeinit(self: *FunctionLower, id: g.GlobalAutoDeinitId) anyerror!void {
         const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
+        if (self.replacement) |captured| if (captured.plan.cleanup == id) {
+            if (captured.target) |target|
+                return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, target, captured.ty.?);
+        };
         if (auto.storage == .indirect) return self.parent.reject(self.parent.source, "indirect cleanup identity transport");
         if (auto.targetNode()) |target| {
             if (self.nodeDrop(target) == null) return error.InvalidBytecode;
@@ -534,6 +540,7 @@ const FunctionLower = struct {
                 if (self.parent.cleanup_types[@intFromEnum(child)] and x.checked_initialization != true and !self.trackedDestination(x.pointer, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
+                try self.captureReplacement(id, target, child);
                 const destination = try self.captureWrite(node.source, target, child, self.targetHasCleanup(x.cleanup_target) or
                     (x.checked_initialization == true and self.parent.cleanup_types[@intFromEnum(child)]));
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
@@ -544,6 +551,7 @@ const FunctionLower = struct {
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });
+                try self.captureReplacement(id, target, x.field_type);
                 const destination = try self.captureWrite(node.source, target, x.field_type, self.targetHasCleanup(x.cleanup_target));
                 const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
                 try self.commitWrite(node.source, destination, value);
@@ -551,7 +559,10 @@ const FunctionLower = struct {
             .auto_deinit_binding => |auto| try self.autoDeinit(auto),
             .code_block => |block_id| try self.block(block_id),
             .replacement => {
-                const plan = try @import("../../4_semantics/global/replacement.zig").plan(self.parent.graph, id);
+                const plan = try replacement.plan(self.parent.graph, id);
+                const previous = self.replacement;
+                self.replacement = .{ .plan = plan };
+                defer self.replacement = previous;
                 try self.block(plan.block);
             },
             .return_statement => |x| {
@@ -689,6 +700,15 @@ const FunctionLower = struct {
         _ = try self.emit(source, .{ .check_write_cleanup = destination });
         _ = try self.emit(source, .{ .store = .{ .destination = destination, .value = value } });
         _ = try self.emit(source, .{ .activate_write_cleanup = destination });
+    }
+    // The place already refers to evaluated operand snapshots. Retain it for
+    // this checked transition so cleanup cannot reevaluate after RHS effects.
+    fn captureReplacement(self: *FunctionLower, write: g.GlobalNodeId, target: b.Place, ty: b.Type) !void {
+        if (self.replacement) |*captured| if (captured.plan.write == write) {
+            if (captured.target != null) return error.InvalidReplacementDestination;
+            captured.target = target;
+            captured.ty = ty;
+        };
     }
     fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type, activate_cleanup: bool) !b.Destination {
         const destination: b.Destination = @intCast(self.write_destinations.items.len);
@@ -1090,6 +1110,9 @@ const FunctionLower = struct {
             return result;
         }
         if (node.content == .value_sequence or node.content == .replacement) {
+            const previous = self.replacement;
+            if (node.content == .replacement) self.replacement = .{ .plan = try replacement.plan(self.parent.graph, id) };
+            defer self.replacement = previous;
             const block_id = if (node.content == .replacement)
                 (try @import("../../4_semantics/global/replacement.zig").plan(self.parent.graph, id)).block
             else
