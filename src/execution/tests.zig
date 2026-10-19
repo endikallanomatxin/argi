@@ -1953,7 +1953,7 @@ test "bytecode partial record reservation never permits unavailable field reads"
     const layout = try @import("../5_codegen/bytecode/storage_layout.zig").compile(a, &graph, @enumFromInt(1));
     defer a.free(layout.nodes);
     var code = [_]b.Instruction{
-        .{ .source = source, .op = .{ .reserve_record = .{ .dst = 0, .layout = layout } } },
+        .{ .source = source, .op = .{ .reserve_storage = .{ .dst = 0, .layout = layout } } },
         .{ .source = source, .op = .{ .load = .{ .dst = 1, .place = .{ .root = 0, .path = &.{.{ .field = 0 }} } } } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
@@ -1962,7 +1962,7 @@ test "bytecode partial record reservation never permits unavailable field reads"
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectError(error.ExecutionUninitializedStorage, executor.runExpression(&.{}));
-    code[0].op.reserve_record.layout = .{ .nodes = &.{.{}} };
+    code[0].op.reserve_storage.layout = .{ .nodes = &.{.{}} };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
 
@@ -1976,4 +1976,22 @@ test "bytecode partial records allow borrowed reads of initialized siblings" {
         \\}
         \\main := () -> (.status_code: Int32 = 0) { status_code = make().second }
     , .{}));
+}
+
+test "bytecode reserved scalar storage rejects reads before initialization" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .reserve_storage = .{ .dst = 0, .layout = .{ .nodes = &.{.{}} } } } },
+        .{ .source = source, .op = .{ .copy = .{ .dst = 1, .src = 0 } } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+    };
+    const expression: b.Function = .{ .slots = &.{ @enumFromInt(0), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{1}, .code = &code };
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }, .{});
+    defer executor.deinit();
+    try std.testing.expectError(error.ExecutionUninitializedStorage, executor.runExpression(&.{}));
 }

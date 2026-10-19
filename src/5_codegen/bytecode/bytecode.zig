@@ -95,7 +95,7 @@ pub const TraceLocation = struct {
 pub const Instruction = struct {
     source: p.SourceRef,
     op: union(enum) {
-        reserve_record: struct { dst: Slot, layout: @import("storage_layout.zig").Layout, reset: bool = false },
+        reserve_storage: struct { dst: Slot, layout: @import("storage_layout.zig").Layout, reset: bool = false },
         borrow_storage: struct { dst: Slot, place: Place },
         constant: struct { dst: Slot, value: Value },
         resolve_location: struct { dst: Slot, id: Slot },

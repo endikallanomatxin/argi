@@ -69,8 +69,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             try readSlots(allocator, inst, &reads);
             for (reads.items) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
             switch (inst.op) {
-                .reserve_record => |x| {
-                    if (types.fields(program.graph, f.slots[x.dst]) == null) return error.InvalidBytecode;
+                .reserve_storage => |x| {
                     const expected = try @import("storage_layout.zig").compile(allocator, program.graph, f.slots[x.dst]);
                     defer allocator.free(expected.nodes);
                     if (expected.nodes.len != x.layout.nodes.len) return error.InvalidBytecode;
@@ -394,7 +393,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     if (i.op == .virtual_call) return i.op.virtual_call.outputs;
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
-        .reserve_record => |x| x.dst,
+        .reserve_storage => |x| x.dst,
         .borrow_storage => |x| x.dst,
         .static_bytes => |x| x.dst,
         .trace_location => |x| x.dst,

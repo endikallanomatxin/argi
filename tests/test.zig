@@ -13982,3 +13982,9 @@ test "feature_tests/execution/96_empty_record_values_vm" {
     try runExpect("tests/feature_tests/execution/96_empty_record_values_vm", 42);
     try vmExpect("tests/feature_tests/execution/96_empty_record_values_vm", 42, null);
 }
+
+test "feature_tests/execution/97_scalar_reference_initialization_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/97_scalar_reference_initialization_vm");
+    try runExpect("tests/feature_tests/execution/97_scalar_reference_initialization_vm", 42);
+    try vmExpect("tests/feature_tests/execution/97_scalar_reference_initialization_vm", 42, null);
+}

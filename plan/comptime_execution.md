@@ -18,8 +18,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Partial storage
 
-- Extend partial layouts to session bindings and scalar initialization targets,
-  then arrays and choices. Keep unavailable storage separate from values.
+- Extend partial layouts to session bindings, then arrays and choices. Keep
+  unavailable storage separate from values.
 - Extend acquired storage and release identities before enabling the allocator
   prelude; scalar host handles alone do not establish allocation receipts.
 

@@ -130,9 +130,11 @@ of those destinations use the same cleanup, including chains of aliases. The fir
 initialization does not run a destructor; neighboring fields retain their cleanup.
 Explicit destruction followed by definite whole-value reinitialization also works
 through reference parameters and reference fields in by-value argument records.
-Function output records and local records support independent initialization of
-nested fields, including writes through references to those fields. Reading a record requires
-all its fields; initialized siblings can be read before the record is complete.
+Scalar locals and outputs can be initialized through checked references before
+their first read. Function output records and local records support independent
+initialization of nested fields, including writes through references to those
+fields. Reading a record requires all its fields; initialized siblings can be
+read before the record is complete.
 Local record storage is cleared on each lexical entry, including loop iterations.
 Completing an owning record field by field activates its selected destructor.
 An incomplete record instead cleans its initialized owning fields, including on

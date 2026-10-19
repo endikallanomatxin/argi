@@ -234,10 +234,8 @@ const FunctionLower = struct {
             slot.* = try self.bindingSlot(binding);
             if (self.parent.graph.binding(binding).initialization != null) return error.InvalidBytecode;
             const ty = self.parent.graph.binding(binding).ty;
-            if (types.fields(self.parent.graph, ty) != null) {
-                const layout = try @import("storage_layout.zig").compile(a, self.parent.graph, ty);
-                _ = try self.emit(source, .{ .reserve_record = .{ .dst = slot.*, .layout = layout } });
-            }
+            const layout = try @import("storage_layout.zig").compile(a, self.parent.graph, ty);
+            _ = try self.emit(source, .{ .reserve_storage = .{ .dst = slot.*, .layout = layout } });
         }
         try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
@@ -466,9 +464,9 @@ const FunctionLower = struct {
                     if (binding_.initialization) |value| {
                         try self.copyTo(node.source, dst, try self.expression(value));
                         if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
-                    } else if (types.fields(self.parent.graph, binding_.ty) != null) {
+                    } else {
                         const layout = try @import("storage_layout.zig").compile(self.parent.allocator, self.parent.graph, binding_.ty);
-                        _ = try self.emit(node.source, .{ .reserve_record = .{ .dst = dst, .layout = layout, .reset = true } });
+                        _ = try self.emit(node.source, .{ .reserve_storage = .{ .dst = dst, .layout = layout, .reset = true } });
                     }
                 }
             },

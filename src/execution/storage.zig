@@ -33,7 +33,8 @@ pub const Slots = struct {
     }
 
     // Verified instructions define complete slot values. Reference writes use
-    // Storage.store instead, which requires an already initialized destination.
+    // Storage.store instead, which preserves reserved partial storage and
+    // checks projections before publishing a value.
     pub fn put(self: Slots, index: b.Slot, value: b.Value) !void {
         const values = try self.cells();
         if (index >= values.len) return error.ExecutionInvalidReference;

@@ -324,7 +324,7 @@ pub const Vm = struct {
             self.steps += 1;
             current.pc += 1;
             switch (inst.op) {
-                .reserve_record => |x| {
+                .reserve_storage => |x| {
                     if (x.reset) {
                         try self.chargeCleanup(try self.context().storage.resetRecord(current.storage, x.dst, x.layout));
                     } else try self.context().storage.prepareRecord(current.storage, x.dst, x.layout);
