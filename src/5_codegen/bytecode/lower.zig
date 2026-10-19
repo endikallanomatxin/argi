@@ -233,6 +233,11 @@ const FunctionLower = struct {
         for (outputs, self.parent.graph.binding_refs.items[f.output_bindings.start..][0..f.output_bindings.len]) |*slot, binding| {
             slot.* = try self.bindingSlot(binding);
             if (self.parent.graph.binding(binding).initialization != null) return error.InvalidBytecode;
+            const ty = self.parent.graph.binding(binding).ty;
+            if (types.fields(self.parent.graph, ty) != null) {
+                const layout = try @import("storage_layout.zig").compile(a, self.parent.graph, ty);
+                _ = try self.emit(source, .{ .reserve_record = .{ .dst = slot.*, .layout = layout } });
+            }
         }
         try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
@@ -329,6 +334,16 @@ const FunctionLower = struct {
         const node = self.parent.graph.node(pointer);
         if (node.content != .address_of) return false;
         return self.directStorage(node.content.address_of) and self.nodeDrop(node.content.address_of) != null;
+    }
+    fn addressable(self: *FunctionLower, id: g.GlobalNodeId) bool {
+        return switch (self.parent.graph.node(id).content) {
+            .binding_use, .dereference => true,
+            .struct_field_access => |field| self.addressable(field.value),
+            .choice_payload_access => |payload| self.addressable(payload.value),
+            .array_index => |element| self.addressable(element.array_ptr),
+            .address_of => |value| self.addressable(value),
+            else => false,
+        };
     }
     fn directStorage(self: *FunctionLower, id: g.GlobalNodeId) bool {
         return @import("../../4_semantics/global/lexical_storage.zig").root(self.parent.graph, id) != null;
@@ -1072,7 +1087,7 @@ const FunctionLower = struct {
             },
             .address_of => |value| {
                 const target = try self.place(value);
-                _ = try self.emit(node.source, .{ .borrow = .{ .dst = dst, .place = target } });
+                _ = try self.emit(node.source, .{ .borrow_storage = .{ .dst = dst, .place = target } });
             },
             .dereference => |x| {
                 const pointer = try self.expression(x.pointer);
@@ -1115,7 +1130,9 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .index = .{ .dst = dst, .base = base, .index = index } });
             },
             .struct_field_access => |x| {
-                _ = try self.emit(node.source, .{ .field = .{ .dst = dst, .base = try self.expression(x.value), .index = x.field_index } });
+                if (self.addressable(id)) {
+                    _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = try self.place(id) } });
+                } else _ = try self.emit(node.source, .{ .field = .{ .dst = dst, .base = try self.expression(x.value), .index = x.field_index } });
             },
             .binary_operation => |x| {
                 _ = try self.emit(node.source, .{ .binary = .{ .dst = dst, .left = try self.expression(x.left), .right = try self.expression(x.right), .operator = x.operator } });

@@ -328,6 +328,13 @@ pub const Vm = struct {
             self.steps += 1;
             current.pc += 1;
             switch (inst.op) {
+                .reserve_record => |x| try self.context().storage.prepareRecord(current.storage, x.dst, x.layout),
+                .borrow_storage => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, false);
+                    const permission = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
+                    try slots.put(x.dst, try self.context().storage.address(reference, permission));
+                },
                 .constant => |x| try slots.put(x.dst, x.value),
                 .resolve_location => |x| try slots.put(x.dst, try self.context().resolveTraceLocation((try slots.get(x.id)).integer)),
                 .trace_location => |x| try slots.put(x.dst, try self.context().registerTraceLocation(x.location.*)),
@@ -465,7 +472,7 @@ pub const Vm = struct {
                 },
                 .capture_write => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, true);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, false);
                     current.write_destinations[x.dst] = try self.context().storage.captureResolvedWrite(reference, x.activate_cleanup);
                 },
                 .check_write_cleanup => |id| {

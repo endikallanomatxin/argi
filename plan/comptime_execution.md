@@ -16,6 +16,14 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Define generic-function access to retained value bindings explicitly; do not
   introduce accidental captures or treat runtime session values as constants.
 
+## Partial storage
+
+- Extend record output layouts to local/session bindings and scalar initialization
+  targets, then arrays and choices. Keep unavailable storage separate from values.
+- Validate partially initialized owners across early errors, loops and cleanup.
+- Extend acquired storage and release identities before enabling the allocator
+  prelude; scalar host handles alone do not establish allocation receipts.
+
 ## Execution coverage
 
 - Extend partial initialization and trace reporting.

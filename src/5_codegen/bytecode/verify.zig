@@ -69,6 +69,13 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             try readSlots(allocator, inst, &reads);
             for (reads.items) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
             switch (inst.op) {
+                .reserve_record => |x| {
+                    if (types.fields(program.graph, f.slots[x.dst]) == null) return error.InvalidBytecode;
+                    const expected = try @import("storage_layout.zig").compile(allocator, program.graph, f.slots[x.dst]);
+                    defer allocator.free(expected.nodes);
+                    if (expected.nodes.len != x.layout.nodes.len) return error.InvalidBytecode;
+                    for (expected.nodes, x.layout.nodes) |wanted, actual| if (!std.meta.eql(wanted, actual)) return error.InvalidBytecode;
+                },
                 .constant => |x| if (!valueFits(program.graph, f.slots[x.dst], x.value)) return error.InvalidBytecode,
                 .resolve_location => |x| {
                     if (!types.isBuiltin(program.graph, f.slots[x.id], .UInt32)) return error.InvalidBytecode;
@@ -207,7 +214,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     _ = try choiceVariant(program.graph, f.slots[x.src], x.variant);
                     if (x.yes >= f.code.len or x.no >= f.code.len) return error.InvalidBytecode;
                 },
-                .borrow => |x| {
+                inline .borrow, .borrow_storage => |x| {
                     const target = try placeInfo(program, f.slots, x.place);
                     const pointer = program.graph.semanticType(f.slots[x.dst]);
                     if (pointer != .pointer or !types.equal(program.graph, pointer.pointer.child, target.ty) or (pointer.pointer.mutability == .read_write and !target.writable)) return error.InvalidBytecode;
@@ -392,6 +399,8 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     if (i.op == .virtual_call) return i.op.virtual_call.outputs;
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
+        .reserve_record => |x| x.dst,
+        .borrow_storage => |x| x.dst,
         .static_bytes => |x| x.dst,
         .trace_location => |x| x.dst,
         .resolve_location => |x| x.dst,
@@ -445,6 +454,7 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
         .is_variant => |x| try out.append(a, x.src),
         .branch_variant => |x| try out.append(a, x.src),
         .borrow => |x| try readPlace(a, x.place, out),
+        .borrow_storage => |x| try readCleanupPlace(a, x.place, out),
         .load => |x| try readPlace(a, x.place, out),
         .check_place => |place| try readPlace(a, place, out),
         .capture_write => |x| try readPlace(a, x.place, out),

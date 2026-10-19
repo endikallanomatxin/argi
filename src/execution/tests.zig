@@ -1938,3 +1938,40 @@ test "bytecode failed lowering does not retain host requirements" {
     try std.testing.expectError(error.UnsupportedExecution, compiler.compile(entry));
     try std.testing.expectEqual(@as(usize, 0), compiler.host_functions.items.len);
 }
+
+test "bytecode partial record reservation never permits unavailable field reads" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
+    const layout = try @import("../5_codegen/bytecode/storage_layout.zig").compile(a, &graph, @enumFromInt(1));
+    defer a.free(layout.nodes);
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .reserve_record = .{ .dst = 0, .layout = layout } } },
+        .{ .source = source, .op = .{ .load = .{ .dst = 1, .place = .{ .root = 0, .path = &.{.{ .field = 0 }} } } } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+    };
+    const expression: b.Function = .{ .slots = &.{ @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{1}, .code = &code };
+    const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &expression };
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expectError(error.ExecutionUninitializedStorage, executor.runExpression(&.{}));
+    code[0].op.reserve_record.layout = .{ .nodes = &.{.{}} };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}
+
+test "bytecode partial records allow borrowed reads of initialized siblings" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Pair: Type = (.first: Int32, .second: Int32)
+        \\first := (.pair: &Pair) -> (.result: Int32) { result = pair&.first }
+        \\make := () -> (.result: Pair) {
+        \\    result.first = 41
+        \\    result.second = first(.pair = &result) + 1
+        \\}
+        \\main := () -> (.status_code: Int32 = 0) { status_code = make().second }
+    , .{}));
+}

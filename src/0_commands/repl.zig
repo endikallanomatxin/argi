@@ -270,7 +270,7 @@ test "REPL standard prelude prints ordinary text across reset" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .explicit_sysroot = "zig-out" });
+    var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .fallback_core_dir = "core" });
     defer sf.freeList(&allocator, &files);
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
@@ -293,8 +293,11 @@ test "REPL standard prelude prints ordinary text across reset" {
     try session.reset();
     try session.submitStatements("print(\"ñ después\")");
     try std.testing.expectEqualStrings("hola\nñ después\n", output.written());
-    try session.submitStatements("init_stderr(.p = $&_repl_output)\nprint(\"error output\")");
+    try session.submitStatements("init_stderr(.p = $&_repl_terminal.stdout)\nprint(\"error output\")");
     try std.testing.expectEqualStrings("error output\n", errors.written());
     try std.testing.expectEqualStrings("hola\nñ después\n", output.written());
-    try session.close();
+    session.close() catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
 }

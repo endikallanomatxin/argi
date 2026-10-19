@@ -106,6 +106,10 @@ _file_flush(.stream: UIntNative) -> (.status: Int32): CFunction(
     .symbol = "_argi_file_flush"
 )
 
+_file_close(.stream: UIntNative) -> (.status: Int32): CFunction(
+    .symbol = "_argi_file_close"
+)
+
 init_stdin(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     p&= (
         ._ffi = ffi
@@ -141,8 +145,7 @@ _close_File(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed)))
     close_failed ::= false
 
     if self&.should_close {
-        stream ::= file_stream_pointer(self).stream
-        close_status ::= fclose(.stream = stream).status
+        close_status ::= _file_close(.stream = self&.stream_address).status
         close_failed = close_status != 0
     }
 

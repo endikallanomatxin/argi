@@ -338,3 +338,8 @@ int32_t _argi_file_flush(uintptr_t stream) {
     if (!stream) return -1;
     return fflush((FILE *)stream) == 0 ? 0 : -1;
 }
+
+int32_t _argi_file_close(uintptr_t stream) {
+    if (!stream) return -1;
+    return fclose((FILE *)stream) == 0 ? 0 : -1;
+}

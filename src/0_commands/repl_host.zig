@@ -25,7 +25,12 @@ pub const Output = struct {
         (if (inputs[0] == 1) self.writer else self.error_writer).flush() catch return;
         outputs[0] = 0;
     }
-    pub fn bindings(self: *Output) [3]host.Binding {
+    fn close(_: ?*anyopaque, _: []const i128, outputs: []i128) !void {
+        // Process endpoints are borrowed. Closing a fabricated owning File
+        // must not close the host's terminal or invalidate another session.
+        outputs[0] = -1;
+    }
+    pub fn bindings(self: *Output) [4]host.Binding {
         const i32_range = comptime p.integerRangeForWidth(32, true);
         const byte_range = comptime p.integerRangeForWidth(8, false);
         const native_range = comptime p.integerRangeForWidth(@bitSizeOf(usize), false);
@@ -33,6 +38,7 @@ pub const Output = struct {
             .{ .symbol = "_argi_standard_stream", .inputs = comptime &.{i32_range}, .outputs = comptime &.{native_range}, .call = endpoint },
             .{ .symbol = "_argi_file_write_byte", .inputs = comptime &.{ native_range, byte_range }, .outputs = comptime &.{i32_range}, .data = self, .call = write },
             .{ .symbol = "_argi_file_flush", .inputs = comptime &.{native_range}, .outputs = comptime &.{i32_range}, .data = self, .call = flush },
+            .{ .symbol = "_argi_file_close", .inputs = comptime &.{native_range}, .outputs = comptime &.{i32_range}, .call = close },
         };
     }
 };
