@@ -688,6 +688,5 @@ fn floatValue(value: b.Value) @import("../5_codegen/numeric_value.zig").Value {
 fn fromFloatValue(value: @import("../5_codegen/numeric_value.zig").Value) b.Value {
     return switch (value) {
         inline .float16, .float32, .float64 => |number, kind| @unionInit(b.Value, @tagName(kind), number),
-        else => unreachable,
     };
 }
