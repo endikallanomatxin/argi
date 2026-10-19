@@ -717,6 +717,28 @@ pub const Session = struct {
         self.phase = .ready;
     }
 
+    /// Request a closed module condition through the ordinary staged scheduler.
+    /// Null means semantic dependencies remain pending; callers can append the
+    /// required modules before retrying. No runtime/session value is captured.
+    pub fn evaluateModuleCondition(self: *Session, module_index: usize, expression: @import("../module/parameterized/ir.zig").ParameterizedNodeId) !?bool {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (self.options.diagnostics == null) return error.MissingCompileTimeDiagnostics;
+        if (module_index >= self.modules.len or @intFromEnum(expression) >= self.modules[module_index].semantic.parameterized_storage.ir.nodes.items.len)
+            return error.InvalidModuleCondition;
+        const Scheduler = @import("comptime_execution.zig").Scheduler;
+        const bindings = @import("generics.zig").Resolver.Bindings{ .types = &.{}, .ints = &.{} };
+        return Scheduler.boolean(&self.resolvers.staged_execution, module_index, expression, &bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => blk: {
+                try self.advance();
+                break :blk Scheduler.boolean(&self.resolvers.staged_execution, module_index, expression, &bindings) catch |retry| switch (retry) {
+                    error.ComptimeExecutionPending => null,
+                    else => return retry,
+                };
+            },
+            else => return err,
+        };
+    }
+
     pub fn advance(self: *Session) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         errdefer self.phase = .failed;

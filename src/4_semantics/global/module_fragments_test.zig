@@ -5,6 +5,12 @@ const module = @import("../module/graph.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 
 fn build(allocator: std.mem.Allocator, path: []const u8, source: []const u8) !module.ModuleSemanticGraph {
+    return buildCondition(allocator, path, source, null);
+}
+
+const Recipe = @import("../module/parameterized/ir.zig").ParameterizedNodeId;
+
+fn buildCondition(allocator: std.mem.Allocator, path: []const u8, source: []const u8, condition: ?*?Recipe) !module.ModuleSemanticGraph {
     const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = path, .code = source }};
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &sources);
     defer diagnostics.deinit();
@@ -16,8 +22,17 @@ fn build(allocator: std.mem.Allocator, path: []const u8, source: []const u8) !mo
     var tree = try parser.parse();
     defer tree.deinit(allocator);
     const inputs = [_]module.FileInput{.{ .path = path, .source = source, .tree = &tree }};
-    const result = try @import("../module/semantizer.zig").build(allocator, std.fs.path.dirname(path).?, &inputs);
-    return result.graph;
+    var graph = try module.build(allocator, std.fs.path.dirname(path).?, &inputs);
+    errdefer graph.deinit(allocator);
+    if (condition) |out| {
+        var writer = @import("../module/writer.zig").Writer.init(allocator, &graph);
+        for (tree.roots) |root| if (tree.ifStatement(root)) |statement| {
+            out.* = try @import("../module/parameterized/lowerer.zig").lowerConcreteExpression(&graph, &writer, 0, &tree, source, statement.condition);
+            break;
+        };
+    }
+    _ = try @import("../module/semantizer.zig").finish(allocator, &graph, &inputs, &diagnostics);
+    return graph;
 }
 
 test "module fragments retain declaration identities and share lexical and qualified lookup" {
@@ -205,4 +220,154 @@ test "module fragment candidates preserve namespaces without publishing rejected
     var checked = try publication.finish();
     defer checked.graph.deinit(a);
     try std.testing.expect(checked.graph.sameModuleNamespace(@enumFromInt(0), @enumFromInt(1)));
+}
+
+test "module conditions use checked staged execution and retain frozen decisions" {
+    const a = std.testing.allocator;
+    const source = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() {}";
+    var recipe: ?Recipe = null;
+    var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
+    defer base.deinit(a);
+    const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    defer diagnostics.deinit();
+    var session: sema.Session = undefined;
+    try session.init(a, &.{base}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try std.testing.expectEqual(@as(?bool, true), try session.evaluateModuleCondition(0, recipe.?));
+    const node_count = session.relocation.graph.nodes.items.len;
+    try std.testing.expectEqual(@as(?bool, true), try session.evaluateModuleCondition(0, recipe.?));
+    try std.testing.expectEqual(node_count, session.relocation.graph.nodes.items.len);
+    var candidate: sema.Session = undefined;
+    try session.fork(&candidate, a, &diagnostics);
+    defer candidate.deinit();
+    try std.testing.expectEqual(@as(?bool, true), try candidate.evaluateModuleCondition(0, recipe.?));
+    try std.testing.expectError(error.InvalidModuleCondition, session.evaluateModuleCondition(1, recipe.?));
+}
+
+test "module conditions resume when a selected dependency fragment becomes available" {
+    const a = std.testing.allocator;
+    const source = "#if choose() {}";
+    var recipe: ?Recipe = null;
+    var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
+    defer base.deinit(a);
+    var dependency = try build(a, "/project/pkg/dependency.rg", "choose := () -> (.ok: Bool) { ok = false }");
+    defer dependency.deinit(a);
+    const modules = [_]module.ModuleSemanticGraph{ base, dependency };
+    const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    defer diagnostics.deinit();
+    var session: sema.Session = undefined;
+    try session.init(a, modules[0..1], .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try std.testing.expectEqual(@as(?bool, null), try session.evaluateModuleCondition(0, recipe.?));
+    try session.appendModuleFragment(&modules, @enumFromInt(0));
+    try std.testing.expectEqual(@as(?bool, false), try session.evaluateModuleCondition(0, recipe.?));
+    try std.testing.expectEqual(@as(usize, 1), session.resolvers.staged_execution.requests.items.len);
+}
+
+test "module conditions reject nonboolean results and execution traps" {
+    const a = std.testing.allocator;
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "choose := () -> (.result: Int32) { result = 42 }\n#if choose() {}", .message = "requires a Bool" },
+        .{ .source = "choose := () -> (.ok: Bool) { abort }\n#if choose() {}", .message = "abort" },
+        .{ .source = "choose := () -> (.ok: Bool) { vacant :: Bool\nok = vacant }\n#if choose() {}", .message = "deinitialized" },
+    };
+    for (cases) |case| {
+        var recipe: ?Recipe = null;
+        var base = try buildCondition(a, "/project/pkg/base.rg", case.source, &recipe);
+        defer base.deinit(a);
+        const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = case.source }};
+        var diagnostic_arena = std.heap.ArenaAllocator.init(a);
+        defer diagnostic_arena.deinit();
+        const diagnostic_allocator = diagnostic_arena.allocator();
+        var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &sources);
+        defer diagnostics.deinit();
+        var session: sema.Session = undefined;
+        try session.init(a, &.{base}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+        defer session.deinit();
+        if (session.evaluateModuleCondition(0, recipe.?)) |_| return error.ExpectedConditionFailure else |_| {}
+        try std.testing.expect(diagnostics.hasErrors());
+        var matched = false;
+        for (diagnostics.list.items) |item| {
+            if (std.mem.indexOf(u8, item.msg, case.message) != null) matched = true;
+        }
+        try std.testing.expect(matched);
+        try std.testing.expectError(error.InvalidSemanticSessionState, session.advance());
+    }
+}
+
+test "unresolved module conditions cannot publish a completed semantic graph" {
+    const a = std.testing.allocator;
+    const source = "#if missing() {}";
+    var recipe: ?Recipe = null;
+    var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
+    defer base.deinit(a);
+    const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const diagnostic_allocator = arena.allocator();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &sources);
+    defer diagnostics.deinit();
+    var session: sema.Session = undefined;
+    try session.init(a, &.{base}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try std.testing.expectEqual(@as(?bool, null), try session.evaluateModuleCondition(0, recipe.?));
+    if (session.finish()) |value| {
+        var unexpected = value;
+        unexpected.graph.deinit(a);
+        return error.ExpectedPendingConditionFailure;
+    } else |_| {}
+    try std.testing.expect(diagnostics.hasErrors());
+}
+
+test "checked module decisions select source fragments without evaluating discarded imports" {
+    const a = std.testing.allocator;
+    const source = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() {\nanswer := () -> (.result: Int32) { result = 42 }\n} #else { missing := import(\"./does_not_exist\") }";
+    var recipe: ?Recipe = null;
+    var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
+    defer base.deinit(a);
+    const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    defer diagnostics.deinit();
+    var session: sema.Session = undefined;
+    try session.init(a, &.{base}, .{ .diagnostics = &diagnostics });
+    defer session.deinit();
+    var offset: usize = 0;
+    var selection = try @import("../../1_base/target_selection.zig").Prepared.init(a, source, .{}, &offset, .computed);
+    defer selection.deinit(a);
+    const pending = try selection.imports(a);
+    defer pending.deinit(a);
+    try std.testing.expectEqual(@as(usize, 1), pending.pending.len);
+    try selection.resolve(pending.pending[0], (try session.evaluateModuleCondition(0, recipe.?)).?);
+    const selected = try selection.imports(a);
+    defer selected.deinit(a);
+    try std.testing.expectEqual(@as(usize, 0), selected.pending.len);
+    try std.testing.expect(std.mem.indexOf(u8, selected.source, "does_not_exist") == null);
+    // Retain original offsets while isolating the newly selected declaration.
+    // Production discovery will hand this slice to the same fragment API.
+    const body = selection.plan.branches.items[0].then_body;
+    for (selected.source, 0..) |*byte, index| {
+        if ((index < body.start or index >= body.end) and byte.* != '\n' and byte.* != '\r') byte.* = ' ';
+    }
+    var fragment = try build(a, "/project/pkg/selected.rg", selected.source);
+    defer fragment.deinit(a);
+    const modules = [_]module.ModuleSemanticGraph{ base, fragment };
+    try session.appendModuleFragment(&modules, @enumFromInt(0));
+    try session.advance();
+    var checked = try session.finish();
+    defer checked.graph.deinit(a);
+    const declarations = try checked.graph.declarationsNamed(a, "answer");
+    try std.testing.expectEqual(@as(usize, 1), declarations.len);
+    const declaration = checked.graph.declaration(declarations[0]);
+    try std.testing.expectEqual(std.mem.indexOf(u8, source, "answer").?, declaration.source.offset);
+    var scratch = std.heap.ArenaAllocator.init(a);
+    defer scratch.deinit();
+    var safety = @import("../safety/checker.zig").SafetyChecker.init(scratch.allocator(), &diagnostics, &checked.graph);
+    defer safety.deinit();
+    try safety.analyze();
+    var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &checked.graph);
+    var vm = try @import("../../execution/vm.zig").Vm.init(a, try lower.compile(declaration.function_id.?), .{});
+    defer vm.deinit();
+    try std.testing.expectEqual(@as(i128, 42), (try vm.invoke(declaration.function_id.?, &.{}))[0].integer);
 }

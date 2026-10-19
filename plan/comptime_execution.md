@@ -9,9 +9,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Extend the ordinary REPL prelude with a persistent allocator through explicit
   checked host adapters.
 - Improve unresolved-name diagnostics in retained sessions.
-- Connect retained source selections to semantic module-condition requests and
-  resume import/declaration discovery. Do not analyze inactive branches or
-  replace original source identities with rendered buffers.
+- Wire the source loader to retained selections and checked module-condition
+  requests, then resume import/declaration discovery. The semantic session can
+  evaluate closed Boolean recipes and retry after appending dependencies.
+  Do not analyze inactive branches or replace original source identities with
+  rendered buffers.
   Append selected declarations through explicit module fragments, preserving
   physical graph ranges and the original module's lexical namespace.
 - Complete staged request diagnostics without a source database. Support temporary

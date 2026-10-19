@@ -58,6 +58,26 @@ pub fn lowerDiagnosed(
     return ctx.lowerDeclarations();
 }
 
+/// Retain a closed source expression for staged evaluation. It has no implicit
+/// runtime inputs or fabricated function identity; ordinary names and calls
+/// resolve in the supplied module when the request is materialized.
+pub fn lowerConcreteExpression(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !ir.ParameterizedNodeId {
+    var context = Context{
+        .allocator = writer.allocator,
+        .graph = graph,
+        .files = &.{},
+        .writer = writer.*,
+        .parameters = std.array_list.Managed(ParameterBinding).init(writer.allocator),
+        .bindings = std.array_list.Managed(BindingName).init(writer.allocator),
+        .file_index = file_index,
+        .tree = tree,
+        .source = source,
+    };
+    defer context.parameters.deinit();
+    defer context.bindings.deinit();
+    return context.lowerBodyNode(node);
+}
+
 pub fn lowerConcreteTypeExpression(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !ir.ParameterizedTypeId {
     var context = Context{
         .allocator = writer.allocator,

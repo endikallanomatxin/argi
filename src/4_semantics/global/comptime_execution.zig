@@ -113,7 +113,10 @@ pub const Scheduler = struct {
                     speculation.retainPendingExecution();
                     continue;
                 },
-                error.UnboundComptimeParameter, error.UnboundGenericTypeParameter, error.UnresolvedParameterizedCall, error.UnresolvedParameterizedExpression => continue,
+                // Module discovery may still append a declaration supplying
+                // this call. An unresolved request remains a publication error
+                // if discovery closes without satisfying it.
+                error.UnboundComptimeParameter, error.UnboundGenericTypeParameter, error.UnresolvedParameterizedCall, error.UnresolvedParameterizedExpression, error.NoMatchingGenericFunction => continue,
                 else => return err,
             };
             var registered = false;
