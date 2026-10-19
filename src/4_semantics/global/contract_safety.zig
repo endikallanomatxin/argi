@@ -398,7 +398,7 @@ fn globalSafetyOutcome(self: *Resolver, module_index: usize, outcome: *primitive
     outcome.variant_index = hit.index;
     outcome.variant = hit.variant.name;
     outcome.source = self.sourceFor(module_index, outcome.source);
-    const children = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
+    const children = try (try self.graph.safetyAllocator(self.allocator)).dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
     for (children, 0..) |*child, index| {
         if (child.output_index != outcome.output_index) return error.InvalidOutcomeContract;
         try globalSafetyOutcome(self, module_index, child, hit.variant.payload_type orelse return error.InvalidOutcomeContract);
@@ -442,10 +442,10 @@ fn globalGeneralOutcome(self: *Resolver, module_index: usize, outcome: *primitiv
         .input_index = outcome.input_index,
         .output_index = outcome.output_index,
         .payload = hit.variant.payload_type,
-        .variants = try std.mem.concat(self.allocator, u32, &.{ ancestors, &.{hit.index} }),
+        .variants = try std.mem.concat(try self.graph.safetyAllocator(self.allocator), u32, &.{ ancestors, &.{hit.index} }),
     };
-    const context = try std.mem.concat(self.allocator, SelectedContractChoice, &.{ parents, &.{selected} });
-    const children = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
+    const context = try std.mem.concat(try self.graph.safetyAllocator(self.allocator), SelectedContractChoice, &.{ parents, &.{selected} });
+    const children = try (try self.graph.safetyAllocator(self.allocator)).dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
     for (children, 0..) |*child, child_index| {
         try globalGeneralOutcome(self, module_index, child, inputs, outputs, context);
         for (children[0..child_index]) |previous| if (previous.input_index == child.input_index and previous.output_index == child.output_index and previous.variant_index == child.variant_index) return error.DuplicateOutcomeContract;
@@ -458,7 +458,7 @@ pub fn globalSafetyContract(self: *Resolver, module_index: usize, declared: prim
     contract.source = self.sourceFor(module_index, contract.source);
     if (declared.outcomes.len != 0) {
         const fields = global_types.fields(self.graph, output_type) orelse return error.InvalidContractRequirementOutput;
-        const outcomes = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
+        const outcomes = try (try self.graph.safetyAllocator(self.allocator)).dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
         for (outcomes, 0..) |*outcome, index| {
             if (declared.general_conditions) {
                 try globalGeneralOutcome(self, module_index, outcome, inputs, fields, &.{});

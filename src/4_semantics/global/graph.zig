@@ -299,6 +299,11 @@ pub const GlobalSemanticGraph = struct {
     strings: std.ArrayList(u8) = .empty,
     roots: std.ArrayList(GlobalNodeId) = .empty,
 
+    // Resolved safety selectors contain immutable nested slices. Their arena
+    // belongs to this graph and is copied on publication, never borrowed from
+    // a speculative graph that may be discarded.
+    safety_arena: ?*std.heap.ArenaAllocator = null,
+
     // Transient lookup state used while building/querying GlobalSema. The
     // append-only semantic pools remain the source of truth; these indexes are
     // derived state and are not part of a persistent semantic representation.
@@ -307,6 +312,24 @@ pub const GlobalSemanticGraph = struct {
     // Construction-only resolution state. Final graphs empty these tables
     // before they are exposed to Safety, Codegen or the LSP.
     construction: ConstructionState = .{},
+
+    pub fn safetyAllocator(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !std.mem.Allocator {
+        if (self.safety_arena == null) {
+            const arena = try allocator.create(std.heap.ArenaAllocator);
+            arena.* = .init(allocator);
+            self.safety_arena = arena;
+        }
+        return self.safety_arena.?.allocator();
+    }
+
+    fn copySafetyOutcomes(allocator: std.mem.Allocator, source: []const primitives.MethodSafetyContract.Outcome) anyerror![]const primitives.MethodSafetyContract.Outcome {
+        const result = try allocator.dupe(primitives.MethodSafetyContract.Outcome, source);
+        for (result) |*outcome| {
+            outcome.parent_variants = try allocator.dupe(u32, outcome.parent_variants);
+            outcome.outcomes = try copySafetyOutcomes(allocator, outcome.outcomes);
+        }
+        return result;
+    }
 
     /// Copy mutable semantic pools while preserving every existing identity.
     /// Immutable source metadata keeps its original ModuleSG lifetime. Derived
@@ -320,6 +343,12 @@ pub const GlobalSemanticGraph = struct {
                 .@"struct" => @hasField(field.type, "items"),
                 else => false,
             }) try @field(result, field.name).appendSlice(allocator, @field(self, field.name).items);
+        }
+        for (result.virtual_registries.items) |*registry| if (registry.safety_contract) |*contract| {
+            contract.outcomes = try copySafetyOutcomes(try result.safetyAllocator(allocator), contract.outcomes);
+        };
+        for (result.contract_safety_conformances.items) |*conformance| {
+            conformance.contract.outcomes = try copySafetyOutcomes(try result.safetyAllocator(allocator), conformance.contract.outcomes);
         }
         inline for (@typeInfo(ConstructionState).@"struct".fields) |field| {
             try @field(result.construction, field.name).appendSlice(allocator, @field(self.construction, field.name).items);
@@ -372,6 +401,10 @@ pub const GlobalSemanticGraph = struct {
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         self.lookup.deinit(allocator);
         self.construction.deinit(allocator);
+        if (self.safety_arena) |arena| {
+            arena.deinit();
+            allocator.destroy(arena);
+        }
         inline for (.{
             &self.modules,                     &self.module_aliases,             &self.files,                        &self.declarations,
             &self.symbols,                     &self.symbol_declarations,        &self.types,                        &self.generic_instances,
@@ -1060,4 +1093,29 @@ fn cloneConstructionGraph(allocator: std.mem.Allocator) !void {
 
 test "semantic graph clones isolate in-place edits and preserve construction identities" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneConstructionGraph, .{});
+}
+
+fn cloneSafetySelectors(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var source: GlobalSemanticGraph = .{};
+    defer source.deinit(a);
+    const arena = try source.safetyAllocator(a);
+    const location: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const outcomes = try arena.alloc(primitives.MethodSafetyContract.Outcome, 1);
+    outcomes[0] = .{ .variant = .{ .start = 0, .len = 0 }, .parent_variants = try arena.dupe(u32, &.{3}), .source = location };
+    try source.contract_safety_conformances.append(a, .{
+        .selection = .{ .conformance = 0, .index = 0 },
+        .method = @enumFromInt(0),
+        .contract = .{ .output_count = 1, .outcomes = outcomes, .source = location },
+        .receiver_input_index = null,
+        .source = location,
+    });
+    var copy = try source.clone(allocator);
+    defer copy.deinit(allocator);
+    source.deinit(a);
+    try std.testing.expectEqual(@as(u32, 3), copy.contract_safety_conformances.items[0].contract.outcomes[0].parent_variants[0]);
+}
+
+test "semantic graph safety selectors survive source destruction and failed cloning" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneSafetySelectors, .{});
 }
