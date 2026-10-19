@@ -6662,8 +6662,9 @@ pub const SafetyChecker = struct {
     }
 
     fn report(self: *SafetyChecker, source: primitives.SourceRef, comptime fmt: []const u8, args: anytype) !void {
-        const loc = self.location(source) orelse return;
-        try self.diagnostics.add(loc, .semantic, fmt, args);
+        if (self.location(source)) |loc| {
+            try self.diagnostics.add(loc, .semantic, fmt, args);
+        } else try self.diagnostics.addUnlocated(.semantic, fmt, args);
     }
 
     fn validateIntegerLiteral(self: *SafetyChecker, source: primitives.SourceRef, maybe_ty: ?graph_mod.GlobalTypeId, value: i128) !void {

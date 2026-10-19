@@ -388,3 +388,43 @@ test "cached modules retain executable condition recipes and source identities" 
     restored.conditions.items[0].expression = @enumFromInt(std.math.maxInt(u32));
     try std.testing.expectError(error.InvalidModuleCondition, @import("../module/complete_verify.zig").verifyModule(&restored));
 }
+
+test "staged evaluation checks safety without source text" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "choose := () -> (.ok: Bool) { flag: Bool\n ok = flag }\n#if choose() {}";
+    var recipe: ?Recipe = null;
+    var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
+    defer base.deinit(a);
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    var session: sema.Session = undefined;
+    try session.init(a, &.{base}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try std.testing.expectError(error.Reported, session.evaluateModuleCondition(0, recipe.?));
+    try std.testing.expect(diagnostics.hasErrors());
+    try std.testing.expectEqualStrings("value was deinitialized", diagnostics.list.items[0].msg);
+    try std.testing.expectEqual(@import("../../1_base/source_db.zig").FileId.unknown, diagnostics.list.items[0].loc.file);
+}
+
+test "staged evaluation works and rejects unsafe bodies without a diagnostic sink" {
+    for ([_]bool{ false, true }) |unsafe_body| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const source = if (unsafe_body)
+            "choose := () -> (.ok: Bool) { flag: Bool\n ok = flag }\n#if choose() {}"
+        else
+            "choose := () -> (.ok: Bool) { ok = true }\n#if choose() {}";
+        var recipe: ?Recipe = null;
+        var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
+        defer base.deinit(a);
+        var session: sema.Session = undefined;
+        try session.init(a, &.{base}, .{ .exhaustive_function_bodies = false });
+        defer session.deinit();
+        if (unsafe_body) {
+            try std.testing.expectError(error.Reported, session.evaluateModuleCondition(0, recipe.?));
+        } else try std.testing.expectEqual(@as(?bool, true), try session.evaluateModuleCondition(0, recipe.?));
+    }
+}

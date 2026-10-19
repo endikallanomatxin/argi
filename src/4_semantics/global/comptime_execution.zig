@@ -159,7 +159,20 @@ pub const Scheduler = struct {
         return false;
     }
 
-    pub fn evaluateReady(self: *Scheduler, contracts: *@import("contracts.zig").Resolver, diagnostics: *@import("../../1_base/diagnostic.zig").Diagnostics, finalized: *const std.AutoHashMap(g.GlobalFunctionId, void), pending_bodies: *const std.AutoHashMap(g.GlobalFunctionId, void)) !bool {
+    pub fn evaluateReady(self: *Scheduler, contracts: *@import("contracts.zig").Resolver, diagnostics: ?*@import("../../1_base/diagnostic.zig").Diagnostics, finalized: *const std.AutoHashMap(g.GlobalFunctionId, void), pending_bodies: *const std.AutoHashMap(g.GlobalFunctionId, void)) !bool {
+        if (self.requests.items.len == 0) return false;
+        if (diagnostics) |sink| return self.evaluateReadyWithDiagnostics(contracts, sink, finalized, pending_bodies);
+        // Proof and execution cannot depend on whether a caller wants diagnostic
+        // text. A private bag retains failures until the evaluator returns.
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var fallback = @import("../../1_base/diagnostic.zig").Diagnostics.init(&a, &.{});
+        defer fallback.deinit();
+        return self.evaluateReadyWithDiagnostics(contracts, &fallback, finalized, pending_bodies);
+    }
+
+    fn evaluateReadyWithDiagnostics(self: *Scheduler, contracts: *@import("contracts.zig").Resolver, diagnostics: *@import("../../1_base/diagnostic.zig").Diagnostics, finalized: *const std.AutoHashMap(g.GlobalFunctionId, void), pending_bodies: *const std.AutoHashMap(g.GlobalFunctionId, void)) !bool {
         var changed = false;
         const graph = self.functions.graph;
         for (self.requests.items) |*request| {

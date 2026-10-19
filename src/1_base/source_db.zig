@@ -4,7 +4,7 @@ const sf = @import("source_files.zig");
 /// Stable identity of a source buffer within one frontend invocation. Retained
 /// and cached semantic graphs match paths and content hashes instead of storing
 /// this invocation-local index. Tokens keep compact indices into this database.
-pub const FileId = enum(u32) { _ };
+pub const FileId = enum(u32) { unknown = std.math.maxInt(u32), _ };
 
 pub fn contentHash(source: []const u8) u64 {
     return std.hash.Wyhash.hash(0, source);

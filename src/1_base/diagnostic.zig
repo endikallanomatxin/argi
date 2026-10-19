@@ -82,6 +82,11 @@ pub const Diagnostics = struct {
         return id;
     }
 
+    /// Missing source metadata must never suppress a semantic failure.
+    pub fn addUnlocated(self: *Diagnostics, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
+        return self.add(tok.Location.unavailable, kind, fmt, args);
+    }
+
     pub fn add(self: *Diagnostics, loc: tok.Location, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
         const txt = try std.fmt.allocPrint(self.arena.*, fmt, args);
         errdefer self.arena.free(txt);
@@ -119,11 +124,14 @@ pub const Diagnostics = struct {
     }
 
     pub fn path(self: *const Diagnostics, loc: tok.Location) []const u8 {
-        return self.source_db.path(self.presentedLocation(loc).file);
+        const file = self.presentedLocation(loc).file;
+        if (@intFromEnum(file) >= self.source_db.files.len) return "<unknown>";
+        return self.source_db.path(file);
     }
 
     pub fn lineColumn(self: *const Diagnostics, loc: tok.Location) source_db.LineColumn {
         const presented = self.presentedLocation(loc);
+        if (@intFromEnum(presented.file) >= self.source_db.files.len) return .{ .line = 1, .column = 1 };
         return self.source_db.lineColumn(presented.file, presented.offset);
     }
 
@@ -163,6 +171,13 @@ pub const Diagnostics = struct {
                 shown += 1;
             }
         }
+        var unlocated_shown: usize = 0;
+        for (self.list.items) |diagnostic| {
+            if (@intFromEnum(self.presentedLocation(diagnostic.loc).file) < self.source_db.files.len) continue;
+            if (unlocated_shown >= max_count) break;
+            std.debug.print("error: {s}\n", .{diagnostic.msg});
+            unlocated_shown += 1;
+        }
     }
 };
 
@@ -195,4 +210,20 @@ test "diagnostic source maps preserve semantic offsets and borrowed presentation
     defer borrowed.deinit();
     try std.testing.expectEqualDeep(mapped, borrowed.presentedLocation(generated));
     try std.testing.expectError(error.InvalidDiagnosticSourceMap, diagnostics.addSourceMap(.{ .generated = @enumFromInt(1), .original = @enumFromInt(0), .offset = 0, .length = 5 }));
+}
+
+test "diagnostics retain errors without source metadata" {
+    const a = std.testing.allocator;
+    var diagnostics = Diagnostics.init(&a, &.{});
+    defer {
+        for (diagnostics.list.items) |item| a.free(item.msg);
+        diagnostics.deinit();
+    }
+    try diagnostics.addUnlocated(.semantic, "invalid value {d}", .{42});
+    try std.testing.expect(diagnostics.hasErrors());
+    const diagnostic = diagnostics.list.items[0];
+    try std.testing.expectEqual(source_db.FileId.unknown, diagnostic.loc.file);
+    try std.testing.expectEqualStrings("invalid value 42", diagnostic.msg);
+    try std.testing.expectEqualStrings("<unknown>", diagnostics.path(diagnostic.loc));
+    try std.testing.expectEqual(@as(u32, 1), diagnostics.lineColumn(diagnostic.loc).line);
 }

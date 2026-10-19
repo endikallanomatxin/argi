@@ -22,7 +22,7 @@ pub fn find(g: *const graph.GlobalSemanticGraph, db: *const source_db.SourceDb, 
 }
 
 pub fn location(g: *const graph.GlobalSemanticGraph, bag: *const diagnostics.Diagnostics, ref: source.SourceRef) token.Location {
-    return find(g, &bag.source_db, ref) orelse .{ .file = @enumFromInt(0), .offset = ref.offset };
+    return find(g, &bag.source_db, ref) orelse .{ .file = .unknown, .offset = ref.offset };
 }
 
 test "retained source lookup distinguishes versions sharing one path" {

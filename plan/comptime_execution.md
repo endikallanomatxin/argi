@@ -8,8 +8,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Extend the ordinary REPL prelude with a persistent allocator through explicit
   checked host adapters.
-- Complete staged request diagnostics without a source database. Support temporary
-  type recipes without retaining identities from speculative graph tails.
+- Support temporary type recipes without retaining identities from speculative
+  graph tails.
 
 ## Partial storage
 

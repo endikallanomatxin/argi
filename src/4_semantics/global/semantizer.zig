@@ -731,7 +731,6 @@ pub const Session = struct {
     /// required modules before retrying. No runtime/session value is captured.
     pub fn evaluateModuleCondition(self: *Session, module_index: usize, expression: @import("../module/parameterized/ir.zig").ParameterizedNodeId) !?bool {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
-        if (self.options.diagnostics == null) return error.MissingCompileTimeDiagnostics;
         if (module_index >= self.modules.len or @intFromEnum(expression) >= self.modules[module_index].semantic.parameterized_storage.ir.nodes.items.len)
             return error.InvalidModuleCondition;
         const Scheduler = @import("comptime_execution.zig").Scheduler;
@@ -1244,13 +1243,10 @@ fn advanceResolution(
                 if (item.owner_function) |owner| try pending_bodies.put(owner, {});
             };
         }
-        const evaluated = if (options.diagnostics) |diagnostics|
-            staged_execution.evaluateReady(contracts, diagnostics, finalized_functions, &pending_bodies) catch |err| {
-                try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
-                return err;
-            }
-        else
-            false;
+        const evaluated = staged_execution.evaluateReady(contracts, options.diagnostics, finalized_functions, &pending_bodies) catch |err| {
+            try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+            return err;
+        };
         if (evaluated) try contracts.resolveAssociatedTypes();
         if (!finalized_any and !reached_cleanup and !evaluated) break;
         changed = true;
@@ -3647,6 +3643,7 @@ fn argumentFieldLocation(
     field_name: []const u8,
 ) tok.Location {
     const value_location = diagnosticLocation(graph, diagnostics, value_source);
+    if (@intFromEnum(value_location.file) >= diagnostics.source_db.files.len) return value_location;
     const file = diagnostics.source_db.get(value_location.file);
     const end = @min(@as(usize, value_location.offset), file.source.len);
     var line_start = end;
@@ -4096,4 +4093,14 @@ test "semantic session forks prepare independent module additions" {
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
     try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[1].builtin);
     try std.testing.expectEqualDeep(saved, accepted.relocation.graph.checkpoint());
+}
+
+test "argument diagnostics tolerate absent source metadata" {
+    const a = std.testing.allocator;
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    const graph: global_sg.GlobalSemanticGraph = .{};
+    const location = argumentFieldLocation(&graph, &diagnostics, .{ .file_index = 0, .offset = 12 }, "value");
+    try std.testing.expectEqual(@import("../../1_base/source_db.zig").FileId.unknown, location.file);
+    try std.testing.expectEqual(@as(u32, 12), location.offset);
 }

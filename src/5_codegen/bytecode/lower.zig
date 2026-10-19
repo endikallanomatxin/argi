@@ -772,6 +772,8 @@ const FunctionLower = struct {
         const graph = self.parent.graph;
         const diagnostics = self.parent.diagnostics orelse return self.parent.reject(source, "source location metadata without a source database");
         const location = diagnostics.presentedLocation(@import("../../4_semantics/global/source_location.zig").location(graph, diagnostics, source));
+        if (@intFromEnum(location.file) >= diagnostics.source_db.files.len)
+            return self.parent.reject(source, "source location metadata without a source database");
         const position_ = diagnostics.source_db.lineColumn(location.file, location.offset);
         const file = diagnostics.source_db.get(location.file);
         const line = file.source[file.line_starts[position_.line - 1]..];
