@@ -3,21 +3,15 @@ const p = @import("../4_semantics/primitives/schema.zig");
 pub const Bounds = p.IntegerRange;
 pub const bounds = p.integerRangeForWidth;
 
-// Evaluate a selected integer primitive, without resolving operations or
-// contracts. The caller supplies the actual target width and signedness.
-// Truncating an overflowing i128 product preserves its low bits, hence its
-// residue for every supported integer width (at most 64 bits).
+// Compatibility boundary for semantic integer constants and range checks.
+// Execution itself uses the selected native-width scalar representation.
 pub fn evaluate(operator: p.BinaryOperator, left: i128, right: i128, range: Bounds) error{DivisionByZero}!i128 {
-    const result = switch (operator) {
-        .addition => left +% right,
-        .subtraction => left -% right,
-        .multiplication => left *% right,
-        .division => if (right == 0) return error.DivisionByZero else @divTrunc(left, right),
-        .modulo => if (right == 0) return error.DivisionByZero else @rem(left, right),
+    const numeric = @import("numeric_value.zig").Value;
+    const result = numeric.fromInteger(left, range).binary(operator, numeric.fromInteger(right, range)) catch |err| switch (err) {
+        error.DivisionByZero => return error.DivisionByZero,
+        error.MismatchedNumericTypes => unreachable,
     };
-    const modulus = range.maximum - range.minimum + 1;
-    const residue = @mod(result, modulus);
-    return if (residue > range.maximum) residue - modulus else residue;
+    return result.integer();
 }
 
 test "integer primitives wrap at each width including full unsigned products" {

@@ -166,4 +166,6 @@ comptime {
     _ = reference_layout;
     _ = reference_evidence;
     _ = native_cleanup_state;
+    _ = @import("5_codegen/integer_arithmetic.zig");
+    _ = @import("5_codegen/numeric_value.zig");
 }
