@@ -67,6 +67,7 @@ fn printHelp() void {
     std.debug.print("  --c-sysroot <path>                      Select the target C toolchain sysroot\n", .{});
     std.debug.print("  --target <arch-os-abi>                   Select native or Linux x86_64/aarch64 GNU target\n", .{});
     std.debug.print("  --release                              Optimize LLVM IR and generated machine code\n", .{});
+    std.debug.print("\nBytecode execution limits (run --vm, repl):\n  {s}\n", .{@import("0_commands/execution_options.zig").help});
     std.debug.print("\nTest flags:\n", .{});
     std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
     std.debug.print("\nBuild diagnostic flags:\n", .{});

@@ -5745,7 +5745,7 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "build [path] [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "run [executable] [build flags]") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "repl [--sysroot <path>]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "repl [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot <path>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--exec <name>") != null);
@@ -5756,6 +5756,9 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "format [paths...] [--check]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "format <file.rg> --stdout") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--vm-instructions <N>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--vm-call-depth <N>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--vm-value-cells <N>") != null);
 }
 
 test "argi repl retains values and shares compile-time execution" {
