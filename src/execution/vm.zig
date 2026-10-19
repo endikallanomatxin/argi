@@ -452,9 +452,8 @@ pub const Vm = struct {
                     try slots.put(x.dst, try self.context().storage.address(original, .read_only));
                 },
                 .memory_call => |x| {
-                    const operation = @import("../5_codegen/bytecode/memory_boundary.zig").classify(unit.graph, x.function) orelse return error.InvalidBytecode;
                     const storage = &self.context().storage;
-                    switch (operation) {
+                    switch (x.operation) {
                         .allocate => |signature| {
                             const size = std.math.cast(usize, (try slots.get(x.args[signature.size])).integer) orelse return error.ExecutionMemoryLimit;
                             const alignment = if (signature.alignment) |index| std.math.cast(usize, (try slots.get(x.args[index])).integer) orelse return error.ExecutionInvalidAlignment else @alignOf(u128);

@@ -135,7 +135,7 @@ pub const Instruction = struct {
         cleanup_test: struct { dst: Slot, place: Place },
         branch_cleanup: struct { place: Place, yes: u32, no: u32 },
         cleanup_set: struct { place: Place, enabled: bool },
-        memory_call: struct { outputs: []const Slot, function: g.GlobalFunctionId, args: []const Slot },
+        memory_call: struct { outputs: []const Slot, function: g.GlobalFunctionId, operation: @import("memory_boundary.zig").Operation, args: []const Slot },
         host_call: struct { outputs: []const Slot, function: u32, args: []const Slot },
         call: struct { outputs: []const Slot, function: g.GlobalFunctionId, args: []const Slot },
         branch: struct { condition: Slot, yes: u32, no: u32 },

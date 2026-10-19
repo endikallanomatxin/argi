@@ -970,7 +970,7 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout } });
             }
         } else if (self.parent.mode == .runtime and @import("memory_boundary.zig").classify(self.parent.graph, x.callee) != null) {
-            _ = try self.emit(node.source, .{ .memory_call = .{ .outputs = outputs, .function = x.callee, .args = args } });
+            _ = try self.emit(node.source, .{ .memory_call = .{ .outputs = outputs, .function = x.callee, .operation = @import("memory_boundary.zig").classify(self.parent.graph, x.callee).?, .args = args } });
         } else if (f.flags.is_c_abi and self.parent.mode == .runtime) {
             @import("host_signature.zig").validate(self.parent.graph, x.callee) catch
                 return self.parent.reject(node.source, "foreign call outside the scalar host boundary");

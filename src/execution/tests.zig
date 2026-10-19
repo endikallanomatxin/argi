@@ -2120,6 +2120,24 @@ test "bytecode memory adapters consume registered identities rather than declara
         const id: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(index);
         if (function.safety_primitive == .raw_released_storage) {
             try std.testing.expect(memory.classify(graph, id).? == .release);
+            const source = function.input;
+            const argument_types = try a.alloc(b.Type, source.len);
+            const arguments = try a.alloc(b.Slot, source.len);
+            for (argument_types, arguments, graph.fields.items[source.start..][0..source.len], 0..) |*ty, *slot, field, position| {
+                ty.* = field.ty;
+                slot.* = @intCast(position);
+            }
+            var code = [_]b.Instruction{
+                .{ .source = .{ .file_index = 0, .offset = 0 }, .op = .{ .memory_call = .{ .outputs = &.{}, .function = id, .operation = .release, .args = arguments } } },
+                .{ .source = .{ .file_index = 0, .offset = 0 }, .op = .{ .ret = &.{} } },
+            };
+            const expression: b.Function = .{ .slots = argument_types, .inputs = arguments, .outputs = &.{}, .code = &code };
+            const functions = try a.alloc(?b.Function, graph.functions.items.len);
+            @memset(functions, null);
+            const program: b.Program = .{ .graph = graph, .functions = functions, .expression = &expression };
+            try b.verify(a, program);
+            code[0].op.memory_call.operation = .{ .allocate = .{ .size = 0, .alignment = null } };
+            try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
             releases += 1;
             // Classification remains valid with no filename or declaration-name
             // spelling available after the frontend has selected the identity.

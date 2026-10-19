@@ -274,7 +274,9 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     for (slots, f.outputs) |slot, output| if (!types.equal(program.graph, f.slots[slot], f.slots[output])) return error.InvalidBytecode;
                 },
                 .memory_call => |x| {
-                    if (@intFromEnum(x.function) >= program.graph.functions.items.len or @import("memory_boundary.zig").classify(program.graph, x.function) == null) return error.InvalidBytecode;
+                    if (@intFromEnum(x.function) >= program.graph.functions.items.len) return error.InvalidBytecode;
+                    const selected = @import("memory_boundary.zig").classify(program.graph, x.function) orelse return error.InvalidBytecode;
+                    if (!std.meta.eql(selected, x.operation)) return error.InvalidBytecode;
                     const callee = program.graph.function(x.function);
                     if (x.args.len != callee.input.len or x.outputs.len != callee.output.len) return error.InvalidBytecode;
                     for (x.args, program.graph.fields.items[callee.input.start..][0..callee.input.len]) |slot, field| if (!types.equal(program.graph, f.slots[slot], field.ty)) return error.InvalidBytecode;
