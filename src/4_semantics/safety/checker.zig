@@ -3325,6 +3325,10 @@ pub const SafetyChecker = struct {
                         continue;
                     }
                 }
+                // An unresolved reference does not identify embedded storage
+                // beneath the slot holding it. Symbolic referent effects use
+                // their own identities, just like unknown top-level inputs.
+                return null;
             }
             target = try self.project(target, projection);
         }
@@ -7342,7 +7346,8 @@ test "structural auto deinit marks nested fields and parent dead" {
         .deinit_fn = null,
     });
     try graph.auto_deinits.append(allocator, .{
-        .storage = .{ .binding = @enumFromInt(0) }, .deinit_fn = null,
+        .storage = .{ .binding = @enumFromInt(0) },
+        .deinit_fn = null,
         .fields = .{ .start = 0, .len = 1 },
     });
 
@@ -8830,4 +8835,25 @@ test "safety continuations retain temporal state while candidate forks remain is
     try std.testing.expect(reassignment);
     try std.testing.expectEqual(value_state.Initializedness.initialized, checker.initializednessAtPlace(&accepted.state, storage));
     try std.testing.expect(checker.continuation == null);
+}
+
+test "summary dereferences require a known referent rather than a synthetic child place" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const owner = facts.Place{ .root = @enumFromInt(0) };
+    const slot = try checker.project(owner, .{ .field = 0 });
+    const external = facts.Place{ .root = @enumFromInt(1) };
+    const path = facts.InputPath{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference, .{ .field = 0 } } };
+    const arguments = [_]facts.ValueFacts{.{ .referenced_place = owner }};
+    try std.testing.expectEqual(null, try checker.resolveSummaryInputPath(path, &.{}, &arguments, &state));
+    try checker.setPlace(&state, slot, .initialized, .{ .referenced_place = external });
+    const resolved = (try checker.resolveSummaryInputPath(path, &.{}, &arguments, &state)).?;
+    try std.testing.expect(resolved.eql(try checker.project(external, .{ .field = 0 })));
 }
