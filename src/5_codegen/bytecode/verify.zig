@@ -639,3 +639,54 @@ test "bytecode verifier allocation scaling for linear functions" {
         try std.testing.expect(bytes <= count * 64 + 2048);
     }
 }
+
+fn verifyJoinAllocationFailures(a: std.mem.Allocator) !void {
+    const owner = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(owner);
+    try graph.types.append(owner, .{ .builtin = .Bool });
+    const source = @import("../../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const slots = [_]Type{ @enumFromInt(0), @enumFromInt(0) };
+    const code = [_]Instruction{
+        .{ .source = source, .op = .{ .branch = .{ .condition = 0, .yes = 1, .no = 3 } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .boolean = true } } } },
+        .{ .source = source, .op = .{ .jump = 5 } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .boolean = false } } } },
+        .{ .source = source, .op = .{ .jump = 5 } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+    };
+    const function = b.Function{ .slots = &slots, .inputs = &.{0}, .outputs = &.{1}, .code = &code };
+    try verify(a, .{ .graph = &graph, .functions = &.{}, .expression = &function });
+    var missing = code;
+    missing[3] = .{ .source = source, .op = .{ .jump = 5 } };
+    var incomplete = function;
+    incomplete.code = &missing;
+    verify(a, .{ .graph = &graph, .functions = &.{}, .expression = &incomplete }) catch |err| {
+        if (err == error.OutOfMemory) return err;
+        return std.testing.expectEqual(error.UninitializedBytecodeSlot, err);
+    };
+    return error.ExpectedInitializationRejection;
+}
+
+test "bytecode verifier retains join intersections and releases transferred states on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, verifyJoinAllocationFailures, .{});
+}
+
+test "bytecode verifier loop backedges cannot initialize the function entry" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    const source = @import("../../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const code = [_]Instruction{
+        .{ .source = source, .op = .{ .branch = .{ .condition = 0, .yes = 1, .no = 3 } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .boolean = true } } } },
+        .{ .source = source, .op = .{ .jump = 0 } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+    };
+    var function = b.Function{ .slots = &.{ @enumFromInt(0), @enumFromInt(0) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code };
+    const program = Program{ .graph = &graph, .functions = &.{}, .expression = &function };
+    try std.testing.expectError(error.UninitializedBytecodeSlot, verify(a, program));
+    function.inputs = &.{ 0, 1 };
+    try verify(a, program);
+}
