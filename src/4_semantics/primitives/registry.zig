@@ -253,19 +253,28 @@ pub const AllocationTransfer = struct {
     };
 };
 
-/// A move with two arguments discovers its storage domain from the owner.
-/// The three-argument form names the storage domain explicitly.
+/// Operand positions come from primitive identity, not completed arity.
+/// Reached capabilities may follow the explicit inputs.
 pub const OpaqueMoveOperands = struct {
     owner: usize,
     storage: ?usize,
 };
 
-pub fn opaqueMoveOperands(argument_count: usize) ?OpaqueMoveOperands {
-    return switch (argument_count) {
-        2 => .{ .owner = 1, .storage = null },
-        3 => .{ .owner = 2, .storage = 0 },
-        else => null,
+pub fn opaqueMoveOperands(primitive: primitives.SafetyPrimitive, argument_count: usize) ?OpaqueMoveOperands {
+    const operands: OpaqueMoveOperands = switch (primitive) {
+        .trusted_opaque_move => .{ .owner = 1, .storage = null },
+        .trusted_opaque_move_in => .{ .owner = 2, .storage = 0 },
+        else => return null,
     };
+    return if (argument_count > operands.owner) operands else null;
+}
+
+test "opaque move operand identity survives additional capability inputs" {
+    try std.testing.expectEqual(@as(usize, 1), opaqueMoveOperands(.trusted_opaque_move, 4).?.owner);
+    try std.testing.expectEqual(@as(usize, 2), opaqueMoveOperands(.trusted_opaque_move_in, 4).?.owner);
+    try std.testing.expectEqual(@as(?usize, 0), opaqueMoveOperands(.trusted_opaque_move_in, 4).?.storage);
+    try std.testing.expectEqual(null, opaqueMoveOperands(.trusted_opaque_move_in, 2));
+    try std.testing.expectEqual(null, opaqueMoveOperands(.relocate, 4));
 }
 
 test "trusted primitive paths accept native separators without weakening identity" {

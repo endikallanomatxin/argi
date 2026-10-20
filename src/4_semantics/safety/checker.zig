@@ -2009,7 +2009,7 @@ pub const SafetyChecker = struct {
             .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
             .relocate => try self.relocatePrimitive(source, values, state),
             .opaque_move => blk: {
-                try self.applyOpaqueMovePrimitive(function, source, argument_ids, values, state);
+                try self.applyOpaqueMovePrimitive(function, primitive, source, argument_ids, values, state);
                 break :blk .{};
             },
             .opaque_move_out => try self.opaqueMoveOutPrimitive(argument_ids, values, state),
@@ -2160,12 +2160,13 @@ pub const SafetyChecker = struct {
     fn applyOpaqueMovePrimitive(
         self: *SafetyChecker,
         function: graph_mod.GlobalFunctionId,
+        primitive: primitives.SafetyPrimitive,
         source: primitives.SourceRef,
         argument_ids: []const graph_mod.GlobalValueFieldId,
         values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        const operands = primitive_transfer.opaqueMoveOperands(values.len) orelse return;
+        const operands = primitive_transfer.opaqueMoveOperands(primitive, values.len) orelse return;
         if (operands.storage) |storage_index| {
             try self.closeOpaqueOwnedRoots(source, values[operands.owner], state, null);
             if (try self.primitiveArgumentStorage(argument_ids, values, storage_index, state)) |storage| {
@@ -7190,9 +7191,10 @@ test "opaque primitives move ownership through domain state" {
 
     try checker.applyOpaqueMovePrimitive(
         @enumFromInt(0),
+        .trusted_opaque_move_in,
         .{ .file_index = 0, .offset = 0 },
         &.{},
-        &.{ .{ .referenced_place = storage }, .{}, moved },
+        &.{ .{ .referenced_place = storage }, .{}, moved, .{} },
         &state,
     );
     try std.testing.expect(!state.tracker.isAlive(owned));

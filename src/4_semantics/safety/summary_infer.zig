@@ -2368,7 +2368,7 @@ pub const Infer = struct {
         const input_transfer = primitive_transfer.forPrimitive(callee_function.safety_primitive).input;
         switch (input_transfer) {
             .consume_opaque_owner => {
-                if (primitive_transfer.opaqueMoveOperands(arguments.len)) |operands| {
+                if (primitive_transfer.opaqueMoveOperands(callee_function.safety_primitive, arguments.len)) |operands| {
                     const targets = try self.inferInputPaths(function_id, arguments[operands.owner].value);
                     const storage = if (operands.storage) |storage_index| blk: {
                         const storage_targets = try self.inferInputPaths(function_id, arguments[storage_index].value);
