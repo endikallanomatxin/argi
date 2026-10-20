@@ -1846,8 +1846,8 @@ pub const CodeGenerator = struct {
         const pointer = (try self.visitNode(deref.pointer)) orelse return CodegenError.ValueNotFound;
         const type_ref = try self.toLLVMType(deref.ty);
         const value = c.LLVMBuildLoad2(self.builder, type_ref, pointer.value_ref, "deref");
-        const view: ?c.LLVMValueRef = if (self.graph.semanticType(deref.ty) == .pointer and pointer.reference_view != null)
-            reference_evidence.loadOptional(self.builder, try reference_evidence.referencesPointer(self.builder, pointer.reference_view.?))
+        const view: ?c.LLVMValueRef = if (pointer.reference_view != null and try self.reference_layouts.count(self.allocator, self.graph, deref.ty) != 0)
+            reference_evidence.loadOptionalValue(self.builder, try reference_evidence.referencesPointer(self.builder, pointer.reference_view.?), try self.referenceValueType(deref.ty))
         else
             null;
         return .{ .value_ref = value, .type_ref = type_ref, .ty = deref.ty, .reference_view = view };
@@ -1908,9 +1908,9 @@ pub const CodeGenerator = struct {
         const value = try self.prepareWriteValue(assignment.value, destination);
         try destination.commit(self, value);
         try self.storeProjectedReferenceView(assignment.cleanup_target, value);
-        if (self.graph.semanticType(pointer_type.pointer.child) == .pointer) {
+        if (try self.reference_layouts.count(self.allocator, self.graph, pointer_type.pointer.child) != 0) {
             if (pointer.reference_view) |view|
-                reference_evidence.storeOptional(self.builder, try reference_evidence.referencesPointer(self.builder, view), value.reference_view);
+                reference_evidence.storeOptionalValue(self.builder, try reference_evidence.referencesPointer(self.builder, view), value.reference_view orelse c.LLVMConstNull(try self.referenceValueType(pointer_type.pointer.child)));
         }
     }
 

@@ -58,29 +58,39 @@ pub fn referencesPointer(builder: c.LLVMBuilderRef, view: c.LLVMValueRef) !c.LLV
 }
 
 pub fn loadOptional(builder: c.LLVMBuilderRef, storage: c.LLVMValueRef) c.LLVMValueRef {
+    return loadOptionalValue(builder, storage, storageViewType());
+}
+
+// Aggregate companions use the same guarded access as a single reference.
+// The descriptor determines the SSA type; absent storage yields empty evidence.
+pub fn loadOptionalValue(builder: c.LLVMBuilderRef, storage: c.LLVMValueRef, ty: c.LLVMTypeRef) c.LLVMValueRef {
     const origin = c.LLVMGetInsertBlock(builder);
     const function = c.LLVMGetBasicBlockParent(origin);
     const present = c.LLVMAppendBasicBlock(function, "reference.present");
     const done = c.LLVMAppendBasicBlock(function, "reference.loaded");
     _ = c.LLVMBuildCondBr(builder, c.LLVMBuildIsNull(builder, storage, "reference.absent"), done, present);
     c.LLVMPositionBuilderAtEnd(builder, present);
-    const value = c.LLVMBuildLoad2(builder, storageViewType(), storage, "reference.view");
+    const value = c.LLVMBuildLoad2(builder, ty, storage, "reference.view");
     _ = c.LLVMBuildBr(builder, done);
     c.LLVMPositionBuilderAtEnd(builder, done);
-    const result = c.LLVMBuildPhi(builder, storageViewType(), "reference.loaded.view");
-    var values = [_]c.LLVMValueRef{ c.LLVMConstNull(storageViewType()), value };
+    const result = c.LLVMBuildPhi(builder, ty, "reference.loaded.view");
+    var values = [_]c.LLVMValueRef{ c.LLVMConstNull(ty), value };
     var blocks = [_]c.LLVMBasicBlockRef{ origin, present };
     c.LLVMAddIncoming(result, &values, &blocks, values.len);
     return result;
 }
 
 pub fn storeOptional(builder: c.LLVMBuilderRef, storage: c.LLVMValueRef, value: ?c.LLVMValueRef) void {
+    storeOptionalValue(builder, storage, value orelse c.LLVMConstNull(storageViewType()));
+}
+
+pub fn storeOptionalValue(builder: c.LLVMBuilderRef, storage: c.LLVMValueRef, value: c.LLVMValueRef) void {
     const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(builder));
     const present = c.LLVMAppendBasicBlock(function, "reference.writable");
     const done = c.LLVMAppendBasicBlock(function, "reference.stored");
     _ = c.LLVMBuildCondBr(builder, c.LLVMBuildIsNull(builder, storage, "reference.absent"), done, present);
     c.LLVMPositionBuilderAtEnd(builder, present);
-    _ = c.LLVMBuildStore(builder, value orelse c.LLVMConstNull(storageViewType()), storage);
+    _ = c.LLVMBuildStore(builder, value, storage);
     _ = c.LLVMBuildBr(builder, done);
     c.LLVMPositionBuilderAtEnd(builder, done);
 }
@@ -216,6 +226,11 @@ test "native reference evidence projects distinct sibling ranges through the pri
         const forwarded = try storageView(builder, .{ .cleanup = try cleanupPointer(builder, value), .references = try referencesPointer(builder, value), .owner = try runtimeOwner(builder, value) });
         storeOptional(builder, output, forwarded);
     }
+    const aggregate_copy = loadOptionalValue(builder, input_storage, sidecar);
+    storeOptionalValue(builder, output_storage, aggregate_copy);
+    const absent_copy = loadOptionalValue(builder, c.LLVMConstNull(c.LLVMPointerType(sidecar, 0)), sidecar);
+    const scratch = c.LLVMBuildAlloca(builder, sidecar, "absent.evidence");
+    storeOptionalValue(builder, scratch, absent_copy);
     const output = c.LLVMBuildLoad2(builder, sidecar, output_storage, "returned.evidence");
     var reassembled = c.LLVMConstNull(sidecar);
     for (0..2) |index| {
