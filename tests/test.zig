@@ -14246,3 +14246,9 @@ test "argi repl distinguishes transient expression default specializations" {
     try expectEqualStrings("", stderr);
     try expectEqualStrings("_0 = 42\n_1 = 41\n_2 = 42\n", stdout);
 }
+
+test "feature_tests/execution/139_comptime_default_effects" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/139_comptime_default_effects");
+    try runExpect("tests/feature_tests/execution/139_comptime_default_effects", 42);
+    try vmExpect("tests/feature_tests/execution/139_comptime_default_effects", 42, null);
+}

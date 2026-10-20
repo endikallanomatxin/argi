@@ -2598,11 +2598,18 @@ pub const Resolver = struct {
             }
             var assumed: std.ArrayList(global_sg.ValueField) = .empty;
             defer assumed.deinit(self.resolver.allocator);
-            for (storage.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |field| {
-                try assumed.append(self.resolver.allocator, .{
-                    .name = try self.copyString(field.name),
-                    .value = try self.instantiateNode(field.value),
-                });
+            if (self.callsite_reach) |context| {
+                // A default executes in its caller's lexical environment.
+                // Re-instantiating the declaration's assumed bindings creates
+                // body-local slots that do not exist at that call site.
+                if (context == .global) try assumed.appendSlice(self.resolver.allocator, self.resolver.graph.value_fields.items[context.global.assumed_fields.start..][0..context.global.assumed_fields.len]);
+            } else {
+                for (storage.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |field| {
+                    try assumed.append(self.resolver.allocator, .{
+                        .name = try self.copyString(field.name),
+                        .value = try self.instantiateNode(field.value),
+                    });
+                }
             }
             const assumed_start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, assumed.items);
