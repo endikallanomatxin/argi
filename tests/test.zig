@@ -14166,3 +14166,40 @@ test "feature_tests/execution/137_comptime_transient_defaults" {
     try runExpect("tests/feature_tests/execution/137_comptime_transient_defaults", 42);
     try vmExpect("tests/feature_tests/execution/137_comptime_transient_defaults", 42, null);
 }
+
+test "argi repl retains transient default recipes across commands" {
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    var child = try std.process.spawn(std.testing.io, .{
+        .argv = &.{ installed_argi, "repl" },
+        .cwd = .{ .path = compilerRoot() },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(std.testing.io);
+    const fixture = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/execution/137_comptime_transient_defaults/main.rg", std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(fixture);
+    const definitions_end = std.mem.indexOf(u8, fixture, "main()") orelse return error.MissingFixtureEntrypoint;
+    try child.stdin.?.writeStreamingAll(std.testing.io, ":begin\n");
+    try child.stdin.?.writeStreamingAll(std.testing.io, fixture[0..definitions_end]);
+    try child.stdin.?.writeStreamingAll(std.testing.io, ":end\nwith_default(.value = 7)\n#run with_default(.value = 9)\nwith_default(.value = true)\n:reset\n");
+    child.stdin.?.close(std.testing.io);
+    child.stdin = null;
+    var buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var reader: std.Io.File.MultiReader = undefined;
+    reader.init(std.testing.allocator, std.testing.io, buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer reader.deinit();
+    while (true) reader.fill(1, .none) catch |err| switch (err) {
+        error.EndOfStream => break,
+        else => return err,
+    };
+    const stdout = try reader.toOwnedSlice(0);
+    defer std.testing.allocator.free(stdout);
+    const stderr = try reader.toOwnedSlice(1);
+    defer std.testing.allocator.free(stderr);
+    if (stderr.len != 0) std.debug.print("REPL stderr: {s}\n", .{stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(std.testing.io));
+    try expectEqualStrings("", stderr);
+    try expectEqualStrings("_0 = 42\n_1 = 42\n_2 = 42\n", stdout);
+}
