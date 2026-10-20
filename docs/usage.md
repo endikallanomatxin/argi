@@ -378,3 +378,11 @@ frame-slot reclamation; it does not establish bounds for aggregate-heavy code.
 Observed total time is 24,358 ms, including 23,799 ms frontend/publication,
 242 ms lowering, 287 ms verification and 30 ms execution. Timing comparisons
 across these samples are not controlled benchmarks.
+
+Publishing function tables directly and copying them only when a retained lowerer
+adds a new function reduces the same 1,000-call sample to 743.70 MiB live
+(745.36 MiB peak). Code arenas fall from 262.44 to 75.26 MiB; checked graphs,
+proofs, frame storage and compiled function/instruction counts are unchanged.
+Observed total time is 23,019 ms, including 147 ms lowering. This removes one
+redundant table snapshot per command without reusing function bodies across
+commands; semantic snapshots remain the largest measured component.
