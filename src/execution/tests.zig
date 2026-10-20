@@ -1006,15 +1006,24 @@ test "bytecode retained lowering publishes stable programs for independent entri
     }
     var compiler = try lower.Lower.init(a, graph);
     const initial = try compiler.compile(first.?);
+    try std.testing.expectEqual(compiler.functions.ptr, initial.functions.ptr);
     var executor = try vm.Vm.init(a, initial, .{});
     defer executor.deinit();
     const original_code = initial.functions[@intFromEnum(first.?)].?.code.ptr;
+    // The pending queue allocates first; fail the subsequent table copy.
+    var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 1 });
+    compiler.allocator = failing.allocator();
+    try std.testing.expectError(error.OutOfMemory, compiler.compile(second.?));
+    compiler.allocator = a;
+    try std.testing.expectEqual(initial.functions.ptr, compiler.functions.ptr);
+    try std.testing.expect(initial.functions[@intFromEnum(second.?)] == null);
     try std.testing.expectError(error.InvalidEntry, compiler.compile(@enumFromInt(graph.functions.items.len)));
     try std.testing.expectError(error.UnsupportedExecution, compiler.compile(unsupported.?));
     try std.testing.expectError(error.UnsupportedExecution, compiler.compile(main.?));
     try std.testing.expectError(error.UnsupportedExecution, compiler.compile(main.?));
     try std.testing.expect(compiler.functions[@intFromEnum(main.?)] == null);
     const extended = try compiler.compile(second.?);
+    try std.testing.expect(initial.functions.ptr != extended.functions.ptr);
     try std.testing.expect(initial.functions[@intFromEnum(second.?)] == null);
     try std.testing.expect(initial.functions[@intFromEnum(unsupported.?)] == null);
     try std.testing.expectEqual(original_code, extended.functions[@intFromEnum(first.?)].?.code.ptr);
@@ -1024,6 +1033,7 @@ test "bytecode retained lowering publishes stable programs for independent entri
     defer next.deinit();
     try std.testing.expectEqual(@as(i128, 22), (try next.invoke(second.?, &.{}))[0].integer);
     const repeated = try compiler.compile(first.?);
+    try std.testing.expectEqual(extended.functions.ptr, repeated.functions.ptr);
     try std.testing.expectEqual(original_code, repeated.functions[@intFromEnum(first.?)].?.code.ptr);
 }
 

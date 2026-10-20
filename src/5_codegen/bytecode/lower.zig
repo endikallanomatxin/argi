@@ -12,6 +12,7 @@ pub const Lower = struct {
     allocator: std.mem.Allocator,
     graph: *const g.GlobalSemanticGraph,
     functions: []?b.Function,
+    functions_published: bool = false,
     globals: std.ArrayList(b.Global) = .empty,
     host_functions: std.ArrayList(g.GlobalFunctionId) = .empty,
     cleanup_bindings: []const bool,
@@ -127,6 +128,12 @@ pub const Lower = struct {
         };
         while (self.pending.pop()) |id| {
             if (self.functions[@intFromEnum(id)] != null) continue;
+            // A published table is immutable. Copy only when extending it;
+            // single-entry lowering and cache hits need no second full table.
+            if (self.functions_published) {
+                self.functions = try self.allocator.dupe(?b.Function, self.functions);
+                self.functions_published = false;
+            }
             try compiled.append(self.allocator, id);
             var f = FunctionLower{ .parent = self };
             self.functions[@intFromEnum(id)] = try f.compile(id);
@@ -139,7 +146,9 @@ pub const Lower = struct {
             stored.* = value;
             break :blk stored;
         } else null;
-        return .{ .host_functions = try self.allocator.dupe(g.GlobalFunctionId, self.host_functions.items), .globals = try self.allocator.dupe(b.Global, self.globals.items), .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions), .expression = entry, .session = self.session };
+        const program: b.Program = .{ .host_functions = try self.allocator.dupe(g.GlobalFunctionId, self.host_functions.items), .globals = try self.allocator.dupe(b.Global, self.globals.items), .graph = self.graph, .functions = self.functions, .expression = entry, .session = self.session };
+        self.functions_published = true;
+        return program;
     }
     fn isGlobal(self: *const Lower, binding: g.GlobalBindingId) bool {
         for (self.graph.roots.items) |root| {
