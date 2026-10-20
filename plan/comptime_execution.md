@@ -28,6 +28,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Lower semantic decisions into explicit runtime descriptors for layout,
   references, variants, memory operations and selected dispatch.
 - Replace core adapter name/path recognition with explicit primitive identities.
+- Complete private native reference-evidence transport: result channels, lifecycle
+  wrappers and aggregate fast paths must preserve the same logical storage views
+  now carried by ordinary and virtual call inputs.
 - Share semantic plans with native lowering; do not introduce a universal IR.
 - Connect cooperative cancellation to CLI controls and complete trace reporting.
 
