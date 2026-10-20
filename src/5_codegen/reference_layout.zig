@@ -8,6 +8,7 @@ const p = @import("../4_semantics/primitives/schema.zig");
 pub const Shape = union(enum) {
     leaf,
     reference,
+    virtual_reference,
     fields: g.FieldRange,
     variants: g.VariantRange,
     array: struct { element: g.GlobalTypeId, length: u64 },
@@ -16,7 +17,7 @@ pub const Shape = union(enum) {
 
 pub const Projection = union(enum) { field: u32, variant: g.GlobalVariantId, element: u64 };
 pub const Slice = struct { offset: usize, count: usize, ty: g.GlobalTypeId };
-pub const Error = error{ OutOfMemory, Overflow, InvalidReferenceLayout, InvalidReferenceProjection, UnsupportedVirtualEvidence };
+pub const Error = error{ OutOfMemory, Overflow, InvalidReferenceLayout, InvalidReferenceProjection };
 
 // Cache against one retained, finalized graph. Counting arrays uses arithmetic,
 // never one entry per element; pointer recursion stops at the reference leaf.
@@ -51,9 +52,9 @@ pub const Layout = struct {
                     .alias => |target| .{ .alias = target },
                 };
             },
-            // Erasure needs selected contract evidence in addition to a concrete
-            // storage view. Never silently classify its receiver as plain data.
-            .virtual => error.UnsupportedVirtualEvidence,
+            // The value already carries its selected method table. Its one
+            // erased receiver retains a storage view independently of that table.
+            .virtual => .virtual_reference,
             .nullable, .inferred_errable => error.InvalidReferenceLayout,
         };
     }
@@ -64,7 +65,7 @@ pub const Layout = struct {
         errdefer _ = self.counts.remove(ty);
         const result: usize = switch (try shape(graph, ty)) {
             .leaf => 0,
-            .reference => 1,
+            .reference, .virtual_reference => 1,
             .alias => |target| try self.count(allocator, graph, target),
             .array => |a| blk: {
                 if (a.length == 0) break :blk 0;
@@ -212,5 +213,5 @@ test "reference evidence follows materialized nominal and generic shapes" {
     const element = try layout.project(a, &graph, @enumFromInt(4), .{ .element = 6 });
     try std.testing.expectEqual(@as(usize, 6), element.offset);
     try std.testing.expectEqual(@as(g.GlobalTypeId, @enumFromInt(2)), element.ty);
-    try std.testing.expectError(error.UnsupportedVirtualEvidence, layout.count(a, &graph, @enumFromInt(5)));
+    try std.testing.expectEqual(@as(usize, 1), try layout.count(a, &graph, @enumFromInt(5)));
 }

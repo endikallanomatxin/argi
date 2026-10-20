@@ -939,7 +939,8 @@ pub const CodeGenerator = struct {
     // initialization flags. Copies snapshot it; retargeting updates only the
     // selected binding. The entry allocation also covers conditional writes.
     fn referenceValueType(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !c.LLVMTypeRef {
-        if (self.graph.semanticType(ty) == .pointer) return reference_evidence.storageViewType();
+        const shape = try reference_layout.Layout.shape(self.graph, ty);
+        if (shape == .reference or shape == .virtual_reference) return reference_evidence.storageViewType();
         return (try reference_evidence.valueType(&self.reference_layouts, self.allocator, self.graph, ty)) orelse error.InvalidReferenceEvidenceStorage;
     }
 
@@ -1768,10 +1769,10 @@ pub const CodeGenerator = struct {
         pointer.ty = self.graph.nodes.items[@intFromEnum(node_id)].ty;
         // Reborrowing the same referent preserves its evidence. The reference
         // slot's own flags describe a different storage identity.
-        if (self.graph.node(target).content == .dereference) return pointer;
+        if (pointer.reference_view != null or self.graph.node(target).content == .dereference) return pointer;
         const cleanup = self.dropStateForNode(target);
         const nested: ?c.LLVMValueRef = switch (self.graph.node(target).content) {
-            .binding_use => |binding| if (self.graph.semanticType(self.graph.binding(binding).ty) == .pointer) try self.referenceViewStorage(binding) else null,
+            .binding_use => |binding| if (try self.reference_layouts.count(self.allocator, self.graph, self.graph.binding(binding).ty) != 0) try self.referenceViewStorage(binding) else null,
             else => null,
         };
         if (cleanup != null or nested != null)
@@ -1811,7 +1812,15 @@ pub const CodeGenerator = struct {
                 }
                 const struct_type = try self.toLLVMType(base_ty);
                 const pointer = c.LLVMBuildStructGEP2(self.builder, struct_type, base.value_ref, access.field_index, "field.addr");
-                break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(try self.toLLVMType(field.ty), 0), .ty = field.ty };
+                break :blk .{
+                    .value_ref = pointer,
+                    .type_ref = c.LLVMPointerType(try self.toLLVMType(field.ty), 0),
+                    .ty = field.ty,
+                    .reference_view = if (base.reference_view) |view|
+                        try reference_evidence.projectView(self.builder, self.allocator, self.graph, &self.reference_layouts, &self.cleanup_counts, base_ty, view, access.field_index)
+                    else
+                        null,
+                };
             },
             .choice_payload_access => |access| blk: {
                 const base = try self.addressablePointer(access.value);
@@ -2275,7 +2284,7 @@ pub const CodeGenerator = struct {
         var value = c.LLVMGetUndef(virtual_type);
         value = c.LLVMBuildInsertValue(self.builder, value, concrete_ptr.value_ref, 0, "virtual.data");
         value = c.LLVMBuildInsertValue(self.builder, value, vtable_ptr, 1, "virtual.vtable");
-        return .{ .value_ref = value, .type_ref = virtual_type, .ty = virtualize.virtual_type };
+        return .{ .value_ref = value, .type_ref = virtual_type, .ty = virtualize.virtual_type, .reference_view = concrete_ptr.reference_view };
     }
 
     fn virtualTable(self: *CodeGenerator, methods_range: primitives.Range(graph_mod.GlobalFunctionId)) CodegenError!c.LLVMValueRef {

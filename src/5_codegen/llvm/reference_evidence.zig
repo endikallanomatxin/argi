@@ -91,6 +91,31 @@ pub fn valueType(layout: *references.Layout, allocator: std.mem.Allocator, graph
     return c.LLVMArrayType2(storageViewType(), count);
 }
 
+// Project a referent's companion without reading its fields. Null state stays
+// absent even for a nonzero offset; it cannot become a fabricated flag address.
+pub fn projectView(builder: c.LLVMBuilderRef, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, layout: *references.Layout, counts: *@import("../cleanup_layout.zig").Counts, ty: g.GlobalTypeId, view: c.LLVMValueRef, field: u32) !c.LLVMValueRef {
+    _ = try counts.count(allocator, graph, ty);
+    const description = counts.description(ty);
+    if (field >= description.children.len) return error.InvalidReferenceEvidenceStorage;
+    const child = description.children[field] orelse return error.InvalidReferenceEvidenceStorage;
+    const cleanup = try cleanupPointer(builder, view);
+    const leaves = try referencesPointer(builder, view);
+    const slice = try layout.project(allocator, graph, ty, .{ .field = field });
+    var owner = try runtimeOwner(builder, view);
+    owner.offset = c.LLVMBuildAdd(builder, owner.offset, c.LLVMConstInt(c.LLVMInt64Type(), child.offset, 0), "reference.owner.projected.offset");
+    return storageView(builder, .{
+        .cleanup = nullableOffset(builder, cleanup, c.LLVMInt1Type(), child.offset),
+        .references = if (slice.count == 0) null else nullableOffset(builder, leaves, storageViewType(), slice.offset),
+        .owner = owner,
+    });
+}
+
+fn nullableOffset(builder: c.LLVMBuilderRef, pointer: c.LLVMValueRef, element: c.LLVMTypeRef, offset: usize) c.LLVMValueRef {
+    var indices = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), offset, 0)};
+    const projected = c.LLVMBuildGEP2(builder, element, pointer, &indices, 1, "reference.storage.projection");
+    return c.LLVMBuildSelect(builder, c.LLVMBuildIsNull(builder, pointer, "reference.storage.absent"), c.LLVMConstNull(c.LLVMTypeOf(pointer)), projected, "reference.storage.selected");
+}
+
 // Value evidence is a flat immutable array. Packing and projection use the
 // same semantic slices as addressable storage, without reading value memory.
 pub fn insertValue(builder: c.LLVMBuilderRef, aggregate: c.LLVMValueRef, child: c.LLVMValueRef, offset: usize) !c.LLVMValueRef {
@@ -117,7 +142,8 @@ pub fn projectValue(builder: c.LLVMBuilderRef, layout: *references.Layout, alloc
     if (slice.count == 0) return null;
     const expected = (try valueType(layout, allocator, graph, ty)).?;
     if (c.LLVMTypeOf(aggregate) != expected) return error.InvalidReferenceEvidenceStorage;
-    if (try references.Layout.shape(graph, slice.ty) == .reference)
+    const shape = try references.Layout.shape(graph, slice.ty);
+    if (shape == .reference or shape == .virtual_reference)
         return c.LLVMBuildExtractValue(builder, aggregate, @intCast(slice.offset), "reference.project");
     var result = c.LLVMConstNull((try valueType(layout, allocator, graph, slice.ty)).?);
     for (0..slice.count) |index| {
@@ -174,6 +200,14 @@ test "native reference evidence projects distinct sibling ranges through the pri
     const input_storage = c.LLVMBuildAlloca(builder, sidecar, "input.evidence");
     _ = c.LLVMBuildStore(builder, signature.inputEvidence(function).?, input_storage);
     const output_storage = signature.outputEvidenceStorage(function).?;
+    var cleanup_counts: @import("../cleanup_layout.zig").Counts = .{};
+    defer cleanup_counts.deinit(a);
+    const root_view = try storageView(builder, .{ .references = input_storage });
+    const child_view = try projectView(builder, a, &graph, &layout, &cleanup_counts, @enumFromInt(2), root_view, 1);
+    const absent_projection = nullableOffset(builder, c.LLVMConstNull(c.LLVMPointerType(c.LLVMInt1Type(), 0)), c.LLVMInt1Type(), 2);
+    try std.testing.expect(c.LLVMIsNull(absent_projection) != 0 or c.LLVMGetInstructionOpcode(absent_projection) == c.LLVMSelect);
+    const child_leaves = try referencesPointer(builder, child_view);
+    try std.testing.expect(child_leaves != input_storage);
     for (0..2) |index| {
         const projection: references.Projection = .{ .field = @intCast(index) };
         const input = (try projectStorage(builder, &layout, a, &graph, @enumFromInt(2), input_storage, projection)).?;

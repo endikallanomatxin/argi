@@ -35,7 +35,8 @@ main() -> (.status_code: Int32 = 0) := {
         )
         alias := $&pair
         sibling := &pair.second.id
-        alias&.first = Resource(.counter = $&counter, .id = 5)
+        first := $&alias&.first
+        first&= Resource(.counter = $&counter, .id = 5)
         if sibling&!= 4 or counter.count != 3 { abort }
     }
     if counter.count != 5 { abort }
