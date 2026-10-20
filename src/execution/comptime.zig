@@ -147,6 +147,12 @@ const Context = struct {
         const node = self.graph.node(id);
         return switch (node.content) {
             .int_literal => |value| .{ .integer = @import("../5_codegen/integer_arithmetic.zig").encode(value, b.integerBounds(self.graph, node.ty.?).?) },
+            .float_literal => |value| switch (self.graph.semanticType(node.ty.?).builtin) {
+                .Float16 => .{ .float16 = @floatCast(value) },
+                .Float32 => .{ .float32 = @floatCast(value) },
+                .Float64 => .{ .float64 = @floatCast(value) },
+                else => return error.NonConstantCompileTimeArgument,
+            },
             .bool_literal => |value| .{ .boolean = value },
             .function_call => try self.constant(try self.callConstant(id, depth + 1), depth + 1),
             .binary_operation, .comparison, .struct_field_access, .array_index => try self.constant(try self.expressionConstant(id, depth + 1), depth + 1),
