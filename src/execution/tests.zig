@@ -422,7 +422,8 @@ test "bytecode cleanup identity follows storage across frames without reading va
     const field = try storage.resolveCleanup(callee, .{ .root = 0, .path = &.{ .dereference, .{ .field = 0 } } }, &path);
     try std.testing.expect(try storage.cleanupTest(field));
     _ = try storage.cleanupSet(field, false);
-    try std.testing.expect(try storage.cleanupTest(owner));
+    // The whole record is now incomplete; only the sibling may be cleaned.
+    try std.testing.expect(!try storage.cleanupTest(owner));
     const sibling = try storage.resolveCleanup(caller, .{ .root = 0, .path = &.{.{ .field = 1 }} }, &path);
     try std.testing.expect(try storage.cleanupTest(sibling));
     var readonly = borrowed.reference;

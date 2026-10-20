@@ -562,31 +562,29 @@ pub const Storage = struct {
             try values.put(entry.flag, .{ .boolean = enabled });
             updated += 1;
         }
-        if (enabled) {
-            var ancestor = index;
-            while (ancestor != 0) {
-                ancestor -= 1;
+        var ancestor = index;
+        while (ancestor != 0) {
+            ancestor -= 1;
+            updated += 1;
+            const parent = layout[ancestor];
+            if (parent.root != layout[index].root) break;
+            if (!b.cleanupContains(parent, layout[index]) or parent.path.len >= layout[index].path.len) continue;
+            var has_fields = false;
+            var complete = true;
+            for (layout[ancestor + 1 ..]) |entry| {
                 updated += 1;
-                const parent = layout[ancestor];
-                if (parent.root != layout[index].root) break;
-                if (!b.cleanupContains(parent, layout[index]) or parent.path.len >= layout[index].path.len) continue;
-                var has_fields = false;
-                var complete = true;
-                for (layout[ancestor + 1 ..]) |entry| {
-                    updated += 1;
-                    if (!b.cleanupContains(parent, entry)) break;
-                    if (entry.path.len != parent.path.len + 1) continue;
-                    if (entry.path[entry.path.len - 1] != .field) {
-                        complete = false;
-                        break;
-                    }
-                    has_fields = true;
-                    if (!(try values.get(entry.flag)).boolean) complete = false;
+                if (!b.cleanupContains(parent, entry)) break;
+                if (entry.path.len != parent.path.len + 1) continue;
+                if (entry.path[entry.path.len - 1] != .field) {
+                    complete = false;
+                    break;
                 }
-                if (has_fields and complete) {
-                    try values.put(parent.flag, .{ .boolean = true });
-                    updated += 1;
-                }
+                has_fields = true;
+                if (!(try values.get(entry.flag)).boolean) complete = false;
+            }
+            if (has_fields) {
+                try values.put(parent.flag, .{ .boolean = complete });
+                updated += 1;
             }
         }
         return updated;
@@ -835,12 +833,47 @@ test "field cleanup activation completes record ancestors but not choices" {
     field.path = &.{.{ .field = 1 }};
     _ = try storage.cleanupSet(field, true);
     try std.testing.expect(try storage.cleanupTest(root));
+    // Ending a descendant must revoke whole-record cleanup immediately.
+    _ = try storage.cleanupSet(field, false);
+    try std.testing.expect(!try storage.cleanupTest(root));
+    var sibling = root;
+    sibling.path = &.{.{ .field = 0 }};
+    try std.testing.expect(try storage.cleanupTest(sibling));
+    _ = try storage.cleanupSet(field, true);
+    try std.testing.expect(try storage.cleanupTest(root));
     var choice = root;
     choice.root = 4;
     var payload = choice;
     payload.path = &.{.{ .variant = 0 }};
     _ = try storage.cleanupSet(payload, true);
     try std.testing.expect(!try storage.cleanupTest(choice));
+}
+
+test "consuming nested storage revokes ancestor cleanup and reinitialization restores it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const frame = try storage.enterCleanup(5, &.{
+        .{ .root = 0, .path = &.{}, .flag = 1 },
+        .{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 2 },
+        .{ .root = 0, .path = &.{ .{ .field = 0 }, .{ .field = 0 } }, .flag = 3 },
+        .{ .root = 0, .path = &.{.{ .field = 1 }}, .flag = 4 },
+    });
+    const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    var parent = root;
+    parent.path = &.{.{ .field = 0 }};
+    var nested = root;
+    nested.path = &.{ .{ .field = 0 }, .{ .field = 0 } };
+    var sibling = root;
+    sibling.path = &.{.{ .field = 1 }};
+    _ = try storage.cleanupSet(root, true);
+    _ = try storage.cleanupSet(nested, false);
+    try std.testing.expect(!try storage.cleanupTest(root));
+    try std.testing.expect(!try storage.cleanupTest(parent));
+    try std.testing.expect(try storage.cleanupTest(sibling));
+    _ = try storage.cleanupSet(nested, true);
+    try std.testing.expect(try storage.cleanupTest(parent));
+    try std.testing.expect(try storage.cleanupTest(root));
 }
 
 test "compact partial array layouts charge concrete cells before allocation" {
