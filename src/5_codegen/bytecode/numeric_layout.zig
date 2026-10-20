@@ -11,6 +11,7 @@ pub const Layout = struct {
     alignment: usize,
     shape: union(enum) {
         integer: struct { signed: bool },
+        floating: enum { float16, float32, float64 },
         fields: []const Field,
         array: struct { element: *const Layout, length: usize, stride: usize },
     },
@@ -22,6 +23,7 @@ pub fn equal(left: *const Layout, right: *const Layout) bool {
     if (left.size != right.size or left.alignment != right.alignment or std.meta.activeTag(left.shape) != std.meta.activeTag(right.shape)) return false;
     return switch (left.shape) {
         .integer => |integer| integer.signed == right.shape.integer.signed,
+        .floating => |kind| kind == right.shape.floating,
         .array => |array| array.length == right.shape.array.length and array.stride == right.shape.array.stride and equal(array.element, right.shape.array.element),
         .fields => |fields| blk: {
             if (fields.len != right.shape.fields.len) break :blk false;
@@ -43,6 +45,15 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
     const shape: @FieldType(Layout, "shape") = if (b.integerBounds(graph, ty)) |bounds| blk: {
         if (size == 0 or size > 8) return error.UnsupportedNumericLayout;
         break :blk .{ .integer = .{ .signed = bounds.minimum < 0 } };
+    } else if (b.floatType(graph, ty)) blk: {
+        const kind: @FieldType(@FieldType(Layout, "shape"), "floating") = if (types.isBuiltin(graph, ty, .Float16)) .float16 else if (types.isBuiltin(graph, ty, .Float32)) .float32 else .float64;
+        const expected: usize = switch (kind) {
+            .float16 => 2,
+            .float32 => 4,
+            .float64 => 8,
+        };
+        if (size != expected) return error.UnsupportedNumericLayout;
+        break :blk .{ .floating = kind };
     } else if (types.arrayElement(graph, ty)) |element_ty| blk: {
         const element = try compileDepth(allocator, graph, element_ty, depth + 1);
         const length = std.math.cast(usize, types.arrayLength(graph, ty).?) orelse return error.Overflow;
@@ -86,10 +97,10 @@ fn alignOffset(value: usize, alignment: usize) !usize {
 pub fn readByte(layout: *const Layout, value: b.Value, offset: usize, endian: std.builtin.Endian) anyerror!u8 {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
-        .integer => blk: {
-            if (value != .integer) return error.ExecutionInvalidReference;
+        .integer, .floating => blk: {
+            const bits = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
             const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
-            break :blk @truncate(value.integer >> shift);
+            break :blk @truncate(bits >> shift);
         },
         .fields => |fields| blk: {
             if (value != .record or value.record.len != fields.len) return error.ExecutionInvalidReference;
@@ -144,17 +155,94 @@ fn requireInteger(layout: *const Layout) !void {
         return error.ExecutionInvalidReference;
 }
 
+test "floating byte layouts preserve precision signed zero and NaN payloads" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Float16 }, .{ .builtin = .Float32 }, .{ .builtin = .Float64 } });
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    for ([_]u64{ 0x8000, 0x80000000, 0x8000000000000000 }, 0..) |negative_zero, index| {
+        const layout = try compile(arena.allocator(), &graph, @enumFromInt(index));
+        const nan_bits = switch (index) {
+            0 => @as(u64, 0x7e55),
+            1 => @as(u64, 0x7fc01234),
+            else => @as(u64, 0x7ff8000012345678),
+        };
+        for ([_]u64{ negative_zero, nan_bits }) |bits| {
+            const value = try floatFromBits(layout, bits);
+            for ([_]std.builtin.Endian{ .little, .big }) |endian| {
+                var bytes: [8]u8 = undefined;
+                try encodeFloat(layout, value, bytes[0..layout.size], endian);
+                for (bytes[0..layout.size], 0..) |byte, offset| {
+                    const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
+                    try std.testing.expectEqual(@as(u8, @truncate(bits >> shift)), byte);
+                }
+                try std.testing.expectEqual(bits, try floatingBits(layout, try decodeFloat(layout, bytes[0..layout.size], endian)));
+                const updated = try writeByte(arena.allocator(), layout, value, 0, bytes[0] ^ 1, endian);
+                const changed_shift: u6 = @intCast(if (endian == .little) 0 else 8 * (layout.size - 1));
+                try std.testing.expectEqual(bits ^ (@as(u64, 1) << changed_shift), try floatingBits(layout, updated));
+                try std.testing.expectEqual(bits, try floatingBits(layout, value));
+            }
+        }
+        var bytes: [8]u8 = undefined;
+        try std.testing.expectError(error.ExecutionInvalidReference, encodeFloat(layout, .{ .integer = 0 }, bytes[0..layout.size], .little));
+    }
+}
+
+fn requireFloat(layout: *const Layout) !void {
+    if (layout.shape != .floating) return error.ExecutionInvalidReference;
+    const size: usize = switch (layout.shape.floating) {
+        .float16 => 2,
+        .float32 => 4,
+        .float64 => 8,
+    };
+    if (layout.size != size or layout.alignment == 0 or !std.math.isPowerOfTwo(layout.alignment) or layout.alignment > size) return error.ExecutionInvalidReference;
+}
+
+fn floatingBits(layout: *const Layout, value: b.Value) !u64 {
+    try requireFloat(layout);
+    return switch (layout.shape.floating) {
+        .float16 => if (value == .float16) @as(u16, @bitCast(value.float16)) else error.ExecutionInvalidReference,
+        .float32 => if (value == .float32) @as(u32, @bitCast(value.float32)) else error.ExecutionInvalidReference,
+        .float64 => if (value == .float64) @as(u64, @bitCast(value.float64)) else error.ExecutionInvalidReference,
+    };
+}
+
+fn floatFromBits(layout: *const Layout, bits: u64) !b.Value {
+    try requireFloat(layout);
+    return switch (layout.shape.floating) {
+        .float16 => .{ .float16 = @bitCast(@as(u16, @truncate(bits))) },
+        .float32 => .{ .float32 = @bitCast(@as(u32, @truncate(bits))) },
+        .float64 => .{ .float64 = @bitCast(bits) },
+    };
+}
+
+pub fn decodeFloat(layout: *const Layout, bytes: []const u8, endian: std.builtin.Endian) !b.Value {
+    try requireFloat(layout);
+    if (bytes.len != layout.size) return error.ExecutionInvalidReference;
+    var bits: u64 = 0;
+    for (bytes, 0..) |byte, index| bits |= @as(u64, byte) << @as(u6, @intCast(8 * (if (endian == .little) index else bytes.len - 1 - index)));
+    return floatFromBits(layout, bits);
+}
+
+pub fn encodeFloat(layout: *const Layout, value: b.Value, bytes: []u8, endian: std.builtin.Endian) !void {
+    _ = try floatingBits(layout, value);
+    if (bytes.len != layout.size) return error.ExecutionInvalidReference;
+    for (bytes, 0..) |*byte, index| byte.* = try readByte(layout, value, index, endian);
+}
+
 /// Produce an updated value without mutating shared aggregate slices. The
 /// caller commits it through its evaluated storage destination afterwards.
 pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
-        .integer => blk: {
-            if (value != .integer) return error.ExecutionInvalidReference;
+        .integer, .floating => blk: {
+            const previous = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
             const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
             const mask = @as(u64, 255) << shift;
-            const bits = (value.integer & ~mask) | (@as(u64, byte) << shift);
-            break :blk .{ .integer = bits };
+            const bits = (previous & ~mask) | (@as(u64, byte) << shift);
+            break :blk if (layout.shape == .floating) try floatFromBits(layout, bits) else .{ .integer = bits };
         },
         .fields => |fields| blk: {
             if (value != .record or value.record.len != fields.len) return error.ExecutionInvalidReference;

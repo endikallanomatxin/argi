@@ -165,7 +165,7 @@ converts reason sets and runs checked early-return cleanup. Context propagation
 ordinary core trace helper. `FixedSizeErrorTracer` can record and reset contexts
 using its caller-provided byte buffer; complete reporting still needs writer support.
 
-Trusted reinterpretation of initialized integer records and arrays as `UInt8`
+Trusted reinterpretation of initialized numeric records and arrays as `UInt8`
 views preserves the original storage, permissions and target byte order. Byte
 writes update the numeric value without creating cleanup obligations. Reference
 fields and nonnumeric representations remain unsupported.
@@ -185,7 +185,7 @@ Callback failures poison execution. `argi repl` registers stdout/stderr adapters
 `argi run --vm` currently registers none. Registered core heap acquisition and
 release primitives use context-owned byte storage instead of native allocation;
 raw addresses remain virtual tokens. Checked core establishment can form references
-to integers and numeric records/arrays in acquired storage;
+to integers, floats and numeric records/arrays in acquired storage;
 reads require initialized bytes and release invalidates every view. Erased anchor
 reads check the backing value but expose no concrete representation. Core
 `CAllocator` allocations execute ordinary `Allocation` cleanup and release their
@@ -194,7 +194,8 @@ memory and choices still require additional establishment lowering. Compile-time
 evaluation continues to reject foreign calls.
 
 Floating values preserve Float16, Float32 and Float64 precision in literals,
-arithmetic, comparisons and compile-time results.
+arithmetic, comparisons and compile-time results. Byte views and acquired storage
+retain their exact representations, including signed zero and NaN payloads.
 
 Raw pointers, C enums, complete trace reporting,
 partial choice initialization before selecting a complete variant, vacant arrays

@@ -13,6 +13,12 @@ pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Lay
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
         .integer => |kind| .{ .integer = integer.encode(try storage.acquisitions.loadInteger(storage, handle, offset, layout, endian), p.integerRangeForWidth(@intCast(layout.size * 8), kind.signed)) },
+        .floating => blk: {
+            if (layout.size > 8) return error.ExecutionInvalidReference;
+            var bytes: [8]u8 = undefined;
+            try storage.acquisitions.read(storage, handle, offset, bytes[0..layout.size]);
+            break :blk try @import("../5_codegen/bytecode/numeric_layout.zig").decodeFloat(layout, bytes[0..layout.size], endian);
+        },
         .fields => |fields| blk: {
             const values = try storage.allocate(fields.len);
             for (fields, values) |field, *value| value.* = try read(storage, handle, offset + field.offset, field.layout, endian);
@@ -43,6 +49,12 @@ fn walkWrite(storage: *Storage, handle: Handle, offset: usize, layout: *const La
             if (value.integer > range.maximum - range.minimum) return error.ExecutionIntegerOutOfRange;
             var bytes: [8]u8 = undefined;
             try @import("../5_codegen/bytecode/numeric_layout.zig").encodeInteger(layout, integer.decode(value.integer, p.integerRangeForWidth(@intCast(layout.size * 8), layout.shape.integer.signed)), bytes[0..layout.size], endian);
+            if (commit) try storage.acquisitions.write(storage, handle, offset, bytes[0..layout.size]);
+        },
+        .floating => {
+            if (layout.size > 8) return error.ExecutionInvalidReference;
+            var bytes: [8]u8 = undefined;
+            try @import("../5_codegen/bytecode/numeric_layout.zig").encodeFloat(layout, value, bytes[0..layout.size], endian);
             if (commit) try storage.acquisitions.write(storage, handle, offset, bytes[0..layout.size]);
         },
         .fields => |fields| {

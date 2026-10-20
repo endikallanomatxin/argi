@@ -972,3 +972,32 @@ test "acquired array indices resolve from layout before elements are initialized
     try slots_.put(1, .{ .integer = 2 });
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.resolveCleanup(frame, place, &path));
 }
+
+test "acquired floating records preserve precision and validate writes before mutation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const single: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .floating = .float32 } };
+    const double: numeric.Layout = .{ .size = 8, .alignment = 8, .shape = .{ .floating = .float64 } };
+    const layout: numeric.Layout = .{ .size = 16, .alignment = 8, .shape = .{ .fields = &.{ .{ .offset = 0, .layout = &single }, .{ .offset = 8, .layout = &double } } } };
+    for ([_]std.builtin.Endian{ .little, .big }) |endian| {
+        const region = try storage.acquisitions.acquire(&storage, 16, 8);
+        const root = try storage.acquiredReference(region, 0, &layout, endian, .read_write);
+        var first = root;
+        first.path = &.{.{ .field = 0 }};
+        var second = root;
+        second.path = &.{.{ .field = 1 }};
+        try storage.store(first, .{ .float32 = @bitCast(@as(u32, 0x80000000)) });
+        try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(root));
+        try std.testing.expectError(error.ExecutionInvalidReference, storage.store(root, .{ .record = &.{ .{ .float32 = 42 }, .{ .float32 = 0 } } }));
+        try std.testing.expectEqual(@as(u32, 0x80000000), @as(u32, @bitCast((try storage.read(first)).float32)));
+        try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(second));
+        try storage.store(second, .{ .float64 = @bitCast(@as(u64, 0x7ff8000012345678)) });
+        const complete = try storage.read(root);
+        try std.testing.expectEqual(@as(u64, 0x7ff8000012345678), @as(u64, @bitCast(complete.record[1].float64)));
+        var padding: [1]u8 = undefined;
+        try std.testing.expectError(error.ExecutionUninitializedStorage, storage.acquisitions.read(&storage, region, 4, &padding));
+        try storage.acquisitions.release(&storage, region);
+        try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(first));
+    }
+}
