@@ -10,6 +10,7 @@ inspect(.value: &Int32) -> (.reference: &Int32, .present: Bool = true) := {
 main() -> (.status_code: Int32 = 0) := {
     result ::= split_number(.value = 402)
     total :: Int32 = result.quotient + result.remainder
+    if inspect(.value = &total).reference&!= 42 { abort }
     borrowed ::= inspect(.value = &total)
     if borrowed.present { status_code = borrowed.reference&}
     split_number(.value = 17)

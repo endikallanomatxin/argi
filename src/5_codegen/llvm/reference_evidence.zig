@@ -103,14 +103,19 @@ pub fn valueType(layout: *references.Layout, allocator: std.mem.Allocator, graph
 
 // Project a referent's companion without reading its fields. Null state stays
 // absent even for a nonzero offset; it cannot become a fabricated flag address.
-pub fn projectView(builder: c.LLVMBuilderRef, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, layout: *references.Layout, counts: *@import("../cleanup_layout.zig").Counts, ty: g.GlobalTypeId, view: c.LLVMValueRef, field: u32) !c.LLVMValueRef {
+pub fn projectView(builder: c.LLVMBuilderRef, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, layout: *references.Layout, counts: *@import("../cleanup_layout.zig").Counts, ty: g.GlobalTypeId, view: c.LLVMValueRef, projection: references.Projection) !c.LLVMValueRef {
     _ = try counts.count(allocator, graph, ty);
+    const slice = try layout.project(allocator, graph, ty, projection);
+    const index: u32 = switch (projection) {
+        .field => |field| field,
+        .variant => |variant| @intFromEnum(variant) - (@import("../../4_semantics/global/types.zig").variants(graph, ty) orelse return error.InvalidReferenceEvidenceStorage).start,
+        .element => return error.InvalidReferenceEvidenceStorage,
+    };
     const description = counts.description(ty);
-    if (field >= description.children.len) return error.InvalidReferenceEvidenceStorage;
-    const child = description.children[field] orelse return error.InvalidReferenceEvidenceStorage;
+    if (index >= description.children.len) return error.InvalidReferenceEvidenceStorage;
+    const child = description.children[index] orelse return error.InvalidReferenceEvidenceStorage;
     const cleanup = try cleanupPointer(builder, view);
     const leaves = try referencesPointer(builder, view);
-    const slice = try layout.project(allocator, graph, ty, .{ .field = field });
     var owner = try runtimeOwner(builder, view);
     owner.offset = c.LLVMBuildAdd(builder, owner.offset, c.LLVMConstInt(c.LLVMInt64Type(), child.offset, 0), "reference.owner.projected.offset");
     return storageView(builder, .{
@@ -196,8 +201,11 @@ test "native reference evidence projects distinct sibling ranges through the pri
         .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
         .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } },
+        .{ .structural_choice = .{ .variants = .{ .start = 1, .len = 3 } } },
     });
     for (0..2) |_| try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source });
+    for ([_]?g.GlobalTypeId{ null, @enumFromInt(1), null, @enumFromInt(2) }, 0..) |payload, index|
+        try graph.variants.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .value = @intCast(index), .payload_type = payload });
     var layout: references.Layout = .{};
     defer layout.deinit(a);
     try std.testing.expect(try valueType(&layout, a, &graph, @enumFromInt(0)) == null);
@@ -220,8 +228,22 @@ test "native reference evidence projects distinct sibling ranges through the pri
     const output_storage = signature.outputEvidenceStorage(function).?;
     var cleanup_counts: @import("../cleanup_layout.zig").Counts = .{};
     defer cleanup_counts.deinit(a);
+    const choice_sidecar = (try valueType(&layout, a, &graph, @enumFromInt(3))).?;
+    const choice_storage = c.LLVMBuildAlloca(builder, choice_sidecar, "choice.evidence");
+    _ = c.LLVMBuildStore(builder, c.LLVMConstNull(choice_sidecar), choice_storage);
+    const choice_root = try storageView(builder, .{ .references = choice_storage });
+    const projected_choice = try projectView(builder, a, &graph, &layout, &cleanup_counts, @enumFromInt(3), choice_root, .{ .variant = @enumFromInt(3) });
+    // Inspect the emitted addition rather than assuming LLVM folds extracts
+    // from a dynamically assembled view into constants.
+    try std.testing.expectEqual(@as(c_uint, c.LLVMInsertValue), c.LLVMGetInstructionOpcode(projected_choice));
+    const offset = c.LLVMGetOperand(projected_choice, 1);
+    try std.testing.expectEqual(@as(c_uint, c.LLVMAdd), c.LLVMGetInstructionOpcode(offset));
+    const increment = c.LLVMGetOperand(offset, 1);
+    try std.testing.expect(c.LLVMIsAConstantInt(increment) != null);
+    try std.testing.expectEqual(@as(u64, 2), c.LLVMConstIntGetZExtValue(increment));
+    try std.testing.expectError(error.InvalidReferenceProjection, projectView(builder, a, &graph, &layout, &cleanup_counts, @enumFromInt(3), choice_root, .{ .variant = @enumFromInt(2) }));
     const root_view = try storageView(builder, .{ .references = input_storage });
-    const child_view = try projectView(builder, a, &graph, &layout, &cleanup_counts, @enumFromInt(2), root_view, 1);
+    const child_view = try projectView(builder, a, &graph, &layout, &cleanup_counts, @enumFromInt(2), root_view, .{ .field = 1 });
     const absent_projection = nullableOffset(builder, c.LLVMConstNull(c.LLVMPointerType(c.LLVMInt1Type(), 0)), c.LLVMInt1Type(), 2);
     try std.testing.expect(c.LLVMIsNull(absent_projection) != 0 or c.LLVMGetInstructionOpcode(absent_projection) == c.LLVMSelect);
     const absent_leaves = c.LLVMConstNull(c.LLVMPointerType(storageViewType(), 0));
