@@ -306,6 +306,18 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 .abort_ => {},
             }
         }
+        // A linear instruction does not need a retained input snapshot. Only
+        // joins (including the implicit function-entry edge) can be revisited
+        // with a stricter incoming state.
+        const predecessors = try allocator.alloc(usize, f.code.len);
+        defer allocator.free(predecessors);
+        @memset(predecessors, 0);
+        predecessors[0] = 1;
+        for (f.code, 0..) |instruction, pc| {
+            var edges: [2]u32 = undefined;
+            const edge_count = successors(instruction, pc, f.code.len, &edges);
+            for (edges[0..edge_count]) |next| predecessors[next] += 1;
+        }
         // Definite initialization is the intersection of every predecessor.
         const states = try allocator.alloc(?[]u8, f.code.len);
         defer {
@@ -324,8 +336,13 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
         defer pending.deinit(allocator);
         try pending.append(allocator, 0);
         while (pending.pop()) |pc| {
-            const initialized = try allocator.dupe(u8, states[pc].?);
-            defer allocator.free(initialized);
+            const initialized = if (predecessors[pc] == 1) owned: {
+                const state = states[pc].?;
+                states[pc] = null;
+                break :owned state;
+            } else try allocator.dupe(u8, states[pc].?);
+            var transferred = false;
+            defer if (!transferred) allocator.free(initialized);
             var reads: std.ArrayList(Slot) = .empty;
             defer reads.deinit(allocator);
             const inst = f.code[pc];
@@ -365,28 +382,10 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             }
             var single: [1]Slot = undefined;
             for (destinations(inst, &single)) |slot| initialized[slot] = 1;
-            var successors: [2]u32 = undefined;
-            const count: usize = switch (inst.op) {
-                .ret, .abort_ => 0,
-                .jump => |target| blk: {
-                    successors[0] = target;
-                    break :blk 1;
-                },
-                inline .branch_cleanup, .branch_variant => |x| blk: {
-                    successors = .{ x.yes, x.no };
-                    break :blk 2;
-                },
-                .branch => |x| blk: {
-                    successors = .{ x.yes, x.no };
-                    break :blk 2;
-                },
-                else => blk: {
-                    if (pc + 1 >= f.code.len) return error.InvalidBytecode;
-                    successors[0] = pc + 1;
-                    break :blk 1;
-                },
-            };
-            for (successors[0..count], 0..) |next, edge| {
+            var edges: [2]u32 = undefined;
+            const count = successors(inst, pc, f.code.len, &edges);
+            if (count == 0 and inst.op != .ret and inst.op != .abort_) return error.InvalidBytecode;
+            for (edges[0..count], 0..) |next, edge| {
                 // An active cleanup branch proves that its concrete owner has
                 // storage. Keep this fact on the active edge only; the vacant
                 // path must still initialize the value before ordinary reads.
@@ -414,13 +413,36 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                         changed = true;
                     };
                 } else {
-                    states[next] = try allocator.dupe(u8, initialized);
+                    if (count == 1) {
+                        states[next] = initialized;
+                        transferred = true;
+                    } else states[next] = try allocator.dupe(u8, initialized);
                     changed = true;
                 }
                 if (changed) try pending.append(allocator, next);
             }
         }
     }
+}
+
+// Structural validation has already checked explicit branch targets.
+fn successors(instruction: Instruction, pc: usize, length: usize, edges: *[2]u32) usize {
+    return switch (instruction.op) {
+        .ret, .abort_ => 0,
+        .jump => |target| result: {
+            edges[0] = target;
+            break :result 1;
+        },
+        inline .branch, .branch_cleanup, .branch_variant => |branch| result: {
+            edges.* = .{ branch.yes, branch.no };
+            break :result 2;
+        },
+        else => result: {
+            if (pc + 1 >= length) return 0;
+            edges[0] = @intCast(pc + 1);
+            break :result 1;
+        },
+    };
 }
 
 fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
@@ -589,4 +611,31 @@ fn sessionBinding(program: Program, index: u32) !b.SessionBinding {
     const session = program.session orelse return error.InvalidBytecode;
     if (index >= session.bindings.len) return error.InvalidBytecode;
     return session.bindings[index];
+}
+
+test "bytecode verifier allocation scaling for linear functions" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    for ([_]usize{ 10, 100, 1000 }) |count| {
+        const slots = try a.alloc(Type, count);
+        defer a.free(slots);
+        @memset(slots, @enumFromInt(0));
+        const code = try a.alloc(Instruction, count + 1);
+        defer a.free(code);
+        for (code[0..count], 0..) |*instruction, slot| instruction.* = .{
+            .source = .{ .file_index = 0, .offset = 0 },
+            .op = .{ .constant = .{ .dst = @intCast(slot), .value = .{ .boolean = true } } },
+        };
+        const output = [_]Slot{@intCast(count - 1)};
+        code[count] = .{ .source = .{ .file_index = 0, .offset = 0 }, .op = .{ .ret = &output } };
+        const function = b.Function{ .slots = slots, .inputs = &.{}, .outputs = &output, .code = code };
+        var bytes: u64 = 0;
+        var allocations = @import("../../1_base/profile.zig").AllocationCounter{ .child = a, .requested_bytes = &bytes };
+        try verify(allocations.allocator(), .{ .graph = &graph, .functions = &.{}, .expression = &function });
+        // Requested allocation traffic remains linear in instructions plus
+        // slots for straight-line code; timing is intentionally not asserted.
+        try std.testing.expect(bytes <= count * 64 + 2048);
+    }
 }
