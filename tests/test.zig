@@ -13382,3 +13382,12 @@ test "feature_tests/errors/110_named_choice_union" {
     try expectSuccessfulBuild("tests/feature_tests/errors/110_named_choice_union");
     try runExpect("tests/feature_tests/errors/110_named_choice_union", 0);
 }
+
+test "feature_tests/basics/87_named_record_field_order" {
+    try expectSuccessfulBuild("tests/feature_tests/basics/87_named_record_field_order");
+    try runExpect("tests/feature_tests/basics/87_named_record_field_order", 0);
+}
+
+test "feature_tests/basics/88X_named_record_field_escape" {
+    try buildExpectFail("tests/feature_tests/basics/88X_named_record_field_escape", "local storage generation");
+}

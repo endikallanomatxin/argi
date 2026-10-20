@@ -1915,12 +1915,55 @@ pub const Resolver = struct {
             const actual = self.callArgument(literal, offset, expected.name) orelse continue;
             _ = self.coerceContextualValue(actual, expected.ty);
         }
+        _ = self.normalizeNamedStructLiteral(node, target);
+        self.graph.nodes.items[@intFromEnum(node)].ty = target;
+        return true;
+    }
+
+    fn normalizeNamedStructLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        const literal = self.graph.node(node).content.struct_value_literal;
+        const expected_fields = types.fields(self.graph, target) orelse return false;
+        if (literal.fields.len != expected_fields.len) return false;
+        var ordered = true;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
+            const expected = self.graph.fields.items[expected_fields.start + offset];
+            if (!std.mem.eql(u8, self.graph.text(field.name), self.graph.text(expected.name))) {
+                ordered = false;
+                break;
+            }
+        }
+        if (ordered) return false;
+        // Safety projections and codegen both consume storage positions. Match
+        // complete named literals to that order before attaching their target
+        // type, using the same completion path as named constructor arguments.
+        // Positional structural conversions retain their existing ordering.
+        var named = true;
+        var reordered = false;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
+            const hit = types.findField(self.graph, target, self.graph.text(field.name)) orelse {
+                named = false;
+                break;
+            };
+            if (hit.index != offset) reordered = true;
+        }
+        if (!named or !reordered) return false;
+        if (!(self.completeCallInputFields(expected_fields, node) catch return false)) return false;
         self.graph.nodes.items[@intFromEnum(node)].ty = target;
         return true;
     }
 
     pub fn materializeAssignmentValues(self: *Resolver) bool {
         var changed = false;
+        // Specialized generic bodies can already carry their contextual type.
+        // Normalize their literals too, even without an assignment type change.
+        const count = self.graph.nodes.items.len;
+        var index: usize = 0;
+        while (index < count) : (index += 1) {
+            const node = self.graph.nodes.items[index];
+            if (node.content != .struct_value_literal) continue;
+            const target = node.ty orelse continue;
+            if (self.normalizeNamedStructLiteral(@enumFromInt(index), target)) changed = true;
+        }
         for (self.graph.bindings.items, 0..) |binding, raw| {
             if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
             const initialization = binding.initialization orelse continue;
