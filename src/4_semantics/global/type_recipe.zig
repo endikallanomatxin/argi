@@ -12,12 +12,18 @@ const Ids = struct {
     pub const NodeId = enum(u32) { _ };
 };
 const Node = union(enum) { stable: g.GlobalTypeId, shape: p.SemanticType(Ids) };
+const DefaultBinding = struct { ty: ?Ids.TypeId, integer: ?i64 };
+const PendingDefault = struct {
+    module_index: usize,
+    expression: @import("../module/parameterized/ir.zig").ParameterizedNodeId,
+    bindings: p.Range(u32),
+};
 const Default = union(enum) {
     stable: g.GlobalNodeId,
     literal: struct {
         source: p.SourceRef,
         ty: ?Ids.TypeId,
-        value: union(enum) { int: i128, float: f64, char: u32, boolean: bool, string: p.StringRange, type: Ids.TypeId },
+        value: union(enum) { int: i128, float: f64, char: u32, boolean: bool, string: p.StringRange, type: Ids.TypeId, pending: PendingDefault },
     },
 };
 
@@ -28,6 +34,7 @@ pub const Recipe = struct {
     pub const Boundary = struct { types: usize, declarations: usize, nodes: usize };
     nodes: std.ArrayList(Node) = .empty,
     defaults: std.ArrayList(Default) = .empty,
+    default_bindings: std.ArrayList(DefaultBinding) = .empty,
     fields: std.ArrayList(p.Field(Ids)) = .empty,
     variants: std.ArrayList(p.ChoiceVariant(Ids)) = .empty,
     arguments: std.ArrayList(p.GenericArgument(Ids)) = .empty,
@@ -37,6 +44,7 @@ pub const Recipe = struct {
     pub fn deinit(self: *Recipe, a: std.mem.Allocator) void {
         self.nodes.deinit(a);
         self.defaults.deinit(a);
+        self.default_bindings.deinit(a);
         self.fields.deinit(a);
         self.variants.deinit(a);
         self.arguments.deinit(a);
@@ -48,7 +56,7 @@ pub const Recipe = struct {
     pub fn clone(self: *const Recipe, a: std.mem.Allocator) !Recipe {
         var result: Recipe = .{};
         errdefer result.deinit(a);
-        inline for (.{ "nodes", "defaults", "fields", "variants", "arguments", "strings" }) |name|
+        inline for (.{ "nodes", "defaults", "default_bindings", "fields", "variants", "arguments", "strings" }) |name|
             try @field(result, name).appendSlice(a, @field(self, name).items);
         result.roots = try a.dupe(?Ids.TypeId, self.roots);
         return result;
@@ -130,13 +138,25 @@ pub const Recipe = struct {
                 .boolean => |v| actual.content == .bool_literal and actual.content.bool_literal == v,
                 .string => |v| actual.content == .string_literal and std.mem.eql(u8, self.recipe.text(v), self.graph.text(actual.content.string_literal)),
                 .type => |v| actual.content == .type_literal and try self.typeId(v, actual.content.type_literal),
+                .pending => |v| pending: {
+                    if (actual.content != .argument_default) break :pending false;
+                    const expression = self.graph.argument_defaults.items[actual.content.argument_default];
+                    if (expression.module_index != v.module_index or expression.expression != v.expression or expression.bindings.len != v.bindings.len) break :pending false;
+                    for (self.recipe.default_bindings.items[v.bindings.start..][0..v.bindings.len], self.graph.argument_default_bindings.items[expression.bindings.start..][0..expression.bindings.len]) |saved_binding, current_binding| {
+                        if (saved_binding.integer != current_binding.integer) break :pending false;
+                        if (saved_binding.ty == null or current_binding.ty == null) {
+                            if ((saved_binding.ty == null) != (current_binding.ty == null)) break :pending false;
+                        } else if (!try self.typeId(saved_binding.ty.?, current_binding.ty.?)) break :pending false;
+                    }
+                    break :pending true;
+                },
             };
         }
 
         fn compare(self: *Match, saved: Ids.TypeId, current: g.GlobalTypeId) anyerror!bool {
             const graph = self.graph;
             const node = self.recipe.nodes.items[@intFromEnum(saved)];
-            if (node == .stable) return node.stable == current or @import("types.zig").equal(graph, node.stable, current);
+            if (node == .stable) return node.stable == current or @import("types.zig").identityEqual(graph, node.stable, current);
             const shape = node.shape;
             const actual = graph.types.items[@intFromEnum(current)];
             if (@intFromEnum(std.meta.activeTag(shape)) != @intFromEnum(std.meta.activeTag(actual))) return false;
@@ -246,6 +266,18 @@ pub const Recipe = struct {
                     .bool_literal => |v| .{ .boolean = v },
                     .string_literal => |v| .{ .string = try self.string(v) },
                     .type_literal => |v| .{ .type = try self.typeId(v, depth) },
+                    .argument_default => |v| pending: {
+                        if (v >= self.graph.argument_defaults.items.len) return error.ComptimeTypeRecipePending;
+                        const expression = self.graph.argument_defaults.items[v];
+                        const bindings = try self.a.alloc(DefaultBinding, expression.bindings.len);
+                        defer self.a.free(bindings);
+                        for (self.graph.argument_default_bindings.items[expression.bindings.start..][0..expression.bindings.len], bindings) |binding, *out| {
+                            out.* = .{ .ty = if (binding.ty) |ty| try self.typeId(ty, depth + 1) else null, .integer = binding.integer };
+                        }
+                        const start = std.math.cast(u32, self.recipe.default_bindings.items.len) orelse return error.SemanticGraphTooLarge;
+                        try self.recipe.default_bindings.appendSlice(self.a, bindings);
+                        break :pending .{ .pending = .{ .module_index = expression.module_index, .expression = expression.expression, .bindings = .{ .start = start, .len = expression.bindings.len } } };
+                    },
                     else => return error.ComptimeTypeRecipePending,
                 };
                 break :value .{ .literal = .{ .source = node.source, .ty = if (node.ty) |ty| try self.typeId(ty, depth) else null, .value = literal } };
@@ -332,6 +364,19 @@ pub const Recipe = struct {
                         .boolean => |v| .{ .bool_literal = v },
                         .string => |v| .{ .string_literal = try self.string(v) },
                         .type => |v| .{ .type_literal = try self.typeId(v) },
+                        .pending => |v| pending: {
+                            const bindings = try self.a.alloc(g.ArgumentDefaultBinding, v.bindings.len);
+                            defer self.a.free(bindings);
+                            for (self.recipe.default_bindings.items[v.bindings.start..][0..v.bindings.len], bindings) |binding, *out| {
+                                out.* = .{ .ty = if (binding.ty) |ty| try self.typeId(ty) else null, .integer = binding.integer };
+                            }
+                            const graph = self.generics.graph;
+                            const start = std.math.cast(u32, graph.argument_default_bindings.items.len) orelse return error.SemanticGraphTooLarge;
+                            try graph.argument_default_bindings.appendSlice(self.a, bindings);
+                            const recipe = std.math.cast(u32, graph.argument_defaults.items.len) orelse return error.SemanticGraphTooLarge;
+                            try graph.argument_defaults.append(self.a, .{ .module_index = v.module_index, .expression = v.expression, .bindings = .{ .start = start, .len = v.bindings.len } });
+                            break :pending .{ .argument_default = recipe };
+                        },
                     },
                 };
                 const published: g.GlobalNodeId = @enumFromInt(std.math.cast(u32, self.generics.graph.nodes.items.len) orelse return error.SemanticGraphTooLarge);
@@ -528,4 +573,48 @@ test "type recipes preserve literal precision and owned string bytes after rollb
     try std.testing.expectEqual(@as(u64, 0x8000000000000000), @as(u64, @bitCast(zero)));
     try std.testing.expectEqual(@as(u64, @bitCast(nan)), @as(u64, @bitCast(retained_nan)));
     try std.testing.expectEqualStrings("retained text", graph.text(text));
+}
+
+fn pendingDefaultFailures(a: std.mem.Allocator) !void {
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = p.SourceRef{ .file_index = 0, .offset = 5 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    const checkpoint = graph.checkpoint();
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    try graph.argument_default_bindings.appendSlice(a, &.{ .{ .ty = @enumFromInt(1), .integer = null }, .{ .ty = null, .integer = 42 } });
+    try graph.argument_defaults.append(a, .{ .module_index = 0, .expression = @enumFromInt(7), .bindings = .{ .start = 0, .len = 2 } });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .argument_default = 0 } });
+    const name = try graph.addString(a, "value");
+    try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(0), .source = source, .default_value = @enumFromInt(0) });
+    try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
+    var recipe = try Recipe.capture(a, &graph, .{ .types = 1, .declarations = 0, .nodes = 0 }, &.{@enumFromInt(2)});
+    defer recipe.deinit(a);
+    var retained = try recipe.clone(a);
+    defer retained.deinit(a);
+    try std.testing.expect(try retained.matches(a, &graph, &.{@enumFromInt(2)}));
+    graph.argument_default_bindings.items[1].integer = 43;
+    try std.testing.expect(!try retained.matches(a, &graph, &.{@enumFromInt(2)}));
+    graph.rollback(checkpoint);
+    // Recycled graph pools cannot become part of the retained substitution.
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try graph.argument_defaults.append(a, .{ .module_index = 0, .expression = @enumFromInt(99), .bindings = .{ .start = 0, .len = 0 } });
+    var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinitReachedCalls();
+    var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var published: [1]?g.GlobalTypeId = undefined;
+    try retained.publish(a, &generics, &published);
+    try std.testing.expect(try retained.matches(a, &graph, &published));
+    const fields = graph.types.items[@intFromEnum(published[0].?)].structural.fields;
+    const node = graph.node(graph.fields.items[fields.start].default_value.?);
+    const expression = graph.argument_defaults.items[node.content.argument_default];
+    try std.testing.expectEqual(@as(u32, 7), @intFromEnum(expression.expression));
+    const bindings = graph.argument_default_bindings.items[expression.bindings.start..][0..expression.bindings.len];
+    try std.testing.expectEqual(@as(?i64, 42), bindings[1].integer);
+    try std.testing.expect(graph.semanticType(bindings[0].ty.?) == .pointer);
+}
+
+test "type recipes retain pending default substitutions through rollback and allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, pendingDefaultFailures, .{});
 }

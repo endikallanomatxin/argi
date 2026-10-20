@@ -262,7 +262,33 @@ pub fn isBuiltin(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
 }
 
 pub fn identityEqual(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
-    return a == b or equal(graph, a, b);
+    if (a == b) return true;
+    if (!equal(graph, a, b)) return false;
+    const left = graph.types.items[@intFromEnum(a)];
+    const right = graph.types.items[@intFromEnum(b)];
+    // Structural assignability ignores defaults, but specialization must retain
+    // them: a generic body can construct a value using the supplied type.
+    return switch (left) {
+        .pointer => |value| identityEqual(graph, value.child, right.pointer.child),
+        .array => |value| identityEqual(graph, value.element, right.array.element),
+        .nullable => |value| identityEqual(graph, value, right.nullable),
+        .virtual => |value| identityEqual(graph, value, right.virtual),
+        .structural => |value| result: {
+            if (value.layout != right.structural.layout) break :result false;
+            for (graph.fields.items[value.fields.start..][0..value.fields.len], graph.fields.items[right.structural.fields.start..][0..right.structural.fields.len]) |first, second| {
+                if (first.default_value != second.default_value or !identityEqual(graph, first.ty, second.ty)) break :result false;
+            }
+            break :result true;
+        },
+        .structural_choice => |value| result: {
+            if (value.layout != right.structural_choice.layout) break :result false;
+            for (graph.variants.items[value.variants.start..][0..value.variants.len], graph.variants.items[right.structural_choice.variants.start..][0..right.structural_choice.variants.len]) |first, second| {
+                if (first.payload_type) |payload| if (!identityEqual(graph, payload, second.payload_type.?)) break :result false;
+            }
+            break :result true;
+        },
+        else => true,
+    };
 }
 
 pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
@@ -665,4 +691,24 @@ pub fn staticTypeBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_
     const binding = graph.binding(id);
     if (binding.mutability != .constant or binding.deferred_initialization or !isBuiltin(graph, binding.ty, .Type)) return null;
     return typeValue(graph, binding.initialization orelse return null);
+}
+
+test "structural compatibility keeps defaults separate from specialization identity" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    const name = try graph.addString(a, "value");
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    for (0..2) |index| {
+        try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = @intCast(41 + index) } });
+        try graph.fields.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(0), .default_value = @enumFromInt(index) });
+        try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = @intCast(index), .len = 1 } } });
+    }
+    try std.testing.expect(equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+    try std.testing.expect(!identityEqual(&graph, @enumFromInt(1), @enumFromInt(2)));
+    for ([_]u32{ 1, 2 }) |child|
+        try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(child), .mutability = .read_only } });
+    try std.testing.expect(equal(&graph, @enumFromInt(3), @enumFromInt(4)));
+    try std.testing.expect(!identityEqual(&graph, @enumFromInt(3), @enumFromInt(4)));
 }

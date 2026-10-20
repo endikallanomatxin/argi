@@ -36,9 +36,11 @@ branch is compiled. This differs from running an ordinary `if` inside
 > waits for the selected dependency bodies, proves their safety, and resumes
 > with the frozen result. Suspended specializations preserve temporary pointer,
 > array, record, choice and generic type descriptions across selection rollback.
-> Literal field defaults retain their source origins and values across rollback.
-> Defaults requiring further resolution, inferred choice identities and declaration
-> origins must already be stable; otherwise the request remains pending.
+> Field defaults retain literal values or their deferred expression and type/integer
+> bindings across rollback. They still execute independently for each omitted
+> argument. Defaults distinguish specialization identities even when the records
+> are structurally compatible. Inferred choice identities and declaration origins
+> must already be stable; otherwise the request remains pending.
 > Within function bodies, computed `#if` conditions accept closed Boolean calls,
 > integer comparisons, and scalar or aggregate projections in that same subset.
 > Generic conditions are evaluated separately for each specialization. Both arms
