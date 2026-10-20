@@ -18,7 +18,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   and record-field replacements use checked plans, including the three-drop
   retargeting probe and preservation of sibling references in native and VM.
   Nested indirect fields and field reinitialization after destruction have
-  differential coverage; extend it to partial initialization through aliases.
+  differential coverage. Fix whole-record replacement after consuming one field
+  through a function: native caller activation and VM ancestor cleanup currently
+  disagree. Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Enable the persistent REPL allocator only after its ordinary initialization,
   resource operations and reset/exit cleanup work end to end.

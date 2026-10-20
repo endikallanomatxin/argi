@@ -170,8 +170,10 @@ fn promoteRecord(builder: c.LLVMBuilderRef, flags: c.LLVMValueRef, description: 
     }
     var offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), base, 0)};
     const pointer = c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), flags, &offset, 1, "cleanup.owner.flag");
-    const previous = c.LLVMBuildLoad2(builder, c.LLVMInt1Type(), pointer, "cleanup.owner.ready");
-    _ = c.LLVMBuildStore(builder, c.LLVMBuildOr(builder, previous, complete, "cleanup.owner.active"), pointer);
+    // A consumed descendant makes the record incomplete as well. Keeping an
+    // earlier whole-value flag would call its nominal destructor on vacant
+    // storage; reinitialization recomputes completeness from the same children.
+    _ = c.LLVMBuildStore(builder, complete, pointer);
 }
 
 test "native cleanup views borrow incoming evidence without allocating or initializing flags" {
