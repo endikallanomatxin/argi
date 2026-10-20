@@ -481,3 +481,51 @@ test "type recipes retain literal defaults and their origins across rollback" {
     try std.testing.expectEqual(@as(i128, 42), graph.node(first).content.int_literal);
     try std.testing.expectEqual(source, graph.node(first).source);
 }
+
+test "type recipes preserve literal precision and owned string bytes after rollback" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Float64 }, .{ .builtin = .Bool }, .{ .builtin = .UInt32 } });
+    const checkpoint = graph.checkpoint();
+    const source = p.SourceRef{ .file_index = 0, .offset = 9 };
+    const nan: f64 = @bitCast(@as(u64, 0x7ff8000000000042));
+    const string = try graph.addString(a, "retained text");
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .float_literal = -0.0 } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .float_literal = nan } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .bool_literal = true } },
+        .{ .source = source, .ty = @enumFromInt(2), .content = .{ .char_literal = 0x1f642 } },
+        .{ .source = source, .ty = null, .content = .{ .string_literal = string } },
+        .{ .source = source, .ty = null, .content = .{ .type_literal = @enumFromInt(0) } },
+    });
+    const names = [_][]const u8{ "zero", "nan", "boolean", "scalar", "text", "type" };
+    for (names, 0..) |name, index| try graph.fields.append(a, .{
+        .name = try graph.addString(a, name),
+        .source = source,
+        .ty = @enumFromInt(0),
+        .default_value = @enumFromInt(index),
+    });
+    try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = 0, .len = names.len } } });
+    var recipe = try Recipe.capture(a, &graph, .{ .types = 3, .declarations = 0, .nodes = 0 }, &.{@enumFromInt(3)});
+    defer recipe.deinit(a);
+    try std.testing.expect(try recipe.matches(a, &graph, &.{@enumFromInt(3)}));
+    graph.nodes.items[0].content = .{ .float_literal = 0.0 };
+    try std.testing.expect(!try recipe.matches(a, &graph, &.{@enumFromInt(3)}));
+    graph.rollback(checkpoint);
+    _ = try graph.addString(a, "overwritten graph string storage");
+    var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinitReachedCalls();
+    var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var published: [1]?g.GlobalTypeId = undefined;
+    try recipe.publish(a, &generics, &published);
+    try std.testing.expect(try recipe.matches(a, &graph, &published));
+    const fields = graph.types.items[@intFromEnum(published[0].?)].structural.fields;
+    const zero = graph.node(graph.fields.items[fields.start].default_value.?).content.float_literal;
+    const retained_nan = graph.node(graph.fields.items[fields.start + 1].default_value.?).content.float_literal;
+    const text = graph.node(graph.fields.items[fields.start + 4].default_value.?).content.string_literal;
+    try std.testing.expectEqual(@as(u64, 0x8000000000000000), @as(u64, @bitCast(zero)));
+    try std.testing.expectEqual(@as(u64, @bitCast(nan)), @as(u64, @bitCast(retained_nan)));
+    try std.testing.expectEqualStrings("retained text", graph.text(text));
+}
