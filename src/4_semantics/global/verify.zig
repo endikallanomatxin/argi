@@ -184,12 +184,15 @@ fn verifyWriteCleanupTargets(graph: *const graph_mod.GlobalSemanticGraph) !void 
             try require(types.equal(graph, pointer_type.pointer.child, graph.node(target).ty orelse return error.InvalidGlobalSemanticGraph));
         },
         .struct_field_store => |write| if (write.cleanup_target) |target| {
-            const actual = lexical_storage.addressedTarget(graph, write.struct_ptr) orelse return error.InvalidGlobalSemanticGraph;
             const field = graph.node(target).content;
-            try require(lexical_storage.root(graph, target) != null);
             try require(field == .struct_field_access);
             try require(field.struct_field_access.field_index == write.field_index);
-            try require(lexical_storage.equal(graph, actual, field.struct_field_access.value));
+            const base = graph.node(field.struct_field_access.value).content;
+            if (base != .dereference or base.dereference.pointer != write.struct_ptr) {
+                const actual = lexical_storage.addressedTarget(graph, write.struct_ptr) orelse return error.InvalidGlobalSemanticGraph;
+                try require(lexical_storage.root(graph, target) != null);
+                try require(lexical_storage.equal(graph, actual, field.struct_field_access.value));
+            }
             try require(types.equal(graph, write.field_type, graph.node(target).ty orelse return error.InvalidGlobalSemanticGraph));
         },
         else => {},

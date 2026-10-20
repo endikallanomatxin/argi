@@ -24,6 +24,10 @@ Nested: Type = (.pair: Pair)
 
 Envelope: Type = (.result: Result, .sibling: Tracked)
 
+replace_first(.pair: $&Pair, .counter: $&Counter) -> () := {
+    pair&.first = Tracked(.counter = counter, .id = 4)
+}
+
 main() -> (.status_code: Int32 = 0) := {
     counter :: Counter = Counter()
     {
@@ -74,5 +78,15 @@ main() -> (.status_code: Int32 = 0) := {
         if counter.count != 11 { abort }
     }
     if counter.count != 13 { abort }
+    {
+        owner :: Pair = Pair(
+            .first  = Tracked(.counter = $&counter, .id = 5)
+            .second = Tracked(.counter = $&counter, .id = 6)
+        )
+        sibling := &owner.second.id
+        replace_first(.pair = $&owner, .counter = $&counter)
+        if counter.count != 14 or sibling&!= 6 { abort }
+    }
+    if counter.count != 16 { abort }
     status_code = 42
 }

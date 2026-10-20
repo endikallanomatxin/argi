@@ -516,7 +516,8 @@ pub const Resolver = struct {
             .struct_field_store => |store| {
                 try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index);
                 const parent = try self.lexicalAddressTarget(store.struct_ptr, visible);
-                if (parent) |base| {
+                {
+                    const base = parent orelse try self.appendNode(self.graph.node(node_id).source, store.struct_type, .{ .dereference = .{ .pointer = store.struct_ptr, .pointer_type = self.graph.node(store.struct_ptr).ty.?, .ty = store.struct_type } });
                     const fields = global_types.fields(self.graph, store.struct_type) orelse return error.InvalidCleanupTarget;
                     const field = self.graph.fields.items[fields.start + store.field_index];
                     const target = try self.appendNode(self.graph.node(node_id).source, store.field_type, .{ .struct_field_access = .{
@@ -525,11 +526,14 @@ pub const Resolver = struct {
                         .field_index = store.field_index,
                     } });
                     self.graph.nodes.items[@intFromEnum(node_id)].content.struct_field_store.cleanup_target = target;
-                    const value = try self.projectedReplacement(node_id, target, store.value, visible, owner_function, module_index);
+                    const value = if (parent != null)
+                        try self.projectedReplacement(node_id, target, store.value, visible, owner_function, module_index)
+                    else
+                        try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
                     self.graph.nodes.items[@intFromEnum(node_id)].content.struct_field_store.value = value;
                     try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
                     if (value != store.value) try self.wrapReplacement(node_id);
-                } else try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
+                }
             },
             .binary_operation => |operation| {
                 try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index);

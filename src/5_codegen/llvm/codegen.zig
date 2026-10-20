@@ -1546,8 +1546,12 @@ pub const CodeGenerator = struct {
             var lowerer = self.typeLowerer();
             break :blk try lowerer.buildUnionFieldPointer(self.builder, pointer.value_ref, store.field_type, "union.field.ptr");
         } else c.LLVMBuildStructGEP2(self.builder, try self.toLLVMType(store.struct_type), pointer.value_ref, store.field_index, "field.ptr");
+        const projected_view = if (pointer.reference_view) |view|
+            try reference_evidence.projectView(self.builder, self.allocator, self.graph, &self.reference_layouts, &self.cleanup_counts, store.struct_type, view, .{ .field = store.field_index })
+        else
+            null;
         const cleanup = if (store.cleanup_target) |target|
-            self.dropStateForNode(target)
+            try self.capturedReferenceCleanup(.{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(try self.toLLVMType(store.field_type), 0), .reference_view = projected_view }, target)
         else if (self.dropStateForNode(store.struct_ptr)) |parent|
             parent.project(self.builder, store.field_index)
         else

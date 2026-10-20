@@ -553,7 +553,7 @@ const FunctionLower = struct {
                 const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });
                 try self.captureReplacement(id, target, x.field_type);
-                const destination = try self.captureWrite(node.source, target, x.field_type, self.targetHasCleanup(x.cleanup_target));
+                const destination = try self.captureWrite(node.source, target, x.field_type, (if (self.replacement) |captured| captured.plan.write == id else false) or self.targetHasCleanup(x.cleanup_target));
                 const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
                 try self.commitWrite(node.source, destination, value);
             },

@@ -9,9 +9,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Complete acquired aggregate/resource storage and partial choice initialization.
   Share identity, projections, initialization and validity rules with ordinary
   storage without requiring identical physical representations.
-- Complete evaluated cleanup identities for indexed and indirect field
-  destinations in both backends. Whole indirect pointer replacements now use
-  checked plans and pass the three-drop retargeting probe in native and VM.
+- Complete indexed cleanup identities in both backends. Whole indirect pointer
+  and record-field replacements use checked plans, including the three-drop
+  retargeting probe and preservation of sibling references in native and VM.
+  Extend coverage to nested indirect fields and partial reinitialization.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Enable the persistent REPL allocator only after its ordinary initialization,
   resource operations and reset/exit cleanup work end to end.

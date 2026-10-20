@@ -438,7 +438,7 @@ const Scanner = struct {
                 if (destination) |target| {
                     if (!flow.skips(target)) try self.activation.replacements.put(id, {});
                     try self.initialize(flow, target, value.value);
-                }
+                } else try self.activation.replacements.put(id, {});
             },
             .array_index => |value| {
                 try self.node(value.array_ptr, flow);
