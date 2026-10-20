@@ -60,7 +60,6 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Later
 
-- Share lexer rules with compile-time conditional recognition.
 - Separate host execution from target semantics for cross-compilation.
 
 ## Invariants

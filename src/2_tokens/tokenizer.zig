@@ -1,4 +1,5 @@
 const std = @import("std");
+const lexical = @import("../1_base/lexical.zig");
 const tok = @import("token.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const sf = @import("../1_base/source_files.zig");
@@ -342,10 +343,7 @@ pub const Tokenizer = struct {
         // Comments
         if (current == '-' and self.peekNext() == '-') {
             const start = self.location.offset;
-            while (self.peek()) |c| {
-                if (c == '\n') break;
-                _ = self.advance();
-            }
+            self.location.offset = @intCast(lexical.commentEnd(self.source, start));
             try self.addToken(tok.Content{ .comment = self.textRange(start, self.location.offset) }, loc);
             return;
         }
@@ -380,7 +378,7 @@ pub const Tokenizer = struct {
         if (std.ascii.isAlphabetic(current) or current == '_') {
             const start = self.location.offset;
             while (self.peek()) |c| {
-                if (!std.ascii.isAlphanumeric(c) and c != '_') break;
+                if (!lexical.identifierContinue(c)) break;
                 _ = self.advance();
             }
             const word = self.source[start..self.location.offset];
@@ -554,17 +552,9 @@ pub const Tokenizer = struct {
                         try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                         return TokenizerError.UnknownCharacter;
                     };
-                    char_val = switch (esc) {
-                        'n' => '\n', // newline
-                        't' => '\t', // tab
-                        'r' => '\r', // carriage return
-                        '\\' => '\\', // backslash
-                        '\'' => '\'', // single quote
-                        '0' => 0, // NUL
-                        else => {
-                            try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
-                            return TokenizerError.UnknownCharacter;
-                        },
+                    char_val = lexical.escape('\'', esc) orelse {
+                        try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
+                        return TokenizerError.UnknownCharacter;
                     };
                     _ = self.advance(); // Skip the escape character.
                 } else { // -- ordinary character --
@@ -607,31 +597,16 @@ pub const Tokenizer = struct {
                 _ = self.advance();
                 const text_start = self.location.offset;
 
-                // Collect characters while handling escapes.
-                while (self.peek()) |c| {
-                    if (c == '"') break;
-                    if (c == '\\') {
-                        _ = self.advance(); // Skip '\'
-                        const esc = self.peek() orelse {
-                            try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
-                            return TokenizerError.UnknownCharacter;
-                        };
-                        switch (esc) { // Common escapes.
-                            'n', 't', 'r', '\\', '"', '0' => {},
-                            else => {
-                                try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
-                                return TokenizerError.UnknownCharacter;
-                            },
-                        }
-                        _ = self.advance();
-                    } else {
-                        _ = self.advance();
-                    }
+                const literal = lexical.quoted(self.source, text_start - 1);
+                if (literal.invalid_escape) |offset| {
+                    try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{self.source[offset]});
+                    return TokenizerError.UnknownCharacter;
                 }
-                if (self.peek() != '"') {
+                if (!literal.closed) {
                     try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
+                self.location.offset = @intCast(literal.content_end);
                 const text_end = self.location.offset;
                 if (!std.unicode.utf8ValidateSlice(self.source[text_start..text_end])) {
                     try self.diagnostics.add(loc, .syntax, "string literal is not valid UTF-8", .{});

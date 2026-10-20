@@ -1,4 +1,5 @@
 const std = @import("std");
+const lexical = @import("lexical.zig");
 
 pub const BranchId = enum(u32) { none = std.math.maxInt(u32), _ };
 pub const Span = struct {
@@ -120,7 +121,7 @@ const Parser = struct {
             if (std.ascii.isWhitespace(self.source[self.offset])) {
                 self.offset += 1;
             } else if (std.mem.startsWith(u8, self.source[self.offset..], "--")) {
-                while (self.offset < self.source.len and self.source[self.offset] != '\n') self.offset += 1;
+                self.offset = lexical.commentEnd(self.source, self.offset);
             } else break;
         }
     }
@@ -129,19 +130,13 @@ const Parser = struct {
         self.skipTrivia();
         if (!std.mem.startsWith(u8, self.source[self.offset..], name)) return false;
         const end = self.offset + name.len;
-        if (end < self.source.len and (std.ascii.isAlphanumeric(self.source[end]) or self.source[end] == '_')) return false;
+        if (end < self.source.len and lexical.identifierContinue(self.source[end])) return false;
         self.offset = end;
         return true;
     }
 
     fn skipQuoted(self: *Parser) void {
-        const quote = self.source[self.offset];
-        self.offset += 1;
-        while (self.offset < self.source.len) {
-            const byte = self.source[self.offset];
-            self.offset += 1;
-            if (byte == '\\' and self.offset < self.source.len) self.offset += 1 else if (byte == quote) return;
-        }
+        self.offset = lexical.quoted(self.source, self.offset).end;
     }
 
     fn closingBrace(self: *Parser) !usize {
@@ -153,7 +148,7 @@ const Parser = struct {
                 continue;
             }
             if (std.mem.startsWith(u8, self.source[self.offset..], "--")) {
-                while (self.offset < self.source.len and self.source[self.offset] != '\n') self.offset += 1;
+                self.offset = lexical.commentEnd(self.source, self.offset);
                 continue;
             }
             self.offset += 1;
@@ -176,7 +171,7 @@ const Parser = struct {
                 continue;
             }
             if (std.mem.startsWith(u8, self.source[self.offset..], "--")) {
-                while (self.offset < self.source.len and self.source[self.offset] != '\n') self.offset += 1;
+                self.offset = lexical.commentEnd(self.source, self.offset);
                 continue;
             }
             if (byte == '{' and parentheses == 0 and brackets == 0) return self.offset;
@@ -206,7 +201,7 @@ const Parser = struct {
                 continue;
             }
             if (std.mem.startsWith(u8, self.source[self.offset..], "--")) {
-                while (self.offset < end and self.source[self.offset] != '\n') self.offset += 1;
+                self.offset = @min(end, lexical.commentEnd(self.source, self.offset));
                 continue;
             }
             if (byte != '#') {
@@ -325,4 +320,25 @@ test "conditional source bounds nesting without evaluating conditions" {
     try source.appendNTimes(a, '}', 130);
     var offset: usize = 0;
     try std.testing.expectError(error.ConditionalDepthLimit, Plan.parse(a, source.items, &offset));
+}
+
+test "conditional source preserves lexical boundaries in invalid inactive strings" {
+    const source =
+        \\#if enabled {
+        \\    text := "\q #else { \" }" -- #if ignored { }
+        \\    quote := '\''
+        \\} #else {
+        \\    selected := 42
+        \\}
+    ;
+    const allocator = std.testing.allocator;
+    var offset: usize = 0;
+    var plan = try Plan.parse(allocator, source, &offset);
+    defer plan.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), plan.branches.items.len);
+    const selected = try plan.select(allocator, &.{false});
+    defer selected.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, selected.source, "selected := 42") != null);
+    try std.testing.expect(std.mem.indexOf(u8, selected.source, "\\q") == null);
+    try std.testing.expectEqual(source.len, selected.source.len);
 }

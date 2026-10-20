@@ -14154,3 +14154,9 @@ test "feature_tests/execution/130_partial_record_indirect_replacement" {
     try runExpect("tests/feature_tests/execution/130_partial_record_indirect_replacement", 42);
     try vmExpect("tests/feature_tests/execution/130_partial_record_indirect_replacement", 42, null);
 }
+
+test "feature_tests/execution/136_comptime_lexical_boundaries" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/136_comptime_lexical_boundaries");
+    try runExpect("tests/feature_tests/execution/136_comptime_lexical_boundaries", 42);
+    try vmExpect("tests/feature_tests/execution/136_comptime_lexical_boundaries", 42, null);
+}
