@@ -2607,7 +2607,7 @@ pub const CodeGenerator = struct {
             self.markRelocationDropState(call.input);
             return result;
         }
-        if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input);
+        if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input, callee.safety_primitive == .trusted_opaque_move_in);
         if (callee.safety_primitive == .trusted_opaque_move_out) return self.opaqueTake(call.input);
         if (callee.safety_primitive == .trusted_opaque_relocate) return self.opaqueRelocate(call.input);
         if (callee.safety_primitive == .trusted_opaque_drop) return self.opaqueDrop(call.input, callee);
@@ -2685,18 +2685,19 @@ pub const CodeGenerator = struct {
         c.LLVMPositionBuilderAtEnd(self.builder, valid);
     }
 
-    fn opaqueStore(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) !?TypedValue {
-        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) {
-            .struct_value_literal => |literal| literal,
-            else => return CodegenError.InvalidType,
-        };
-        const fields = self.graph.value_fields.items[input.fields.start..][0..input.fields.len];
-        if (fields.len != 2 and fields.len != 3) return CodegenError.InvalidType;
-        const destination_index: usize = if (fields.len == 3) 1 else 0;
-        const source_index: usize = if (fields.len == 3) 2 else 1;
-        const destination = (try self.visitNode(fields[destination_index].value)) orelse return CodegenError.ValueNotFound;
-        const source = (try self.visitNode(fields[source_index].value)) orelse return CodegenError.ValueNotFound;
-        _ = c.LLVMBuildStore(self.builder, source.value_ref, destination.value_ref);
+    fn opaqueStore(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId, has_storage: bool) !?TypedValue {
+        // Owning argument preparation may wrap the record in a value sequence.
+        // Consume its evaluated ABI record rather than requiring literal syntax.
+        const input = (try self.visitNode(input_id)) orelse return CodegenError.ValueNotFound;
+        if (c.LLVMGetTypeKind(input.type_ref) != c.LLVMStructTypeKind) return CodegenError.InvalidType;
+        // Explicit primitive inputs precede any completed capability inputs.
+        const destination_index: u32 = if (has_storage) 1 else 0;
+        const source_index = destination_index + 1;
+        if (c.LLVMCountStructElementTypes(input.type_ref) <= source_index)
+            return CodegenError.InvalidType;
+        const destination = c.LLVMBuildExtractValue(self.builder, input.value_ref, destination_index, "opaque.destination");
+        const source = c.LLVMBuildExtractValue(self.builder, input.value_ref, source_index, "opaque.source");
+        _ = c.LLVMBuildStore(self.builder, source, destination);
         return null;
     }
 
