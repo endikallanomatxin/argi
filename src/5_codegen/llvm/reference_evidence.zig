@@ -179,6 +179,14 @@ pub fn projectStorage(builder: c.LLVMBuilderRef, layout: *references.Layout, all
     return c.LLVMBuildGEP2(builder, whole, storage, &indices, indices.len, "reference.evidence.projection");
 }
 
+// Runtime views may deliberately have no companion. Keep that absence when
+// projecting; a nonzero logical offset must never manufacture a pointer.
+pub fn projectOptionalStorage(builder: c.LLVMBuilderRef, layout: *references.Layout, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, storage: c.LLVMValueRef, projection: references.Projection) !?c.LLVMValueRef {
+    const slice = try layout.project(allocator, graph, ty, projection);
+    if (slice.count == 0) return null;
+    return nullableOffset(builder, storage, storageViewType(), slice.offset);
+}
+
 test "native reference evidence projects distinct sibling ranges through the private ABI" {
     const a = std.testing.allocator;
     var graph: g.GlobalSemanticGraph = .{};
@@ -216,6 +224,9 @@ test "native reference evidence projects distinct sibling ranges through the pri
     const child_view = try projectView(builder, a, &graph, &layout, &cleanup_counts, @enumFromInt(2), root_view, 1);
     const absent_projection = nullableOffset(builder, c.LLVMConstNull(c.LLVMPointerType(c.LLVMInt1Type(), 0)), c.LLVMInt1Type(), 2);
     try std.testing.expect(c.LLVMIsNull(absent_projection) != 0 or c.LLVMGetInstructionOpcode(absent_projection) == c.LLVMSelect);
+    const absent_leaves = c.LLVMConstNull(c.LLVMPointerType(storageViewType(), 0));
+    const absent_child = (try projectOptionalStorage(builder, &layout, a, &graph, @enumFromInt(2), absent_leaves, .{ .field = 1 })).?;
+    try std.testing.expect(c.LLVMIsNull(absent_child) != 0);
     const child_leaves = try referencesPointer(builder, child_view);
     try std.testing.expect(child_leaves != input_storage);
     for (0..2) |index| {

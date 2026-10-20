@@ -60,6 +60,7 @@ const WriteDestination = struct {
     address: c.LLVMValueRef,
     type_ref: c.LLVMTypeRef,
     cleanup: ?DropState = null,
+    references: ?c.LLVMValueRef = null,
 
     fn activate(self: WriteDestination, generator: *CodeGenerator) void {
         if (self.cleanup) |drop| generator.storeDropState(drop, true);
@@ -1126,7 +1127,7 @@ pub const CodeGenerator = struct {
                 const storage = self.bindings.get(assignment.binding) orelse return CodegenError.SymbolNotFound;
                 if (self.graph.bindings.items[@intFromEnum(assignment.binding)].mutability == .constant and storage.initialized)
                     return CodegenError.ConstantReassignment;
-                const destination: WriteDestination = .{ .address = storage.ref, .type_ref = storage.type_ref, .cleanup = storage.drop_state };
+                const destination: WriteDestination = .{ .address = storage.ref, .type_ref = storage.type_ref, .cleanup = storage.drop_state, .references = if (try self.reference_layouts.count(self.allocator, self.graph, storage.ty) != 0) try self.referenceViewStorage(assignment.binding) else null };
                 if (try self.storeLargeNode(assignment.value, destination.address)) {
                     self.bindings.getPtr(assignment.binding).?.initialized = true;
                     destination.activate(self);
@@ -1510,7 +1511,13 @@ pub const CodeGenerator = struct {
             parent.project(self.builder, store.field_index)
         else
             null;
-        const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup };
+        const references = if (pointer.reference_view) |view|
+            try reference_evidence.projectOptionalStorage(self.builder, &self.reference_layouts, self.allocator, self.graph, store.struct_type, try reference_evidence.referencesPointer(self.builder, view), .{ .field = store.field_index })
+        else if (store.cleanup_target) |target|
+            try self.referenceStorageForNode(target)
+        else
+            null;
+        const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup, .references = references };
         const value = try self.prepareWriteValue(store.value, destination);
         try destination.commit(self, value);
         try self.storeProjectedReferenceView(store.cleanup_target, value);
@@ -1972,6 +1979,7 @@ pub const CodeGenerator = struct {
             .address = pointer.value_ref,
             .type_ref = try self.toLLVMType(pointer_type.pointer.child),
             .cleanup = try self.capturedReferenceCleanup(pointer, assignment.cleanup_target orelse assignment.pointer),
+            .references = if (pointer.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else if (assignment.cleanup_target) |target| try self.referenceStorageForNode(target) else null,
         };
         const value = try self.prepareWriteValue(assignment.value, destination);
         try destination.commit(self, value);
@@ -2697,7 +2705,7 @@ pub const CodeGenerator = struct {
         for (self.graph.value_fields.items[input.fields.start..][0..input.fields.len]) |field| {
             if (!std.mem.eql(u8, self.graph.text(field.name), "slot")) continue;
             const slot = (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
-            try self.callDeinit(destructor, input_id, self_index orelse return CodegenError.InvalidType, slot.value_ref);
+            try self.callDeinit(destructor, input_id, self_index orelse return CodegenError.InvalidType, slot.value_ref, slot.reference_view);
             return null;
         }
         return CodegenError.InvalidType;
@@ -2774,16 +2782,16 @@ pub const CodeGenerator = struct {
             // Use exactly the address and flag range captured before the RHS.
             // Do not resolve the cleanup target again after its effects.
             const destination = captured.destination orelse return error.MissingReplacementDestination;
-            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, destination.address, captured.ty, destination.cleanup.?);
+            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, destination.address, captured.ty, destination.cleanup.?, destination.references);
         };
         if (auto.targetNode()) |target| {
             const drop = self.dropStateForNode(target) orelse return CodegenError.InvalidType;
             const pointer = try self.addressablePointer(target);
-            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, pointer.value_ref, self.graph.node(target).ty.?, drop);
+            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, pointer.value_ref, self.graph.node(target).ty.?, drop, try self.referenceStorageForNode(target));
         }
         const storage = self.bindings.get(auto.ownerBinding().?) orelse return;
         const drop = storage.drop_state orelse return;
-        try self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, storage.ref, storage.ty, drop);
+        try self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, storage.ref, storage.ty, drop, storage.reference_view);
     }
 
     fn genAutoDeinitStorage(
@@ -2795,18 +2803,19 @@ pub const CodeGenerator = struct {
         storage: llvm.c.LLVMValueRef,
         ty: graph_mod.GlobalTypeId,
         drop: DropState,
+        references: ?c.LLVMValueRef,
     ) !void {
         try cleanup_plan.emit(CleanupEmitter{ .generator = self }, self.graph, .{
             .deinit_fn = deinit_fn,
             .input = input,
             .self_field_index = self_field_index,
             .fields = fields,
-        }, CleanupEmitter.Target{ .storage = storage, .ty = ty, .drop = drop });
+        }, CleanupEmitter.Target{ .storage = storage, .ty = ty, .drop = drop, .references = references });
     }
 
     const CleanupEmitter = struct {
         generator: *CodeGenerator,
-        const Target = struct { storage: c.LLVMValueRef, ty: graph_mod.GlobalTypeId, drop: DropState };
+        const Target = struct { storage: c.LLVMValueRef, ty: graph_mod.GlobalTypeId, drop: DropState, references: ?c.LLVMValueRef };
 
         pub fn begin(self: @This(), target: Target) !c.LLVMBasicBlockRef {
             const generator = self.generator;
@@ -2820,7 +2829,9 @@ pub const CodeGenerator = struct {
             return done;
         }
         pub fn call(self: @This(), target: Target, callee: graph_mod.GlobalFunctionId, input: ?graph_mod.GlobalNodeId, self_index: u32) !void {
-            try self.generator.callDeinit(callee, input, self_index, target.storage);
+            const generator = self.generator;
+            const view = try reference_evidence.storageView(generator.builder, .{ .cleanup = target.drop.flag_ref, .references = target.references, .owner = try generator.dropRuntimeOwner(target.drop) });
+            try generator.callDeinit(callee, input, self_index, target.storage, view);
         }
         pub fn beginVariant(self: @This(), target: Target, field: graph_mod.AutoDeinitField, _: cleanup_plan.Child) !c.LLVMBasicBlockRef {
             const generator = self.generator;
@@ -2846,7 +2857,11 @@ pub const CodeGenerator = struct {
             const index = field.field_index + @as(u32, if (selected.variant != null) 1 else 0);
             const name: [*:0]const u8 = if (selected.variant != null) "deinit.payload.addr" else "deinit.field";
             const storage = c.LLVMBuildStructGEP2(generator.builder, try generator.toLLVMType(target.ty), target.storage, index, name);
-            return .{ .storage = storage, .ty = selected.ty, .drop = drop };
+            const references = if (target.references) |companion|
+                try reference_evidence.projectOptionalStorage(generator.builder, &generator.reference_layouts, generator.allocator, generator.graph, target.ty, companion, if (selected.variant) |variant| .{ .variant = variant } else .{ .field = field.field_index })
+            else
+                null;
+            return .{ .storage = storage, .ty = selected.ty, .drop = drop, .references = references };
         }
         pub fn finish(self: @This(), target: Target, done: c.LLVMBasicBlockRef) !void {
             try self.clear(target);
@@ -2857,19 +2872,23 @@ pub const CodeGenerator = struct {
         }
     };
 
-    fn callDeinit(self: *CodeGenerator, callee: graph_mod.GlobalFunctionId, input_override: ?graph_mod.GlobalNodeId, self_index: u32, storage: llvm.c.LLVMValueRef) !void {
+    fn callDeinit(self: *CodeGenerator, callee: graph_mod.GlobalFunctionId, input_override: ?graph_mod.GlobalNodeId, self_index: u32, storage: llvm.c.LLVMValueRef, receiver_evidence: ?c.LLVMValueRef) !void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
         const symbol = self.functions.get(callee) orelse return CodegenError.SymbolNotFound;
         const input_type = try self.fieldsLLVMType(function.input);
         var aggregate = c.LLVMGetUndef(input_type);
+        var evidence: ?c.LLVMValueRef = if (symbol.argiSignature().?.evidence.input) |ty| c.LLVMConstNull(ty) else null;
+        var offset: usize = 0;
         for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
-            const value = if (index == self_index)
-                storage
+            const value: TypedValue = if (index == self_index)
+                .{ .value_ref = storage, .type_ref = try self.toLLVMType(field.ty), .reference_view = receiver_evidence }
             else
-                ((try self.visitNode(try cleanup_plan.argument(self.graph, input_override, field))) orelse return CodegenError.ValueNotFound).value_ref;
-            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value, @intCast(index), "deinit.arg");
+                (try self.visitNode(try cleanup_plan.argument(self.graph, input_override, field))) orelse return CodegenError.ValueNotFound;
+            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, @intCast(index), "deinit.arg");
+            if (value.reference_view) |view| evidence = try reference_evidence.insertValue(self.builder, evidence.?, view, offset);
+            offset += try self.reference_layouts.count(self.allocator, self.graph, field.ty);
         }
-        _ = try self.callArgi(symbol, aggregate, "");
+        _ = try self.callArgiWithEvidence(symbol, aggregate, evidence, "");
     }
 
     fn variantIndex(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, variant: graph_mod.GlobalVariantId) !u32 {
