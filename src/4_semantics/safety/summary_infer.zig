@@ -2205,6 +2205,17 @@ pub const Infer = struct {
                 try self.inferInputPostStates(function_id, block, &flow, exits);
                 if (self.post_domain_sink) |sink| for (flow.domains.items) |domain| try appendDomain(sink, domain);
             },
+            .pointer_assignment, .struct_field_store, .array_store => {
+                // A replacement can return its commit write directly rather
+                // than listing it among the block's statements. Its post-state
+                // must be recorded in either position, exactly once.
+                var flow = InputPostStateFlow.init(self.allocator);
+                flow.states.deinit();
+                flow.states = states.*;
+                defer states.* = flow.states;
+                defer flow.domains.deinit();
+                try self.inferInputPostStatesNode(function_id, node_id, &flow, exits);
+            },
             .move_value, .denied_implicit_copy => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
             .address_of => |value| {
                 try self.markAddressedOutput(function_id, value);
@@ -2600,6 +2611,33 @@ pub const Infer = struct {
         initialization: facts.PlacePostState.Initialization,
     ) !void {
         for (targets) |target| {
+            // A definite aggregate write also replaces its embedded storage.
+            // Keep earlier generation-ending facts, but do not leave consumed
+            // descendants describing the previous value. Dereferences cross
+            // into borrowed storage; variant and dynamic-index paths likewise
+            // need their own conditional initialization facts.
+            if (initializedness == .initialized and initialization == .definite) {
+                for (states.items) |*existing| {
+                    if (existing.target.projections.len <= target.projections.len or
+                        !self.inputPathPrefix(target, existing.target)) continue;
+                    const suffix = existing.target.projections[target.projections.len..];
+                    var projected = value;
+                    var embedded = true;
+                    for (suffix) |projection| {
+                        if (projection != .field and projection != .static_index) {
+                            embedded = false;
+                            break;
+                        }
+                        projected = try self.projectValueEffect(projected, projection);
+                    }
+                    if (!embedded) continue;
+                    existing.refreshes_storage_generation = existing.refreshes_storage_generation or
+                        existing.initializedness != .initialized;
+                    existing.initializedness = .initialized;
+                    existing.initialization = .definite;
+                    existing.value = projected;
+                }
+            }
             var existing_state: ?*facts.PlacePostState = null;
             for (states.items) |*existing| if (self.inputPathEqual(existing.target, target)) {
                 existing_state = existing;
@@ -4030,16 +4068,27 @@ pub const Infer = struct {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
         if (cleanup.input) |input| {
-            try self.inferRequiredLiveInputsNode(function_id, input, required);
+            if (cleanup.storage == .indirect) {
+                // The captured cleanup flag guards the receiver's old value.
+                // Vacant destination storage is legal; auxiliary capabilities
+                // still have their ordinary entry-liveness requirements.
+                if (self.structArguments(input)) |arguments| for (arguments, 0..) |argument, index| {
+                    if (index != cleanup.self_field_index) try self.inferRequiredLiveInputsNode(function_id, argument.value, required);
+                };
+            } else try self.inferRequiredLiveInputsNode(function_id, input, required);
             if (cleanup.deinit_fn) |deinit_fn| {
-                if (self.engine.summaryFor(deinit_fn)) |summary|
-                    try self.substituteRequiredLiveInputsWithOverride(
-                        function_id,
-                        self.requiredInputPaths(summary),
-                        input,
-                        required,
-                        if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
-                    );
+                if (self.engine.summaryFor(deinit_fn)) |summary| {
+                    for (self.requiredInputPaths(summary)) |path| {
+                        if (cleanup.storage == .indirect and path.input_index == cleanup.self_field_index) continue;
+                        try self.substituteRequiredLiveInputsWithOverride(
+                            function_id,
+                            &.{path},
+                            input,
+                            required,
+                            if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
+                        );
+                    }
+                }
             }
         }
         if (binding_effect) |effect|
@@ -4366,12 +4415,12 @@ pub const Infer = struct {
     }
 
     fn structArguments(self: *Infer, node_id: graph_mod.GlobalNodeId) ?[]const graph_mod.ValueField {
-        const node = self.graph.node(node_id);
-        const literal = switch (node.content) {
-            .struct_value_literal => |value| value,
+        var current = node_id;
+        while (true) switch (self.graph.node(current).content) {
+            .struct_value_literal => |literal| return self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len],
+            .value_sequence, .replacement => |block| current = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return null,
             else => return null,
         };
-        return self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len];
     }
 
     fn inferAggregate(
@@ -6111,4 +6160,28 @@ test "no-result summaries avoid self scheduling and retain recursive dependencie
         try std.testing.expectEqual(@as(u64, if (recursive == 0) 1 else 2), infer.evaluations);
         try expectGlobalReseedingStable(&infer);
     }
+}
+
+test "definite aggregate replacement renews embedded post-states but preserves borrowed effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+    var states = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer states.deinit();
+    const child = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 0 }} };
+    const borrowed = facts.InputPath{ .input_index = 0, .projections = &.{ .{ .field = 1 }, .dereference } };
+    try inference.recordInputPostState(&states, &.{child}, .deinitialized, .{}, true, false, false, false, .preserved);
+    try inference.recordInputPostState(&states, &.{borrowed}, .deinitialized, .{}, true, false, false, false, .preserved);
+    try inference.recordInputPostState(&states, &.{.{ .input_index = 0 }}, .initialized, .{}, false, false, false, false, .definite);
+    try std.testing.expectEqual(.initialized, states.items[0].initializedness);
+    try std.testing.expectEqual(.definite, states.items[0].initialization);
+    try std.testing.expect(states.items[0].ends_previous_roots);
+    try std.testing.expect(states.items[0].refreshes_storage_generation);
+    try std.testing.expectEqual(.deinitialized, states.items[1].initializedness);
 }

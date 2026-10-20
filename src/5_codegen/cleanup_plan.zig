@@ -137,6 +137,10 @@ pub fn emit(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operati
         // The same field walk therefore runs only for incomplete values.
         try backend.finish(target, active);
         try emitFields(backend, graph, plan, target);
+        // The guarded whole destructor may have been skipped for an incomplete
+        // record. After its remaining children, retire the entire destination,
+        // including initialized non-owning fields with no destructor operation.
+        try backend.clear(target);
     } else if (types.fields(graph, target.ty) != null) {
         // An incomplete record can still contain live owning fields. Its root
         // flag must not suppress their individually guarded cleanup.
