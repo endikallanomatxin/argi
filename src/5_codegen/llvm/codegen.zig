@@ -61,6 +61,7 @@ const WriteDestination = struct {
     type_ref: c.LLVMTypeRef,
     cleanup: ?DropState = null,
     references: ?c.LLVMValueRef = null,
+    reference_type: ?c.LLVMTypeRef = null,
 
     fn activate(self: WriteDestination, generator: *CodeGenerator) void {
         if (self.cleanup) |drop| generator.storeDropState(drop, true);
@@ -68,7 +69,11 @@ const WriteDestination = struct {
 
     fn commit(self: WriteDestination, generator: *CodeGenerator, value: TypedValue) !void {
         if (value.type_ref != self.type_ref) return CodegenError.InvalidType;
+        const evidence: ?c.LLVMValueRef = if (self.reference_type) |ty| value.reference_view orelse c.LLVMConstNull(ty) else null;
+        if (evidence) |view| if (c.LLVMTypeOf(view) != self.reference_type.?) return error.InvalidReferenceEvidenceStorage;
         _ = c.LLVMBuildStore(generator.builder, value.value_ref, self.address);
+        if (self.references) |storage| if (evidence) |view|
+            reference_evidence.storeOptionalValue(generator.builder, storage, view);
         self.activate(generator);
     }
 };
@@ -994,6 +999,11 @@ pub const CodeGenerator = struct {
     // Reference evidence has separate storage from the pointer slot's own
     // initialization flags. Copies snapshot it; retargeting updates only the
     // selected binding. The entry allocation also covers conditional writes.
+    fn optionalReferenceValueType(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !?c.LLVMTypeRef {
+        if (try self.reference_layouts.count(self.allocator, self.graph, ty) == 0) return null;
+        return try self.referenceValueType(ty);
+    }
+
     fn referenceValueType(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !c.LLVMTypeRef {
         const shape = try reference_layout.Layout.shape(self.graph, ty);
         if (shape == .reference or shape == .virtual_reference) return reference_evidence.storageViewType();
@@ -1022,8 +1032,10 @@ pub const CodeGenerator = struct {
     }
 
     fn storeReferenceView(self: *CodeGenerator, binding: graph_mod.GlobalBindingId, view: ?c.LLVMValueRef) !void {
-        const storage = self.bindings.get(binding).?.reference_view orelse if (view != null) try self.referenceViewStorage(binding) else return;
-        const evidence_type = try self.referenceValueType(self.graph.binding(binding).ty);
+        const evidence_type = try self.optionalReferenceValueType(self.graph.binding(binding).ty) orelse return;
+        // Emit initialization even for empty evidence. An entry-only zero store
+        // cannot reset a binding initialized again on a later loop iteration.
+        const storage = try self.referenceViewStorage(binding);
         _ = c.LLVMBuildStore(self.builder, view orelse c.LLVMConstNull(evidence_type), storage);
     }
 
@@ -1038,13 +1050,6 @@ pub const CodeGenerator = struct {
             },
             else => null,
         };
-    }
-
-    fn storeProjectedReferenceView(self: *CodeGenerator, target: ?graph_mod.GlobalNodeId, value: TypedValue) !void {
-        const node = target orelse return;
-        const storage = try self.referenceStorageForNode(node) orelse return;
-        const evidence_type = try self.referenceValueType(self.graph.node(node).ty.?);
-        _ = c.LLVMBuildStore(self.builder, value.reference_view orelse c.LLVMConstNull(evidence_type), storage);
     }
 
     fn genBlock(self: *CodeGenerator, block_id: graph_mod.GlobalBlockId) !?TypedValue {
@@ -1127,7 +1132,7 @@ pub const CodeGenerator = struct {
                 const storage = self.bindings.get(assignment.binding) orelse return CodegenError.SymbolNotFound;
                 if (self.graph.bindings.items[@intFromEnum(assignment.binding)].mutability == .constant and storage.initialized)
                     return CodegenError.ConstantReassignment;
-                const destination: WriteDestination = .{ .address = storage.ref, .type_ref = storage.type_ref, .cleanup = storage.drop_state, .references = if (try self.reference_layouts.count(self.allocator, self.graph, storage.ty) != 0) try self.referenceViewStorage(assignment.binding) else null };
+                const destination: WriteDestination = .{ .address = storage.ref, .type_ref = storage.type_ref, .cleanup = storage.drop_state, .references = if (try self.reference_layouts.count(self.allocator, self.graph, storage.ty) != 0) try self.referenceViewStorage(assignment.binding) else null, .reference_type = try self.optionalReferenceValueType(storage.ty) };
                 if (try self.storeLargeNode(assignment.value, destination.address)) {
                     self.bindings.getPtr(assignment.binding).?.initialized = true;
                     destination.activate(self);
@@ -1135,7 +1140,6 @@ pub const CodeGenerator = struct {
                 }
                 const value = try self.prepareWriteValue(assignment.value, destination);
                 try destination.commit(self, value);
-                try self.storeReferenceView(assignment.binding, value.reference_view);
                 self.bindings.getPtr(assignment.binding).?.initialized = true;
                 break :blk value;
             },
@@ -1517,10 +1521,9 @@ pub const CodeGenerator = struct {
             try self.referenceStorageForNode(target)
         else
             null;
-        const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup, .references = references };
+        const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup, .references = references, .reference_type = try self.optionalReferenceValueType(store.field_type) };
         const value = try self.prepareWriteValue(store.value, destination);
         try destination.commit(self, value);
-        try self.storeProjectedReferenceView(store.cleanup_target, value);
     }
 
     fn binary(self: *CodeGenerator, operation: anytype) !TypedValue {
@@ -1980,14 +1983,10 @@ pub const CodeGenerator = struct {
             .type_ref = try self.toLLVMType(pointer_type.pointer.child),
             .cleanup = try self.capturedReferenceCleanup(pointer, assignment.cleanup_target orelse assignment.pointer),
             .references = if (pointer.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else if (assignment.cleanup_target) |target| try self.referenceStorageForNode(target) else null,
+            .reference_type = try self.optionalReferenceValueType(pointer_type.pointer.child),
         };
         const value = try self.prepareWriteValue(assignment.value, destination);
         try destination.commit(self, value);
-        try self.storeProjectedReferenceView(assignment.cleanup_target, value);
-        if (try self.reference_layouts.count(self.allocator, self.graph, pointer_type.pointer.child) != 0) {
-            if (pointer.reference_view) |view|
-                reference_evidence.storeOptionalValue(self.builder, try reference_evidence.referencesPointer(self.builder, view), value.reference_view orelse c.LLVMConstNull(try self.referenceValueType(pointer_type.pointer.child)));
-        }
     }
 
     fn explicitCast(self: *CodeGenerator, cast: anytype) !TypedValue {
@@ -3297,6 +3296,57 @@ test "native calls preserve nested reference evidence with direct and indirect r
         try std.testing.expectEqual(sidecar, c.LLVMTypeOf(returned.evidence.?));
         try generator.returnArgi(returned.value, returned.evidence);
     }
+    var message: [*c]u8 = null;
+    defer if (message != null) c.LLVMDisposeMessage(message);
+    try std.testing.expectEqual(@as(c_int, 0), c.LLVMVerifyModule(generator.module, c.LLVMReturnStatusAction, &message));
+}
+
+test "captured native writes commit reference evidence and reject mismatched companions before writing" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
+    defer generator.deinit();
+    const pointer = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+    var parameters = [_]c.LLVMTypeRef{ pointer, pointer, pointer, reference_evidence.storageViewType() };
+    const signature = c.LLVMFunctionType(c.LLVMVoidType(), &parameters, parameters.len, 0);
+    const function = c.LLVMAddFunction(generator.module, "captured_write", signature);
+    c.LLVMPositionBuilderAtEnd(generator.builder, c.LLVMAppendBasicBlock(function, "entry"));
+    const destination: WriteDestination = .{
+        .address = c.LLVMGetParam(function, 0),
+        .type_ref = pointer,
+        .references = c.LLVMGetParam(function, 1),
+        .reference_type = reference_evidence.storageViewType(),
+    };
+    const reference = c.LLVMGetParam(function, 2);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    const binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    try graph.bindings.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(1),
+        .initialization = null,
+        .mutability = .variable,
+    });
+    try generator.bindings.put(binding, .{ .ref = destination.address, .type_ref = pointer, .ty = @enumFromInt(1) });
+    try generator.storeReferenceView(binding, null);
+    try std.testing.expect(generator.bindings.get(binding).?.reference_view != null);
+    const before = c.LLVMGetLastInstruction(c.LLVMGetInsertBlock(generator.builder));
+    try std.testing.expectError(error.InvalidReferenceEvidenceStorage, destination.commit(&generator, .{
+        .value_ref = reference,
+        .type_ref = pointer,
+        .reference_view = c.LLVMConstInt(c.LLVMInt64Type(), 1, 0),
+    }));
+    try std.testing.expectEqual(before, c.LLVMGetLastInstruction(c.LLVMGetInsertBlock(generator.builder)));
+    try destination.commit(&generator, .{ .value_ref = reference, .type_ref = pointer, .reference_view = c.LLVMGetParam(function, 3) });
+    // Replacing a value without evidence clears the same captured companion.
+    try destination.commit(&generator, .{ .value_ref = reference, .type_ref = pointer });
+    _ = c.LLVMBuildRetVoid(generator.builder);
     var message: [*c]u8 = null;
     defer if (message != null) c.LLVMDisposeMessage(message);
     try std.testing.expectEqual(@as(c_int, 0), c.LLVMVerifyModule(generator.module, c.LLVMReturnStatusAction, &message));
