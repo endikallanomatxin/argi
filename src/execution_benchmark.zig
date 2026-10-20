@@ -76,20 +76,30 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
         proofs += arena.queryCapacity();
     };
     var dead_frames: usize = 0;
+    var dead_frame_slot_bytes: usize = 0;
+    var live_frame_slot_bytes: usize = 0;
+    var frame_identity_bytes: usize = 0;
     if (session.runtime.context.state != .fresh) {
-        for (session.runtime.context.storage.frames.items) |frame| {
-            if (!frame.alive) dead_frames += 1;
+        const frames = session.runtime.context.storage.frames.items;
+        frame_identity_bytes = frames.len * @sizeOf(@TypeOf(frames[0]));
+        for (frames) |frame| {
+            const bytes = frame.values.len * @sizeOf(@TypeOf(frame.values[0]));
+            if (!frame.alive) {
+                dead_frames += 1;
+                dead_frame_slot_bytes += bytes;
+            } else live_frame_slot_bytes += bytes;
         }
     }
     const runtime = if (session.runtime.context.state == .fresh) 0 else session.runtime.context.arena.queryCapacity();
-    std.debug.print("{s},{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d}\n", .{
+    std.debug.print("{s},{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d},{d},{d}\n", .{
         @tagName(scenario),          if (core) @as([]const u8, "core") else "minimal", commands,
         ms(total_ns),                ms(total_ns -| backend_ns),                       ms(stats.lowering_ns),
         ms(stats.verification_ns),   ms(stats.execution_ns),                           mib(memory.live),
         mib(memory.peak),            mib(checked_graphs),                              mib(code),
         mib(proofs),                 mib(session.sources.arena.queryCapacity()),       mib(session.diagnostic_arena.queryCapacity()),
         runtime,                     dead_frames,                                      stats.compiled_functions,
-        stats.compiled_instructions,
+        stats.compiled_instructions, dead_frame_slot_bytes,                            live_frame_slot_bytes,
+        frame_identity_bytes,
     });
     // Check the actual retained value without adding a measurement submission.
     const bindings = session.compiler.semantic.resolvers.expressions.session_bindings.items;
@@ -164,6 +174,6 @@ pub fn main(init: std.process.Init) !void {
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
     std.debug.print("# [commands=1000] [minimal|core] [update|bindings|calls] [memory-limit-MiB=2048]\n", .{});
-    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,checked_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions\n", .{});
+    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,checked_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes\n", .{});
     try run(init.io, count, core, scenario, limit);
 }

@@ -325,9 +325,13 @@ Function/instruction totals reveal recompilation across commands.
 Live/peak bytes count requested allocator backing, including arena slabs, not
 RSS. Checked-graph payload excludes spare capacity and indexes; code, proof and
 runtime arena counters identify retained components but are not a partition of
-total live memory. Completed frames are counted separately. The memory limit
-bounds tracked requested bytes; a run that reaches it reports the last completed
-command and fails. Successful runs verify retained results and complete teardown.
+total live memory. Completed frames are counted separately. `dead_frame_slot_bytes`
+and `live_frame_slot_bytes` count their slot payloads; `frame_identity_bytes`
+counts the logical frame records (including dead-reference tombstones), excluding
+spare capacity and aggregate snapshots. These payload counts overlap the runtime
+arena total. The memory limit bounds tracked requested bytes; a run that reaches
+it reports the last completed command and fails. Successful runs verify retained
+results and complete teardown.
 
 Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
 ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
@@ -362,3 +366,15 @@ arenas 261.90 MiB. The sample takes 2,328.1 ms (2,181.5 ms frontend/publication)
 Core at 100 commands retains 708.11 MiB. Retained memory is still not linear.
 Earlier snapshots and branched/rejected histories keep their original module
 headers; source IDs and original diagnostic buffers remain unchanged.
+
+After verifier linear-state transfer, a 1,000-command minimal call sample
+retains 930.89 MiB (932.53 MiB peak) within a 1,536 MiB limit. Completed-frame
+slots account for 440,088 bytes, live-frame slots for 88 bytes, and logical frame
+records for 160,160 bytes. The entire runtime arena holds 2,220,156 bytes;
+checked-graph payload and code arenas account for 393.37 and 262.44 MiB.
+The run compiles 2,000 functions and 11,000 instructions: the helper is still
+regenerated for each command. This sample prioritizes snapshot/code reuse over
+frame-slot reclamation; it does not establish bounds for aggregate-heavy code.
+Observed total time is 24,358 ms, including 23,799 ms frontend/publication,
+242 ms lowering, 287 ms verification and 30 ms execution. Timing comparisons
+across these samples are not controlled benchmarks.
