@@ -353,7 +353,7 @@ pub const CodeGenerator = struct {
         } else {
             const input_ty = try self.fieldsLLVMType(function.input);
             const output_ty = try self.fieldsLLVMType(function.output);
-            const signature = argi_abi.Signature.initWithEvidence(input_ty, output_ty, try self.indirectOutput(function.output), .{ .input = try self.fieldsEvidenceType(function.input) });
+            const signature = argi_abi.Signature.initWithEvidence(input_ty, output_ty, try self.indirectOutput(function.output), .{ .input = try self.fieldsEvidenceType(function.input), .output = try self.fieldsEvidenceType(function.output) });
             var lowerer = self.typeLowerer();
             const mangled = try lowerer.mangledFunctionName(id);
             defer self.allocator.free(mangled);
@@ -412,23 +412,41 @@ pub const CodeGenerator = struct {
         return result;
     }
 
+    const ArgiCallResult = struct { value: c.LLVMValueRef, evidence: ?c.LLVMValueRef };
+
+    fn callEvidence(self: *CodeGenerator, signature: argi_abi.Signature, input: ?c.LLVMValueRef) argi_abi.CallEvidence {
+        return .{
+            .input = if (signature.evidence.input) |ty| input orelse c.LLVMConstNull(ty) else null,
+            .output_storage = if (signature.evidence.output) |ty| c.LLVMBuildAlloca(self.builder, ty, "call.evidence.storage") else null,
+        };
+    }
+
     fn callArgi(self: *CodeGenerator, symbol: FunctionSymbol, input: c.LLVMValueRef, name: [:0]const u8) !c.LLVMValueRef {
-        return self.callArgiWithInputEvidence(symbol, input, null, name);
+        return (try self.callArgiWithEvidence(symbol, input, null, name)).value;
     }
 
-    fn callArgiWithInputEvidence(self: *CodeGenerator, symbol: FunctionSymbol, input: c.LLVMValueRef, evidence: ?c.LLVMValueRef, name: [:0]const u8) !c.LLVMValueRef {
+    fn callArgiWithEvidence(self: *CodeGenerator, symbol: FunctionSymbol, input: c.LLVMValueRef, evidence: ?c.LLVMValueRef, name: [:0]const u8) !ArgiCallResult {
         const signature = symbol.argiSignature() orelse return CodegenError.InvalidType;
-        const supplied: argi_abi.CallEvidence = .{ .input = if (signature.evidence.input) |ty| evidence orelse c.LLVMConstNull(ty) else null };
-        if (!signature.indirect_output) return (try signature.callWithEvidence(self.builder, symbol.ref, input, null, supplied, name)).?;
-        const storage = c.LLVMBuildAlloca(self.builder, signature.output_type, "call.return.storage");
-        _ = try signature.callWithEvidence(self.builder, symbol.ref, input, storage, supplied, "");
-        return c.LLVMBuildLoad2(self.builder, signature.output_type, storage, name.ptr);
+        const supplied = self.callEvidence(signature, evidence);
+        const storage: ?c.LLVMValueRef = if (signature.indirect_output) c.LLVMBuildAlloca(self.builder, signature.output_type, "call.return.storage") else null;
+        const direct = try signature.callWithEvidence(self.builder, symbol.ref, input, storage, supplied, name);
+        return .{
+            .value = direct orelse c.LLVMBuildLoad2(self.builder, signature.output_type, storage.?, name.ptr),
+            .evidence = if (supplied.output_storage) |output| c.LLVMBuildLoad2(self.builder, signature.evidence.output.?, output, "call.evidence") else null,
+        };
     }
 
-    fn returnArgi(self: *CodeGenerator, value: c.LLVMValueRef) !void {
+    fn returnArgi(self: *CodeGenerator, value: c.LLVMValueRef, evidence: ?c.LLVMValueRef) !void {
         const symbol = self.functions.get(self.current_function.?) orelse return CodegenError.SymbolNotFound;
         const signature = symbol.argiSignature() orelse return CodegenError.InvalidType;
-        try signature.returnValue(self.builder, symbol.ref, value);
+        try signature.returnWithEvidence(self.builder, symbol.ref, value, if (signature.evidence.output) |ty| evidence orelse c.LLVMConstNull(ty) else null);
+    }
+
+    fn packReturnEvidence(self: *CodeGenerator, signature: argi_abi.Signature, evidence: ?c.LLVMValueRef) !?c.LLVMValueRef {
+        const ty = signature.evidence.output orelse return null;
+        var result = c.LLVMConstNull(ty);
+        if (evidence) |supplied| result = try reference_evidence.insertValue(self.builder, result, supplied, 0);
+        return result;
     }
 
     fn storeLargeNode(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId, destination: c.LLVMValueRef) anyerror!bool {
@@ -436,6 +454,10 @@ pub const CodeGenerator = struct {
         const ty = node.ty orelse return false;
         const layout = try types.layoutOf(self.graph, ty);
         if (layout.size <= 128) return false;
+        // This address-only fast path cannot carry value evidence. Reference
+        // aggregates use the ordinary typed path until destination companions
+        // are part of the bulk-copy interface as well.
+        if (try self.reference_layouts.count(self.allocator, self.graph, ty) != 0) return false;
         switch (node.content) {
             .function_call => |call| {
                 const function = self.graph.function(call.callee);
@@ -448,7 +470,7 @@ pub const CodeGenerator = struct {
                 // Keep result storage separate until the call completes: an
                 // input may borrow the value being replaced at destination.
                 const result_storage = c.LLVMBuildAlloca(self.builder, symbol.outputType(), "call.return.storage");
-                _ = try symbol.argiSignature().?.callWithEvidence(self.builder, symbol.ref, input.value_ref, result_storage, .{ .input = if (symbol.argiSignature().?.evidence.input) |evidence_ty| input.reference_view orelse c.LLVMConstNull(evidence_ty) else null }, "");
+                _ = try symbol.argiSignature().?.callWithEvidence(self.builder, symbol.ref, input.value_ref, result_storage, self.callEvidence(symbol.argiSignature().?, input.reference_view), "");
                 const result = if (call.initializes_auto_deinit != null or call.outcome_cleanups.len != 0)
                     c.LLVMBuildLoad2(self.builder, symbol.outputType(), result_storage, "call.status")
                 else
@@ -1729,13 +1751,13 @@ pub const CodeGenerator = struct {
             }
             const return_type = self.current_return_type orelse return CodegenError.InvalidType;
             if (return_type == value.type_ref) {
-                try self.returnArgi(value.value_ref);
+                try self.returnArgi(value.value_ref, try self.packReturnEvidence(symbol.argiSignature().?, value.reference_view));
                 return;
             }
             if (c.LLVMGetTypeKind(return_type) == c.LLVMStructTypeKind and c.LLVMCountStructElementTypes(return_type) == 1 and c.LLVMStructGetTypeAtIndex(return_type, 0) == value.type_ref) {
                 var aggregate = c.LLVMGetUndef(return_type);
                 aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, 0, "ret.pack");
-                try self.returnArgi(aggregate);
+                try self.returnArgi(aggregate, try self.packReturnEvidence(symbol.argiSignature().?, value.reference_view));
                 return;
             }
             return CodegenError.InvalidType;
@@ -1761,7 +1783,20 @@ pub const CodeGenerator = struct {
             }
             return;
         }
-        if (self.functions.get(self.current_function.?).?.hasIndirectOutput()) {
+        const symbol = self.functions.get(self.current_function.?).?;
+        const signature = symbol.argiSignature().?;
+        var evidence: ?c.LLVMValueRef = if (signature.evidence.output) |ty| c.LLVMConstNull(ty) else null;
+        var evidence_offset: usize = 0;
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
+            const storage = self.bindings.get(binding).?;
+            if (storage.reference_view) |companion| {
+                const child = c.LLVMBuildLoad2(self.builder, try self.referenceValueType(storage.ty), companion, "return.field.evidence");
+                evidence = try reference_evidence.insertValue(self.builder, evidence.?, child, evidence_offset);
+            }
+            evidence_offset += try self.reference_layouts.count(self.allocator, self.graph, storage.ty);
+        }
+        if (symbol.hasIndirectOutput()) {
+            if (evidence) |value| _ = c.LLVMBuildStore(self.builder, value, signature.outputEvidenceStorage(symbol.ref).?);
             _ = c.LLVMBuildRetVoid(self.builder);
             return;
         }
@@ -1772,7 +1807,7 @@ pub const CodeGenerator = struct {
             const value = c.LLVMBuildLoad2(self.builder, storage.type_ref, storage.ref, "return.field");
             aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value, @intCast(index), "return.aggregate");
         }
-        try self.returnArgi(aggregate);
+        try self.returnArgi(aggregate, evidence);
     }
 
     fn genBreak(self: *CodeGenerator, source: primitives.SourceRef) !void {
@@ -2047,7 +2082,7 @@ pub const CodeGenerator = struct {
         const return_type = self.current_return_type orelse return CodegenError.InvalidType;
         var return_value = c.LLVMGetUndef(return_type);
         return_value = c.LLVMBuildInsertValue(self.builder, return_value, propagated, 0, "error.return");
-        try self.returnArgi(return_value);
+        try self.returnArgi(return_value, null);
 
         c.LLVMPositionBuilderAtEnd(self.builder, ok_block);
         const ok_payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, (try self.variantIndex(source_errable_type, propagation.ok_variant)) + 1, "error.ok.payload");
@@ -2140,7 +2175,7 @@ pub const CodeGenerator = struct {
             }
             var output = c.LLVMGetUndef(symbol.outputType());
             output = c.LLVMBuildInsertValue(self.builder, output, result, 0, "location_value.output");
-            try symbol.argiSignature().?.returnValue(self.builder, symbol.ref, output);
+            try symbol.argiSignature().?.returnWithEvidence(self.builder, symbol.ref, output, if (symbol.argiSignature().?.evidence.output) |ty| c.LLVMConstNull(ty) else null);
         }
         c.LLVMPositionBuilderAtEnd(self.builder, invalid);
         try self.runtimeFailure("invalid source location ID");
@@ -2407,9 +2442,9 @@ pub const CodeGenerator = struct {
 
         const output_type = try self.toLLVMType(call.output_type);
         const output_fields = types.fields(self.graph, call.output_type) orelse return CodegenError.InvalidType;
-        const signature = argi_abi.Signature.initWithEvidence(input_type, output_type, try self.indirectOutput(output_fields), .{ .input = evidence_type });
+        const signature = argi_abi.Signature.initWithEvidence(input_type, output_type, try self.indirectOutput(output_fields), .{ .input = evidence_type, .output = try self.fieldsEvidenceType(output_fields) });
         if (destination) |storage| {
-            _ = try signature.callWithEvidence(self.builder, method, patched_input, storage, .{ .input = input_evidence }, "");
+            _ = try signature.callWithEvidence(self.builder, method, patched_input, storage, self.callEvidence(signature, input_evidence), "");
             for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
             for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
             if (call.outcome_cleanups.len != 0) {
@@ -2418,7 +2453,8 @@ pub const CodeGenerator = struct {
             }
             return null;
         }
-        const result = try self.callArgiWithInputEvidence(.{ .ref = method, .abi = .{ .argi = signature }, .is_extern = false }, patched_input, input_evidence, "virtual.call");
+        const returned = try self.callArgiWithEvidence(.{ .ref = method, .abi = .{ .argi = signature }, .is_extern = false }, patched_input, input_evidence, "virtual.call");
+        const result = returned.value;
         for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
         try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields);
@@ -2430,9 +2466,10 @@ pub const CodeGenerator = struct {
                 .value_ref = c.LLVMBuildExtractValue(self.builder, result, 0, "virtual.call.out"),
                 .type_ref = try self.toLLVMType(field_ty),
                 .ty = field_ty,
+                .reference_view = if (returned.evidence) |evidence| try self.fieldEvidence(output_fields, 0, evidence) else null,
             };
         }
-        return .{ .value_ref = result, .type_ref = output_type, .ty = call.output_type };
+        return .{ .value_ref = result, .type_ref = output_type, .ty = call.output_type, .reference_view = returned.evidence };
     }
 
     fn floatMath(self: *CodeGenerator, input: graph_mod.GlobalNodeId, callee: graph_mod.Function) !TypedValue {
@@ -2503,16 +2540,17 @@ pub const CodeGenerator = struct {
         const input = (try self.visitNode(call.input)) orelse return CodegenError.ValueNotFound;
 
         if (symbol.abi == .argi) {
-            const result = try self.callArgiWithInputEvidence(symbol, input.value_ref, input.reference_view, "call");
+            const returned = try self.callArgiWithEvidence(symbol, input.value_ref, input.reference_view, "call");
+            const result = returned.value;
             try self.markCallDropState(call, result, false);
             // No-output Argi calls return an empty record. Preserve that unit
             // value when a checked entry binds an otherwise discarded call.
             if (callee.output.len == 0) return .{ .value_ref = result, .type_ref = symbol.outputType(), .ty = null };
             if (callee.output.len == 1) {
                 const field = self.graph.fields.items[callee.output.start];
-                return .{ .value_ref = c.LLVMBuildExtractValue(self.builder, result, 0, "call.out"), .type_ref = try self.toLLVMType(field.ty), .ty = field.ty };
+                return .{ .value_ref = c.LLVMBuildExtractValue(self.builder, result, 0, "call.out"), .type_ref = try self.toLLVMType(field.ty), .ty = field.ty, .reference_view = if (returned.evidence) |evidence| try self.fieldEvidence(callee.output, 0, evidence) else null };
             }
-            return .{ .value_ref = result, .type_ref = symbol.outputType(), .ty = self.graph.nodes.items[@intFromEnum(call.input)].ty };
+            return .{ .value_ref = result, .type_ref = symbol.outputType(), .ty = null, .reference_view = returned.evidence };
         }
 
         const plan = symbol.cPlan() orelse return CodegenError.InvalidType;
@@ -3197,7 +3235,7 @@ test "global codegen prunes bodies outside the executable call graph" {
     try std.testing.expectEqual(@as(usize, 1), generator.pruned_function_bodies);
 }
 
-test "native call evidence preserves nested parameter ranges and omits scalar channels" {
+test "native calls preserve nested reference evidence with direct and indirect returns" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
@@ -3220,19 +3258,26 @@ test "native call evidence preserves nested parameter ranges and omits scalar ch
     const sidecar = (try generator.fieldsEvidenceType(fields)).?;
     try std.testing.expectEqual(@as(u64, 2), c.LLVMGetArrayLength2(sidecar));
     const empty = c.LLVMStructType(null, 0, 0);
-    const signature = argi_abi.Signature.initWithEvidence(empty, empty, false, .{ .input = sidecar });
-    const function = c.LLVMAddFunction(generator.module, "parameter_evidence", signature.function_type);
-    c.LLVMPositionBuilderAtEnd(generator.builder, c.LLVMAppendBasicBlock(function, "entry"));
-    const evidence = signature.inputEvidence(function).?;
-    const nested = (try generator.fieldEvidence(fields, 0, evidence)).?;
-    const reference = (try generator.fieldEvidence(fields, 1, evidence)).?;
-    try std.testing.expectEqual(c.LLVMArrayType2(reference_evidence.storageViewType(), 1), c.LLVMTypeOf(nested));
-    try std.testing.expectEqual(reference_evidence.storageViewType(), c.LLVMTypeOf(reference));
-    var repacked = c.LLVMConstNull(sidecar);
-    repacked = try reference_evidence.insertValue(generator.builder, repacked, nested, 0);
-    repacked = try reference_evidence.insertValue(generator.builder, repacked, reference, 1);
-    _ = try signature.callWithEvidence(generator.builder, function, signature.input(function), null, .{ .input = repacked }, "forward");
-    try signature.returnValue(generator.builder, function, c.LLVMConstNull(empty));
+    for ([_]bool{ false, true }, 0..) |indirect, index| {
+        const signature = argi_abi.Signature.initWithEvidence(empty, empty, indirect, .{ .input = sidecar, .output = sidecar });
+        const function = c.LLVMAddFunction(generator.module, if (indirect) "indirect_parameter_evidence" else "direct_parameter_evidence", signature.function_type);
+        c.LLVMPositionBuilderAtEnd(generator.builder, c.LLVMAppendBasicBlock(function, "entry"));
+        const evidence = signature.inputEvidence(function).?;
+        const nested = (try generator.fieldEvidence(fields, 0, evidence)).?;
+        const reference = (try generator.fieldEvidence(fields, 1, evidence)).?;
+        try std.testing.expectEqual(c.LLVMArrayType2(reference_evidence.storageViewType(), 1), c.LLVMTypeOf(nested));
+        try std.testing.expectEqual(reference_evidence.storageViewType(), c.LLVMTypeOf(reference));
+        var repacked = c.LLVMConstNull(sidecar);
+        repacked = try reference_evidence.insertValue(generator.builder, repacked, nested, 0);
+        repacked = try reference_evidence.insertValue(generator.builder, repacked, reference, 1);
+        const symbol: FunctionSymbol = .{ .ref = function, .abi = .{ .argi = signature }, .is_extern = false };
+        const id: graph_mod.GlobalFunctionId = @enumFromInt(index);
+        try generator.functions.put(id, symbol);
+        generator.current_function = id;
+        const returned = try generator.callArgiWithEvidence(symbol, signature.input(function), repacked, "forward");
+        try std.testing.expectEqual(sidecar, c.LLVMTypeOf(returned.evidence.?));
+        try generator.returnArgi(returned.value, returned.evidence);
+    }
     var message: [*c]u8 = null;
     defer if (message != null) c.LLVMDisposeMessage(message);
     try std.testing.expectEqual(@as(c_int, 0), c.LLVMVerifyModule(generator.module, c.LLVMReturnStatusAction, &message));

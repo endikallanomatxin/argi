@@ -16,12 +16,20 @@ make(.counter: $&Counter, .id: Int32) -> (.result: Resource) := {
     result = Resource(.counter = counter, .id = id)
 }
 
+forward(.value: $&Resource) -> (.result: $&Resource) := {
+    result = value
+}
+
+forward_large(.value: &Counter) -> (.result: (.padding: [40]Int32, .target: &Counter)) := {
+    result = (.padding = zeroed#(.t: [40]Int32)(), .target = value)
+}
+
 main() -> (.status_code: Int32 = 0) := {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter, .id = 1)
         alias := $&owner
-        chain := alias
+        chain := forward(.value = alias)
         reborrow := $&chain&
         reborrow&= make(.counter = $&counter, .id = 2)
         if counter.count != 1 or counter.order != 21 { abort }
@@ -67,6 +75,8 @@ main() -> (.status_code: Int32 = 0) := {
         if observed&.id != 2 { abort }
     }
     if counter.count != 12 { abort }
+    large := forward_large(.value = &counter)
+    if large.target&.count != 12 { abort }
     {
         owner :: Resource = Resource(.counter = $&counter, .id = 3)
         references: (.target: $&Resource) = (.target = $&owner)
