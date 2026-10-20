@@ -28,6 +28,15 @@ replace_first(.pair: $&Pair, .counter: $&Counter) -> () := {
     pair&.first = Tracked(.counter = counter, .id = 4)
 }
 
+replace_nested(.owner: $&Nested, .counter: $&Counter) -> () := {
+    owner&.pair.first = Tracked(.counter = counter, .id = 7)
+}
+
+reinitialize_first(.pair: $&Pair, .counter: $&Counter) -> () := {
+    deinit(.self = $&pair&.first)
+    pair&.first = Tracked(.counter = counter, .id = 8)
+}
+
 main() -> (.status_code: Int32 = 0) := {
     counter :: Counter = Counter()
     {
@@ -88,5 +97,18 @@ main() -> (.status_code: Int32 = 0) := {
         if counter.count != 14 or sibling&!= 6 { abort }
     }
     if counter.count != 16 { abort }
+    {
+        owner :: Nested = Nested(
+            .pair = Pair(
+                .first  = Tracked(.counter = $&counter, .id = 1)
+                .second = Tracked(.counter = $&counter, .id = 2)
+            )
+        )
+        replace_nested(.owner = $&owner, .counter = $&counter)
+        if counter.count != 17 { abort }
+        reinitialize_first(.pair = $&owner.pair, .counter = $&counter)
+        if counter.count != 18 { abort }
+    }
+    if counter.count != 20 { abort }
     status_code = 42
 }

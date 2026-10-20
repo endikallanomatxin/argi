@@ -142,9 +142,12 @@ Local record storage is cleared on each lexical entry, including loop iterations
 Completing an owning record field by field activates its selected destructor.
 An incomplete record instead cleans its initialized owning fields, including on
 early exits; it never calls a destructor requiring the absent whole value.
-Earlier copies retain their old lifetime and cannot be used again. General owning
-replacement through unresolved or retargetable references and indexed storage
-remains unsupported. Scalar and borrowed-only writes through references work.
+Earlier copies retain their old lifetime and cannot be used again. Whole-value
+and record-field owning replacements also work through runtime-selected and
+retargetable references. Both backends capture the destination and its cleanup
+identity before evaluating the replacement; neighboring fields remain independent.
+Owning replacement in indexed storage remains unsupported. Scalar and borrowed-only
+writes through references work.
 
 Unary virtual values retain their concrete receiver and the immutable bytecode
 unit containing the selected operations. Calls use that evidence directly, including

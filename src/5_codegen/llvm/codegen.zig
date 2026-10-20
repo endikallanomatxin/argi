@@ -2019,11 +2019,11 @@ pub const CodeGenerator = struct {
         };
     }
 
-    // A lexical proof supplies the fallback until all private ABI boundaries
-    // transport evidence. When supplied, borrow the complete runtime owner;
-    // replacing only its flag pointer would leave stale ancestor identities.
+    // Only a proven lexical referent supplies fallback flags. A reference
+    // slot's own flags never establish its pointee's identity. Runtime views
+    // retain the complete owner so ancestor activation uses that same identity.
     fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId) !?DropState {
-        const lexical = self.dropStateForNode(target);
+        const lexical = if (@import("../../4_semantics/global/lexical_storage.zig").root(self.graph, target) != null) self.dropStateForNode(target) else null;
         if (lexical == null) {
             if (self.replacement == null) return null;
             const view = pointer.reference_view orelse return null;

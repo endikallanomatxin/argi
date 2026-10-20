@@ -12,7 +12,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Complete indexed cleanup identities in both backends. Whole indirect pointer
   and record-field replacements use checked plans, including the three-drop
   retargeting probe and preservation of sibling references in native and VM.
-  Extend coverage to nested indirect fields and partial reinitialization.
+  Nested indirect fields and field reinitialization after destruction have
+  differential coverage; extend it to partial initialization through aliases.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Enable the persistent REPL allocator only after its ordinary initialization,
   resource operations and reset/exit cleanup work end to end.
