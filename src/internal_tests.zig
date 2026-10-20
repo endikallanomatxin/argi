@@ -147,6 +147,7 @@ comptime {
     _ = global_semantic_replacement;
     _ = global_semantizer;
     _ = global_safety_facts;
+    _ = @import("4_semantics/safety/place.zig");
     _ = global_safety_checker;
     _ = foreign_result;
     _ = safety_choice_conditions;

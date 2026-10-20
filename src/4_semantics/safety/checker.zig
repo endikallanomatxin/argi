@@ -1857,7 +1857,7 @@ pub const SafetyChecker = struct {
                         post.target.projections[post.target.projections.len - 1] == .dereference and
                         !sameInputPath(previous.target, post.target))) continue;
                 const other = try self.resolveSummaryInputPath(previous.target, ids, arguments, state) orelse continue;
-                if (target.isPrefixOf(other) or other.isPrefixOf(target)) {
+                if (target.mayOverlap(other)) {
                     try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
                     return false;
                 }
@@ -2877,7 +2877,7 @@ pub const SafetyChecker = struct {
         if (source_place != null and destination_place != null) {
             const from = source_place.?;
             const to = destination_place.?;
-            if (from.isPrefixOf(to) or to.isPrefixOf(from)) {
+            if (from.mayOverlap(to)) {
                 try self.report(source, "relocation requires distinct, non-overlapping source and destination storage", .{});
                 return;
             }
