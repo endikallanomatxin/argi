@@ -430,7 +430,11 @@ fn transientRequestFailures(a: std.mem.Allocator) !void {
     const graph_allocator = std.testing.allocator;
     var graph: g.GlobalSemanticGraph = .{};
     defer graph.deinit(graph_allocator);
-    try graph.types.appendSlice(graph_allocator, &.{ .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } });
+    try graph.types.append(graph_allocator, .{ .builtin = .Int32 });
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.nodes.append(graph_allocator, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } });
+    try graph.fields.append(graph_allocator, .{ .name = try graph.addString(graph_allocator, "value"), .ty = @enumFromInt(0), .source = source, .default_value = @enumFromInt(0) });
+    try graph.types.append(graph_allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
     var core = @import("core.zig").Resolver{ .allocator = graph_allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = graph_allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };

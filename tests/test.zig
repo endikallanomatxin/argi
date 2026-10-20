@@ -14160,3 +14160,9 @@ test "feature_tests/execution/136_comptime_lexical_boundaries" {
     try runExpect("tests/feature_tests/execution/136_comptime_lexical_boundaries", 42);
     try vmExpect("tests/feature_tests/execution/136_comptime_lexical_boundaries", 42, null);
 }
+
+test "feature_tests/execution/137_comptime_transient_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/137_comptime_transient_defaults");
+    try runExpect("tests/feature_tests/execution/137_comptime_transient_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/137_comptime_transient_defaults", 42, null);
+}

@@ -1524,6 +1524,12 @@ pub const Resolver = struct {
             }
             const value = node orelse return false;
             _ = self.coerceContextualValue(value, expected.ty);
+            if (self.graph.node(value).content == .struct_value_literal) {
+                if (types.fields(self.graph, expected.ty)) |nested| {
+                    if (!try self.completeCallInputFieldsWithReach(nested, value, context)) return false;
+                    self.graph.nodes.items[@intFromEnum(value)].ty = expected.ty;
+                }
+            }
             try values.append(self.allocator, .{ .name = expected.name, .value = value });
         }
         const ty = try self.structType(expected_fields);

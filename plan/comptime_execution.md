@@ -28,8 +28,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Compile-time integration
 
-- Extend temporary type recipes to defaults, inferred identities and transient
-  declaration origins; validate branch selection in native and retained sessions.
+- Extend temporary type recipes beyond literal defaults to unresolved default
+  expressions, inferred identities and transient declaration origins; validate
+  branch selection in native and retained sessions.
 - Keep dependency readiness in the scheduler and execution in the VM. Add no
   coordination stages without a demonstrated need.
 

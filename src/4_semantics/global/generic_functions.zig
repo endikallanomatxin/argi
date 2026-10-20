@@ -2448,6 +2448,14 @@ pub const Resolver = struct {
                     .dispatch_prefix_positional_count = node.content.struct_value_literal.dispatch_prefix_positional_count,
                 } },
             };
+            // Use ordinary default completion before publishing a value with
+            // the complete contextual record type. A type annotation alone
+            // cannot manufacture omitted runtime fields.
+            const context = try self.operatorContext(null);
+            defer self.resolver.allocator.free(context.global.visible_bindings);
+            if (!try self.resolver.core.completeCallInputFieldsWithReach(expected_fields, global, context))
+                return error.MissingParameterizedStructField;
+            self.resolver.graph.nodes.items[@intFromEnum(global)].ty = expected;
             self.resolver.stats.nodes += 1;
             return global;
         }
