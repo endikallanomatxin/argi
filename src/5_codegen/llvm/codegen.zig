@@ -1045,6 +1045,9 @@ pub const CodeGenerator = struct {
         return switch (self.graph.node(id).content) {
             .binding_use => |binding| if (self.bindings.get(binding)) |storage| storage.reference_view else null,
             .struct_field_access => |field| blk: {
+                // Public representation fields of a virtual handle are not
+                // semantic projections of its erased receiver evidence.
+                if (try reference_layout.Layout.shape(self.graph, self.graph.node(field.value).ty.?) == .virtual_reference) break :blk null;
                 const parent = try self.referenceStorageForNode(field.value) orelse break :blk null;
                 break :blk try reference_evidence.projectStorage(self.builder, &self.reference_layouts, self.allocator, self.graph, self.graph.node(field.value).ty.?, parent, .{ .field = field.field_index });
             },
@@ -1371,7 +1374,7 @@ pub const CodeGenerator = struct {
         };
         if (maybe_pointer) |pointer| {
             const type_ref = try self.toLLVMType(field_ty);
-            const storage = if (pointer.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else try self.referenceStorageForNode(node_id);
+            const storage = if (try self.optionalReferenceValueType(field_ty) == null) null else if (pointer.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else try self.referenceStorageForNode(node_id);
             return .{
                 .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, pointer.value_ref, "field"),
                 .type_ref = type_ref,
@@ -1394,8 +1397,8 @@ pub const CodeGenerator = struct {
             .value_ref = c.LLVMBuildExtractValue(self.builder, aggregate.value_ref, access.field_index, "field"),
             .type_ref = type_ref,
             .ty = field_ty,
-            .reference_view = if (aggregate.reference_view) |evidence|
-                try reference_evidence.projectValue(self.builder, &self.reference_layouts, self.allocator, self.graph, aggregate_ty, evidence, .{ .field = access.field_index })
+            .reference_view = if (aggregate.reference_view != null and try reference_layout.Layout.shape(self.graph, aggregate_ty) != .virtual_reference and try self.reference_layouts.count(self.allocator, self.graph, field_ty) != 0)
+                try reference_evidence.projectValue(self.builder, &self.reference_layouts, self.allocator, self.graph, aggregate_ty, aggregate.reference_view.?, .{ .field = access.field_index })
             else
                 null,
         };
@@ -1446,10 +1449,14 @@ pub const CodeGenerator = struct {
         const values = try self.allocator.alloc(c.LLVMValueRef, literal.elements.len);
         defer self.allocator.free(values);
         var all_constant = true;
+        var evidence: ?c.LLVMValueRef = null;
+        const stride = try self.reference_layouts.count(self.allocator, self.graph, literal.element_type);
+        const evidence_count = try std.math.mul(usize, stride, literal.elements.len);
         for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len], 0..) |node, index| {
             const value = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
             if (value.type_ref != element_ref) return CodegenError.InvalidType;
             values[index] = value.value_ref;
+            if (value.reference_view) |view| evidence = try reference_evidence.insertValue(self.builder, evidence orelse c.LLVMConstNull(c.LLVMArrayType2(reference_evidence.storageViewType(), evidence_count)), view, index * stride);
             all_constant = all_constant and c.LLVMIsConstant(value.value_ref) != 0;
         }
         // Build constants together: repeated constant insertions retain a
@@ -1458,54 +1465,68 @@ pub const CodeGenerator = struct {
             .value_ref = c.LLVMConstArray2(element_ref, values.ptr, values.len),
             .type_ref = type_ref,
             .ty = null,
+            .reference_view = evidence,
         };
         var aggregate = c.LLVMGetUndef(type_ref);
         for (values, 0..) |value, index| {
             aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value, @intCast(index), "array.elem");
         }
-        return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = null };
+        return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = null, .reference_view = evidence };
     }
 
     fn arrayIndex(self: *CodeGenerator, access: anytype) !TypedValue {
-        const pointer = self.addressablePointer(access.array_ptr) catch |err| switch (err) {
+        const pointer = blk: {
+            const pointer = self.addressablePointer(access.array_ptr) catch |err| break :blk err;
+            break :blk self.referenceToStorage(access.array_ptr, pointer);
+        } catch |err| switch (err) {
             error.InvalidType => blk: {
                 // A read may project an array from a temporary record. Keep
                 // the receiver's evaluation before the index and materialize
                 // it once; this storage is not exposed as a mutable place.
                 const type_ref = try self.toLLVMType(access.array_type);
                 const storage = c.LLVMBuildAlloca(self.builder, type_ref, "array.read.temporary");
+                var evidence_storage: ?c.LLVMValueRef = null;
                 if (!try self.storeLargeNode(access.array_ptr, storage)) {
                     const value = (try self.visitNode(access.array_ptr)) orelse return CodegenError.ValueNotFound;
                     if (value.type_ref != type_ref) return CodegenError.InvalidType;
                     _ = c.LLVMBuildStore(self.builder, value.value_ref, storage);
+                    if (value.reference_view) |view| {
+                        evidence_storage = c.LLVMBuildAlloca(self.builder, c.LLVMTypeOf(view), "array.read.evidence");
+                        _ = c.LLVMBuildStore(self.builder, view, evidence_storage.?);
+                    }
                 }
-                break :blk TypedValue{ .value_ref = storage, .type_ref = c.LLVMPointerType(type_ref, 0), .ty = access.array_type };
+                break :blk TypedValue{ .value_ref = storage, .type_ref = c.LLVMPointerType(type_ref, 0), .ty = access.array_type, .reference_view = if (evidence_storage) |companion| try reference_evidence.storageView(self.builder, .{ .references = companion }) else null };
             },
             else => return err,
         };
         const index = (try self.visitNode(access.index)) orelse return CodegenError.ValueNotFound;
         const array_type = try self.toLLVMType(access.array_type);
         const element_type = try self.toLLVMType(access.element_type);
-        const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref, access.array_type);
-        return .{ .value_ref = c.LLVMBuildLoad2(self.builder, element_type, element_ptr, "array.elem"), .type_ref = element_type, .ty = access.element_type };
+        const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index, access.array_type);
+        const companion = if (pointer.reference_view) |view| try reference_evidence.elementStorage(self.builder, &self.reference_layouts, self.allocator, self.graph, access.array_type, try reference_evidence.referencesPointer(self.builder, view), index.value_ref) else null;
+        return .{ .value_ref = c.LLVMBuildLoad2(self.builder, element_type, element_ptr, "array.elem"), .type_ref = element_type, .ty = access.element_type, .reference_view = try self.loadReferenceView(access.element_type, companion) };
     }
 
     fn arrayStore(self: *CodeGenerator, store: anytype) !void {
-        const pointer = try self.addressablePointer(store.array_ptr);
+        const pointer = try self.referenceToStorage(store.array_ptr, try self.addressablePointer(store.array_ptr));
         const index = (try self.visitNode(store.index)) orelse return CodegenError.ValueNotFound;
         const array_type = try self.toLLVMType(store.array_type);
         // Capture and validate the destination before RHS effects, just like
         // pointer/field assignment. Never defer its bounds check to the store.
-        const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref, store.array_type);
-        const destination: WriteDestination = .{ .address = element_ptr, .type_ref = try self.toLLVMType(store.element_type) };
+        const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index, store.array_type);
+        const companion = if (pointer.reference_view) |view| try reference_evidence.elementStorage(self.builder, &self.reference_layouts, self.allocator, self.graph, store.array_type, try reference_evidence.referencesPointer(self.builder, view), index.value_ref) else null;
+        const destination: WriteDestination = .{ .address = element_ptr, .type_ref = try self.toLLVMType(store.element_type), .references = companion, .reference_type = try self.optionalReferenceValueType(store.element_type) };
         const value = try self.prepareWriteValue(store.value, destination);
         try destination.commit(self, value);
     }
 
-    fn arrayElementPointer(self: *CodeGenerator, pointer: llvm.c.LLVMValueRef, array_type: llvm.c.LLVMTypeRef, index: llvm.c.LLVMValueRef, semantic_type: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
+    fn arrayElementPointer(self: *CodeGenerator, pointer: llvm.c.LLVMValueRef, array_type: llvm.c.LLVMTypeRef, index: TypedValue, semantic_type: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
         const length = types.arrayLength(self.graph, semantic_type) orelse return CodegenError.InvalidType;
-        const limit = c.LLVMConstInt(c.LLVMTypeOf(index), length, 0);
-        const inside = c.LLVMBuildICmp(self.builder, c.LLVMIntULT, index, limit, "array.index.inside");
+        const signed = !self.isUnsigned(index.ty orelse return CodegenError.InvalidType);
+        const normalized = c.LLVMBuildIntCast2(self.builder, index.value_ref, c.LLVMInt64Type(), @intFromBool(signed), "array.index.widened");
+        const limit = c.LLVMConstInt(c.LLVMInt64Type(), length, 0);
+        var inside = c.LLVMBuildICmp(self.builder, c.LLVMIntULT, normalized, limit, "array.index.inside");
+        if (signed) inside = c.LLVMBuildAnd(self.builder, inside, c.LLVMBuildICmp(self.builder, c.LLVMIntSGE, normalized, c.LLVMConstInt(c.LLVMInt64Type(), 0, 0), "array.index.nonnegative"), "array.index.valid");
         const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
         const valid_block = c.LLVMAppendBasicBlock(function, "array.index.valid");
         const invalid_block = c.LLVMAppendBasicBlock(function, "array.index.invalid");
@@ -1515,7 +1536,7 @@ pub const CodeGenerator = struct {
         c.LLVMPositionBuilderAtEnd(self.builder, valid_block);
         const native = try self.nativeUIntType();
         const zero = c.LLVMConstInt(native, 0, 0);
-        var indices = [_]llvm.c.LLVMValueRef{ zero, index };
+        var indices = [_]llvm.c.LLVMValueRef{ zero, normalized };
         return c.LLVMBuildGEP2(self.builder, array_type, pointer, &indices, 2, "array.elem.ptr");
     }
 
@@ -1947,12 +1968,13 @@ pub const CodeGenerator = struct {
                 break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(try self.toLLVMType(access.payload_type), 0), .ty = access.payload_type, .reference_view = if (base.reference_view) |view| try reference_evidence.projectView(self.builder, self.allocator, self.graph, &self.reference_layouts, &self.cleanup_counts, choice_ty, view, .{ .variant = access.variant }) else null };
             },
             .array_index => |access| blk: {
-                const base = try self.addressablePointer(access.array_ptr);
+                const base = try self.referenceToStorage(access.array_ptr, try self.addressablePointer(access.array_ptr));
                 const index = (try self.visitNode(access.index)) orelse return CodegenError.ValueNotFound;
                 const array_type = try self.toLLVMType(access.array_type);
                 const element_type = try self.toLLVMType(access.element_type);
-                const pointer = try self.arrayElementPointer(base.value_ref, array_type, index.value_ref, access.array_type);
-                break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(element_type, 0), .ty = access.element_type };
+                const pointer = try self.arrayElementPointer(base.value_ref, array_type, index, access.array_type);
+                const companion = if (base.reference_view) |view| try reference_evidence.elementStorage(self.builder, &self.reference_layouts, self.allocator, self.graph, access.array_type, try reference_evidence.referencesPointer(self.builder, view), index.value_ref) else null;
+                break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(element_type, 0), .ty = access.element_type, .reference_view = if (companion) |storage| try reference_evidence.storageView(self.builder, .{ .references = storage }) else null };
             },
             .dereference => |deref| (try self.visitNode(deref.pointer)) orelse return CodegenError.ValueNotFound,
             else => CodegenError.InvalidType,

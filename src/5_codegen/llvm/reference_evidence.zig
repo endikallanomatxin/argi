@@ -126,7 +126,11 @@ pub fn projectView(builder: c.LLVMBuilderRef, allocator: std.mem.Allocator, grap
 }
 
 fn nullableOffset(builder: c.LLVMBuilderRef, pointer: c.LLVMValueRef, element: c.LLVMTypeRef, offset: usize) c.LLVMValueRef {
-    var indices = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), offset, 0)};
+    return nullableOffsetValue(builder, pointer, element, c.LLVMConstInt(c.LLVMInt64Type(), offset, 0));
+}
+
+fn nullableOffsetValue(builder: c.LLVMBuilderRef, pointer: c.LLVMValueRef, element: c.LLVMTypeRef, offset: c.LLVMValueRef) c.LLVMValueRef {
+    var indices = [_]c.LLVMValueRef{offset};
     const projected = c.LLVMBuildGEP2(builder, element, pointer, &indices, 1, "reference.storage.projection");
     return c.LLVMBuildSelect(builder, c.LLVMBuildIsNull(builder, pointer, "reference.storage.absent"), c.LLVMConstNull(c.LLVMTypeOf(pointer)), projected, "reference.storage.selected");
 }
@@ -190,6 +194,20 @@ pub fn projectOptionalStorage(builder: c.LLVMBuilderRef, layout: *references.Lay
     const slice = try layout.project(allocator, graph, ty, projection);
     if (slice.count == 0) return null;
     return nullableOffset(builder, storage, storageViewType(), slice.offset);
+}
+
+// The caller has already checked this index for the data access. Reuse its
+// SSA value; this projection introduces neither another evaluation nor flags
+// for indexed cleanup, which has a separate frontend representation obligation.
+pub fn elementStorage(builder: c.LLVMBuilderRef, layout: *references.Layout, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, storage: c.LLVMValueRef, index: c.LLVMValueRef) !?c.LLVMValueRef {
+    const element = @import("../../4_semantics/global/types.zig").arrayElement(graph, ty) orelse return error.InvalidReferenceEvidenceStorage;
+    _ = try layout.count(allocator, graph, ty);
+    const stride = try layout.count(allocator, graph, element);
+    if (stride == 0) return null;
+    if (c.LLVMGetTypeKind(c.LLVMTypeOf(index)) != c.LLVMIntegerTypeKind or c.LLVMGetIntTypeWidth(c.LLVMTypeOf(index)) > 64) return error.InvalidReferenceEvidenceStorage;
+    const widened = c.LLVMBuildIntCast2(builder, index, c.LLVMInt64Type(), 0, "reference.element.index");
+    const offset = c.LLVMBuildMul(builder, widened, c.LLVMConstInt(c.LLVMInt64Type(), stride, 0), "reference.element.offset");
+    return nullableOffsetValue(builder, storage, storageViewType(), offset);
 }
 
 test "native reference evidence projects distinct sibling ranges through the private ABI" {
