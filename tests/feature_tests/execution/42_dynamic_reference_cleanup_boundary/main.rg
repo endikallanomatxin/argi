@@ -12,9 +12,13 @@ choose(.left: $&Resource, .right: $&Resource, .use_left: &Bool) -> (.result: $&R
 
 main() -> () := {
     counter :: Counter = Counter()
-    left :: Resource = Resource(.counter = $&counter)
-    right :: Resource = Resource(.counter = $&counter)
-    enabled ::= true
-    target := choose(.left = $&left, .right = $&right, .use_left = &enabled)
-    target&= Resource(.counter = $&counter)
+    {
+        left :: Resource = Resource(.counter = $&counter)
+        right :: Resource = Resource(.counter = $&counter)
+        enabled ::= true
+        target := choose(.left = $&left, .right = $&right, .use_left = &enabled)
+        target&= Resource(.counter = $&counter)
+        if counter.count != 1 { abort }
+    }
+    if counter.count != 3 { abort }
 }

@@ -545,12 +545,14 @@ pub const Resolver = struct {
             },
             .pointer_assignment => |assignment| {
                 try self.finalizeExpressionCleanup(assignment.pointer, active, defers, visible, owner_function, module_index);
-                const target = try self.lexicalAddressTarget(assignment.pointer, visible);
+                const lexical = try self.lexicalAddressTarget(assignment.pointer, visible);
+                const child = self.graph.semanticType(self.graph.node(assignment.pointer).ty.?).pointer.child;
+                const target = lexical orelse try self.appendNode(self.graph.node(node_id).source, child, .{ .dereference = .{ .pointer = assignment.pointer, .pointer_type = self.graph.node(assignment.pointer).ty.?, .ty = child } });
                 self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.cleanup_target = target;
-                const value = if (target) |destination|
-                    try self.projectedReplacement(node_id, destination, assignment.value, visible, owner_function, module_index)
+                const value = if (lexical != null)
+                    try self.projectedReplacement(node_id, target, assignment.value, visible, owner_function, module_index)
                 else
-                    assignment.value;
+                    try self.indirectReplacement(node_id, target, assignment.value, visible, owner_function, module_index);
                 self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.value = value;
                 try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
                 if (value != assignment.value) try self.wrapReplacement(node_id);
@@ -644,6 +646,18 @@ pub const Resolver = struct {
             record.initialization == null and !record.deferred_initialization,
         ) orelse return value;
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
+        try self.graph.auto_deinits.append(self.allocator, plan);
+        const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
+        return self.replacementValue(value, ty, cleanup);
+    }
+
+    fn indirectReplacement(self: *Resolver, node_id: global_sg.GlobalNodeId, target: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId, visible: []const global_sg.GlobalBindingId, owner_function: global_sg.GlobalFunctionId, module_index: usize) !global_sg.GlobalNodeId {
+        if (!self.replacement_candidates.contains(node_id)) return value;
+        const write = self.graph.node(node_id).content;
+        if (write == .pointer_assignment and write.pointer_assignment.checked_initialization == true) return value;
+        const ty = self.graph.node(target).ty orelse return value;
+        const plan = try self.buildAutoDeinit(.{ .indirect = target }, target, ty, reach_context.Context.fromGlobal(visible, owner_function), module_index, false) orelse return value;
+        const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);
         try self.graph.auto_deinits.append(self.allocator, plan);
         const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
         return self.replacementValue(value, ty, cleanup);

@@ -14,6 +14,10 @@ replace(.target: $&Resource, .counter: $&Counter) -> () := {
 
 main() -> () := {
     counter :: Counter = Counter()
-    owner :: Resource = Resource(.counter = $&counter)
-    replace(.target = $&owner, .counter = $&counter)
+    {
+        owner :: Resource = Resource(.counter = $&counter)
+        replace(.target = $&owner, .counter = $&counter)
+        if counter.count != 1 { abort }
+    }
+    if counter.count != 2 { abort }
 }

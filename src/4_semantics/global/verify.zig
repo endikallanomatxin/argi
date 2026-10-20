@@ -170,9 +170,15 @@ fn verifyWriteCleanupTargets(graph: *const graph_mod.GlobalSemanticGraph) !void 
     // second address expression or following a retargetable reference slot.
     for (graph.nodes.items) |node| switch (node.content) {
         .pointer_assignment => |write| if (write.cleanup_target) |target| {
-            const actual = lexical_storage.addressedTarget(graph, write.pointer) orelse return error.InvalidGlobalSemanticGraph;
-            try require(lexical_storage.root(graph, target) != null);
-            try require(lexical_storage.equal(graph, actual, target));
+            const destination = graph.node(target).content;
+            if (destination == .dereference and destination.dereference.pointer == write.pointer) {
+                // Exact operand identity describes an evaluated destination;
+                // owning transitions additionally require a replacement plan.
+            } else {
+                const actual = lexical_storage.addressedTarget(graph, write.pointer) orelse return error.InvalidGlobalSemanticGraph;
+                try require(lexical_storage.root(graph, target) != null);
+                try require(lexical_storage.equal(graph, actual, target));
+            }
             const pointer_type = graph.semanticType(graph.node(write.pointer).ty orelse return error.InvalidGlobalSemanticGraph);
             try require(pointer_type == .pointer);
             try require(types.equal(graph, pointer_type.pointer.child, graph.node(target).ty orelse return error.InvalidGlobalSemanticGraph));
@@ -435,6 +441,13 @@ test "global verifier requires cleanup targets to prove the written storage" {
     graph.nodes.items[0].ty = @enumFromInt(2);
     try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
     graph.nodes.items[0].ty = value_type;
+    const evaluated: graph_mod.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(allocator, .{ .source = source, .ty = value_type, .content = .{ .dereference = .{ .pointer = @enumFromInt(2), .pointer_type = pointer_type, .ty = value_type } } });
+    graph.nodes.items[5].content.pointer_assignment.cleanup_target = evaluated;
+    try verifyWriteCleanupTargets(&graph);
+    graph.nodes.items[@intFromEnum(evaluated)].content.dereference.pointer = @enumFromInt(1);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.nodes.items[5].content.pointer_assignment.cleanup_target = @enumFromInt(0);
     try graph.binding_refs.append(allocator, @enumFromInt(2));
     try graph.functions.append(allocator, .{
         .declaration = @enumFromInt(0),

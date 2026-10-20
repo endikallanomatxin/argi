@@ -2019,7 +2019,24 @@ pub const CodeGenerator = struct {
     // transport evidence. When supplied, borrow the complete runtime owner;
     // replacing only its flag pointer would leave stale ancestor identities.
     fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId) !?DropState {
-        var state = self.dropStateForNode(target) orelse return null;
+        const lexical = self.dropStateForNode(target);
+        if (lexical == null) {
+            if (self.replacement == null) return null;
+            const view = pointer.reference_view orelse return null;
+            const ty = self.graph.node(target).ty orelse return CodegenError.InvalidType;
+            const flags = try reference_evidence.cleanupPointer(self.builder, view);
+            const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+            const valid = c.LLVMAppendBasicBlock(function, "cleanup.evidence.valid");
+            const invalid = c.LLVMAppendBasicBlock(function, "cleanup.evidence.missing");
+            _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildIsNull(self.builder, flags, "cleanup.evidence.absent"), invalid, valid);
+            c.LLVMPositionBuilderAtEnd(self.builder, invalid);
+            try self.runtimeFailure("owning replacement requires storage cleanup evidence");
+            c.LLVMPositionBuilderAtEnd(self.builder, valid);
+            var state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, ty, flags);
+            state.runtime_owner = try reference_evidence.runtimeOwner(self.builder, view);
+            return state;
+        }
+        var state = lexical.?;
         if (pointer.reference_view) |view| {
             const flags = try reference_evidence.cleanupPointer(self.builder, view);
             const absent = c.LLVMBuildIsNull(self.builder, flags, "reference.cleanup.absent");
@@ -2610,6 +2627,7 @@ pub const CodeGenerator = struct {
         if (symbol.abi == .argi) {
             const returned = try self.callArgiWithEvidence(symbol, input.value_ref, input.reference_view, "call");
             const result = returned.value;
+            try self.markConsumedInputEvidence(call, callee, input.reference_view);
             try self.markCallDropState(call, result, false);
             // No-output Argi calls return an empty record. Preserve that unit
             // value when a checked entry binds an otherwise discarded call.
@@ -2798,6 +2816,41 @@ pub const CodeGenerator = struct {
         };
     }
 
+    // Post-call consumption applies to the captured argument values, never
+    // reevaluated reference expressions or the reference slot's own flags.
+    fn markConsumedInputEvidence(self: *CodeGenerator, call: anytype, callee: graph_mod.Function, input_evidence: ?c.LLVMValueRef) !void {
+        if (input_evidence) |evidence| {
+            const content = self.graph.node(call.input).content;
+            if (content == .struct_value_literal) {
+                const fields = content.struct_value_literal.fields;
+                for (self.graph.value_fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+                    var consumed = call.consumes_auto_deinit == field.value;
+                    for (call.consumed_auto_deinits) |target| {
+                        if (target == field.value) consumed = true;
+                        const argument = self.graph.node(field.value).content;
+                        if (argument == .address_of and argument.address_of == target) consumed = true;
+                    }
+                    if (!consumed) continue;
+                    const ty = self.graph.fields.items[callee.input.start + index].ty;
+                    const pointer = self.graph.semanticType(ty);
+                    if (pointer != .pointer) continue;
+                    const view = (try self.fieldEvidence(callee.input, index, evidence)) orelse continue;
+                    const flags = try reference_evidence.cleanupPointer(self.builder, view);
+                    const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+                    const present = c.LLVMAppendBasicBlock(function, "call.cleanup.present");
+                    const done = c.LLVMAppendBasicBlock(function, "call.cleanup.done");
+                    _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildIsNull(self.builder, flags, "call.cleanup.absent"), done, present);
+                    c.LLVMPositionBuilderAtEnd(self.builder, present);
+                    var state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, pointer.pointer.child, flags);
+                    state.runtime_owner = try reference_evidence.runtimeOwner(self.builder, view);
+                    self.storeDropState(state, false);
+                    _ = c.LLVMBuildBr(self.builder, done);
+                    c.LLVMPositionBuilderAtEnd(self.builder, done);
+                }
+            }
+        }
+    }
+
     fn markCallDropState(self: *CodeGenerator, call: anytype, result: llvm.c.LLVMValueRef, is_extern: bool) !void {
         if (call.consumes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
@@ -2837,13 +2890,13 @@ pub const CodeGenerator = struct {
 
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {
         const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        if (auto.storage == .indirect) return error.UnsupportedCleanupEvidence;
         if (self.replacement) |captured| if (captured.plan.cleanup == auto_id) {
             // Use exactly the address and flag range captured before the RHS.
             // Do not resolve the cleanup target again after its effects.
             const destination = captured.destination orelse return error.MissingReplacementDestination;
             return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, destination.address, captured.ty, destination.cleanup.?, destination.references);
         };
+        if (auto.storage == .indirect) return error.UnsupportedCleanupEvidence;
         if (auto.targetNode()) |target| {
             const drop = self.dropStateForNode(target) orelse return CodegenError.InvalidType;
             const pointer = try self.addressablePointer(target);

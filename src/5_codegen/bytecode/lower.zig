@@ -346,9 +346,10 @@ const FunctionLower = struct {
         };
     }
     // A reference field's drop flag belongs to its slot, not its referent.
-    // Only the direct local destinations finalized by ownership lowering have
-    // both a replacement cleanup plan and the matching runtime flags.
-    fn trackedDestination(self: *FunctionLower, pointer: g.GlobalNodeId, cleanup_target: ?g.GlobalNodeId) bool {
+    // Checked replacement plans may capture either lexical storage or a
+    // runtime reference. Only that plan's exact write gains this permission.
+    fn trackedDestination(self: *FunctionLower, write: g.GlobalNodeId, pointer: g.GlobalNodeId, cleanup_target: ?g.GlobalNodeId) bool {
+        if (self.replacement) |captured| if (captured.plan.write == write) return true;
         if (cleanup_target) |target| return self.directStorage(target) and self.nodeDrop(target) != null;
         const node = self.parent.graph.node(pointer);
         if (node.content != .address_of) return false;
@@ -537,17 +538,17 @@ const FunctionLower = struct {
             },
             .pointer_assignment => |x| {
                 const child = self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child;
-                if (self.parent.cleanup_types[@intFromEnum(child)] and x.checked_initialization != true and !self.trackedDestination(x.pointer, x.cleanup_target))
+                if (self.parent.cleanup_types[@intFromEnum(child)] and x.checked_initialization != true and !self.trackedDestination(id, x.pointer, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
                 try self.captureReplacement(id, target, child);
-                const destination = try self.captureWrite(node.source, target, child, self.targetHasCleanup(x.cleanup_target) or
+                const destination = try self.captureWrite(node.source, target, child, (if (self.replacement) |captured| captured.plan.write == id else false) or self.targetHasCleanup(x.cleanup_target) or
                     (x.checked_initialization == true and self.parent.cleanup_types[@intFromEnum(child)]));
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
                 try self.commitWrite(node.source, destination, value);
             },
             .struct_field_store => |x| {
-                if (self.parent.cleanup_types[@intFromEnum(x.field_type)] and !self.trackedDestination(x.struct_ptr, x.cleanup_target))
+                if (self.parent.cleanup_types[@intFromEnum(x.field_type)] and !self.trackedDestination(id, x.struct_ptr, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });

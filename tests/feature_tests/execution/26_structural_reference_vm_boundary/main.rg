@@ -16,6 +16,10 @@ replace(.target: $&Envelope, .counter: $&Counter) -> () := {
 
 main() -> () := {
     counter :: Counter = Counter()
-    owner :: Envelope = Envelope(.resource = Resource(.counter = $&counter))
-    replace(.target = $&owner, .counter = $&counter)
+    {
+        owner :: Envelope = Envelope(.resource = Resource(.counter = $&counter))
+        replace(.target = $&owner, .counter = $&counter)
+        if counter.count != 1 { abort }
+    }
+    if counter.count != 2 { abort }
 }

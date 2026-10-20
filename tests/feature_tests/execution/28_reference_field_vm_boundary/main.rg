@@ -12,7 +12,11 @@ Holder: Type = (.owned: Resource, .target: $&Resource)
 
 main() -> () := {
     counter :: Counter = Counter()
-    owner :: Resource = Resource(.counter = $&counter)
-    holder :: Holder = Holder(.owned = Resource(.counter = $&counter), .target = $&owner)
-    holder.target&= Resource(.counter = $&counter)
+    {
+        owner :: Resource = Resource(.counter = $&counter)
+        holder :: Holder = Holder(.owned = Resource(.counter = $&counter), .target = $&owner)
+        holder.target&= Resource(.counter = $&counter)
+        if counter.count != 1 { abort }
+    }
+    if counter.count != 3 { abort }
 }

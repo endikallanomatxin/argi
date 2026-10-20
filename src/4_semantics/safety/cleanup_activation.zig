@@ -460,6 +460,10 @@ const Scanner = struct {
                 } else {
                     if (try self.resolvePlace(value.pointer)) |target| {
                         if (!flow.skips(target)) try self.activation.replacements.put(id, {});
+                    } else if (value.checked_initialization != true) {
+                        // Unknown referents need a runtime cleanup decision;
+                        // absence of a lexical place is not first initialization.
+                        try self.activation.replacements.put(id, {});
                     }
                     // An unresolved write can reinitialize escaped storage, but
                     // cannot initialize a local whose address was never formed.

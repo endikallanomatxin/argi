@@ -13519,12 +13519,14 @@ test "feature_tests/execution/24X_field_replacement_retains_old_storage" {
 
 test "feature_tests/execution/25_owning_reference_vm_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/25_owning_reference_vm_boundary");
-    try vmExpect("tests/feature_tests/execution/25_owning_reference_vm_boundary", 1, "owning replacement through a runtime reference");
+    try runExpect("tests/feature_tests/execution/25_owning_reference_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/25_owning_reference_vm_boundary", 0, null);
 }
 
 test "feature_tests/execution/26_structural_reference_vm_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/26_structural_reference_vm_boundary");
-    try vmExpect("tests/feature_tests/execution/26_structural_reference_vm_boundary", 1, "owning replacement through a runtime reference");
+    try runExpect("tests/feature_tests/execution/26_structural_reference_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/26_structural_reference_vm_boundary", 0, null);
 }
 
 test "feature_tests/execution/27_borrowed_reference_write_vm" {
@@ -13535,7 +13537,8 @@ test "feature_tests/execution/27_borrowed_reference_write_vm" {
 
 test "feature_tests/execution/28_reference_field_vm_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/28_reference_field_vm_boundary");
-    try vmExpect("tests/feature_tests/execution/28_reference_field_vm_boundary", 1, "owning replacement through a runtime reference");
+    try runExpect("tests/feature_tests/execution/28_reference_field_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/28_reference_field_vm_boundary", 0, null);
 }
 
 test "feature_tests/execution/29_owning_indexed_vm_boundary" {
@@ -13561,7 +13564,8 @@ test "feature_tests/execution/32X_alias_replacement_keeps_sibling_stale" {
 
 test "feature_tests/execution/33_retargetable_alias_vm_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/33_retargetable_alias_vm_boundary");
-    try vmExpect("tests/feature_tests/execution/33_retargetable_alias_vm_boundary", 1, "owning replacement through a runtime reference");
+    try runExpect("tests/feature_tests/execution/33_retargetable_alias_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/33_retargetable_alias_vm_boundary", 0, null);
 }
 
 test "feature_tests/execution/34X_destination_checked_before_rhs" {
@@ -13651,7 +13655,8 @@ test "feature_tests/ownership/368_nested_replacement_captured_cleanup" {
 
 test "feature_tests/execution/42_dynamic_reference_cleanup_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary");
-    try vmExpect("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary", 1, "owning replacement through a runtime reference");
+    try runExpect("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary", 0, null);
 }
 
 test "feature_tests/ownership/369_symbolic_reference_reinitialization" {
