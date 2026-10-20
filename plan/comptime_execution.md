@@ -9,6 +9,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Complete acquired aggregate/resource storage and partial choice initialization.
   Share identity, projections, initialization and validity rules with ordinary
   storage without requiring identical physical representations.
+- Add structural array cleanup before enabling owning indexed writes. A scoped
+  `[2]Resource` probe currently performs zero drops in native and VM (expected
+  two), even without replacement. Represent one repeated element cleanup plan,
+  with its length/stride and evaluated index identity; avoid expanding metadata
+  for every element. Integrate whole-array exit, partial moves and initialization.
 - Complete indexed cleanup identities in both backends. Whole indirect pointer
   and record-field replacements use checked plans, including the three-drop
   retargeting probe and preservation of sibling references in native and VM.
