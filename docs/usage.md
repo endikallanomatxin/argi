@@ -391,9 +391,13 @@ method parameter type to determine its access.
 Finished call frames now make their slot buffers available to later frames of
 the same size. Frame identities remain retired, and reused cells and cleanup
 flags are reinitialized. Session and acquired storage are not retired by this
-mechanism. Cumulative execution-cell budgets are unchanged. A fresh retained
-memory comparison remains pending; the benchmark rebuild exceeded local process
-memory limits during validation.
+mechanism. Cumulative execution-cell budgets are unchanged. A subsequent ten-command
+resource run in Debug retained 414,040 bytes of dead-frame slot buffers, versus
+4,920,696 bytes in the preceding ReleaseSafe sample. Runtime arena capacity was
+7.44 MiB versus 11.18 MiB, with the same 3,148 dead identities, 330 compiled
+functions and ten live acquisitions. These are requested storage counts across
+different optimization modes, not a timing comparison; a controlled ReleaseSafe
+rerun remains pending after benchmark rebuilds exceeded local process limits.
 
 Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
 ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
