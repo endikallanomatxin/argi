@@ -71,6 +71,7 @@ pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer
         .file_index = file_index,
         .tree = tree,
         .source = source,
+        .inside_comptime_entry = true,
     };
     defer context.parameters.deinit();
     defer context.bindings.deinit();
@@ -174,6 +175,7 @@ pub const Context = struct {
     writer: writer_mod.Writer,
     parameters: std.array_list.Managed(ParameterBinding),
     referenced_parameter_prefix: usize = 0,
+    inside_comptime_entry: bool = false,
     bindings: std.array_list.Managed(BindingName),
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
@@ -1070,6 +1072,7 @@ pub const Context = struct {
             .tree = self.tree,
             .source = self.source,
             .diagnostics = self.diagnostics,
+            .inside_comptime_entry = true,
         };
         defer child.parameters.deinit();
         defer child.bindings.deinit();
@@ -1112,7 +1115,7 @@ pub const Context = struct {
         const input = try self.addResolvedNode(node, empty, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
         const result = try self.addPending(node, .generic_call, &.{input}, name, null, .none);
         const pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
-        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.comptime_run = true;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.comptime_run = !self.inside_comptime_entry;
         self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.generic_arguments = .{ .start = argument_start, .len = @intCast(arguments.items.len) };
         return result;
     }
