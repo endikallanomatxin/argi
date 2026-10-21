@@ -319,26 +319,53 @@ bindings, and their logical `ffi` input still participates in safety checking.
 
 Build the developer benchmark with `zig build build-execution-benchmark
 -Doptimize=ReleaseSafe`. From the repository root, run
-`./zig-out/bin/execution-benchmark [commands=1000] [minimal|core]
-[update|bindings|calls] [memory-limit-MiB=2048]`. It reports checkpoints at 10,
+`./zig-out/bin/execution-benchmark [commands=1000] [minimal|core|prelude]
+[update|bindings|calls|resources] [memory-limit-MiB=2048]`. It reports checkpoints at 10,
 100 and 1,000 commands, plus the final count. Run benchmarks separately from tests.
 
 `minimal` isolates session growth; `core` also retains a prepared bundled-core
-module template. Initial preparation, the first binding and teardown are outside
-command timings. Frontend/publication time is total command time minus lowering,
+module template. `prelude` also executes the CLI's checked prelude, including
+its persistent allocator. `resources` requires that mode and retains one 32-byte
+`String` plus a scalar marker per command. Other scenarios preserve their existing
+behavior. Initial preparation, prelude execution, the first binding and teardown
+are outside command timings; the zero-command row includes their retained memory.
+Frontend/publication time is total command time minus lowering,
 verification and execution; verification includes host-binding validation.
 Function/instruction totals reveal recompilation across commands.
 
 Live/peak bytes count requested allocator backing, including arena slabs, not
 RSS. Checked-graph payload excludes spare capacity and indexes; code, proof and
 runtime arena counters identify retained components but are not a partition of
-total live memory. Completed frames are counted separately. `dead_frame_slot_bytes`
+total live memory. `live_acquisitions` and `live_acquired_bytes` count live VM
+regions and their extents; `retained_acquired_bytes` includes byte backing and
+initialization bitmaps of both live and released regions. These counts overlap
+the runtime arena, rather than adding to it. Completed frames are counted separately.
+`dead_frame_slot_bytes`
 and `live_frame_slot_bytes` count their slot payloads; `frame_identity_bytes`
 counts the logical frame records (including dead-reference tombstones), excluding
 spare capacity and aggregate snapshots. These payload counts overlap the runtime
 arena total. The memory limit bounds tracked requested bytes; a run that reaches
 it reports the last completed command and fails. Successful runs verify retained
 results and complete teardown.
+
+With the checked allocator prelude (ReleaseSafe, a 1,024 MiB tracked limit), one
+local run produced the following retained-memory checkpoints:
+
+| Session / command | 0 | 10 | 100 | 1,000 |
+|---|---:|---:|---:|---:|
+| Minimal / update | 0.06 MiB | 0.76 MiB | 10.49 MiB | 526.76 MiB |
+| Prelude / update | 155.77 MiB | 213.29 MiB | 733.84 MiB | Limit after 148 |
+| Prelude / resources | 155.77 MiB | 319.47 MiB | Limit after 47 | Not reached |
+
+At ten resource commands, acquired regions held only 400 live bytes (allocation
+alignment can enlarge the requested String backing). Checked-graph payload was
+43.60 MiB, retained proof arenas 90.17 MiB, code arenas 14.18 MiB and the runtime
+arena about 11.18 MiB. These categories overlap and exclude some indexes and
+spare capacity. The 100-command prelude/update checkpoint retained 361.33 MiB of
+checked-graph payload. The evidence points first to repeated semantic snapshots
+and proof state; resource bytes and finished-frame slots do not explain this
+sample's growth. The limit failures are measured bounds, not completed
+1,000-command runs. These samples are not an AOT compile-time benchmark.
 
 Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
 ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
