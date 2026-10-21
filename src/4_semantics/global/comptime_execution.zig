@@ -144,13 +144,24 @@ pub const Scheduler = struct {
             if (!self.requests.items[index].types_published) {
                 var publication = self.functions.beginSpeculation();
                 defer publication.deinit();
-                var request = &self.requests.items[index];
+                const request = self.requests.items[index];
                 const published = try self.allocator.alloc(?g.GlobalTypeId, request.bindings.types.len);
                 defer self.allocator.free(published);
-                try self.type_recipes.items[request.type_recipe.?].publish(self.allocator, self.functions.generics, published);
+                // Materializing a generic choice default can suspend on another
+                // compile-time dependency and grow either coordinator pool.
+                // Borrow the owned recipe buffers through a copied descriptor.
+                const recipe = self.type_recipes.items[request.type_recipe.?];
+                recipe.publish(self.allocator, self.functions.generics, published) catch |err| switch (err) {
+                    error.ComptimeExecutionPending => {
+                        publication.retainPendingExecution();
+                        continue;
+                    },
+                    error.ComptimeTypeRecipePending => continue,
+                    else => return err,
+                };
                 publication.commit();
-                @memcpy(request.bindings.types, published);
-                request.types_published = true;
+                @memcpy(self.requests.items[index].bindings.types, published);
+                self.requests.items[index].types_published = true;
                 changed = true;
             }
             const request = self.requests.items[index];

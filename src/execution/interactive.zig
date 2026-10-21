@@ -1250,6 +1250,27 @@ test "interactive computed conditions retain reconstructed type bindings across 
     try session.close();
 }
 
+test "interactive computed conditions retain choice defaults in temporary type bindings" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    errdefer for (session.diagnostics.list.items) |diagnostic| {
+        std.debug.print("choice-default session: {s}\n", .{diagnostic.msg});
+    };
+    try session.submitDefinitions(
+        "Choice: Type = (..present(.value: Int32), ..empty)\n" ++
+            "decide#(.T: Type) := () -> (.ok: Bool) { width ::= size_of(.type = T)\n ok = true }\n" ++
+            "choose#(.T: Type) := (.value: T) -> (.result: Int32) { #if decide#(.T: T)() { match value.selection { ..present selected { result = selected.value } ..empty { result = 0 } } } #else { result = 0 } }\n" ++
+            "outer#(.T: Type) := (.value: T) -> (.result: Int32) { result = choose#(.T: (.value: T, .selection: Choice = #run () -> (.result: Choice) { result = ..present(.value = 42) }))(.value = (.value = value)) }",
+    );
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("outer(.value = 7)")).?.value.runtime.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("missing_choice_default"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("outer(.value = true)")).?.value.runtime.integer);
+    try session.close();
+}
+
 test "interactive virtual methods link host calls against their retained code unit" {
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);

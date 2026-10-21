@@ -14324,3 +14324,17 @@ test "feature_tests/execution/158_concrete_selected_comptime_captures" {
 test "feature_tests/execution/159X_concrete_selected_runtime_capture" {
     try buildExpectFail("tests/feature_tests/execution/159X_concrete_selected_runtime_capture", "runtime values cannot be used");
 }
+
+test "feature_tests/execution/160_comptime_choice_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/160_comptime_choice_defaults");
+    try runExpect("tests/feature_tests/execution/160_comptime_choice_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/160_comptime_choice_defaults", 42, null);
+}
+
+test "argi repl preserves choice defaults across specializations" {
+    try expectReplFixture(
+        "tests/feature_tests/execution/160_comptime_choice_defaults/main.rg",
+        "with_default#(.T: Int32, .n = 42)(.value = 7)\nwith_default#(.T: Bool, .n = 41)(.value = true)\nwith_default#(.T: Int32, .n = 0)(.value = 9)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 42)(.value = true) }\n",
+        "_0 = 42\n_1 = 41\n_2 = 0\n_3 = 42\n",
+    );
+}

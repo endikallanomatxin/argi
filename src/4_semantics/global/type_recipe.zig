@@ -24,7 +24,18 @@ const Default = union(enum) {
     literal: struct {
         source: p.SourceRef,
         ty: ?Ids.TypeId,
-        value: union(enum) { int: i128, float: f64, char: u32, boolean: bool, string: p.StringRange, type: Ids.TypeId, pending: PendingDefault, record: struct { fields: p.Range(u32), positional: u32 }, array: struct { elements: p.Range(u32), element_type: Ids.TypeId, length: u32 } },
+        value: union(enum) {
+            int: i128,
+            float: f64,
+            char: u32,
+            boolean: bool,
+            string: p.StringRange,
+            type: Ids.TypeId,
+            pending: PendingDefault,
+            choice: struct { choice_type: Ids.TypeId, ordinal: u32, payload: ?Ids.NodeId },
+            record: struct { fields: p.Range(u32), positional: u32 },
+            array: struct { elements: p.Range(u32), element_type: Ids.TypeId, length: u32 },
+        },
     },
 };
 
@@ -143,6 +154,14 @@ pub const Recipe = struct {
                 .boolean => |v| actual.content == .bool_literal and actual.content.bool_literal == v,
                 .string => |v| actual.content == .string_literal and std.mem.eql(u8, self.recipe.text(v), self.graph.text(actual.content.string_literal)),
                 .type => |v| actual.content == .type_literal and try self.typeId(v, actual.content.type_literal),
+                .choice => |v| choice: {
+                    if (actual.content != .choice_literal) break :choice false;
+                    const selected = actual.content.choice_literal;
+                    if (!try self.typeId(v.choice_type, selected.choice_type)) break :choice false;
+                    const variants = @import("types.zig").variants(self.graph, selected.choice_type) orelse break :choice false;
+                    if (v.ordinal >= variants.len or @intFromEnum(selected.variant) != variants.start + v.ordinal) break :choice false;
+                    break :choice try self.defaultValue(v.payload, selected.payload);
+                },
                 .array => |v| array: {
                     if (actual.content != .array_literal) break :array false;
                     const literal_array = actual.content.array_literal;
@@ -289,6 +308,16 @@ pub const Recipe = struct {
                     .bool_literal => |v| .{ .boolean = v },
                     .string_literal => |v| .{ .string = try self.string(v) },
                     .type_literal => |v| .{ .type = try self.typeId(v, depth) },
+                    .choice_literal => |v| choice: {
+                        const variants = @import("types.zig").variants(self.graph, v.choice_type) orelse return error.ComptimeTypeRecipePending;
+                        const variant = @intFromEnum(v.variant);
+                        if (variant < variants.start or variant - variants.start >= variants.len) return error.ComptimeTypeRecipePending;
+                        break :choice .{ .choice = .{
+                            .choice_type = try self.typeId(v.choice_type, depth + 1),
+                            .ordinal = variant - variants.start,
+                            .payload = if (v.payload) |payload| try self.defaultValue(payload, depth + 1) else null,
+                        } };
+                    },
                     .array_literal => |v| array: {
                         const elements = try self.a.alloc(Ids.NodeId, v.elements.len);
                         defer self.a.free(elements);
@@ -406,6 +435,17 @@ pub const Recipe = struct {
                         .boolean => |v| .{ .bool_literal = v },
                         .string => |v| .{ .string_literal = try self.string(v) },
                         .type => |v| .{ .type_literal = try self.typeId(v) },
+                        .choice => |v| choice: {
+                            const choice_type = try self.typeId(v.choice_type);
+                            _ = try self.generics.ensureGenericInstance(choice_type);
+                            const variants = @import("types.zig").variants(self.generics.graph, choice_type) orelse return error.ComptimeTypeRecipePending;
+                            if (v.ordinal >= variants.len) return error.ComptimeTypeRecipePending;
+                            break :choice .{ .choice_literal = .{
+                                .choice_type = choice_type,
+                                .variant = @enumFromInt(variants.start + v.ordinal),
+                                .payload = if (v.payload) |payload| try self.defaultValue(payload) else null,
+                            } };
+                        },
                         .array => |v| array: {
                             const elements = try self.a.alloc(g.GlobalNodeId, v.elements.len);
                             defer self.a.free(elements);
@@ -758,4 +798,69 @@ fn pendingDefaultFailures(a: std.mem.Allocator) !void {
 
 test "type recipes retain pending default substitutions through rollback and allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, pendingDefaultFailures, .{});
+}
+
+fn choiceDefaultFailures(a: std.mem.Allocator, with_payload: bool) !void {
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    const checkpoint = graph.checkpoint();
+    const source = p.SourceRef{ .file_index = 0, .offset = 31 };
+    const name = try graph.addString(a, "option");
+    try graph.variants.appendSlice(a, &.{
+        .{ .name = try graph.addString(a, "empty"), .source = source, .value = 0 },
+        .{ .name = try graph.addString(a, "present"), .source = source, .value = 1, .payload_type = @enumFromInt(0) },
+    });
+    try graph.types.append(a, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .choice_literal = .{
+            .choice_type = @enumFromInt(1),
+            .variant = @enumFromInt(@intFromBool(with_payload)),
+            .payload = if (with_payload) @enumFromInt(0) else null,
+        } } },
+    });
+    for (0..2) |_| try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(1), .source = source, .default_value = @enumFromInt(1) });
+    try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } });
+    const roots = [_]?g.GlobalTypeId{@enumFromInt(2)};
+    var recipe = try Recipe.capture(a, &graph, .{ .types = 1, .declarations = 0, .nodes = 0 }, &roots);
+    defer recipe.deinit(a);
+    var retained = try recipe.clone(a);
+    defer retained.deinit(a);
+    try std.testing.expect(try retained.matches(a, &graph, &roots));
+    graph.nodes.items[1].content.choice_literal.variant = @enumFromInt(@intFromBool(!with_payload));
+    try std.testing.expect(!try retained.matches(a, &graph, &roots));
+    graph.nodes.items[1].content.choice_literal.variant = @enumFromInt(@intFromBool(with_payload));
+    if (with_payload) {
+        graph.nodes.items[0].content.int_literal = 99;
+        try std.testing.expect(!try retained.matches(a, &graph, &roots));
+    }
+    graph.rollback(checkpoint);
+    // Recycle both type and variant IDs before reconstructing the saved value.
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try graph.variants.append(a, .{ .name = try graph.addString(a, "unrelated"), .source = source, .value = 0 });
+    var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinitReachedCalls();
+    var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var published: [1]?g.GlobalTypeId = undefined;
+    try retained.publish(a, &generics, &published);
+    try std.testing.expect(try retained.matches(a, &graph, &published));
+    const fields = graph.semanticType(published[0].?).structural.fields;
+    const first = graph.fields.items[fields.start].default_value.?;
+    try std.testing.expectEqual(first, graph.fields.items[fields.start + 1].default_value.?);
+    const selected = graph.node(first).content.choice_literal;
+    const variants = @import("types.zig").variants(&graph, selected.choice_type).?;
+    try std.testing.expectEqual(variants.start + @intFromBool(with_payload), @intFromEnum(selected.variant));
+    if (with_payload) {
+        try std.testing.expectEqual(@as(i128, 42), graph.node(selected.payload.?).content.int_literal);
+    } else try std.testing.expect(selected.payload == null);
+}
+
+test "type recipes preserve payload defaults across rollback and allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, choiceDefaultFailures, .{true});
+}
+
+test "type recipes preserve payloadless defaults across rollback and allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, choiceDefaultFailures, .{false});
 }
