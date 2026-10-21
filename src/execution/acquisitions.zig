@@ -94,13 +94,18 @@ pub const Regions = struct {
 
     /// Copy reads instead of exporting a mutable host slice or an untracked
     /// language reference. Validate the entire range before touching output.
-    pub fn read(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, destination: []u8) !void {
-        _ = try self.range(storage, handle, offset, destination.len, 1);
+    pub fn requireInitialized(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, length: usize) !void {
+        _ = try self.range(storage, handle, offset, length, 1);
         const region = try self.get(storage, handle);
-        for (offset..offset + destination.len) |index| {
+        for (offset..offset + length) |index| {
             const mask = @as(u8, 1) << @as(u3, @intCast(index % 8));
             if (region.initialized[index / 8] & mask == 0) return error.ExecutionUninitializedStorage;
         }
+    }
+
+    pub fn read(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, destination: []u8) !void {
+        try self.requireInitialized(storage, handle, offset, destination.len);
+        const region = try self.get(storage, handle);
         @memcpy(destination, region.bytes[offset..][0..destination.len]);
     }
 

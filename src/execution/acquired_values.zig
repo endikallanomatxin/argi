@@ -10,6 +10,40 @@ const Value = @import("../5_codegen/bytecode/value.zig").Value;
 // a value and need not be initialized. References/resources cannot be decoded
 // from bytes; their eventual representation requires explicit evidence storage.
 pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) anyerror!Value {
+    switch (layout.shape) {
+        .integer, .floating => return readValidated(storage, handle, offset, layout, endian),
+        .fields, .array => {},
+    }
+    const cells = try readableCells(storage, handle, offset, layout);
+    if (cells > storage.limit -| storage.cells) return error.ExecutionMemoryLimit;
+    return readValidated(storage, handle, offset, layout, endian);
+}
+
+// Inspect typed leaves only: record padding is neither a value nor required to
+// be initialized. Failed reads publish no snapshots and consume no cell quota.
+fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout) anyerror!usize {
+    _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
+    return switch (layout.shape) {
+        .integer, .floating => blk: {
+            try storage.acquisitions.requireInitialized(storage, handle, offset, layout.size);
+            break :blk 0;
+        },
+        .fields => |fields| blk: {
+            var count: usize = fields.len;
+            for (fields) |field|
+                count = std.math.add(usize, count, try readableCells(storage, handle, offset + field.offset, field.layout)) catch return error.ExecutionMemoryLimit;
+            break :blk count;
+        },
+        .array => |array| blk: {
+            var count: usize = array.length;
+            for (0..array.length) |index|
+                count = std.math.add(usize, count, try readableCells(storage, handle, offset + index * array.stride, array.element)) catch return error.ExecutionMemoryLimit;
+            break :blk count;
+        },
+    };
+}
+
+fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) anyerror!Value {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
         .integer => |kind| .{ .integer = integer.encode(try storage.acquisitions.loadInteger(storage, handle, offset, layout, endian), p.integerRangeForWidth(@intCast(layout.size * 8), kind.signed)) },
@@ -21,12 +55,12 @@ pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Lay
         },
         .fields => |fields| blk: {
             const values = try storage.allocate(fields.len);
-            for (fields, values) |field, *value| value.* = try read(storage, handle, offset + field.offset, field.layout, endian);
+            for (fields, values) |field, *value| value.* = try readValidated(storage, handle, offset + field.offset, field.layout, endian);
             break :blk .{ .record = values };
         },
         .array => |array| blk: {
             const values = try storage.allocate(array.length);
-            for (values, 0..) |*value, index| value.* = try read(storage, handle, offset + index * array.stride, array.element, endian);
+            for (values, 0..) |*value, index| value.* = try readValidated(storage, handle, offset + index * array.stride, array.element, endian);
             break :blk .{ .array = values };
         },
     };

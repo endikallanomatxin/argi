@@ -937,11 +937,18 @@ test "acquired aggregates preserve partial initialization and validate writes be
     var second = root;
     second.path = &.{.{ .field = 1 }};
     try storage.store(first, .{ .integer = 7 });
+    const before_read = storage.cells;
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(root));
+    try std.testing.expectEqual(before_read, storage.cells);
     try std.testing.expectError(error.ExecutionIntegerOutOfRange, storage.store(root, .{ .record = &.{ .{ .integer = 9 }, .{ .integer = std.math.maxInt(u32) + @as(u64, 1) } } }));
     try std.testing.expectEqual(@as(i128, 7), (try storage.read(first)).integer);
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(second));
     try storage.store(second, .{ .integer = 42 });
+    const normal_limit = storage.limit;
+    storage.limit = storage.cells + 1;
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.read(root));
+    try std.testing.expectEqual(before_read, storage.cells);
+    storage.limit = normal_limit;
     const complete = try storage.read(root);
     try std.testing.expectEqual(@as(i128, 42), complete.record[1].integer);
     // Padding remains vacant and is never exposed by a typed aggregate read.
