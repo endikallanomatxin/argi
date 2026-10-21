@@ -24,8 +24,58 @@ Explicit compile-time execution uses `#run`. Conditional compilation uses
 branch is compiled. This differs from running an ordinary `if` inside
 `#run`; the latter executes the conditional during compile-time evaluation.
 
+## Compile-time entry points
+
+`#run` declares and immediately executes an anonymous function. Its signature
+uses the ordinary function input and output syntax:
+
+```rg
+#run {
+    calculate(42)
+}
+
+answer ::= #run () -> (.result: Int32) {
+    result = calculate(42)
+}
+```
+
+Like `main`, an entry takes no inputs or one `.system: System` input. For
+`#run`, the compiler supplies the compilation host's system, independently of
+the generated program's target. Capabilities remain explicit:
+
+```rg
+answer ::= #run (.system: System) -> (.result: Int32) {
+    assume writer ::= $&system.terminal&.stdout
+    print("Compiling...")
+    result = calculate(42)
+}
+```
+
+Neither `#run` nor its `System` input installs assumed writers, allocators or
+other capabilities. Ordinary `assume`, `reach`, contracts and safety rules
+apply to the entry and its calls. Existing functions are called inside the
+block; `#run function(...)` is not an alternative entry syntax.
+
+The entry is an execution boundary. It can use surrounding compile-time-known
+values, including compile-time parameters, but cannot capture runtime-only
+values or storage. It can borrow local storage and create temporary resources
+during evaluation. Outputs must freeze into compiler constants: references,
+host handles and temporary resource ownership cannot escape into generated
+code. These restrictions apply to all captured values and outputs, not only
+to `System`.
+
+Dependency readiness remains the semantic scheduler's responsibility; the VM
+executes an entry after its dependencies are available. Specialization and
+`#if` selection retain deferred evaluation rather than executing discarded
+entries. Host operations require explicit support and effect policy; providing
+`System` does not authorize unrestricted FFI or external access. Relevant
+external inputs must be tracked as build dependencies before enabling them.
+
 > [!IMPLEMENTATION]
-> `#run` currently accepts resolved function calls with constant scalar or
+> Anonymous entry syntax and host `System` execution are not implemented yet.
+> The current implementation still accepts the superseded `#run function(...)`
+> form; migration replaces it rather than preserving both forms.
+> This implementation accepts resolved function calls with constant scalar or
 > aggregate arguments and representable results. Closed calls and selected
 > integer arithmetic/comparisons and aggregate field/index projections can compute
 > those arguments. Calls use the checked bytecode
