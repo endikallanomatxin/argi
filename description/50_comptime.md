@@ -85,6 +85,8 @@ external inputs must be tracked as build dependencies before enabling them.
 > the accepted runtime state; reset starts a fresh execution context.
 > A concrete entry containing `#if` uses ordinary staged function materialization:
 > only its selected branch is resolved and safety-checked.
+> Anonymous entries can initialize module constants and field defaults through
+> the same execution request and constant-freezing path.
 > Interactive selection retains successful results across commands and rejects
 > invalid selected branches without changing the accepted session revision.
 > The current implementation still accepts the superseded `#run function(...)`

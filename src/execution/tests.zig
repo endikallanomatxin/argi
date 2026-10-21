@@ -1250,6 +1250,21 @@ test "bytecode anonymous compile-time blocks support local storage and no output
     , .{}));
 }
 
+test "bytecode anonymous compile-time entries initialize module constants" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\answer ::= #run () -> (.result: Int32) {
+        \\    local :: Int32 = 41
+        \\    result = local + 1
+        \\}
+        \\Record: Type = (.value: Int32 = #run () -> (.result: Int32 = 42) {})
+        \\main() -> (.status_code: Int32) := {
+        \\    record ::= Record()
+        \\    if record.value != answer { abort }
+        \\    status_code = answer
+        \\}
+    , .{}));
+}
+
 test "bytecode anonymous compile-time entries select only their active branch" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\enabled() -> (.result: Bool) := { result = true }

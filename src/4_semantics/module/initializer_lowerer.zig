@@ -264,7 +264,10 @@ const Context = struct {
     }
 
     fn lowerFieldDefaults(self: *Context, stats: *Stats) !void {
-        for (self.graph.declarations.items) |declaration| {
+        var index: usize = 0;
+        // A default expression can register a generated compile-time entry.
+        while (index < self.graph.declarations.items.len) : (index += 1) {
+            const declaration = self.graph.declarations.items[index];
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             switch (declaration.kind) {

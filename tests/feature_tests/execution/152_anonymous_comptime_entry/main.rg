@@ -2,7 +2,13 @@ calculate(.value: Int32) -> (.result: Int32) := { result = value + 1 }
 
 enabled() -> (.result: Bool) := { result = true }
 
+module_answer ::= #run () -> (.result: Int32 = 42) {}
+
+Record: Type = (.value: Int32 = #run () -> (.result: Int32 = 42) {})
+
 main() -> (.status_code: Int32) := {
+    record ::= Record()
+    if record.value != module_answer { abort }
     #run {
         local :: Int32 = 41
         pointer ::= $&local

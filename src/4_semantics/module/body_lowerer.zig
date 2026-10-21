@@ -383,6 +383,7 @@ const Context = struct {
             .literal,
             .identifier,
             .function_call,
+            .comptime_entry,
             .struct_value_literal,
             .choice_literal,
             .choice_some_literal,
