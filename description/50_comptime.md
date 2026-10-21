@@ -78,6 +78,9 @@ external inputs must be tracked as build dependencies before enabling them.
 > entry; temporary references cannot escape as outputs. Generic entries,
 > compile-time captures and host `System` execution
 > remain incomplete.
+> Persistent sessions retain successful entry results. Rejected runtime captures
+> and aborted compile-time entries publish no session revision and do not poison
+> the accepted runtime state; reset starts a fresh execution context.
 > The current implementation still accepts the superseded `#run function(...)`
 > form; migration replaces it rather than preserving both forms.
 > This implementation accepts resolved function calls with constant scalar or

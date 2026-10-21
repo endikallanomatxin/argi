@@ -429,6 +429,29 @@ test "interactive submissions share staged run and conditional execution" {
     try session.close();
 }
 
+test "interactive anonymous compile-time entries preserve accepted state across failures" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("calculate := () -> (.result: Int32) { result = 42 }");
+    try session.submitStatements("saved ::= #run () -> (.result: Int32) { result = calculate() }");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("saved")).?.value.runtime.integer);
+    try session.submitStatements("runtime_value :: Int32 = 7");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.result: Int32) { result = runtime_value }"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("runtime_value")).?.value.runtime.integer);
+    const after_read = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.result: Int32) { abort }"));
+    try std.testing.expectEqual(after_read, session.compiler.revision);
+    try std.testing.expect(session.runtime.context.state != .poisoned);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("saved")).?.value.runtime.integer);
+    try session.submitStatements("#run { local :: Int32 = 41\npointer ::= $&local\npointer&= 42 }");
+    try session.reset();
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("#run () -> (.result: Int32 = 42) {} ")).?.value.runtime.integer);
+    try session.close();
+}
+
 test "interactive classification rejects mixed submissions and unresolved imports atomically" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
