@@ -216,16 +216,30 @@ pub const Storage = struct {
     /// promoted call-frame slots. Layouts are copied because their original
     /// bytecode unit may be released before this storage is retired.
     pub fn enterSession(self: *Storage, count: usize, cleanup: []const b.Cleanup) !Slots {
-        try self.charge(cleanup.len);
+        var metadata_cells = cleanup.len;
+        for (cleanup) |entry| {
+            if (entry.root >= count or entry.flag >= count or entry.root == entry.flag) return error.ExecutionInvalidReference;
+            metadata_cells = std.math.add(usize, metadata_cells, entry.path.len) catch return error.ExecutionMemoryLimit;
+        }
+        const frame_cells = std.math.add(usize, count, 1) catch return error.ExecutionMemoryLimit;
+        const total_cells = std.math.add(usize, metadata_cells, frame_cells) catch return error.ExecutionMemoryLimit;
+        if (total_cells > self.limit -| self.cells) return error.ExecutionMemoryLimit;
+        try self.charge(metadata_cells);
+        errdefer self.cells -= metadata_cells;
         const retained = try self.allocator.alloc(b.Cleanup, cleanup.len);
+        var copied: usize = 0;
+        errdefer {
+            for (retained[0..copied]) |entry| self.allocator.free(entry.path);
+            self.allocator.free(retained);
+        }
         for (retained, cleanup) |*out, entry| {
-            try self.charge(entry.path.len);
             out.* = entry;
             out.path = try self.allocator.dupe(v.Projection, entry.path);
+            copied += 1;
         }
         const frame = try self.enterCleanup(count, retained);
         self.frames.items[@intFromEnum(frame)].duration = .session;
-        return self.slots(frame);
+        return .{ .storage = self, .context = self.context, .frame = frame };
     }
 
     /// Initialize vacant session storage with checked publication data. Reject
@@ -894,6 +908,36 @@ test "compact partial array layouts charge concrete cells before allocation" {
     } }));
     try std.testing.expectEqual(before, storage.cells);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+}
+
+test "session creation validates complete quota before retaining cleanup paths" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4);
+    const cleanup = &.{b.Cleanup{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 1 }};
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.enterSession(2, cleanup));
+    try std.testing.expectEqual(@as(usize, 0), storage.cells);
+    try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
+    storage.limit = 5;
+    const session = try storage.enterSession(2, cleanup);
+    try std.testing.expectEqual(@as(usize, 5), storage.cells);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(session.frame));
+}
+
+fn failedSessionStorage(a: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100000);
+    const cleanup = &.{b.Cleanup{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 1 }};
+    _ = storage.enterSession(4096, cleanup) catch |err| {
+        try std.testing.expectEqual(@as(usize, 0), storage.cells);
+        try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
+        return err;
+    };
+}
+
+test "session allocation failures publish neither cleanup layouts nor frames" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedSessionStorage, .{});
 }
 
 test "rejected frames preserve quota and frame identities" {
