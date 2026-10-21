@@ -1288,6 +1288,26 @@ test "bytecode anonymous compile-time entries preserve named multiple outputs" {
     , .{}));
 }
 
+test "anonymous compile-time entries diagnose unsupported argument interfaces" {
+    for ([_][]const u8{ ".value: Int32", ".system: Int32, .extra: Int32" }) |inputs| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const source = try std.fmt.allocPrint(a, "main() -> () := {{ #run ({s}) -> () {{}} }}", .{inputs});
+        const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
+        var diagnostics = diag.Diagnostics.init(&a, &files);
+        defer diagnostics.deinit();
+        var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+        defer pipeline.deinit();
+        try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+        var found = false;
+        for (diagnostics.list.items) |diagnostic| if (std.mem.indexOf(u8, diagnostic.msg, "accept no inputs or one '.system: System' input") != null) {
+            found = true;
+        };
+        try std.testing.expect(found);
+    }
+}
+
 test "anonymous compile-time entries cannot export temporary references" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

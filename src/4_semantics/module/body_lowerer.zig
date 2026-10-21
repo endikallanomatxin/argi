@@ -768,8 +768,11 @@ const Context = struct {
     fn lowerComptimeEntry(self: *Context, node: syn.NodeIndex) anyerror!Lowered {
         const entry = self.tree.comptimeEntry(node).?;
         const input = try self.entryFields(entry.input);
-        if (input.len != 0)
+        if (input.len != 0) {
+            if (input.len != 1 or !std.mem.eql(u8, self.graph.text((try views.fieldView(self.graph, @enumFromInt(input.start))).name), "system"))
+                return self.foreignOptionError(node, "compile-time entries accept no inputs or one '.system: System' input; pass ordinary arguments to functions inside the entry body");
             return self.foreignOptionError(node, "compile-time System entry execution is not implemented yet");
+        }
         const output = try self.entryFields(entry.output);
         const declaration_id: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
         const function_id: entities.ModuleFunctionId = @enumFromInt(self.graph.functions.items.len);
