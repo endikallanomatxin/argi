@@ -1267,6 +1267,22 @@ test "bytecode generic anonymous entries capture compile-time parameters" {
     , .{}));
 }
 
+test "bytecode generic anonymous entries retain nested parameter-dependent selection" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\calculate#(.n: Int32) := () -> (.result: Int32) {
+        \\    result = #run () -> (.value: Int32) {
+        \\        #if n == 42 {
+        \\            value = #run () -> (.inner: Int32) { inner = n }
+        \\        } #else { value = 41 }
+        \\    }
+        \\}
+        \\main() -> (.status_code: Int32) := {
+        \\    if calculate#(.n = 41)() != 41 { abort }
+        \\    status_code = calculate#(.n = 42)()
+        \\}
+    , .{}));
+}
+
 test "bytecode anonymous compile-time entries consume known module values" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\base := 41
@@ -1324,7 +1340,9 @@ test "bytecode anonymous compile-time entries select only their active branch" {
         \\enabled() -> (.result: Bool) := { result = true }
         \\main() -> (.status_code: Int32) := {
         \\    status_code = #run () -> (.result: Int32) {
-        \\        #if enabled() { result = 42 } #else { result = missing() }
+        \\        #if enabled() {
+        \\            result = #run () -> (.value: Int32 = 42) {}
+        \\        } #else { result = missing() }
         \\    }
         \\}
     , .{}));

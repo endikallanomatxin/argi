@@ -455,6 +455,21 @@ test "interactive anonymous compile-time entries preserve accepted state across 
     try session.close();
 }
 
+test "interactive generic compile-time entries retain independent specializations" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("calculate#(.T: Type, .n: Int32) := () -> (.result: T) { result = #run () -> (.value: T) { value = n } }");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("calculate#(.T: Int32, .n = 42)()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("calculate#(.T: Int32, .n = 41)()")).?.value.runtime.integer);
+    try session.submit("invalid#(.T: Type) := (.runtime_value: T) -> (.result: T) { result = #run () -> (.value: T) { value = runtime_value } }");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("invalid#(.T: Int32)(.runtime_value = 7)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("calculate#(.T: Int32, .n = 42)()")).?.value.runtime.integer);
+    try session.close();
+}
+
 test "interactive conditional compile-time entries preserve selection across revisions" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});

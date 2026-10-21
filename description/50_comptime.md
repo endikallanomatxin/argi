@@ -80,6 +80,8 @@ external inputs must be tracked as build dependencies before enabling them.
 > entry; temporary references cannot escape as outputs. Entries in generic
 > bodies can receive enclosing type and integer compile-time parameters through
 > a generated parameterized function, without capturing runtime bindings.
+> Nested entries and parameter-dependent `#if` selection retain separate
+> specialization results, including across interactive submissions.
 > Capturing other local compile-time-known values and host `System` execution
 > remain incomplete.
 > Persistent sessions retain successful entry results. Rejected runtime captures
