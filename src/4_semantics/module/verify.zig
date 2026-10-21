@@ -146,7 +146,16 @@ fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
         type_reference_cursor += file.type_reference_count;
     }
 
-    try require(declaration_cursor == graph.declarations.items.len);
+    try require(graph.generated_declaration_count <= graph.declarations.items.len);
+    try require(declaration_cursor == graph.declarations.items.len - graph.generated_declaration_count);
+    for (graph.declarations.items[declaration_cursor..], declaration_cursor..) |declaration, index| {
+        try require(declaration.kind == .function);
+        try require(declaration.module_file_index < graph.file_offsets.items.len);
+        const function = declaration.function_id orelse return error.InvalidModuleSemanticGraph;
+        try require(verify.idFits(function, graph.functions.items.len));
+        try require(@intFromEnum(graph.functions.items[@intFromEnum(function)].declaration) == index);
+        for (graph.symbol_declarations.items) |exported| try require(@intFromEnum(exported) != index);
+    }
     try require(type_reference_cursor == graph.type_references.items.len);
 }
 
@@ -382,6 +391,27 @@ test "module verifier accepts an empty semantic module" {
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "empty") };
     defer graph.deinit(allocator);
     try verifyModule(&graph);
+}
+
+test "module verifier checks generated declaration partitions and function provenance" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "entry") };
+    defer graph.deinit(a);
+    const text = try @import("../primitives/strings.zig").append(&graph.strings, a, "entry.rg");
+    try graph.file_offsets.append(a, .{ .path = text, .declaration_base = 0, .declaration_count = 0, .type_reference_base = 0, .type_reference_count = 0 });
+    try graph.declarations.append(a, .{ .kind = .function, .name = text, .source_offset = 7, .module_file_index = 0, .function_id = @enumFromInt(0) });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.generated_declaration_count = 1;
+    try verifyModule(&graph);
+    graph.file_offsets.items[0].declaration_count = 1;
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.file_offsets.items[0].declaration_count = 0;
+    graph.declarations.items[0].function_id = null;
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.declarations.items[0].function_id = @enumFromInt(0);
+    try graph.symbol_declarations.append(a, @enumFromInt(0));
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
 }
 
 test "module verifier accepts a well formed external type hole" {

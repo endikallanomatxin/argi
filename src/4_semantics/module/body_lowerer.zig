@@ -437,6 +437,7 @@ const Context = struct {
             .handle_expression, .error_report_return, .error_report_return_block => self.lowerHandle(node, expected),
             .unwrap_or, .unwrap_or_do => self.lowerUnwrap(node, expected),
             .function_call => self.lowerCall(node, expected),
+            .comptime_entry => self.lowerComptimeEntry(node),
             .code_block => self.lowerBlockNode(node),
             .list_literal => self.lowerList(node),
             .struct_value_literal => self.lowerStructValue(node),
@@ -753,6 +754,82 @@ const Context = struct {
             .nullable_value = value.node,
             .fallback_value = fallback.node,
         } }, expected orelse fallback.ty);
+    }
+
+    fn entryFields(self: *Context, syntax: ?syn.NodeIndex) !graph_mod.FieldRange {
+        const node = syntax orelse return .{ .start = 0, .len = 0 };
+        const ty = try views.typeView(self.graph, try self.lowerType(node));
+        if (ty != .resolved or ty.resolved != .structural) return error.InvalidComptimeEntrySignature;
+        const fields = ty.resolved.structural.fields;
+        return .{ .start = fields.start, .len = fields.len };
+    }
+
+    fn lowerComptimeEntry(self: *Context, node: syn.NodeIndex) anyerror!Lowered {
+        const entry = self.tree.comptimeEntry(node).?;
+        const input = try self.entryFields(entry.input);
+        if (input.len != 0)
+            return self.foreignOptionError(node, "compile-time System entry execution is not implemented yet");
+        const output = try self.entryFields(entry.output);
+        const declaration_id: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
+        const function_id: entities.ModuleFunctionId = @enumFromInt(self.graph.functions.items.len);
+        const generated_name = try std.fmt.allocPrint(self.allocator, "_comptime_entry_{d}_{d}", .{ self.file_index, self.sourceRef(node).offset });
+        defer self.allocator.free(generated_name);
+        const name = try self.writer.addString(generated_name);
+        try self.graph.declarations.append(self.allocator, .{
+            .kind = .function,
+            .name = name,
+            .source_offset = self.sourceRef(node).offset,
+            .module_file_index = self.file_index,
+            .function_id = function_id,
+        });
+        self.graph.generated_declaration_count += 1;
+        try self.graph.functions.append(self.allocator, .{ .declaration = declaration_id, .input = input, .output = output });
+        // A separate function scope cannot borrow the enclosing runtime frame.
+        // Compile-time parameter capture still requires specialization support.
+        var body = Context{
+            .allocator = self.allocator,
+            .graph = self.graph,
+            .files = self.files,
+            .diagnostics = self.diagnostics,
+            .writer = writer_mod.Writer.init(self.allocator, self.graph),
+            .bindings = std.array_list.Managed(NamedBinding).init(self.allocator),
+            .refinements = std.array_list.Managed(RefinedValue).init(self.allocator),
+            .module_aliases = std.array_list.Managed(type_lowerer.LexicalModuleAlias).init(self.allocator),
+            .scope_marks = std.array_list.Managed(ScopeMark).init(self.allocator),
+            .file_index = self.file_index,
+            .tree = self.tree,
+            .source = self.source,
+            .current_function = function_id,
+        };
+        defer body.bindings.deinit();
+        defer body.refinements.deinit();
+        defer body.module_aliases.deinit();
+        defer body.scope_marks.deinit();
+        try body.seedGlobalModuleAliases();
+        try body.pushScope();
+        var outputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
+        defer outputs.deinit();
+        try body.bindInterface(output, .variable, &outputs);
+        const output_bindings = try body.writer.appendBindingRefs(outputs.items);
+        body.writer.pending_owner_function = function_id;
+        const block = if (entry.output) |output_syntax|
+            try body.lowerBlockWithDefaults(entry.body, .{ .syntax = output_syntax, .bindings = outputs.items })
+        else
+            try body.lowerBlock(entry.body);
+        try self.graph.semantic.function_semantics.append(self.allocator, .{
+            .function = function_id,
+            .body = block,
+            .output_bindings = output_bindings,
+            .flags = .{ .has_declared_body = true, .uses_inferred_error_reasons = try body.interfaceUsesInferredErrable(output) },
+        });
+        const result_type = if (output.len == 0) try self.builtin(.Void) else if (output.len == 1)
+            (try views.fieldView(self.graph, @enumFromInt(output.start))).ty
+        else
+            try self.writer.addResolvedType(.{ .structural = .{ .fields = .{ .start = output.start, .len = output.len } } });
+        const arguments = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        const result = try self.resolved(node, result_type, .{ .function_call = .{ .callee = function_id, .input = arguments.node } });
+        try self.graph.semantic.comptime_requests.append(self.allocator, result.node);
+        return result;
     }
 
     fn lowerCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {

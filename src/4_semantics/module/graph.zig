@@ -101,6 +101,10 @@ pub const ModuleSemanticGraph = struct {
     module_dir: []const u8 = "",
     is_bundled_core: bool = false,
     declarations: std.ArrayList(Declaration) = .empty,
+    /// Compiler-generated declarations form a trailing partition, outside the
+    /// source-file partitions and public symbol index. Each retains source
+    /// provenance in its ordinary declaration record.
+    generated_declaration_count: u32 = 0,
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(ModuleDeclId) = .empty,
     types: std.ArrayList(ModuleType) = .empty,

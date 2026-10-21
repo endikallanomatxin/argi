@@ -72,8 +72,10 @@ entries. Host operations require explicit support and effect policy; providing
 external inputs must be tracked as build dependencies before enabling them.
 
 > [!IMPLEMENTATION]
-> The parser and formatter recognize anonymous entry syntax. Semantic entry
-> lowering and host `System` execution are not implemented yet.
+> Concrete anonymous entries without inputs execute through ordinary semantic
+> functions and compile-time requests, including nested entries and output
+> defaults. Generic entries, compile-time captures and host `System` execution
+> remain incomplete.
 > The current implementation still accepts the superseded `#run function(...)`
 > form; migration replaces it rather than preserving both forms.
 > This implementation accepts resolved function calls with constant scalar or

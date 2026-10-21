@@ -14166,6 +14166,12 @@ test "feature_tests/execution/150_comptime_array_defaults" {
     try vmExpect("tests/feature_tests/execution/150_comptime_array_defaults", 42, null);
 }
 
+test "feature_tests/execution/152_anonymous_comptime_entry" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/152_anonymous_comptime_entry");
+    try runExpect("tests/feature_tests/execution/152_anonymous_comptime_entry", 42);
+    try vmExpect("tests/feature_tests/execution/152_anonymous_comptime_entry", 42, null);
+}
+
 test "feature_tests/execution/121_type_queries" {
     try expectSuccessfulBuild("tests/feature_tests/execution/121_type_queries");
     try runExpect("tests/feature_tests/execution/121_type_queries", 42);

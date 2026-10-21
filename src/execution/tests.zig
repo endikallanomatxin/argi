@@ -1206,6 +1206,32 @@ test "bytecode source run preserves several outputs and void boundaries" {
     , .{}));
 }
 
+test "bytecode anonymous compile-time entry executes an ordinary function body" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\calculate(.value: Int32) -> (.result: Int32) := { result = value + 1 }
+        \\main() -> (.status_code: Int32) := {
+        \\    answer ::= #run () -> (.result: Int32) {
+        \\        local :: Int32 = 41
+        \\        result = calculate(.value = local)
+        \\    }
+        \\    status_code = answer
+        \\}
+    , .{}));
+}
+
+test "bytecode anonymous compile-time entries retain defaults and independent scopes" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\main() -> (.status_code: Int32) := {
+        \\    first ::= #run () -> (.result: Int32 = 20) {}
+        \\    second ::= #run () -> (.result: Int32) {
+        \\        local ::= #run () -> (.result: Int32 = 21) {}
+        \\        result = local + 1
+        \\    }
+        \\    status_code = first + second
+        \\}
+    , .{}));
+}
+
 test "bytecode source run evaluates closed argument calls through selected operations" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
