@@ -1152,7 +1152,20 @@ pub const Context = struct {
             try parent.addResolvedNode(node, parent.graph.semantic.parameterized_storage.ir.bindingType(binding), .{ .binding_use = binding })
         else
             (try parent.captureEntryValue(node, name)) orelse return null;
-        const ty = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer)].resolved.ty orelse return error.UnresolvedCompileTimeCaptureType;
+        const ty = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer)].resolved.ty orelse blk: {
+            const outer_binding = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer)].resolved.content.binding_use;
+            const storage = &self.graph.semantic.parameterized_storage.ir;
+            const initialization = storage.bindings.items[@intFromEnum(outer_binding)].initialization orelse return error.UnresolvedCompileTimeCaptureType;
+            // Reuse a type already retained by the ordinary initializer lowering.
+            // This observes no value and never executes the initializer again.
+            break :blk switch (storage.nodes.items[@intFromEnum(initialization)]) {
+                .resolved => |value| value.ty orelse return error.UnresolvedCompileTimeCaptureType,
+                .pending => |pending| switch (storage.pending.items[@intFromEnum(pending)]) {
+                    .resolve_expression => |expression| expression.expected_type orelse return error.UnresolvedCompileTimeCaptureType,
+                    else => return error.UnresolvedCompileTimeCaptureType,
+                },
+            };
+        };
         // This node is patched to its private input binding before publication;
         // it is never a value literal in retained or instantiated IR.
         const use = try self.addResolvedNode(node, ty, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });

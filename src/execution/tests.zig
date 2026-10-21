@@ -1251,12 +1251,13 @@ test "bytecode nested anonymous entries retain their invocation environment" {
     , .{}));
 }
 
-test "bytecode generic anonymous entries transport typed lexical captures" {
+test "bytecode generic anonymous entries transport retained lexical capture types" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\calculate#(.n: Int32)() -> (.result: Int32) := {
-        \\    local: Int32 = n
+        \\    local := n
+        \\    offset := 0
         \\    result = #run () -> (.value: Int32) {
-        \\        value = #run () -> (.inner: Int32) { inner = local }
+        \\        value = #run () -> (.inner: Int32) { inner = local + offset }
         \\    }
         \\}
         \\main() -> (.status_code: Int32) := {
