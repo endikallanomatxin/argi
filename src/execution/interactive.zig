@@ -424,7 +424,7 @@ test "interactive submissions share staged run and conditional execution" {
     );
     const runtime = (try session.submitInput("choose()")).?;
     try std.testing.expectEqual(@as(i128, 42), runtime.value.runtime.integer);
-    const comptime_value = (try session.submitInput("#run choose()")).?;
+    const comptime_value = (try session.submitInput("#run () -> (.answer: Int32) { answer = choose() }")).?;
     try std.testing.expectEqual(@as(i128, 42), comptime_value.value.runtime.integer);
     try session.close();
 }
@@ -554,7 +554,7 @@ test "interactive compile-time failures preserve definition source and accepted 
     defer session.deinit();
     try session.submit("fail := () -> (.result: Int32) { abort }");
     const revision = session.compiler.revision;
-    try std.testing.expectError(error.Reported, session.submitInput("#run fail()"));
+    try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.answer: Int32) { answer = fail() }"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expect(session.diagnostics.hasErrors());
     const diagnostic = session.diagnostics.list.items[0];
@@ -727,7 +727,7 @@ test "interactive source IDs retain original metadata across commands" {
     for ("error_location_id()", 0..) |byte, index| {
         try std.testing.expectEqual(@as(i128, byte), (try session.runtime.context.storage.readOffset(recovered[1].reference, @intCast(index))).integer);
     }
-    try std.testing.expectError(error.Reported, session.submitInput("#run error_location_id()"));
+    try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.answer: SourceLocationId) { answer = error_location_id() }"));
     try session.reset();
     try std.testing.expectEqual(@as(usize, 0), session.runtime.context.trace_locations.items.len);
     try session.close();
@@ -853,7 +853,7 @@ test "interactive once consumption survives commands and rejected candidates" {
     defer session.deinit();
     const definition = "once acquire := () -> (.result: Int32) { result = 42 }";
     try session.submit(definition);
-    try std.testing.expectError(error.Reported, session.submitInput("#run acquire()"));
+    try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.answer: Int32) { answer = acquire() }"));
     // Neither unresolved commands nor repeated uses in a rejected candidate
     // may consume the once identity retained by the accepted session.
     try std.testing.expectError(error.Reported, session.submitStatements("unused ::= acquire()\nmissing()"));
@@ -1021,7 +1021,7 @@ test "interactive scalar host calls require explicit bindings before publication
     session.runtime.context.host_bindings = &bindings;
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("host_increment(.value = 41)")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(usize, 1), state.calls);
-    try std.testing.expectError(error.Reported, session.submitInput("#run host_increment(.value = 41)"));
+    try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.answer: Int32) { answer = host_increment(.value = 41) }"));
     try std.testing.expectEqual(@as(usize, 1), state.calls);
     const negative = (try session.submitInput("host_increment(.value = -42)")).?.value.runtime.integer;
     try std.testing.expectEqual(@as(i128, -41), @import("../5_codegen/integer_arithmetic.zig").decode(negative, range));

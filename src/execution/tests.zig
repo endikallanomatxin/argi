@@ -1169,7 +1169,7 @@ test "bytecode source run freezes loop results before runtime execution" {
         \\    while result < 42 { result = result + 1 }
         \\}
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    answer ::= #run calculate(.base = 40)
+        \\    answer ::= #run () -> (.answer: Int32) { answer = calculate(.base = 40) }
         \\    status_code = answer
         \\}
     , .{ .instructions = 20 }));
@@ -1182,10 +1182,10 @@ test "bytecode source run evaluates nested requests in specialized bodies" {
         \\    while result < 42 { result = result + 1 }
         \\}
         \\prepared#(.N: Int32)() -> (.result: Int32 = 0) := {
-        \\    result = #run calculate(.base = N)
+        \\    result = #run () -> (.answer: Int32) { answer = calculate(.base = N) }
         \\}
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    status_code = #run prepared#(.N = 40)()
+        \\    status_code = #run () -> (.answer: Int32) { answer = prepared#(.N = 40)() }
         \\}
     , .{ .instructions = 20 }));
 }
@@ -1195,15 +1195,19 @@ test "bytecode source run preserves several outputs and void boundaries" {
         \\pair() -> (.left: Int32 = 20, .right: Int32 = 22) := {}
         \\check(.value: Int32) -> () := { if value != 42 { abort } }
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    values ::= #run pair()
-        \\    #run check(.value = 42)
+        \\    values ::= #run () -> (.left: Int32, .right: Int32) {
+        \\        pair_value ::= pair()
+        \\        left = pair_value.left
+        \\        right = pair_value.right
+        \\    }
+        \\    #run { check(.value = 42) }
         \\    status_code = values.left + values.right
         \\}
     , .{}));
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\answer(.value: Void) -> (.result: Int32 = 42) := {}
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    status_code = #run answer(.value = ())
+        \\    status_code = #run () -> (.computed: Int32) { computed = answer(.value = ()) }
         \\}
     , .{}));
 }
@@ -1458,7 +1462,7 @@ test "bytecode source run evaluates closed argument calls through selected opera
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
         \\increment(.value: Int32) -> (.result: Int32) := { result = value + 1 }
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    status_code = #run identity(.value = increment(.value = 20 + 21))
+        \\    status_code = #run () -> (.answer: Int32) { answer = identity(.value = increment(.value = 20 + 21)) }
         \\}
     , .{ .instructions = 20 }));
 }
@@ -1507,7 +1511,7 @@ test "bytecode source run leaves implicit argument calls in runtime bindings" {
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
         \\main() -> (.status_code: Int32 = 0) := {
         \\    computed: Int32 = compute()
-        \\    status_code = #run identity(.value = computed)
+        \\    status_code = #run () -> (.answer: Int32) { answer = identity(.value = computed) }
         \\}
     , .{ .instructions = 50 }));
 }
@@ -1518,7 +1522,7 @@ test "bytecode source run admits a single argument computation below its budget"
         \\    while result < count { result = result + 1 }
         \\}
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    value ::= #run compute(.count = 100000)
+        \\    value ::= #run () -> (.answer: Int32) { answer = compute(.count = 100000) }
         \\    if value != 100000 { abort }
         \\    status_code = 42
         \\}
@@ -1530,7 +1534,11 @@ test "bytecode source run evaluates concrete output defaults in function scope" 
         \\increment(.value: Int32) -> (.result: Int32 = value + 1) := {}
         \\compute(.value: Int32) -> (.first: Int32 = value | increment(_), .second: Int32 = first + 1) := {}
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    values := #run compute(.value = 40)
+        \\    values := #run () -> (.first: Int32, .second: Int32) {
+        \\        pair_value ::= compute(.value = 40)
+        \\        first = pair_value.first
+        \\        second = pair_value.second
+        \\    }
         \\    status_code = values.second
         \\}
     , .{ .instructions = 50 }));
@@ -1543,7 +1551,7 @@ test "bytecode source run projects aggregate argument expressions" {
         \\}
         \\identity(.value: Int32) -> (.result: Int32 = value) := {}
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    status_code = #run identity(.value = values().items[1])
+        \\    status_code = #run () -> (.answer: Int32) { answer = identity(.value = values().items[1]) }
         \\}
     , .{ .instructions = 50 }));
 }
@@ -1555,7 +1563,7 @@ test "bytecode source run determines specialization arguments" {
         \\}
         \\scale#(.n: Int32)(.value: Int32) -> (.result: Int32 = value * n) := {}
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    status_code = scale#(.n = #run compute())(.value = 7)
+        \\    status_code = scale#(.n = #run () -> (.answer: Int32) { answer = compute() })(.value = 7)
         \\}
     , .{ .instructions = 50 }));
 }
@@ -1565,7 +1573,7 @@ test "bytecode source run determines type arguments" {
         \\compute() -> (.result: Int32 = 2) := {}
         \\Holder#(.n: Int32): Type = (.items: Array#(.n = n, .t: Int32))
         \\main() -> (.status_code: Int32 = 0) := {
-        \\    data :: Holder#(.n = #run compute()) = (.items = (20, 42))
+        \\    data :: Holder#(.n = #run () -> (.answer: Int32) { answer = compute() }) = (.items = (20, 42))
         \\    status_code = data.items[1]
         \\}
     , .{ .instructions = 50 }));
@@ -1576,7 +1584,7 @@ test "bytecode source run keys generic requests by bound arguments" {
         \\increment(.value: Int32) -> (.result: Int32 = value + 1) := {}
         \\result#(.n: Int32)() -> (.value: Int32 = n) := {}
         \\compute#(.n: Int32)() -> (.value: Int32) := {
-        \\    value = result#(.n = #run increment(.value = n))()
+        \\    value = result#(.n = #run () -> (.answer: Int32) { answer = increment(.value = n) })()
         \\}
         \\main() -> (.status_code: Int32 = 0) := {
         \\    if compute#(.n = 3)() != 4 { abort }
