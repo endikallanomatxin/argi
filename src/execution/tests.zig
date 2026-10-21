@@ -1251,6 +1251,21 @@ test "bytecode nested anonymous entries retain their invocation environment" {
     , .{}));
 }
 
+test "bytecode generic anonymous entries transport typed lexical captures" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\calculate#(.n: Int32)() -> (.result: Int32) := {
+        \\    local: Int32 = n
+        \\    result = #run () -> (.value: Int32) {
+        \\        value = #run () -> (.inner: Int32) { inner = local }
+        \\    }
+        \\}
+        \\main() -> (.status_code: Int32) := {
+        \\    if calculate#(.n = 41)() != 41 { abort }
+        \\    status_code = calculate#(.n = 42)()
+        \\}
+    , .{}));
+}
+
 test "bytecode anonymous entries complete inferred capture types" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\compute() -> (.value: Int32 = 41) := {}

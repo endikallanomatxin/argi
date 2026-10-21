@@ -12,6 +12,13 @@ selected#(.n: Int32) := () -> (.result: Int32) {
     }
 }
 
+captured_local#(.n: Int32) := () -> (.result: Int32) {
+    local: Int32 = n
+    result = #run () -> (.value: Int32) {
+        value = #run () -> (.inner: Int32) { inner = local }
+    }
+}
+
 nested_specialization#(.n: Int32) := () -> (.result: Int32) {
     result = #run () -> (.value: Int32) {
         value = identity#(.n = #run () -> (.inner: Int32) { inner = n })()
@@ -32,6 +39,8 @@ forward#(.n: Int32) := () -> (.result: Int32) {
 }
 
 main() -> (.status_code: Int32) := {
+    if captured_local#(.n = 41)() != 41 { abort }
+    if captured_local#(.n = 42)() != 42 { abort }
     if nested_specialization#(.n = 41)() != 41 { abort }
     if nested_specialization#(.n = 42)() != 42 { abort }
     if read_items#(.n = 2)() != 42 { abort }
