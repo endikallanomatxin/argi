@@ -176,6 +176,7 @@ pub const Context = struct {
     files: []const graph_mod.FileInput,
     writer: writer_mod.Writer,
     parameters: std.array_list.Managed(ParameterBinding),
+    referenced_parameter_prefix: usize = 0,
     bindings: std.array_list.Managed(BindingName),
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
@@ -1083,9 +1084,15 @@ pub const Context = struct {
         if (entry.output) |syntax| try child.seedFunctionBindings(syntax, .variable);
         const end: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
         const body = try child.lowerBlock(entry.body);
+        // Forward only the declaration-order prefix needed by the entry. In a
+        // parameter default, forwarding the parameter being defined would turn
+        // an otherwise closed entry into a dependency on its own result.
+        const captured = self.parameters.items[0..child.referenced_parameter_prefix];
+        self.referenced_parameter_prefix = @max(self.referenced_parameter_prefix, child.referenced_parameter_prefix);
+        self.graph.declarations.items[@intFromEnum(declaration)].generic_parameter_count = @intCast(captured.len);
         const parameters: primitives.Range(ir.ComptimeParameterId) = .{
-            .start = if (self.parameters.items.len == 0) 0 else @intFromEnum(self.parameters.items[0].id),
-            .len = @intCast(self.parameters.items.len),
+            .start = if (captured.len == 0) 0 else @intFromEnum(captured[0].id),
+            .len = @intCast(captured.len),
         };
         try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
             .declaration = declaration,
@@ -1097,7 +1104,7 @@ pub const Context = struct {
         });
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
-        for (self.parameters.items) |parameter_binding| {
+        for (captured) |parameter_binding| {
             try arguments.append(self.allocator, .{
                 .name = try self.writer.addString(parameter_binding.name),
                 .value = switch (parameter_binding.kind) {
@@ -1982,7 +1989,10 @@ pub const Context = struct {
         var i = self.parameters.items.len;
         while (i != 0) {
             i -= 1;
-            if (std.mem.eql(u8, self.parameters.items[i].name, name)) return self.parameters.items[i];
+            if (std.mem.eql(u8, self.parameters.items[i].name, name)) {
+                self.referenced_parameter_prefix = @max(self.referenced_parameter_prefix, i + 1);
+                return self.parameters.items[i];
+            }
         }
         return null;
     }

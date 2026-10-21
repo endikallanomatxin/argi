@@ -21,10 +21,15 @@ single_identity := (.value: Float32) -> (.result: Float32) { result = value }
 double_identity := (.value: Float64) -> (.result: Float64) { result = value }
 
 main := () -> (.status_code: Int32) {
-    if #run probe() != 42 { abort }
-    if #run fraction() != 0.123123 { abort }
-    if #run half_identity(.value = 1.5) != 1.5 { abort }
-    if #run single_identity(.value = 0.123123) != 0.123123 { abort }
-    if #run double_identity(.value = 16777217.0) != 16777217.0 { abort }
+    if [#run () -> (.value: Int32) { value = probe() }] != 42 { abort }
+    if [#run () -> (.value: Float32) { value = fraction() }] != 0.123123 { abort }
+    if [#run () -> (.value: Float16) { value = half_identity(.value = 1.5) }] != 1.5 { abort }
+    if [#run () -> (.value: Float32) { value = single_identity(.value = 0.123123) }] != 0.123123 {
+        abort
+    }
+    if [
+        [#run () -> (.value: Float64) { value = double_identity(.value = 16777217.0) }]
+        != 16777217.0
+    ] { abort }
     status_code = probe()
 }
