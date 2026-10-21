@@ -800,10 +800,16 @@ const Context = struct {
         return .{ .start = fields.start, .len = fields.len };
     }
 
-    fn resolveStagedEntryCapture(context: *anyopaque, node: syn.NodeIndex, name: []const u8) anyerror!?entities.ModuleTypeId {
+    fn resolveStagedEntryCapture(context: *anyopaque, node: syn.NodeIndex, name: []const u8) anyerror!?@import("parameterized/lowerer.zig").EntryCaptureSource.Value {
         const self: *Context = @ptrCast(@alignCast(context));
-        const binding = (try self.captureEntryBinding(name, node)) orelse return null;
-        return binding.ty;
+        const parent = self.entry_parent orelse return null;
+        if (parent.lookupBinding(name)) |binding| {
+            const value = try parent.resolved(node, binding.ty, .{ .binding_use = binding.id });
+            return .{ .value = value.node };
+        }
+        for (self.graph.declarations.items) |declaration|
+            if (std.mem.eql(u8, self.graph.text(declaration.name), name)) return null;
+        return .{ .owner = parent.current_function };
     }
 
     fn lowerComptimeEntry(self: *Context, node: syn.NodeIndex) anyerror!Lowered {
@@ -860,7 +866,7 @@ const Context = struct {
         try body.bindInterface(output, .variable, &outputs);
         const output_bindings = try body.writer.appendBindingRefs(outputs.items);
         body.writer.pending_owner_function = function_id;
-        const staged = self.tree.hasComptimeSelection(entry.body);
+        const staged = self.tree.hasEntryComptimeSelection(entry.body);
         if (staged) try @import("parameterized/lowerer.zig").lowerConcreteEntry(self.graph, &self.writer, self.file_index, self.tree, self.source, node, declaration_id, function_id, .{ .context = &body, .resolve = resolveStagedEntryCapture });
         const block = if (staged) null else if (entry.output) |output_syntax|
             try body.lowerBlockWithDefaults(entry.body, .{ .syntax = output_syntax, .bindings = outputs.items })
@@ -890,6 +896,7 @@ const Context = struct {
             try self.writer.addResolvedType(.{ .structural = .{ .fields = .{ .start = output.start, .len = output.len } } });
         const arguments = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = captured_values_start, .len = @intCast(body.entry_captures.items.len) } } });
         const result = try self.resolved(node, result_type, .{ .function_call = .{ .callee = function_id, .input = arguments.node } });
+        if (staged) _ = try self.writer.addPendingOperation(.{ .resolve_entry_call = .{ .node = result.node, .callee = function_id } });
         // A directly nested entry executes inside the enclosing compile-time
         // invocation. Its captured inputs belong to that VM frame, not to a
         // separately freezable request with no argument environment.

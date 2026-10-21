@@ -23,8 +23,9 @@ captured_local#(.n: Int32) := () -> (.result: Int32) {
 }
 
 selected_capture#(.n: Int32) := (.runtime_value: Int32) -> (.result: Int32) {
+    selector := copy_value(.value = n)
     result = #run () -> (.value: Int32) {
-        #if n == 42 { value = n } #else { value = runtime_value }
+        #if selector == 42 { value = n } #else { value = runtime_value }
     }
 }
 

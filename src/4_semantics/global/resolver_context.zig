@@ -84,6 +84,8 @@ pub const Context = struct {
             .stable_declaration_count = graph.declarations.items.len,
             .stable_node_count = graph.nodes.items.len,
         };
+        self.generic_functions.capture_lookup_context = &self.expressions;
+        self.generic_functions.capture_lookup = expression_mod.Resolver.captureBinding;
         self.generics.execution_context = &self.staged_execution;
         self.generics.checkpoint_execution = execution.Scheduler.checkpoint;
         self.generics.rollback_execution = execution.Scheduler.rollback;
@@ -377,6 +379,7 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     try std.testing.expect(candidate.core.graph == &candidate_graph);
     try std.testing.expect(candidate.generics.core == &candidate.core);
     try std.testing.expect(candidate.generic_functions.active_instance == null);
+    try std.testing.expect(candidate.generic_functions.capture_lookup_context.? == @as(*anyopaque, &candidate.expressions));
     try std.testing.expect(candidate.generics.execution_context.? == @as(*anyopaque, &candidate.staged_execution));
     try std.testing.expect(candidate.staged_execution.functions == &candidate.generic_functions);
     try std.testing.expect(candidate.ownership.dispatch.? == &candidate.dispatch);

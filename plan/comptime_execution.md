@@ -32,11 +32,6 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   and cleanup, sharing the execution host boundary with VM programs and the REPL.
   Keep capabilities explicit; define host effects and build dependencies before
   enabling filesystem, stdin, networking, processes or unrestricted FFI.
-- Extend selected-branch capture completion to concrete staged entries. Generic
-  entries already add inputs only for materialized uses, through ordinary late
-  argument completion. The concrete module bridge still captures both branches
-  before selection; a discarded runtime value can reject an otherwise valid
-  entry. Preserve ordinary call semantics and avoid fictitious input values.
 - Extend temporary type recipes beyond captured defaults to inferred identities
   and transient declaration origins; validate branch selection in native and
   retained sessions.

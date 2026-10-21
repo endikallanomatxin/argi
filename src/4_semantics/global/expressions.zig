@@ -26,12 +26,21 @@ pub const Resolver = struct {
     pub fn deinit(self: *Resolver) void {
         self.session_bindings.deinit(self.allocator);
     }
-    fn sessionBinding(self: *const Resolver, name: []const u8) ?global_sg.GlobalBindingId {
-        if (self.continuation_function == null or self.operation_owner != self.continuation_function) return null;
+    pub fn captureBinding(context: *anyopaque, module_index: usize, owner: ?global_sg.GlobalFunctionId, name: []const u8) ?global_sg.GlobalBindingId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        return self.sessionBindingForOwner(name, owner) orelse name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name);
+    }
+
+    fn sessionBindingForOwner(self: *const Resolver, name: []const u8, owner: ?global_sg.GlobalFunctionId) ?global_sg.GlobalBindingId {
+        if (self.continuation_function == null or owner != self.continuation_function) return null;
         for (self.session_bindings.items) |binding| {
             if (std.mem.eql(u8, self.graph.text(self.graph.binding(binding).name), name)) return binding;
         }
         return null;
+    }
+
+    fn sessionBinding(self: *const Resolver, name: []const u8) ?global_sg.GlobalBindingId {
+        return self.sessionBindingForOwner(name, self.operation_owner);
     }
 
     pub fn tryResolve(

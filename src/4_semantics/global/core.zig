@@ -400,6 +400,15 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_type => |value| try self.resolveTypeHole(module_index, module, o, value),
+            .resolve_entry_call => |value| blk: {
+                const callee = globalizer.globalFunction(o, value.callee);
+                const function = self.graph.function(callee);
+                if (function.body == null) break :blk .deferred;
+                const node = self.graph.node(globalizer.globalNode(o, value.node));
+                if (node.content != .function_call or node.content.function_call.callee != callee or !function.flags.is_comptime_entry)
+                    return error.InvalidCompileTimeEntryCall;
+                break :blk resolution.Result.fromBool(try self.completeCallInputFields(function.input, node.content.function_call.input));
+            },
             .resolve_value_type => |value| blk: {
                 const ty = self.graph.node(globalizer.globalNode(o, value.value)).ty orelse break :blk .deferred;
                 if (self.graph.isTypeUnresolved(ty)) break :blk .deferred;

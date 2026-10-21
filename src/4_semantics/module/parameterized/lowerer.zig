@@ -59,8 +59,9 @@ pub fn lowerDiagnosed(
 }
 
 pub const EntryCaptureSource = struct {
+    pub const Value = union(enum) { value: entities.ModuleNodeId, owner: ?entities.ModuleFunctionId };
     context: *anyopaque,
-    resolve: *const fn (*anyopaque, syn.NodeIndex, []const u8) anyerror!?entities.ModuleTypeId,
+    resolve: *const fn (*anyopaque, syn.NodeIndex, []const u8) anyerror!?Value,
 };
 
 /// Retain an anonymous entry body in the ordinary staged-function representation.
@@ -88,16 +89,14 @@ pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer
     const output = if (entry.output) |syntax| try context.lowerType(syntax, false) else empty;
     const output_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.output) |syntax| try context.seedFunctionBindings(syntax, .variable) else .{ .start = 0, .len = 0 };
     const body = try context.lowerBlock(entry.body);
-    const capture_interface = try context.publishEntryCaptures(node);
     try graph.semantic.parameterized_storage.parameterized_functions.append(writer.allocator, .{
         .declaration = declaration,
         .is_comptime_entry = true,
         .concrete_function = function,
         .parameters = .{ .start = 0, .len = 0 },
-        .input = capture_interface.ty,
+        .input = empty,
         .output = output,
         .body = body,
-        .input_bindings = capture_interface.bindings,
         .output_bindings = output_bindings,
     });
 }
@@ -186,7 +185,7 @@ pub const Context = struct {
     inside_comptime_entry: bool = false,
     entry_parent: ?*Context = null,
     module_capture_source: ?EntryCaptureSource = null,
-    entry_captures: std.ArrayList(struct { name: []const u8, ty: ?ir.ParameterizedTypeId, outer_value: ?ir.ParameterizedNodeId, use_node: ir.ParameterizedNodeId }) = .empty,
+    entry_captures: std.ArrayList(struct { name: []const u8, use_node: ir.ParameterizedNodeId }) = .empty,
     bindings: std.array_list.Managed(BindingName),
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
@@ -1137,47 +1136,24 @@ pub const Context = struct {
         return result;
     }
 
-    fn publishEntryCaptures(self: *Context, node: syn.NodeIndex) !struct { ty: ir.ParameterizedTypeId, bindings: primitives.Range(ir.ParameterizedBindingId) } {
-        // Reserve each complete capture interface after discovering its uses.
-        // Nested bodies cannot interleave their bindings into this range.
-        const capture_binding_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
-        const capture_field_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.fields.items.len);
-        for (self.entry_captures.items, 0..) |capture, offset| {
-            const binding: ir.ParameterizedBindingId = @enumFromInt(capture_binding_start + @as(u32, @intCast(offset)));
-            const capture_name = try self.writer.addString(capture.name);
-            try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{ .name = capture_name, .source = self.sourceRef(node), .ty = capture.ty.?, .mutability = .constant });
-            try self.graph.semantic.parameterized_storage.ir.fields.append(self.allocator, .{ .name = capture_name, .source = self.sourceRef(node), .ty = capture.ty.? });
-            self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(capture.use_node)].resolved.content = .{ .binding_use = binding };
-        }
-        const capture_count: u32 = @intCast(self.entry_captures.items.len);
-        const capture_input = try self.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = capture_field_start, .len = capture_count } } } });
-        return .{ .ty = capture_input, .bindings = .{ .start = capture_binding_start, .len = capture_count } };
-    }
-
     fn captureEntryValue(self: *Context, node: syn.NodeIndex, name: []const u8) anyerror!?ir.ParameterizedNodeId {
         for (self.entry_captures.items) |capture|
             if (std.mem.eql(u8, capture.name, name)) return capture.use_node;
-        var outer: ?ir.ParameterizedNodeId = null;
-        const ty: ?ir.ParameterizedTypeId = if (self.entry_parent) |parent| blk: {
-            outer = if (parent.parameterizedBinding(name)) |binding|
+        const use = if (self.entry_parent) |parent| blk: {
+            const outer = if (parent.parameterizedBinding(name)) |binding|
                 try parent.addResolvedNode(node, parent.graph.semantic.parameterized_storage.ir.bindingType(binding), .{ .binding_use = binding })
             else
                 (try parent.captureEntryValue(node, name)) orelse return null;
-            break :blk switch (self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer.?)]) {
-                .resolved => |value| value.ty,
-                .pending => null,
-            };
+            break :blk try self.addPending(node, .entry_capture, &.{outer}, try self.writer.addString(name), null, .none);
         } else if (self.module_capture_source) |source| blk: {
-            const module_type = (try source.resolve(source.context, node, name)) orelse return null;
-            break :blk try self.addType(.{ .concrete = module_type });
+            const value = (try source.resolve(source.context, node, name)) orelse return null;
+            const detail: ir.PendingExpressionDetail = switch (value) {
+                .value => |value_node| .{ .capture_module_value = value_node },
+                .owner => |owner| .{ .capture_owner = owner },
+            };
+            break :blk try self.addPending(node, .entry_capture, &.{}, try self.writer.addString(name), null, detail);
         } else return null;
-        // Generic captures remain pending until their selected branch is
-        // materialized. Concrete module captures keep their fixed input bridge.
-        const use = if (outer) |value|
-            try self.addPending(node, .entry_capture, &.{value}, try self.writer.addString(name), null, .none)
-        else
-            try self.addResolvedNode(node, ty, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
-        try self.entry_captures.append(self.allocator, .{ .name = name, .ty = ty, .outer_value = outer, .use_node = use });
+        try self.entry_captures.append(self.allocator, .{ .name = name, .use_node = use });
         return use;
     }
 

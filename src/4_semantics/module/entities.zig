@@ -179,6 +179,7 @@ pub const PendingOperation = union(enum) {
         value: ModuleNodeId,
         destination: ModuleTypeId,
     },
+    resolve_entry_call: struct { node: ModuleNodeId, callee: ModuleFunctionId },
     resolve_call: struct {
         contract_type: ?ModuleTypeId = null,
         node: ModuleNodeId,

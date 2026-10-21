@@ -82,7 +82,7 @@ const Context = struct {
         defer self.budget = previous_budget;
         const result = switch (node.content) {
             .function_call => try self.callConstant(id, 0),
-            .binary_operation, .comparison, .struct_field_access, .array_index => try self.expressionConstant(id, 0),
+            .binding_use, .binary_operation, .comparison, .struct_field_access, .array_index => try self.expressionConstant(id, 0),
             else => return error.UnsupportedCompileTimeExpression,
         };
         self.graph.nodes.items[@intFromEnum(id)] = self.graph.node(result);
@@ -195,6 +195,13 @@ const Context = struct {
 
     fn expressionConstant(self: *Context, id: g.GlobalNodeId, depth: usize) !g.GlobalNodeId {
         const node = self.graph.node(id);
+        if (node.content == .binding_use) {
+            const binding = self.graph.binding(node.content.binding_use);
+            if (binding.mutability != .constant) return error.NonConstantCompileTimeArgument;
+            const initialization = binding.initialization orelse return error.NonConstantCompileTimeArgument;
+            const value = try self.constant(initialization, depth + 1);
+            return @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, &.{id}, &.{value}, &self.budget);
+        }
         var operands: [2]g.GlobalNodeId = undefined;
         const count: usize = switch (node.content) {
             .binary_operation => |value| setOperands(&operands, value.left, value.right),

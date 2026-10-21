@@ -141,7 +141,21 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
         },
         .resolve_expression => |value| {
             try require(verify.rangeFits(value.operands, storage.node_refs.items.len));
-            if (value.kind == .entry_capture) try require(value.operands.len == 1 and value.name != null);
+            if (value.kind == .entry_capture) {
+                try require(value.name != null);
+                switch (value.detail) {
+                    .none => try require(value.operands.len == 1),
+                    .capture_module_value => |node| {
+                        try require(value.operands.len == 0);
+                        try require(verify.idFits(node, graph.semantic.nodes.items.len));
+                    },
+                    .capture_owner => |owner| {
+                        try require(value.operands.len == 0);
+                        try require(verify.optionalIdFits(owner, graph.functions.items.len));
+                    },
+                    else => return error.InvalidModuleParameterizedIR,
+                }
+            }
             if (value.kind == .comptime_if) {
                 try require(value.operands.len == 2 or value.operands.len == 3);
                 for (storage.node_refs.items[value.operands.start + 1 ..][0 .. value.operands.len - 1]) |branch| {

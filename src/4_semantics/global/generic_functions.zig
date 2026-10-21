@@ -55,6 +55,8 @@ pub const ConstraintFailure = struct {
 
 pub const Resolver = struct {
     active_instance: ?*InstanceContext = null,
+    capture_lookup_context: ?*anyopaque = null,
+    capture_lookup: ?*const fn (*anyopaque, usize, ?global_sg.GlobalFunctionId, []const u8) ?global_sg.GlobalBindingId = null,
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -2064,6 +2066,7 @@ pub const Resolver = struct {
                 speculation.retainPendingExecution();
                 return false;
             }
+            if (err == error.UnresolvedCompileTimeCaptureType) return false;
             if (err == error.OutOfMemory or err == error.Reported) return err;
             if (self.nested_call_context) |contracts| if (contracts.participant_conformance_failure != null) return err;
             if (self.generics.comptime_failure == null) self.generics.comptime_failure = .{
@@ -2363,6 +2366,7 @@ pub const Resolver = struct {
                     },
                 }
             }
+            if (self.function == null) return self.instantiateNode(local);
             return error.UnresolvedCompileTimeCaptureType;
         }
 
@@ -2371,9 +2375,22 @@ pub const Resolver = struct {
             const module = &self.resolver.modules[self.module_index];
             const storage = &module.semantic.parameterized_storage.ir;
             const expression = storage.pending.items[@intFromEnum(storage.nodes.items[@intFromEnum(id)].pending)].resolve_expression;
-            const value = try self.entryCaptureSource(storage.node_refs.items[expression.operands.start]);
+            const value = switch (expression.detail) {
+                .none => try self.entryCaptureSource(storage.node_refs.items[expression.operands.start]),
+                .capture_module_value => |value_node| globalizer.globalNode(self.resolver.offsets[self.module_index], value_node),
+                .capture_owner => |owner| blk: {
+                    const binding = self.resolver.capture_lookup.?(self.resolver.capture_lookup_context.?, self.module_index, if (owner) |function| globalizer.globalFunction(self.resolver.offsets[self.module_index], function) else null, module.text(expression.name.?)) orelse {
+                        self.resolver.generics.comptime_failure = .{ .source = self.resolver.sourceFor(self.module_index, expression.source), .reason = "unknown name in this scope", .unknown_name = module.text(expression.name.?) };
+                        return error.UnknownParameterizedName;
+                    };
+                    if (self.resolver.graph.isBindingTypeUnresolved(binding)) return error.UnresolvedCompileTimeCaptureType;
+                    break :blk try self.resolver.core.appendNode(self.resolver.sourceFor(self.module_index, expression.source), self.resolver.graph.binding(binding).ty, .{ .binding_use = binding });
+                },
+                else => return error.InvalidParameterizedEntryCapture,
+            };
             const ty = self.resolver.graph.node(value).ty orelse return error.UnresolvedCompileTimeCaptureType;
             if (self.resolver.graph.isTypeUnresolved(ty)) return error.UnresolvedCompileTimeCaptureType;
+            if (self.function == null) return value;
             const name = try self.resolver.graph.addString(self.resolver.allocator, module.text(expression.name.?));
             const source = self.resolver.sourceFor(self.module_index, expression.source);
             const binding: global_sg.GlobalBindingId = @enumFromInt(self.resolver.graph.bindings.items.len);

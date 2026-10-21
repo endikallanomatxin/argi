@@ -478,6 +478,8 @@ test "interactive conditional compile-time entries preserve selection across rev
     try session.submit("enabled := () -> (.result: Bool) { result = false }");
     try session.submitStatements("saved ::= #run () -> (.result: Int32) { #if enabled() { result = missing() } #else { result = 42 } }");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("saved")).?.value.runtime.integer);
+    try session.submitStatements("fixed: Int32 = 42\nbranch_enabled: Bool = true\nruntime_value :: Int32 = 7");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("#run () -> (.result: Int32) { #if branch_enabled { result = fixed } #else { result = runtime_value } }")).?.value.runtime.integer);
     const revision = session.compiler.revision;
     try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.result: Int32) { #if enabled() { result = 42 } #else { result = missing() } }"));
     try std.testing.expectEqual(revision, session.compiler.revision);

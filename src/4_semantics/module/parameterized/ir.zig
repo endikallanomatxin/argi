@@ -181,6 +181,8 @@ pub const PendingExpressionKind = enum(u8) {
 };
 
 pub const PendingExpressionDetail = union(enum(u8)) {
+    capture_module_value: entities.ModuleNodeId,
+    capture_owner: ?entities.ModuleFunctionId,
     none,
     comptime_parameter: ComptimeParameterId,
     binary: primitives.BinaryOperator,

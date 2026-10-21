@@ -206,6 +206,13 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.value, semantic.nodes.items.len));
             try require(verify.idFits(value.destination, views.typeCount(graph)));
         },
+        .resolve_entry_call => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.callee, graph.functions.items.len));
+            const node = semantic.nodes.items[@intFromEnum(value.node)];
+            try require(node == .resolved and node.resolved.content == .function_call);
+            try require(node.resolved.content.function_call.callee == value.callee);
+        },
         .resolve_call => |value| {
             try require(verify.optionalIdFits(value.contract_type, views.typeCount(graph)));
             try require(verify.idFits(value.node, semantic.nodes.items.len));

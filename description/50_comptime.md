@@ -105,8 +105,8 @@ external inputs must be tracked as build dependencies before enabling them.
 > Interactive selection retains successful results across commands and rejects
 > invalid selected branches without changing the accepted session revision.
 > Captured lexical values travel through ordinary checked call inputs. Their
-> types can be inferred, including for constants retained by the REPL. Staged
-> captures are added as inputs only when the selected branch uses them. Their
+> types can be inferred, including for constants retained by the REPL. Concrete
+> and generic staged captures become inputs only when the selected branch uses them. Their
 > types come from the enclosing specialization's existing bindings, without
 > repeating initializer execution.
 > The superseded `#run function(...)` form is rejected; invoke the function

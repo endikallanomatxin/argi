@@ -14305,3 +14305,13 @@ test "feature_tests/execution/156X_nested_comptime_reference_output" {
 test "feature_tests/execution/157X_selected_runtime_comptime_capture" {
     try buildExpectFail("tests/feature_tests/execution/157X_selected_runtime_comptime_capture", "runtime values cannot be used");
 }
+
+test "feature_tests/execution/158_concrete_selected_comptime_captures" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/158_concrete_selected_comptime_captures");
+    try runExpect("tests/feature_tests/execution/158_concrete_selected_comptime_captures", 42);
+    try vmExpect("tests/feature_tests/execution/158_concrete_selected_comptime_captures", 42, null);
+}
+
+test "feature_tests/execution/159X_concrete_selected_runtime_capture" {
+    try buildExpectFail("tests/feature_tests/execution/159X_concrete_selected_runtime_capture", "runtime values cannot be used");
+}

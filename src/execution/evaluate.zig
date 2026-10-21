@@ -154,7 +154,7 @@ fn freeze(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, ty: g.Glo
 pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, root: g.GlobalNodeId, operands: []const g.GlobalNodeId, args: []const bytecode.Value, budget: *Limits) !g.GlobalNodeId {
     const node = graph.node(root);
     switch (node.content) {
-        .binary_operation, .comparison, .struct_field_access, .array_index => {},
+        .binding_use, .binary_operation, .comparison, .struct_field_access, .array_index => {},
         else => return error.UnsupportedCompileTimeExpression,
     }
     var scratch = std.heap.ArenaAllocator.init(allocator);

@@ -572,48 +572,60 @@ pub const FileSyntaxTree = struct {
     /// Only block statements introduce conditional compilation. Follow the
     /// parsed control structure rather than searching source text for '#if'.
     pub fn hasComptimeSelection(tree: *const FileSyntaxTree, node: NodeIndex) bool {
+        return tree.hasComptimeSelectionWithin(node, false);
+    }
+
+    // An entry shares its nested compile-time execution, while an ordinary
+    // containing function keeps its own staging boundary.
+    pub fn hasEntryComptimeSelection(tree: *const FileSyntaxTree, node: NodeIndex) bool {
+        return tree.hasComptimeSelectionWithin(node, true);
+    }
+
+    fn hasComptimeSelectionWithin(tree: *const FileSyntaxTree, node: NodeIndex, descend_entries: bool) bool {
+        if (tree.comptimeEntry(node)) |entry|
+            return descend_entries and tree.hasComptimeSelectionWithin(entry.body, true);
         if (tree.codeBlock(node)) |block| {
-            for (block.statements) |statement| if (tree.hasComptimeSelection(statement)) return true;
+            for (block.statements) |statement| if (tree.hasComptimeSelectionWithin(statement, descend_entries)) return true;
         } else if (tree.ifStatement(node)) |statement| {
-            return statement.comptime_selection or tree.hasComptimeSelection(statement.condition) or tree.hasComptimeSelection(statement.then_block) or
-                (if (statement.else_block) |alternate| tree.hasComptimeSelection(alternate) else false);
+            return statement.comptime_selection or tree.hasComptimeSelectionWithin(statement.condition, descend_entries) or tree.hasComptimeSelectionWithin(statement.then_block, descend_entries) or
+                (if (statement.else_block) |alternate| tree.hasComptimeSelectionWithin(alternate, descend_entries) else false);
         } else if (tree.whileStatement(node)) |statement| {
-            return tree.hasComptimeSelection(statement.condition) or tree.hasComptimeSelection(statement.body);
+            return tree.hasComptimeSelectionWithin(statement.condition, descend_entries) or tree.hasComptimeSelectionWithin(statement.body, descend_entries);
         } else if (tree.forStatement(node)) |statement| {
-            return tree.hasComptimeSelection(statement.iterable) or tree.hasComptimeSelection(statement.body);
+            return tree.hasComptimeSelectionWithin(statement.iterable, descend_entries) or tree.hasComptimeSelectionWithin(statement.body, descend_entries);
         } else if (tree.matchStatement(node)) |statement| {
-            if (tree.hasComptimeSelection(statement.value)) return true;
-            for (statement.cases) |case| if (tree.hasComptimeSelection(tree.matchCase(case).?.body)) return true;
+            if (tree.hasComptimeSelectionWithin(statement.value, descend_entries)) return true;
+            for (statement.cases) |case| if (tree.hasComptimeSelectionWithin(tree.matchCase(case).?.body, descend_entries)) return true;
         } else if (tree.tag(node) == .handle_expression) {
             const handle = tree.extraData(HandleExtra, tree.data(node).extra);
-            return tree.hasComptimeSelection(handle.value) or tree.hasComptimeSelection(handle.body);
+            return tree.hasComptimeSelectionWithin(handle.value, descend_entries) or tree.hasComptimeSelectionWithin(handle.body, descend_entries);
         } else if (tree.tag(node) == .error_report_return_block) {
             const pair = tree.data(node).node_and_node;
-            return tree.hasComptimeSelection(pair.first) or tree.hasComptimeSelection(pair.second);
+            return tree.hasComptimeSelectionWithin(pair.first, descend_entries) or tree.hasComptimeSelectionWithin(pair.second, descend_entries);
         } else if (tree.symbolDeclaration(node)) |declaration| {
-            return if (declaration.value) |value| tree.hasComptimeSelection(value) else false;
+            return if (declaration.value) |value| tree.hasComptimeSelectionWithin(value, descend_entries) else false;
         } else if (tree.assignment(node)) |assignment_node| {
-            return tree.hasComptimeSelection(assignment_node.value);
+            return tree.hasComptimeSelectionWithin(assignment_node.value, descend_entries);
         } else if (tree.returnStatement(node)) |statement| {
-            return if (statement.value) |value| tree.hasComptimeSelection(value) else false;
+            return if (statement.value) |value| tree.hasComptimeSelectionWithin(value, descend_entries) else false;
         } else if (tree.functionCall(node)) |call| {
-            return tree.hasComptimeSelection(call.input);
+            return tree.hasComptimeSelectionWithin(call.input, descend_entries);
         } else if (tree.structValueLiteral(node)) |collection_value| {
-            for (collection_value.fields) |field| if (tree.hasComptimeSelection(tree.valueField(field).?.value)) return true;
+            for (collection_value.fields) |field| if (tree.hasComptimeSelectionWithin(tree.valueField(field).?.value, descend_entries)) return true;
         } else if (tree.listLiteral(node)) |collection_value| {
-            for (collection_value.elements) |element| if (tree.hasComptimeSelection(element)) return true;
+            for (collection_value.elements) |element| if (tree.hasComptimeSelectionWithin(element, descend_entries)) return true;
         } else if (tree.choiceLiteral(node)) |collection_value| {
-            return if (collection_value.payload) |payload| tree.hasComptimeSelection(payload) else false;
+            return if (collection_value.payload) |payload| tree.hasComptimeSelectionWithin(payload, descend_entries) else false;
         } else if (tree.structFieldAccess(node)) |access| {
-            return tree.hasComptimeSelection(access.value);
+            return tree.hasComptimeSelectionWithin(access.value, descend_entries);
         } else if (tree.choicePayloadAccess(node)) |access| {
-            return tree.hasComptimeSelection(access.value);
+            return tree.hasComptimeSelectionWithin(access.value, descend_entries);
         } else if (tree.binaryOperation(node)) |operation| {
-            return tree.hasComptimeSelection(operation.lhs) or tree.hasComptimeSelection(operation.rhs);
+            return tree.hasComptimeSelectionWithin(operation.lhs, descend_entries) or tree.hasComptimeSelectionWithin(operation.rhs, descend_entries);
         } else if (tree.unaryOperand(node)) |operand| {
-            return tree.hasComptimeSelection(operand);
+            return tree.hasComptimeSelectionWithin(operand, descend_entries);
         } else if (tree.assumedDeclaration(node)) |declaration| {
-            return tree.hasComptimeSelection(declaration);
+            return tree.hasComptimeSelectionWithin(declaration, descend_entries);
         }
         return false;
     }
