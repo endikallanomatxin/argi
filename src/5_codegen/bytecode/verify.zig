@@ -125,6 +125,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const to = program.graph.semanticType(f.slots[x.dst]);
                     if (from != .pointer or to != .pointer or !types.isBuiltin(program.graph, to.pointer.child, .UInt8) or
                         (to.pointer.mutability == .read_write and from.pointer.mutability != .read_write)) return error.InvalidBytecode;
+                    if (x.permission != to.pointer.mutability or x.endian != program.graph.target.arch.endian()) return error.InvalidBytecode;
                     var arena = std.heap.ArenaAllocator.init(allocator);
                     defer arena.deinit();
                     const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, from.pointer.child) catch return error.InvalidBytecode;
@@ -611,6 +612,41 @@ fn sessionBinding(program: Program, index: u32) !b.SessionBinding {
     const session = program.session orelse return error.InvalidBytecode;
     if (index >= session.bindings.len) return error.InvalidBytecode;
     return session.bindings[index];
+}
+
+test "bytecode numeric byte descriptors preserve selected permissions and endianness" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt32 },
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } },
+    });
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const layout = try @import("numeric_layout.zig").compile(arena.allocator(), &graph, @enumFromInt(0));
+    const endian = graph.target.arch.endian();
+    const source = @import("../../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    var code = [_]Instruction{
+        .{ .source = source, .op = .{ .numeric_bytes = .{ .dst = 1, .src = 0, .layout = layout, .permission = .read_write, .endian = endian } } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+    };
+    var slots = [_]Type{ @enumFromInt(2), @enumFromInt(3) };
+    const function = b.Function{ .slots = &slots, .inputs = &.{0}, .outputs = &.{1}, .code = &code };
+    const program = Program{ .graph = &graph, .functions = &.{}, .expression = &function };
+    try verify(a, program);
+    code[0].op.numeric_bytes.permission = .read_only;
+    try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+    slots[1] = @enumFromInt(4);
+    try verify(a, program);
+    code[0].op.numeric_bytes.permission = .read_write;
+    try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+    code[0].op.numeric_bytes.permission = .read_only;
+    code[0].op.numeric_bytes.endian = if (endian == .little) .big else .little;
+    try std.testing.expectError(error.InvalidBytecode, verify(a, program));
 }
 
 test "bytecode verifier allocation scaling for linear functions" {

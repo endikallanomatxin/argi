@@ -977,7 +977,7 @@ const FunctionLower = struct {
                     error.UnsupportedNumericLayout => return self.parent.reject(node.source, "byte reinterpretation of nonnumeric storage"),
                     else => return err,
                 };
-                _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout } });
+                _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout, .permission = to.pointer.mutability, .endian = self.parent.graph.target.arch.endian() } });
             }
         } else if (self.parent.mode == .runtime and @import("memory_boundary.zig").classify(self.parent.graph, x.callee) != null) {
             _ = try self.emit(node.source, .{ .memory_call = .{ .outputs = outputs, .function = x.callee, .operation = @import("memory_boundary.zig").classify(self.parent.graph, x.callee).?, .args = args } });

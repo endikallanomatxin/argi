@@ -103,7 +103,7 @@ pub const Instruction = struct {
         static_bytes: struct { dst: Slot, bytes: []const u8 },
         acquired_reference: struct { dst: Slot, address: Slot, layout: *const @import("numeric_layout.zig").Layout, permission: p.PointerMutability, endian: std.builtin.Endian },
         erase_reference: struct { dst: Slot, src: Slot },
-        numeric_bytes: struct { dst: Slot, src: Slot, layout: *const @import("numeric_layout.zig").Layout },
+        numeric_bytes: struct { dst: Slot, src: Slot, layout: *const @import("numeric_layout.zig").Layout, permission: p.PointerMutability, endian: std.builtin.Endian },
         offset_reference: struct { dst: Slot, src: Slot, elements: Slot },
         virtualize: struct { dst: Slot, receiver: Slot, table: *const VirtualTable },
         virtual_call: *const VirtualInvocation,

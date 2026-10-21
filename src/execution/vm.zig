@@ -389,8 +389,8 @@ pub const Vm = struct {
                 .trace_location => |x| try slots.put(x.dst, try self.context().registerTraceLocation(x.location.*)),
                 .static_bytes => |x| try slots.put(x.dst, try self.context().literalBytes(x.bytes)),
                 .numeric_bytes => |x| {
-                    var reference = try self.context().storage.numericBytes((try slots.get(x.src)).reference, x.layout, unit.graph.target.arch.endian());
-                    reference.mutability = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
+                    var reference = try self.context().storage.numericBytes((try slots.get(x.src)).reference, x.layout, x.endian);
+                    reference.mutability = x.permission;
                     try slots.put(x.dst, .{ .reference = reference });
                 },
                 .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, integer.decode((try slots.get(x.elements)).integer, b.integerBounds(unit.graph, f.slots[x.elements]).?)) }),
