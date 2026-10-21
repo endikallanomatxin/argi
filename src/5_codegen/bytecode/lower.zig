@@ -541,8 +541,8 @@ const FunctionLower = struct {
                     return;
                 }
                 if (self.parent.isGlobal(x.binding)) {
-                    try self.parent.requireGlobal(x.binding);
-                    const destination = try self.captureWrite(node.source, .{ .root = @intFromEnum(x.binding), .region = .global, .path = &.{} }, self.parent.graph.binding(x.binding).ty, false);
+                    const target = try self.globalPlace(x.binding, node.source);
+                    const destination = try self.captureWrite(node.source, target, self.parent.graph.binding(x.binding).ty, false);
                     try self.commitWrite(node.source, destination, try self.expression(x.value));
                     return;
                 }
@@ -753,6 +753,18 @@ const FunctionLower = struct {
         path[base.path.len] = projection;
         return .{ .root = base.root, .region = base.region, .path = path };
     }
+    fn globalPlace(self: *FunctionLower, binding: g.GlobalBindingId, source: p.SourceRef) !b.Place {
+        const record = self.parent.graph.binding(binding);
+        if (self.parent.mode == .compile_time and record.mutability != .constant) {
+            // Tables can retain operations that this evaluation never invokes.
+            // Reject the access on its execution path without acquiring runtime storage.
+            _ = try self.emit(source, .{ .trap = .runtime_storage });
+            return .{ .root = try self.newSlot(record.ty), .path = &.{} };
+        }
+        try self.parent.requireGlobal(binding);
+        return .{ .root = @intFromEnum(binding), .region = .global, .path = &.{} };
+    }
+
     // Resolve storage syntactically, without evaluating it into a copied value.
     // Address operations retain storage identity. Intermediate array bounds are checked
     // before later indices or the RHS, matching native address evaluation.
@@ -771,10 +783,10 @@ const FunctionLower = struct {
             },
             .binding_use => |binding| if (self.parent.sessionIndex(binding)) |index|
                 .{ .root = index, .region = .session, .path = &.{} }
-            else if (self.parent.isGlobal(binding)) blk: {
-                try self.parent.requireGlobal(binding);
-                break :blk .{ .root = @intFromEnum(binding), .region = .global, .path = &.{} };
-            } else .{ .root = self.bindings.get(binding) orelse return self.parent.reject(node.source, "global or captured storage"), .path = &.{} },
+            else if (self.parent.isGlobal(binding))
+                try self.globalPlace(binding, node.source)
+            else
+                .{ .root = self.bindings.get(binding) orelse return self.parent.reject(node.source, "global or captured storage"), .path = &.{} },
             .address_of => |value| self.place(value),
             .dereference => |x| self.project(.{ .root = try self.expression(x.pointer), .path = &.{} }, .dereference),
             .struct_field_access => |x| self.project(try self.place(x.value), .{ .field = x.field_index }),

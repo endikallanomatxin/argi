@@ -1329,11 +1329,27 @@ test "bytecode anonymous compile-time entries consume known module values" {
     , .{}));
 }
 
+test "anonymous compile-time entries reject runtime storage only on executed paths" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\runtime :: Int32 = 99
+        \\choose(.access: Bool) -> (.value: Int32) := {
+        \\    if access { value = runtime } else { value = 42 }
+        \\}
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = #run () -> (.answer: Int32) {
+        \\        answer = choose(.access = false)
+        \\    }
+        \\}
+    , .{}));
+}
+
 test "anonymous compile-time entries cannot observe mutable runtime globals" {
     const bodies = [_][]const u8{
         "result = runtime_value",
         "result = read_runtime()",
         "result = alias",
+        "runtime_value = 1\nresult = 42",
+        "reference ::= &runtime_value\nresult = 42",
     };
     for (bodies) |body| {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

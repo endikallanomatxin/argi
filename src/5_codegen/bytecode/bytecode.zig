@@ -202,6 +202,7 @@ pub const Instruction = struct {
         jump: u32,
         ret: []const Slot,
         abort_,
+        trap: enum { runtime_storage },
     },
 };
 pub const Function = struct {

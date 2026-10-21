@@ -311,7 +311,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                         for (x.outputs[0..index]) |previous| if (previous == slot) return error.InvalidBytecode;
                     }
                 },
-                .abort_ => {},
+                .abort_, .trap => {},
             }
         }
         // A linear instruction does not need a retained input snapshot. Only
@@ -392,7 +392,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (destinations(inst, &single)) |slot| initialized[slot] = 1;
             var edges: [2]u32 = undefined;
             const count = successors(inst, pc, f.code.len, &edges);
-            if (count == 0 and inst.op != .ret and inst.op != .abort_) return error.InvalidBytecode;
+            if (count == 0 and inst.op != .ret and inst.op != .abort_ and inst.op != .trap) return error.InvalidBytecode;
             for (edges[0..count], 0..) |next, edge| {
                 // An active cleanup branch proves that its concrete owner has
                 // storage. Keep this fact on the active edge only; the vacant
@@ -436,7 +436,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
 // Structural validation has already checked explicit branch targets.
 fn successors(instruction: Instruction, pc: usize, length: usize, edges: *[2]u32) usize {
     return switch (instruction.op) {
-        .ret, .abort_ => 0,
+        .ret, .abort_, .trap => 0,
         .jump => |target| result: {
             edges[0] = target;
             break :result 1;

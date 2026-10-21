@@ -654,6 +654,9 @@ pub const Vm = struct {
                     for (completed.return_slots, result) |dst, value| try caller.put(dst, value);
                 },
                 .abort_ => return error.ExecutionAborted,
+                .trap => |reason| return switch (reason) {
+                    .runtime_storage => error.RuntimeStorageInCompileTime,
+                },
             }
         }
     }
