@@ -2006,6 +2006,10 @@ pub const Resolver = struct {
     fn materializeRetainedBody(self: *Resolver, located: LocatedParameterized, function_id: global_sg.GlobalFunctionId, substitutions: *generic_mod.Resolver.Bindings) !bool {
         const body = located.parameterized.body orelse return false;
         const function = self.graph.function(function_id);
+        inline for (.{ function.input, function.output }) |fields| {
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
+                if (self.graph.isTypeUnresolved(field.ty)) return false;
+        }
         var speculation = self.beginSpeculation();
         defer speculation.deinit();
         errdefer {

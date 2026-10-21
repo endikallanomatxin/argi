@@ -32,12 +32,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   and cleanup, sharing the execution host boundary with VM programs and the REPL.
   Keep capabilities explicit; define host effects and build dependencies before
   enabling filesystem, stdin, networking, processes or unrestricted FFI.
-- Resolve staged capture types that depend on pending calls through GlobalSema.
-  Do not require explicit annotations long term, execute initializers again,
-  or infer types from function names. Concrete captures already use a deferred
-  value/type relation; generic captures currently reuse retained initializer types.
-- Transport enclosing lexical captures into concrete staged entries containing
-  `#if`, preserving selected-branch resolution and per-invocation identity.
+- Select lexical captures after staged `#if` branch materialization. Inputs
+  mentioned only in discarded branches must not become required compile-time
+  captures. The current transport handles inferred values in concrete/staged
+  entries, but still captures both branches before selection; a discarded runtime
+  value can therefore reject an otherwise valid entry. Preserve ordinary call
+  semantics and avoid fictitious values for unused inputs.
 - Extend temporary type recipes beyond captured defaults to inferred identities
   and transient declaration origins; validate branch selection in native and
   retained sessions.

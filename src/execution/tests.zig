@@ -1234,7 +1234,7 @@ test "bytecode nested anonymous entries retain their invocation environment" {
         \\    captured := #run () -> (.answer: Int32) {
         \\        first := #run () -> (.answer: Int32) { answer = known + 1 }
         \\        second := #run () -> (.answer: Int32) { answer = first + 1 }
-        \\        answer = second
+        \\        #if true { answer = second } #else { answer = missing() }
         \\    }
         \\    repeated := #run () -> (.answer: Int32) {
         \\        index :: Int32 = 0
