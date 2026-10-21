@@ -139,6 +139,27 @@ pub const View = struct {
         };
     }
 
+    // The data access has already checked the element index. This selects the
+    // same logical flag range without evaluating the index or value again.
+    pub fn projectElement(self: View, builder: c.LLVMBuilderRef, index: c.LLVMValueRef, refresh: c.LLVMValueRef) !View {
+        const array = self.layouts.description(self.ty).repetition orelse return error.InvalidCleanupEvidence;
+        if (c.LLVMGetTypeKind(c.LLVMTypeOf(index)) != c.LLVMIntegerTypeKind or c.LLVMGetIntTypeWidth(c.LLVMTypeOf(index)) > 64) return error.InvalidCleanupEvidence;
+        const widened = c.LLVMBuildIntCast2(builder, index, c.LLVMInt64Type(), 0, "cleanup.project.index");
+        const offset = c.LLVMBuildAdd(builder, c.LLVMConstInt(c.LLVMInt64Type(), 1, 0), c.LLVMBuildMul(builder, widened, c.LLVMConstInt(c.LLVMInt64Type(), array.element.count, 0), "cleanup.project.stride"), "cleanup.project.offset");
+        const owner = self.runtime_owner orelse RuntimeOwner{
+            .flags = self.owner_flags orelse self.flag_ref,
+            .refresh = refresh,
+            .offset = c.LLVMConstInt(c.LLVMInt64Type(), self.offset, 0),
+        };
+        var indices = [_]c.LLVMValueRef{offset};
+        return .{
+            .flag_ref = c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), self.flag_ref, &indices, 1, "cleanup.project.flags"),
+            .layouts = self.layouts,
+            .ty = array.ty,
+            .runtime_owner = .{ .flags = owner.flags, .refresh = owner.refresh, .offset = c.LLVMBuildAdd(builder, owner.offset, offset, "cleanup.project.owner.offset") },
+        };
+    }
+
     pub fn set(self: View, builder: c.LLVMBuilderRef, enabled: bool) void {
         self.setValue(builder, c.LLVMConstInt(c.LLVMInt1Type(), if (enabled) 1 else 0, 0));
     }
@@ -346,7 +367,11 @@ test "native repeated cleanup refresh emits bounded loops and distinct element f
     first.project(builder, 999_999).?.set(builder, false);
     var refresh: RefreshFunctions = .{};
     defer refresh.deinit(a);
-    _ = try refresh.get(a, &counts, module, @enumFromInt(2));
+    const helper = try refresh.get(a, &counts, module, @enumFromInt(2));
+    const dynamic = try view.projectElement(builder, c.LLVMGetParam(function, 1), helper);
+    try std.testing.expectEqual(@as(g.GlobalTypeId, @enumFromInt(1)), dynamic.ty);
+    try std.testing.expect(dynamic.runtime_owner != null);
+    dynamic.set(builder, true);
     _ = c.LLVMBuildRetVoid(builder);
     var instruction_count: usize = 0;
     var current = c.LLVMGetFirstFunction(module);
@@ -357,7 +382,7 @@ test "native repeated cleanup refresh emits bounded loops and distinct element f
             while (instruction != null) : (instruction = c.LLVMGetNextInstruction(instruction)) instruction_count += 1;
         }
     }
-    try std.testing.expect(instruction_count < 160);
+    try std.testing.expect(instruction_count < 200);
     var message: [*c]u8 = null;
     defer if (message != null) c.LLVMDisposeMessage(message);
     const invalid = c.LLVMVerifyModule(module, c.LLVMReturnStatusAction, &message);
