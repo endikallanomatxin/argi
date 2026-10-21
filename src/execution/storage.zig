@@ -139,8 +139,11 @@ pub const Storage = struct {
         const values = try slots_.cells();
         if (root >= values.len) return error.ExecutionInvalidReference;
         if (values[root] != null or self.frames.items[@intFromEnum(frame)].partial_storage.contains(root)) return error.ExecutionInitializedStorage;
-        try self.charge(if (layout.nodes.len == 0) 0 else layout.nodes[0].span);
+        const charge_count = if (layout.nodes.len == 0) 0 else layout.nodes[0].span;
+        try self.charge(charge_count);
+        errdefer self.cells -= charge_count;
         const record = try partial.Storage.init(self.allocator, layout);
+        errdefer self.allocator.free(record.values);
         try self.frames.items[@intFromEnum(frame)].partial_storage.put(self.allocator, root, record);
     }
     /// Re-enter lexical storage after its previous cleanup has finished.
@@ -888,6 +891,41 @@ test "compact partial array layouts charge concrete cells before allocation" {
     } }));
     try std.testing.expectEqual(before, storage.cells);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+}
+
+test "rejected partial layouts publish neither storage nor quota charges" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const frame = try storage.enter(1);
+    const before = storage.cells;
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.prepareStorage(frame, 0, .{ .nodes = &.{
+        .{ .kind = .record, .count = 1, .first = 0, .span = 2 },
+    } }));
+    try std.testing.expectEqual(before, storage.cells);
+    try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+    try storage.prepareStorage(frame, 0, .{ .nodes = &.{.{}} });
+    try std.testing.expectEqual(before + 1, storage.cells);
+}
+
+fn failedPartialStorage(a: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100000);
+    const frame = try storage.enter(1);
+    const before = storage.cells;
+    storage.prepareStorage(frame, 0, .{ .nodes = &.{
+        .{ .kind = .array, .first = 1, .count = 4096, .span = 4097 },
+        .{ .offset = 1 },
+    } }) catch |err| {
+        try std.testing.expectEqual(before, storage.cells);
+        try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+        return err;
+    };
+}
+
+test "partial storage allocation failures preserve quota and publication" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedPartialStorage, .{});
 }
 
 test "acquired scalar frames use ordinary references and reject release or permission violations" {
