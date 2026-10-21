@@ -13466,3 +13466,25 @@ test "feature_tests/basics/90_semicolon_statements" {
 test "feature_tests/basics/91X_semicolon_arguments" {
     try buildExpectFailWithoutNoise("tests/feature_tests/basics/91X_semicolon_arguments", "';' separates statements, not arguments, fields, or expression parts", "panic");
 }
+
+test "feature_tests/modules/32_public_submodules" {
+    try expectSuccessfulBuild("tests/feature_tests/modules/32_public_submodules");
+    try runExpect("tests/feature_tests/modules/32_public_submodules", 0);
+}
+
+test "feature_tests/modules/33X_private_submodule" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/33X_private_submodule", "submodule '_detail' is private", "panic");
+}
+
+test "feature_tests/modules/34_more_submodules" {
+    try expectSuccessfulBuild("tests/feature_tests/modules/34_more_submodules");
+    try runExpect("tests/feature_tests/modules/34_more_submodules", 0);
+}
+
+test "feature_tests/modules/35X_private_submodule_import" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/35X_private_submodule_import", "submodule '_detail' is private", "panic");
+}
+
+test "feature_tests/modules/36X_nested_private_submodule" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/36X_nested_private_submodule", "submodule '_detail' is private", "panic");
+}

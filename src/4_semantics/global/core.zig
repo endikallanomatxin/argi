@@ -2063,16 +2063,31 @@ pub const Resolver = struct {
 
     /// Resolve a source qualifier through the module aliases linked before
     /// semantic resolution. Paths are no longer semantic identity here.
-    pub fn findModuleForQualifier(self: *Resolver, current_module: usize, qualifier: []const u8) !global_sg.GlobalModuleId {
+    pub fn findModuleForQualifier(self: *Resolver, current_module: usize, spelling: []const u8) !global_sg.GlobalModuleId {
+        const symbolic = std.mem.startsWith(u8, spelling, "@alias:");
+        const qualifier = if (symbolic) spelling["@alias:".len..] else spelling;
         var found: ?global_sg.GlobalModuleId = null;
         const current: global_sg.GlobalModuleId = @enumFromInt(@as(u32, @intCast(current_module)));
         for (self.graph.module_aliases.items) |alias| {
             if (alias.owner != current) continue;
             const declaration = self.graph.declarations.items[@intFromEnum(alias.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), qualifier)) continue;
+            const name = self.graph.text(declaration.name);
+            var target = alias.target;
+            if (!std.mem.eql(u8, name, qualifier)) {
+                if (!symbolic) continue;
+                if (qualifier.len <= name.len or !std.mem.startsWith(u8, qualifier, name) or qualifier[name.len] != '/') continue;
+                const dir = self.graph.text(self.graph.modules.items[@intFromEnum(alias.target)].dir);
+                const path = try std.fs.path.resolve(self.allocator, &.{ dir, qualifier[name.len + 1 ..] });
+                defer self.allocator.free(path);
+                var child: ?global_sg.GlobalModuleId = null;
+                for (self.graph.modules.items, 0..) |candidate, index| {
+                    if (std.mem.eql(u8, self.graph.text(candidate.dir), path)) child = @enumFromInt(@as(u32, @intCast(index)));
+                }
+                target = child orelse return error.UnknownModuleReference;
+            }
             if (found) |previous| {
-                if (previous != alias.target) return error.AmbiguousModuleReference;
-            } else found = alias.target;
+                if (previous != target) return error.AmbiguousModuleReference;
+            } else found = target;
         }
         if (found) |target| return target;
         // Local lexical imports are lowered to their original path spelling.
@@ -2245,7 +2260,7 @@ test "qualified lookup follows linked module alias" {
     defer module.deinit(allocator);
 
     const app_dir = try graph.addString(allocator, "/workspace/app");
-    const target_dir = try graph.addString(allocator, "/tool/more/_test_support/basic");
+    const target_dir = try graph.addString(allocator, "/tool/more/test_support/basic");
     const alias_name = try graph.addString(allocator, "support");
     try graph.declarations.append(allocator, .{
         .kind = .import_alias,

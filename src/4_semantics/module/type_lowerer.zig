@@ -97,7 +97,7 @@ pub const Context = struct {
 
         const name = try self.writer.addString(name_text);
         const module_path = if (qualifier_token) |token_index|
-            try self.modulePathForQualifier(token_index)
+            try self.modulePathForQualifier(token_index, name_token)
         else
             null;
         const external = try self.writer.addExternalRef(.{
@@ -150,7 +150,7 @@ pub const Context = struct {
             const name = try self.writer.addString(name_text);
             const id = try self.writer.addVariant(.{
                 .name = name,
-                .qualifier = if (variant.module_qualifier) |qualifier| try self.modulePathForQualifier(qualifier) else null,
+                .qualifier = if (variant.module_qualifier) |qualifier| try self.modulePathForQualifier(qualifier, variant.name_token) else null,
                 .payload_type = payload_type,
                 .option_decl = option_decl,
                 .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(variant.name_token).offset },
@@ -324,15 +324,24 @@ pub const Context = struct {
         return null;
     }
 
-    fn modulePathForQualifier(self: *Context, token: syn.TokenIndex) !primitives.StringRange {
+    fn modulePathForQualifier(self: *Context, token: syn.TokenIndex, member: syn.TokenIndex) !primitives.StringRange {
         const spelling = self.tree.tokenTextFromSource(self.source, token);
+        var root: ?[]const u8 = null;
         var index = self.module_aliases.len;
         while (index != 0) {
             index -= 1;
             const alias = self.module_aliases[index];
-            if (std.mem.eql(u8, self.graph.text(alias.name), spelling)) return alias.path;
+            if (std.mem.eql(u8, self.graph.text(alias.name), spelling)) {
+                root = self.graph.text(alias.path);
+                break;
+            }
         }
-        return self.writer.addString(spelling);
+        const path = if (root) |path|
+            try @import("qualified_path.zig").build(self.writer.allocator, self.tree, self.source, token, member, path)
+        else
+            try @import("qualified_path.zig").symbolic(self.writer.allocator, self.tree, self.source, token, member);
+        defer self.writer.allocator.free(path);
+        return self.writer.addString(path);
     }
 
     fn sourceRef(self: *const Context, node: syn.NodeIndex) @import("../primitives/schema.zig").SourceRef {

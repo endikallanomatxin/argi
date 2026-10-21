@@ -849,10 +849,11 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
         const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(index)));
         const name = tree.syntaxType(node).?.name;
         const spelling = try graph.addString(allocator, tree.tokenTextFromSource(source, name.name_token));
-        const qualifier = if (name.qualifier_token) |token|
-            try graph.addString(allocator, tree.tokenTextFromSource(source, token))
-        else
-            null;
+        const qualifier = if (name.qualifier_token) |token| blk: {
+            const path = try @import("qualified_path.zig").symbolic(allocator, tree, source, token, name.name_token);
+            defer allocator.free(path);
+            break :blk try graph.addString(allocator, path);
+        } else null;
         try graph.type_references.append(allocator, .{
             .name = spelling,
             .qualifier = qualifier,

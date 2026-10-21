@@ -136,11 +136,13 @@ const Context = struct {
                     .identifier => self.tree.mainToken(value),
                     .struct_field_access => field: {
                         const access = self.tree.structFieldAccess(value).?;
-                        if (self.tree.tag(access.value) != .identifier) {
+                        var root = access.value;
+                        while (self.tree.structFieldAccess(root)) |parent| root = parent.value;
+                        if (self.tree.tag(root) != .identifier) {
                             try self.conformanceError(member_node, "implementation operation aliases require an ordinary function name");
                             unreachable;
                         }
-                        qualifier = self.tree.mainToken(access.value);
+                        qualifier = self.tree.mainToken(root);
                         break :field access.field_token;
                     },
                     else => {
@@ -151,7 +153,7 @@ const Context = struct {
                 const function_ref = try self.writer.addExternalRef(.{
                     .kind = .function,
                     .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, function_token)),
-                    .module_path = if (qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null,
+                    .module_path = if (qualifier) |token| try @import("qualified_path.zig").intern(&self.writer, self.tree, self.source, token, function_token) else null,
                     .source = .{ .file_index = self.sourceRef(member_node).file_index, .offset = self.tree.tokenLocation(function_token).offset },
                 });
                 try storage.contract_operations.append(self.allocator, .{
@@ -355,7 +357,7 @@ const Context = struct {
         };
         const external = try self.writer.addExternalRef(.{
             .kind = kind,
-            .module_path = if (qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null,
+            .module_path = if (qualifier) |token| try @import("qualified_path.zig").intern(&self.writer, self.tree, self.source, token, syntax_type.?.name.name_token) else null,
             .name = try self.writer.addString(name),
             .source = self.sourceRef(node),
         });

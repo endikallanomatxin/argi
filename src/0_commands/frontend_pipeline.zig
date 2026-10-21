@@ -365,6 +365,7 @@ pub const FrontendPipeline = struct {
             dir: []const u8,
             files: std.ArrayList(module_sg.FileInput) = .empty,
             source_fingerprint: cache.Fingerprint = @splat(0),
+            uses_imports: bool = false,
         };
         var groups: std.ArrayList(ModuleInputs) = .empty;
         defer {
@@ -383,6 +384,8 @@ pub const FrontendPipeline = struct {
                 try groups.append(self.allocator, .{ .dir = dir });
                 group_index = groups.items.len - 1;
             }
+            if (std.mem.indexOfScalar(st.Node.Tag, file.nodes.items(.tag), .import_statement) != null)
+                groups.items[group_index.?].uses_imports = true;
             try groups.items[group_index.?].files.append(self.allocator, .{
                 .path = source.path,
                 .tree = file,
@@ -403,6 +406,28 @@ pub const FrontendPipeline = struct {
                     cache.hashBytes(&core_hash, group.dir);
                     core_hash.update(&group.source_fingerprint);
                 }
+            }
+        }
+        if (self.options.module_cache != null) {
+            // Namespace/value disambiguation depends on the discovered directories.
+            // Their order must not invalidate otherwise reusable module graphs.
+            const dirs = try self.allocator.alloc([]const u8, groups.items.len);
+            defer self.allocator.free(dirs);
+            for (groups.items, dirs) |group, *dir| dir.* = group.dir;
+            std.mem.sort([]const u8, dirs, {}, struct {
+                fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+                    return std.mem.lessThan(u8, a, b);
+                }
+            }.lessThan);
+            var directory_hash = cache.ContentHash.init(.{});
+            for (dirs) |dir| cache.hashBytes(&directory_hash, dir);
+            const directory_fingerprint = cache.finishHash(&directory_hash);
+            for (groups.items) |*group| {
+                if (!group.uses_imports) continue;
+                var hash = cache.ContentHash.init(.{});
+                hash.update(&group.source_fingerprint);
+                hash.update(&directory_fingerprint);
+                group.source_fingerprint = cache.finishHash(&hash);
             }
         }
         const core_fingerprint = cache.finishHash(&core_hash);

@@ -435,7 +435,7 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         var qualifier_token: ?syn.TokenIndex = null;
         var name_token = name.token;
-        if (self.tokenIs(.dot)) {
+        while (self.tokenIs(.dot)) {
             self.advanceOne();
             const rhs = try self.parseName();
             qualifier_token = name.token;
@@ -1384,8 +1384,10 @@ pub const Syntaxer = struct {
                     var qualifier: ?syn.TokenIndex = null;
                     const callee_token = if (self.file.tag(node) == .struct_field_access) blk: {
                         const sfa = self.file.data(node).token_and_node;
-                        if (self.file.tag(sfa.node) != .identifier) break;
-                        qualifier = self.file.mainToken(sfa.node);
+                        var root = sfa.node;
+                        while (self.file.structFieldAccess(root)) |access| root = access.value;
+                        if (self.file.tag(root) != .identifier) break;
+                        qualifier = self.file.mainToken(root);
                         break :blk sfa.token;
                     } else self.file.mainToken(node);
                     var type_args = try self.addNodeRange(&.{});

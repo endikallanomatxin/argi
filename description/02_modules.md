@@ -97,10 +97,6 @@ example, `source/math/_detail` is visible to `source/math` and
 to every `_` component in the resolved import path, regardless of whether the
 import uses `./`, `../`, or `.../`.
 
-> [!IMPLEMENTATION]
-> Directory privacy is not enforced yet. The current `_` rule protects
-> declarations only.
-
 Unqualified lookup uses the current module and public `core`. Other modules
 use named imports; standalone `import("...")` is unsupported. Paths resolve as
 follows:
@@ -111,6 +107,21 @@ follows:
 | `../` | Parent module |
 | `.../` | Project root |
 | No prefix | Bundled `more/` library |
+
+Importing a module also exposes its public directory submodules through qualified
+access. The parent can have no `.rg` files; it still provides a namespace:
+
+```rg
+math := import("math")
+-- Matrix belongs to linear_algebra, not directly to math.
+Matrix2: Type = math.linear_algebra.Matrix#(.rows = 2, .cols = 2, .t: Int32)
+```
+
+This works for nested types, calls, and values, and for local import aliases.
+Submodules are discovered on demand from qualified uses; importing a parent
+does not recursively compile its unused descendants. Private `_` directories
+follow the visibility rule above for both qualified access and explicit imports.
+Members are not flattened into the parent's namespace.
 
 Module-qualified calls accept explicit compile-time arguments, such as
 `dep.identity#(.t: Int32)(.value = 42)` or `dep.identity#(Int32)(42)`.
