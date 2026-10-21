@@ -13552,7 +13552,8 @@ test "feature_tests/execution/28_reference_field_vm_boundary" {
 
 test "feature_tests/execution/29_owning_indexed_vm_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/29_owning_indexed_vm_boundary");
-    try vmExpect("tests/feature_tests/execution/29_owning_indexed_vm_boundary", 1, "owning replacement in indexed storage");
+    try runExpect("tests/feature_tests/execution/29_owning_indexed_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/29_owning_indexed_vm_boundary", 0, null);
 }
 
 test "feature_tests/execution/30_local_alias_replacement_vm" {
@@ -14447,4 +14448,14 @@ test "feature_tests/execution/164_zero_sized_array_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/execution/164_zero_sized_array_cleanup");
     try runExpect("tests/feature_tests/execution/164_zero_sized_array_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/164_zero_sized_array_cleanup", 42, null);
+}
+
+test "feature_tests/execution/165_indexed_owner_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/165_indexed_owner_replacement");
+    try runExpect("tests/feature_tests/execution/165_indexed_owner_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/165_indexed_owner_replacement", 42, null);
+}
+
+test "feature_tests/execution/166X_indexed_replacement_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/166X_indexed_replacement_keeps_alias_stale", "root that has ended");
 }

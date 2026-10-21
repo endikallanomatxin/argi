@@ -510,9 +510,31 @@ pub const Resolver = struct {
                 try self.finalizeExpressionCleanup(access.index, active, defers, visible, owner_function, module_index);
             },
             .array_store => |store| {
-                try self.finalizeExpressionCleanup(store.array_ptr, active, defers, visible, owner_function, module_index);
-                try self.finalizeExpressionCleanup(store.index, active, defers, visible, owner_function, module_index);
-                try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
+                // An indexed destination is an evaluated reference, not a
+                // lexical cleanup path. Normalize it to the ordinary indirect
+                // write so capture, replacement and activation share one plan.
+                const source = self.graph.node(node_id).source;
+                const element = try self.appendNode(source, store.element_type, .{ .array_index = .{
+                    .array_ptr = store.array_ptr,
+                    .index = store.index,
+                    .element_type = store.element_type,
+                    .array_type = store.array_type,
+                } });
+                const pointer = try self.appendNode(source, try self.core.pointerType(store.element_type, .read_write), .{ .address_of = element });
+                const pointer_type = self.graph.node(pointer).ty.?;
+                const target = try self.appendNode(source, store.element_type, .{ .dereference = .{ .pointer = pointer, .pointer_type = pointer_type, .ty = store.element_type } });
+                try self.replacement_candidates.put(self.allocator, node_id, {});
+                const value = try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
+                if (value != store.value) {
+                    self.graph.nodes.items[@intFromEnum(node_id)].content = .{ .pointer_assignment = .{ .pointer = pointer, .value = value, .cleanup_target = target } };
+                    try self.finalizeExpressionCleanup(pointer, active, defers, visible, owner_function, module_index);
+                    try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                    try self.wrapReplacement(node_id);
+                } else {
+                    try self.finalizeExpressionCleanup(store.array_ptr, active, defers, visible, owner_function, module_index);
+                    try self.finalizeExpressionCleanup(store.index, active, defers, visible, owner_function, module_index);
+                    try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
+                }
             },
             .struct_field_store => |store| {
                 try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index);
