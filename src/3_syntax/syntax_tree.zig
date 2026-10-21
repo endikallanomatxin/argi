@@ -228,7 +228,6 @@ pub const ContractExtra = struct {
     domains_end: ExtraIndex,
 };
 pub const CallExtra = struct {
-    comptime_token: OptionalTokenIndex = .none,
     contract_type: OptionalNodeIndex = .none,
     module_qualifier: OptionalTokenIndex,
     type_arguments_start: ExtraIndex,
@@ -268,7 +267,6 @@ pub const OperatorName = enum {
 };
 pub const IfStatement = struct { condition: NodeIndex, then_block: NodeIndex, else_block: ?NodeIndex, comptime_selection: bool = false };
 pub const FunctionCall = struct {
-    comptime_token: ?TokenIndex = null,
     contract_type: ?NodeIndex = null,
     callee_token: TokenIndex,
     module_qualifier: ?TokenIndex,
@@ -631,7 +629,6 @@ pub const FileSyntaxTree = struct {
         if (tree.tag(node) != .function_call) return null;
         const extra = tree.extraData(CallExtra, tree.data(node).extra);
         return .{
-            .comptime_token = extra.comptime_token.unwrap(),
             .contract_type = extra.contract_type.unwrap(),
             .callee_token = tree.mainToken(node),
             .module_qualifier = extra.module_qualifier.unwrap(),

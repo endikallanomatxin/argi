@@ -240,7 +240,7 @@ const Context = struct {
             error.UnfreezableEvaluationInput => "#run arguments cannot contain references or values requiring cleanup",
             error.UnfreezableEvaluationResult => "#run cannot return references or values requiring cleanup",
             error.UnsupportedExecution => "#run uses an operation outside the supported bytecode subset",
-            error.UnsupportedCompileTimeCall => "#run requires a supported direct function call",
+            error.UnsupportedCompileTimeCall => "#run entry could not be resolved to an executable function",
             else => null,
         };
         if (message) |text|

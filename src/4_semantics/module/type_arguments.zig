@@ -27,7 +27,6 @@ pub fn isVirtualContractParameter(parameter_name: []const u8) bool {
 // These arguments need retained parameterized IR rather than literal folding.
 pub fn requiresResolution(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) bool {
     if (tree.tag(node) == .associated_type_projection or tree.tag(node) == .comptime_entry) return true;
-    if (tree.functionCall(node)) |call| if (call.comptime_token != null) return true;
     if (tree.binaryOperation(node)) |operation|
         return requiresResolution(tree, operation.lhs) or requiresResolution(tree, operation.rhs);
     if (tree.structTypeLiteral(node)) |literal| for (literal.fields) |field_node| {

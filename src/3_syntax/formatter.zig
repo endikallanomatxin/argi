@@ -663,7 +663,6 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
     var first: usize = @intFromEnum(tree.mainToken(node));
     if (tree.tag(node) == .assume_statement and first != 0) return first - 1;
     if (tree.functionCall(node)) |call| {
-        if (call.comptime_token) |prefix| first = @min(first, @intFromEnum(prefix));
         if (call.contract_type) |contract_type| first = @min(first, firstToken(tree, contract_type));
         if (call.module_qualifier) |qualifier| first = @min(first, @intFromEnum(qualifier));
         return first;

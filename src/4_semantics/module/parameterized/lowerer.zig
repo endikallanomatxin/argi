@@ -1120,8 +1120,6 @@ pub const Context = struct {
     pub fn lowerIntExpression(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedIntExprId {
         if (self.tree.tag(node) == .comptime_entry)
             return self.addInt(.{ .execution = try self.lowerBodyNode(node) });
-        if (self.tree.functionCall(node)) |call| if (call.comptime_token != null)
-            return self.addInt(.{ .execution = try self.lowerBodyNode(node) });
         if (self.tree.syntaxType(node)) |syntax| if (syntax == .projection) {
             return self.addInt(.{ .projection = .{
                 .base = try self.lowerType(syntax.projection.base, false),
@@ -1370,7 +1368,6 @@ pub const Context = struct {
             try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
             const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)), null, .none);
             const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)].pending;
-            self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.comptime_run = call.comptime_token != null;
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.generic_arguments = .{ .start = start, .len = @intCast(arguments.items.len) };
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (call.module_qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null;
             if (call.contract_type) |contract| {
