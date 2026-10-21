@@ -294,17 +294,23 @@ pub const Storage = struct {
     /// of the frame evaluating it. Include the native trailing zero without
     /// exposing it as part of a StringView's logical length.
     pub fn staticBytes(self: *Storage, bytes: []const u8) !v.Reference {
-        const length = try std.math.add(usize, bytes.len, 1);
-        try self.charge(length);
+        const length = std.math.add(usize, bytes.len, 1) catch return error.ExecutionMemoryLimit;
+        const backing_cells = std.math.add(usize, length, 1) catch return error.ExecutionMemoryLimit;
+        const total_cells = std.math.add(usize, backing_cells, 1) catch return error.ExecutionMemoryLimit;
+        if (total_cells > self.limit -| self.cells) return error.ExecutionMemoryLimit;
+        try self.charge(backing_cells);
+        errdefer self.cells -= backing_cells;
         const data = try self.allocator.alloc(u8, length);
+        errdefer self.allocator.free(data);
         @memcpy(data[0..bytes.len], bytes);
         data[bytes.len] = 0;
+        const path = try self.allocator.alloc(v.Projection, 1);
+        errdefer self.allocator.free(path);
+        path[0] = .{ .element = 0 };
+        // The frame is the publication point. Nothing fallible may follow it.
         const frame = try self.enter(0);
         self.frames.items[@intFromEnum(frame)].bytes = data;
         self.frames.items[@intFromEnum(frame)].duration = .static;
-        try self.charge(1);
-        const path = try self.allocator.alloc(v.Projection, 1);
-        path[0] = .{ .element = 0 };
         return .{ .context = self.context, .frame = frame, .root = 0, .path = path, .mutability = .read_only };
     }
 
@@ -908,6 +914,37 @@ test "compact partial array layouts charge concrete cells before allocation" {
     } }));
     try std.testing.expectEqual(before, storage.cells);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+}
+
+test "literal creation checks its complete storage quota before publication" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 5);
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.staticBytes("abc"));
+    try std.testing.expectEqual(@as(usize, 0), storage.cells);
+    try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
+    storage.limit = 6;
+    const reference = try storage.staticBytes("abc");
+    try std.testing.expectEqual(@as(usize, 6), storage.cells);
+    try std.testing.expectEqualStrings("abc", try storage.literalBytes(reference));
+    try std.testing.expectEqual(@as(u64, 0), (try storage.readOffset(reference, 3)).integer);
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.store(reference, .{ .integer = 0 }));
+}
+
+fn failedLiteralStorage(a: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 10000);
+    const text: [4096]u8 = @splat('a');
+    _ = storage.staticBytes(&text) catch |err| {
+        try std.testing.expectEqual(@as(usize, 0), storage.cells);
+        try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
+        return err;
+    };
+}
+
+test "literal allocation failures publish neither frames nor quota charges" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedLiteralStorage, .{});
 }
 
 test "session creation validates complete quota before retaining cleanup paths" {
