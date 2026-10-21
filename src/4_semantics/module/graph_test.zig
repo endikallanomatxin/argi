@@ -1185,8 +1185,8 @@ test "compile-time integer calls retain executable parameterized nodes" {
         "compute(.value: Int32) -> (.result: Int32 = value) := {}\n" ++
         "repeat#(.n: Int32)(.value: Int32) -> (.result: Int32 = value) := {}\n" ++
         "Holder#(.n: Int32): Type = (.value: Int32)\n" ++
-        "main() -> () := { repeat#(.n = #run compute(.value = 4))(.value = 42) }\n" ++
-        "use(.value: Holder#(.n = #run compute(.value = 3))) -> () := {}\n";
+        "main() -> () := { repeat#(.n = #run () -> (.answer: Int32) { answer = compute(.value = 4) })(.value = 42) }\n" ++
+        "use(.value: Holder#(.n = #run () -> (.answer: Int32) { answer = compute(.value = 3) })) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "staged", &.{.{ .path = "staged/main.rg", .tree = &tree, .source = source }});
@@ -1201,7 +1201,16 @@ test "compile-time integer calls retain executable parameterized nodes" {
         const node = storage.nodes.items[@intFromEnum(expression.execution)];
         const pending = storage.pending.items[@intFromEnum(node.pending)].resolve_expression;
         try std.testing.expect(pending.comptime_run);
-        try std.testing.expectEqualStrings("compute", module.graph.text(pending.name.?));
+        var retained_entry = false;
+        for (module.graph.semantic.parameterized_storage.parameterized_functions.items) |function| {
+            const declaration = module.graph.declarations.items[@intFromEnum(function.declaration)];
+            if (!std.mem.eql(u8, module.graph.text(declaration.name), module.graph.text(pending.name.?))) continue;
+            try std.testing.expect(@intFromEnum(function.declaration) >= module.graph.declarations.items.len - module.graph.generated_declaration_count);
+            try std.testing.expect(function.body != null);
+            try std.testing.expectEqual(@as(u32, 1), function.output_bindings.len);
+            retained_entry = true;
+        }
+        try std.testing.expect(retained_entry);
         found = true;
     }
     try std.testing.expect(found);
@@ -1218,7 +1227,16 @@ test "compile-time integer calls retain executable parameterized nodes" {
         const node = storage.nodes.items[@intFromEnum(expression.execution)];
         const pending = storage.pending.items[@intFromEnum(node.pending)].resolve_expression;
         try std.testing.expect(pending.comptime_run);
-        try std.testing.expectEqualStrings("compute", decoded.text(pending.name.?));
+        var retained_entry = false;
+        for (decoded.semantic.parameterized_storage.parameterized_functions.items) |function| {
+            const declaration = decoded.declarations.items[@intFromEnum(function.declaration)];
+            if (!std.mem.eql(u8, decoded.text(declaration.name), decoded.text(pending.name.?))) continue;
+            try std.testing.expect(@intFromEnum(function.declaration) >= decoded.declarations.items.len - decoded.generated_declaration_count);
+            try std.testing.expect(function.body != null);
+            try std.testing.expectEqual(@as(u32, 1), function.output_bindings.len);
+            retained_entry = true;
+        }
+        try std.testing.expect(retained_entry);
         retained = true;
     }
     try std.testing.expect(retained);
