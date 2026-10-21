@@ -227,6 +227,7 @@ const Context = struct {
     fn report(self: *Context, source: p.SourceRef, err: anyerror) !void {
         const location = @import("../4_semantics/global/source_location.zig").location(self.graph, self.diagnostics, source);
         const message: ?[]const u8 = switch (err) {
+            error.RuntimeStorageInCompileTime => "#run cannot access mutable runtime global storage; use a compile-time-known constant instead",
             error.NonConstantCompileTimeArgument => "#run arguments must be compile-time constants; runtime values cannot be used",
             error.CompileTimeDependencyDepthLimit => "#run dependencies exceeded their nesting limit",
             error.CompileTimeEvaluationCycle => "cyclic dependency between #run evaluations",

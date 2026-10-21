@@ -1262,21 +1262,31 @@ test "bytecode anonymous compile-time entries consume known module values" {
 }
 
 test "anonymous compile-time entries cannot observe mutable runtime globals" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\runtime_value :: Int32 = 42
-        \\main() -> (.status_code: Int32) := {
-        \\    status_code = #run () -> (.result: Int32) { result = runtime_value }
-        \\}
-    }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
-    defer diagnostics.deinit();
-    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
-    defer pipeline.deinit();
-    try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
-    try std.testing.expect(diagnostics.hasErrors());
+    const bodies = [_][]const u8{
+        "result = runtime_value",
+        "result = read_runtime()",
+        "result = alias",
+    };
+    for (bodies) |body| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const source = try std.fmt.allocPrint(a, "runtime_value :: Int32 = 42\n" ++
+            "alias := runtime_value\n" ++
+            "read_runtime() -> (.result: Int32) := {{ result = runtime_value }}\n" ++
+            "main() -> (.status_code: Int32) := {{ status_code = #run () -> (.result: Int32) {{ {s} }} }}", .{body});
+        const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
+        var diagnostics = diag.Diagnostics.init(&a, &files);
+        defer diagnostics.deinit();
+        var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+        defer pipeline.deinit();
+        try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+        var found = false;
+        for (diagnostics.list.items) |diagnostic| if (std.mem.indexOf(u8, diagnostic.msg, "cannot access mutable runtime global storage") != null) {
+            found = true;
+        };
+        try std.testing.expect(found);
+    }
 }
 
 test "bytecode anonymous compile-time entries initialize module constants" {
