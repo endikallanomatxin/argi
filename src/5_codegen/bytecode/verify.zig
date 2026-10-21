@@ -249,7 +249,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 },
                 .load => |x| {
                     const target = try placeInfo(program, f.slots, x.place);
-                    if (!types.equal(program.graph, f.slots[x.dst], target.ty)) return error.InvalidBytecode;
+                    if (!types.equal(program.graph, f.slots[x.dst], target.ty) or x.interpretation != b.loadInterpretation(program.graph, target.ty)) return error.InvalidBytecode;
                 },
                 .check_place => |place| _ = try placeInfo(program, f.slots, place),
                 .capture_write => |x| {
@@ -619,6 +619,33 @@ fn sessionBinding(program: Program, index: u32) !b.SessionBinding {
     const session = program.session orelse return error.InvalidBytecode;
     if (index >= session.bindings.len) return error.InvalidBytecode;
     return session.bindings[index];
+}
+
+test "bytecode load descriptors preserve erased anchors and target byte interpretation" {
+    const a = std.testing.allocator;
+    const p = @import("../../4_semantics/primitives/schema.zig");
+    for ([_]p.BuiltinType{ .Int8, .UInt8, .Int32, .Any }) |builtin| {
+        var graph: g.GlobalSemanticGraph = .{};
+        defer graph.deinit(a);
+        try graph.types.appendSlice(a, &.{
+            .{ .builtin = builtin },
+            .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        });
+        const selected = b.loadInterpretation(&graph, @enumFromInt(0));
+        const source = p.SourceRef{ .file_index = 0, .offset = 0 };
+        var code = [_]Instruction{
+            .{ .source = source, .op = .{ .load = .{ .dst = 1, .place = .{ .root = 0, .path = &.{.dereference} }, .interpretation = selected } } },
+            .{ .source = source, .op = .{ .ret = &.{1} } },
+        };
+        const function = b.Function{ .slots = &.{ @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code };
+        const program = Program{ .graph = &graph, .functions = &.{}, .expression = &function };
+        try verify(a, program);
+        for (std.enums.values(b.LoadInterpretation)) |interpretation| {
+            if (interpretation == selected) continue;
+            code[0].op.load.interpretation = interpretation;
+            try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+        }
+    }
 }
 
 test "bytecode scalar descriptors preserve integer width sign and floating precision" {

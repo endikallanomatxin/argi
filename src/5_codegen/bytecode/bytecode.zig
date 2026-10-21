@@ -8,6 +8,15 @@ pub const Slot = u32;
 // as a safe reference. A function captures it before evaluating a store's RHS.
 pub const Destination = u32;
 pub const Type = g.GlobalTypeId;
+pub const LoadInterpretation = enum(u8) { value, erased, signed_byte, unsigned_byte };
+
+pub fn loadInterpretation(graph: *const g.GlobalSemanticGraph, ty: Type) LoadInterpretation {
+    if (types.isBuiltin(graph, ty, .Any)) return .erased;
+    if (integerBounds(graph, ty)) |bounds| {
+        if (bounds.maximum - bounds.minimum == 255) return if (bounds.minimum < 0) .signed_byte else .unsigned_byte;
+    }
+    return .value;
+}
 // Checked operation interpretation, independent of semantic graph identities.
 // One byte avoids retaining full integer bounds in every instruction.
 pub const ScalarKind = enum(u8) {
@@ -173,7 +182,7 @@ pub const Instruction = struct {
         is_variant: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32), invert: bool },
         branch_variant: struct { src: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32), yes: u32, no: u32 },
         borrow: struct { dst: Slot, place: Place, permission: p.PointerMutability },
-        load: struct { dst: Slot, place: Place },
+        load: struct { dst: Slot, place: Place, interpretation: LoadInterpretation = .value },
         check_place: Place,
         // Initialization activation and old-value destruction are independent:
         // scalar fields can carry initialization flags without owning resources.

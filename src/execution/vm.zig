@@ -547,14 +547,16 @@ pub const Vm = struct {
                     var value = try self.context().storage.read(reference);
                     // Reading an erased anchor checks its actual referent, but
                     // cannot expose that referent's concrete representation.
-                    if (types.isBuiltin(unit.graph, f.slots[x.dst], .Any)) value = .erased;
+                    if (x.interpretation == .erased) value = .erased;
                     // Immutable byte backing is compact and untyped. A typed
                     // load interprets CChar signedness using the target width.
                     if (value == .integer and self.context().storage.frames.items[@intFromEnum(reference.frame)].duration == .static) {
-                        if (b.integerBounds(unit.graph, f.slots[x.dst])) |bounds| {
-                            if (bounds.maximum - bounds.minimum != 255) return error.ExecutionInvalidReference;
-                            value.integer = try integer.evaluateBits(.addition, value.integer, 0, bounds);
-                        }
+                        const bounds = switch (x.interpretation) {
+                            .signed_byte => b.ScalarKind.i8.bounds().?,
+                            .unsigned_byte => b.ScalarKind.u8.bounds().?,
+                            else => return error.ExecutionInvalidReference,
+                        };
+                        value.integer = try integer.evaluateBits(.addition, value.integer, 0, bounds);
                     }
                     try slots.put(x.dst, value);
                 },

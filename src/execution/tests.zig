@@ -1846,7 +1846,7 @@ test "resolved source text respects signed byte loads" {
             .{ .source = source, .op = .{ .trace_location = .{ .dst = 0, .location = &metadata } } },
             .{ .source = source, .op = .{ .resolve_location = .{ .dst = 1, .id = 0 } } },
             .{ .source = source, .op = .{ .field = .{ .dst = 2, .base = 1, .index = 1 } } },
-            .{ .source = source, .op = .{ .load = .{ .dst = 3, .place = .{ .root = 2, .path = &.{.dereference} } } } },
+            .{ .source = source, .op = .{ .load = .{ .dst = 3, .interpretation = .signed_byte, .place = .{ .root = 2, .path = &.{.dereference} } } } },
             .{ .source = source, .op = .{ .ret = &.{3} } },
         },
     };
