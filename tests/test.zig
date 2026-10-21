@@ -253,6 +253,12 @@ fn expectSuccessfulBuild(name: []const u8) !void {
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
+fn expectDiagnostic(name: []const u8, actual: []const u8, expected: []const u8) !void {
+    if (std.mem.indexOf(u8, actual, expected) != null) return;
+    std.debug.print("build rejection for {s} is missing diagnostic '{s}':\n{s}\n", .{ name, expected, actual });
+    return error.MissingExpectedDiagnostic;
+}
+
 fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
     const result = try buildResult(name);
     defer std.testing.allocator.free(result.stdout);
@@ -263,7 +269,7 @@ fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
         else => return error.UnexpectedProcessTermination,
     }
 
-    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr) != null);
+    try expectDiagnostic(name, result.stderr, expected_stderr);
 }
 
 fn buildExpectFailWithoutNoise(name: []const u8, expected_stderr: []const u8, forbidden_stderr: []const u8) !void {
@@ -276,8 +282,11 @@ fn buildExpectFailWithoutNoise(name: []const u8, expected_stderr: []const u8, fo
         else => return error.UnexpectedProcessTermination,
     }
 
-    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr) != null);
-    try expect(std.mem.indexOf(u8, result.stderr, forbidden_stderr) == null);
+    try expectDiagnostic(name, result.stderr, expected_stderr);
+    if (std.mem.indexOf(u8, result.stderr, forbidden_stderr) != null) {
+        std.debug.print("build rejection for {s} contains forbidden diagnostic '{s}':\n{s}\n", .{ name, forbidden_stderr, result.stderr });
+        return error.UnexpectedDiagnostic;
+    }
 }
 
 fn buildExpectFailExact(name: []const u8, expected_stderr: []const u8) !void {
@@ -305,7 +314,7 @@ fn buildExpectFailWithoutParseNoise(name: []const u8, expected_stderr_fragment: 
         else => return error.UnexpectedProcessTermination,
     }
 
-    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr_fragment) != null);
+    try expectDiagnostic(name, result.stderr, expected_stderr_fragment);
     try expect(std.mem.indexOf(u8, result.stdout, "Parse error:") == null);
     try expect(std.mem.indexOf(u8, result.stderr, "Parse error:") == null);
 }
@@ -388,7 +397,7 @@ fn argiTestExpectStderrContains(
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
-    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr_fragment) != null);
+    try expectDiagnostic(name, result.stderr, expected_stderr_fragment);
 }
 
 fn runExpectStdoutWithArgs(
