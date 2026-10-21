@@ -712,6 +712,13 @@ pub const Storage = struct {
             depth -= 1;
             const ancestor = parents[depth];
             updated += 1;
+            // Ending an actual descendant always makes its ancestors
+            // incomplete. No sibling scan is needed to prove this direction.
+            if (!enabled) {
+                flags[ancestor.offset] = false;
+                updated += 1;
+                continue;
+            }
             if (ancestor.layout.repetition) |array| {
                 if (array.length == 0) continue;
                 var complete = true;

@@ -2773,3 +2773,46 @@ test "bytecode cleanup flags neither require Bool slots nor initialize owner val
     functions[0].?.cleanup = &.{.{ .root = 0, .offset = std.math.maxInt(usize) }};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
+
+test "bytecode repeated cleanup plans traverse indexed flags with bounded code" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const p = @import("../4_semantics/primitives/schema.zig");
+    const shapes = @import("../5_codegen/cleanup_layout.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .builtin = .UIntNative },
+        .{ .builtin = .Bool },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 1000 } },
+    });
+    const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(3), .source = source, .mutability = .variable });
+    try graph.auto_deinit_fields.append(a, .{ .field_index = 0, .deinit_fn = null });
+    try graph.auto_deinits.append(a, .{ .storage = .{ .binding = @enumFromInt(0) }, .deinit_fn = null, .fields = .{ .start = 0, .len = 1 } });
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .auto_deinit_binding = @enumFromInt(0) } });
+    var counts: shapes.Counts = .{};
+    defer counts.deinit(a);
+    _ = try counts.count(a, &graph, @enumFromInt(3));
+    const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .ty = @enumFromInt(3), .cleanup = &.{.{ .root = 0, .layout = counts.retained(@enumFromInt(3)) }} }};
+    var compiler = try lower.Lower.initSession(a, &graph, .{ .namespace = @enumFromInt(0), .bindings = &bindings });
+    const program = try compiler.compileSessionCleanup(&.{@enumFromInt(0)});
+    try std.testing.expect(program.expression.?.code.len < 20);
+    var context = vm.Context.init(a, 10000);
+    defer context.deinit();
+    const storage = try context.sessionSlots(1, bindings[0].cleanup);
+    const vacant = try @import("../5_codegen/bytecode/storage_layout.zig").compile(a, &graph, @enumFromInt(3));
+    try context.storage.prepareStorage(storage.frame, 0, vacant);
+    try context.bindings.put(context.arena.allocator(), @enumFromInt(0), storage.frame);
+    context.namespace = @enumFromInt(0);
+    const reference: @import("../5_codegen/bytecode/value.zig").Reference = .{ .context = context.storage.context, .frame = storage.frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    _ = try context.storage.cleanupSet(reference, true);
+    var executor = try vm.Vm.initShared(a, program, .{ .value_cells = 10000 }, &context);
+    defer executor.deinit();
+    _ = try executor.invokeExpression(&.{});
+    const flags = context.storage.frames.items[@intFromEnum(storage.frame)].cleanup_flags;
+    try std.testing.expect(std.mem.indexOfScalar(bool, flags, true) == null);
+}

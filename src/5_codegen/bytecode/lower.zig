@@ -437,6 +437,34 @@ const FunctionLower = struct {
             try self.lower.parent.pending.append(self.lower.parent.allocator, id);
             _ = try self.lower.emit(source, .{ .call = .{ .function = id, .args = args, .outputs = &.{} } });
         }
+        const ElementLoop = struct { index: b.Slot, one: b.Slot, start: u32, exit: u32 };
+
+        pub fn beginElements(self: @This(), _: Target, length: u64) !ElementLoop {
+            const lower = self.lower;
+            const ty: b.Type = for (lower.parent.graph.types.items, 0..) |candidate, index| {
+                if (candidate == .builtin and candidate.builtin == .UIntNative) break @enumFromInt(index);
+            } else return error.InvalidBytecode;
+            const index = try lower.newSlot(ty);
+            const one = try lower.newSlot(ty);
+            const limit = try lower.newSlot(ty);
+            const condition = try lower.newSlot(try lower.boolType());
+            _ = try lower.emit(lower.parent.source, .{ .constant = .{ .dst = index, .value = .{ .integer = 0 } } });
+            _ = try lower.emit(lower.parent.source, .{ .constant = .{ .dst = one, .value = .{ .integer = 1 } } });
+            _ = try lower.emit(lower.parent.source, .{ .constant = .{ .dst = limit, .value = .{ .integer = length } } });
+            const start = lower.position();
+            _ = try lower.emit(lower.parent.source, .{ .compare = .{ .dst = condition, .left = index, .right = limit, .operator = .less_than } });
+            const exit = try lower.emit(lower.parent.source, .{ .branch = .{ .condition = condition, .yes = lower.position() + 1, .no = 0 } });
+            return .{ .index = index, .one = one, .start = start, .exit = exit };
+        }
+        pub fn element(self: @This(), target: Target, selected: cleanup_plan.Child, iteration: ElementLoop) !Target {
+            return .{ .place = try self.lower.project(target.place, .{ .element = .{ .slot = iteration.index } }), .ty = selected.ty };
+        }
+        pub fn endElements(self: @This(), iteration: ElementLoop) !void {
+            const lower = self.lower;
+            _ = try lower.emit(lower.parent.source, .{ .binary = .{ .dst = iteration.index, .left = iteration.index, .right = iteration.one, .operator = .addition } });
+            _ = try lower.emit(lower.parent.source, .{ .jump = iteration.start });
+            lower.code.items[iteration.exit].op.branch.no = lower.position();
+        }
         pub fn beginVariant(self: @This(), target: Target, _: g.AutoDeinitField, selected: cleanup_plan.Child) !u32 {
             const lower = self.lower;
             return lower.emit(lower.parent.source, .{ .branch_storage_variant = .{

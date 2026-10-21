@@ -2967,6 +2967,44 @@ pub const CodeGenerator = struct {
             const view = try reference_evidence.storageView(generator.builder, .{ .cleanup = target.drop.flag_ref, .references = target.references, .owner = try generator.dropRuntimeOwner(target.drop) });
             try generator.callDeinit(callee, input, self_index, target.storage, view);
         }
+        const ElementLoop = struct { index: c.LLVMValueRef, body: c.LLVMBasicBlockRef, done: c.LLVMBasicBlockRef, length: u64 };
+
+        pub fn beginElements(self: @This(), _: Target, length: u64) !ElementLoop {
+            const builder = self.generator.builder;
+            const entry = c.LLVMGetInsertBlock(builder);
+            const function = c.LLVMGetBasicBlockParent(entry);
+            const body = c.LLVMAppendBasicBlock(function, "deinit.elements");
+            const done = c.LLVMAppendBasicBlock(function, "deinit.elements.done");
+            _ = c.LLVMBuildBr(builder, body);
+            c.LLVMPositionBuilderAtEnd(builder, body);
+            const index = c.LLVMBuildPhi(builder, c.LLVMInt64Type(), "deinit.element.index");
+            var values = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), 0, 0)};
+            var blocks = [_]c.LLVMBasicBlockRef{entry};
+            c.LLVMAddIncoming(index, &values, &blocks, 1);
+            return .{ .index = index, .body = body, .done = done, .length = length };
+        }
+        pub fn element(self: @This(), target: Target, selected: cleanup_plan.Child, loop: ElementLoop) !Target {
+            const generator = self.generator;
+            const owner = try generator.dropRuntimeOwner(target.drop);
+            const drop = try target.drop.projectElement(generator.builder, loop.index, owner.refresh);
+            var indices = [_]c.LLVMValueRef{ c.LLVMConstInt(c.LLVMInt64Type(), 0, 0), loop.index };
+            return .{
+                .storage = c.LLVMBuildInBoundsGEP2(generator.builder, try generator.toLLVMType(target.ty), target.storage, &indices, 2, "deinit.element"),
+                .ty = selected.ty,
+                .drop = drop,
+                .references = if (target.references) |companion| try reference_evidence.elementStorage(generator.builder, &generator.reference_layouts, generator.allocator, generator.graph, target.ty, companion, loop.index) else null,
+            };
+        }
+        pub fn endElements(self: @This(), loop: ElementLoop) !void {
+            const builder = self.generator.builder;
+            const end = c.LLVMGetInsertBlock(builder);
+            const next = c.LLVMBuildAdd(builder, loop.index, c.LLVMConstInt(c.LLVMInt64Type(), 1, 0), "deinit.element.next");
+            var values = [_]c.LLVMValueRef{next};
+            var blocks = [_]c.LLVMBasicBlockRef{end};
+            c.LLVMAddIncoming(loop.index, &values, &blocks, 1);
+            _ = c.LLVMBuildCondBr(builder, c.LLVMBuildICmp(builder, c.LLVMIntULT, next, c.LLVMConstInt(c.LLVMInt64Type(), loop.length, 0), "deinit.elements.more"), loop.body, loop.done);
+            c.LLVMPositionBuilderAtEnd(builder, loop.done);
+        }
         pub fn beginVariant(self: @This(), target: Target, field: graph_mod.AutoDeinitField, _: cleanup_plan.Child) !c.LLVMBasicBlockRef {
             const generator = self.generator;
             const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(generator.builder));

@@ -14,19 +14,13 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   payload construction still needs its own initialization representation.
   Share identity, projections, initialization and validity rules with ordinary
   storage without requiring identical physical representations.
-- Add structural array cleanup before enabling owning indexed writes. A scoped
-  `[2]Resource` probe currently performs zero drops in native and VM (expected
-  two), even without replacement. Represent one repeated element cleanup plan,
-  with its length/stride and evaluated index identity; avoid expanding metadata
-  for every element. Integrate whole-array exit, partial moves and initialization.
-  Shared layouts now represent repetition with one element descriptor and
-  checked length/stride arithmetic. VM projection and native ancestor refresh
-  preserve indexed flag ranges; LLVM refresh uses bounded loops instead of
-  expanding element instructions. Runtime flags occupy separate compact buffers,
-  and bytecode owners retain shared immutable layouts rather than concrete paths.
-  Complete frontend repeated cleanup plans and indexed destructor emission,
-  including logical identities for zero-sized elements. Do not enable array destruction while partial initialization or
-  projected flag transport is missing.
+- Finish structural array cleanup. The pending
+  `execution/162_structural_array_cleanup` regression aborts in native and VM:
+  its scoped `[2]Resource` performs zero drops instead of two. Register it once
+  both backends pass. Connect ownership selection and repeated safety effects to
+  the shared element-loop emitter without expanding a plan per element.
+  Preserve partial initialization, moved elements, indexed replacement and
+  zero-sized element identities before enabling owning indexed writes.
 - Complete indexed cleanup identities in both backends. Whole indirect pointer
   and record-field replacements use checked plans, including the three-drop
   retargeting probe and preservation of sibling references in native and VM.

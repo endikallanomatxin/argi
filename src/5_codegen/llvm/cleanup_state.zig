@@ -66,6 +66,17 @@ pub const RefreshFunctions = struct {
             _ = c.LLVMBuildBr(builder, next);
             c.LLVMPositionBuilderAtEnd(builder, next);
         };
+        // An unavailable descendant immediately disproves whole-owner
+        // completeness. Destruction loops must not rescan every sibling.
+        const unavailable = c.LLVMAppendBasicBlock(function, "cleanup.incomplete");
+        const initialized = c.LLVMAppendBasicBlock(function, "cleanup.check.parents");
+        var selected_index = [_]c.LLVMValueRef{offset};
+        const selected_flag = c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), flags, &selected_index, 1, "cleanup.changed.flag");
+        _ = c.LLVMBuildCondBr(builder, c.LLVMBuildLoad2(builder, c.LLVMInt1Type(), selected_flag, "cleanup.changed.ready"), initialized, unavailable);
+        c.LLVMPositionBuilderAtEnd(builder, unavailable);
+        _ = c.LLVMBuildStore(builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), flags);
+        _ = c.LLVMBuildBr(builder, done);
+        c.LLVMPositionBuilderAtEnd(builder, initialized);
         promoteAggregate(builder, flags, description, 0);
         _ = c.LLVMBuildBr(builder, done);
         c.LLVMPositionBuilderAtEnd(builder, done);

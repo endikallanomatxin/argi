@@ -9,6 +9,7 @@ pub const Access = enum { complete, present };
 pub const Child = struct {
     ty: g.GlobalTypeId,
     variant: ?g.GlobalVariantId = null,
+    repetition: ?u64 = null,
 };
 
 pub fn child(graph: *const g.GlobalSemanticGraph, parent: g.GlobalTypeId, field: g.AutoDeinitField) !Child {
@@ -20,6 +21,12 @@ pub fn child(graph: *const g.GlobalSemanticGraph, parent: g.GlobalTypeId, field:
             .ty = graph.variants.items[@intFromEnum(variant)].payload_type orelse return error.InvalidCleanupPlan,
             .variant = variant,
         };
+    }
+    if (types.arrayElement(graph, parent)) |element| {
+        // One selected operation describes every element; the index belongs
+        // to the emitter's evaluated storage projection, not this template.
+        if (field.field_index != 0) return error.InvalidCleanupPlan;
+        return .{ .ty = element, .repetition = types.arrayLength(graph, parent).? };
     }
     const fields = types.fields(graph, parent) orelse return error.InvalidCleanupPlan;
     if (field.field_index >= fields.len) return error.InvalidCleanupPlan;
@@ -146,7 +153,7 @@ pub fn emit(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operati
             try emitFields(backend, graph, plan, target);
             try backend.clear(target);
         }
-    } else if (types.fields(graph, target.ty) != null) {
+    } else if (types.fields(graph, target.ty) != null or types.arrayElement(graph, target.ty) != null) {
         // An incomplete record can still contain live owning fields. Its root
         // flag must not suppress their individually guarded cleanup.
         try emitFields(backend, graph, plan, target);
@@ -162,7 +169,13 @@ pub fn emit(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operati
 fn emitFields(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operation, target: anytype) anyerror!void {
     for (graph.auto_deinit_fields.items[plan.fields.start..][0..plan.fields.len]) |field| {
         const selected = try child(graph, target.ty, field);
-        if (selected.variant != null) {
+        if (selected.repetition) |length| {
+            if (plan.fields.len != 1) return error.InvalidCleanupPlan;
+            if (length == 0) continue;
+            const loop = try backend.beginElements(target, length);
+            try emit(backend, graph, Operation.fromField(field), try backend.element(target, selected, loop));
+            try backend.endElements(loop);
+        } else if (selected.variant != null) {
             const variant = try backend.beginVariant(target, field, selected);
             try emit(backend, graph, Operation.fromField(field), try backend.project(target, field, selected));
             try backend.endVariant(variant);
@@ -170,4 +183,26 @@ fn emitFields(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Opera
             try emit(backend, graph, Operation.fromField(field), try backend.project(target, field, selected));
         }
     }
+}
+
+test "repeated cleanup child selection retains one element operation and its dimension" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 1_000_000 } },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 0 } },
+    });
+    var template: g.AutoDeinitField = .{ .field_index = 0, .deinit_fn = null };
+    const selected = try child(&graph, @enumFromInt(1), template);
+    try std.testing.expectEqual(@as(g.GlobalTypeId, @enumFromInt(0)), selected.ty);
+    try std.testing.expectEqual(@as(u64, 1_000_000), selected.repetition.?);
+    try std.testing.expect(selected.variant == null);
+    try std.testing.expectEqual(@as(u64, 0), (try child(&graph, @enumFromInt(2), template)).repetition.?);
+    template.field_index = 1;
+    try std.testing.expectError(error.InvalidCleanupPlan, child(&graph, @enumFromInt(1), template));
+    template.field_index = 0;
+    template.is_variant = true;
+    try std.testing.expectError(error.InvalidCleanupPlan, child(&graph, @enumFromInt(1), template));
 }
