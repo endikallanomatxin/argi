@@ -167,6 +167,7 @@ pub const Storage = struct {
     }
     pub fn allocate(self: *Storage, count: usize) ![]b.Value {
         try self.charge(count);
+        errdefer self.cells -= count;
         return self.allocator.alloc(b.Value, count);
     }
     pub fn virtualize(self: *Storage, receiver: v.Reference, program: *const b.Program, table: *const b.VirtualTable) !b.Value {
@@ -353,16 +354,18 @@ pub const Storage = struct {
         return self.enterCleanup(count, &.{});
     }
     pub fn enterCleanup(self: *Storage, count: usize, cleanup: []const b.Cleanup) !v.FrameId {
-        // Also bound zero-slot frames and the frame identity table.
-        try self.charge(1);
         if (self.frames.items.len >= std.math.maxInt(u32)) return error.ExecutionMemoryLimit;
-        try self.charge(count);
-        const values = try self.allocator.alloc(?b.Value, count);
-        @memset(values, null);
-        for (cleanup) |entry| {
+        for (cleanup) |entry|
             if (entry.root >= count or entry.flag >= count or entry.root == entry.flag) return error.ExecutionInvalidReference;
-            values[entry.flag] = .{ .boolean = false };
-        }
+        // Bound zero-slot frames too, but publish neither quota nor identity
+        // until all frame storage and metadata allocations have succeeded.
+        const charge_count = std.math.add(usize, count, 1) catch return error.ExecutionMemoryLimit;
+        try self.charge(charge_count);
+        errdefer self.cells -= charge_count;
+        const values = try self.allocator.alloc(?b.Value, count);
+        errdefer self.allocator.free(values);
+        @memset(values, null);
+        for (cleanup) |entry| values[entry.flag] = .{ .boolean = false };
         const id: v.FrameId = @enumFromInt(self.frames.items.len);
         try self.frames.append(self.allocator, .{ .values = values, .cleanup = cleanup });
         return id;
@@ -891,6 +894,33 @@ test "compact partial array layouts charge concrete cells before allocation" {
     } }));
     try std.testing.expectEqual(before, storage.cells);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+}
+
+test "rejected frames preserve quota and frame identities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 2);
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.enterCleanup(2, &.{.{ .root = 0, .path = &.{}, .flag = 0 }}));
+    try std.testing.expectEqual(@as(usize, 0), storage.cells);
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.enter(2));
+    try std.testing.expectEqual(@as(usize, 0), storage.cells);
+    try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(try storage.enter(1)));
+}
+
+fn failedFrameStorage(a: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100000);
+    _ = storage.enterCleanup(4096, &.{.{ .root = 0, .path = &.{}, .flag = 1 }}) catch |err| {
+        try std.testing.expectEqual(@as(usize, 0), storage.cells);
+        try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
+        return err;
+    };
+}
+
+test "frame allocation failures publish neither identities nor quota charges" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedFrameStorage, .{});
 }
 
 test "rejected partial layouts publish neither storage nor quota charges" {
