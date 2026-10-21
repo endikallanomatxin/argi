@@ -196,6 +196,23 @@ pub fn projectOptionalStorage(builder: c.LLVMBuilderRef, layout: *references.Lay
     return nullableOffset(builder, storage, storageViewType(), slice.offset);
 }
 
+// Reuse the checked data index for both independent evidence ranges. Null
+// companions remain absent even when the logical element offset is nonzero.
+pub fn elementView(builder: c.LLVMBuilderRef, layout: *references.Layout, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, counts: *@import("../cleanup_layout.zig").Counts, ty: g.GlobalTypeId, view: c.LLVMValueRef, index: c.LLVMValueRef) !c.LLVMValueRef {
+    if (c.LLVMGetTypeKind(c.LLVMTypeOf(index)) != c.LLVMIntegerTypeKind or c.LLVMGetIntTypeWidth(c.LLVMTypeOf(index)) > 64) return error.InvalidReferenceEvidenceStorage;
+    _ = try counts.count(allocator, graph, ty);
+    const array = counts.description(ty).repetition orelse return error.InvalidReferenceEvidenceStorage;
+    const widened = c.LLVMBuildIntCast2(builder, index, c.LLVMInt64Type(), 0, "cleanup.element.index");
+    const offset = c.LLVMBuildAdd(builder, c.LLVMConstInt(c.LLVMInt64Type(), 1, 0), c.LLVMBuildMul(builder, widened, c.LLVMConstInt(c.LLVMInt64Type(), array.element.count, 0), "cleanup.element.stride"), "cleanup.element.offset");
+    var owner = try runtimeOwner(builder, view);
+    owner.offset = c.LLVMBuildAdd(builder, owner.offset, offset, "cleanup.element.owner.offset");
+    return storageView(builder, .{
+        .cleanup = nullableOffsetValue(builder, try cleanupPointer(builder, view), c.LLVMInt1Type(), offset),
+        .references = try elementStorage(builder, layout, allocator, graph, ty, try referencesPointer(builder, view), index),
+        .owner = owner,
+    });
+}
+
 // The caller has already checked this index for the data access. Reuse its
 // SSA value; this projection introduces neither another evaluation nor flags
 // for indexed cleanup, which has a separate frontend representation obligation.
@@ -295,4 +312,26 @@ test "native reference evidence projects distinct sibling ranges through the pri
     const invalid = c.LLVMVerifyModule(module, c.LLVMReturnStatusAction, &message);
     if (invalid != 0) std.debug.print("{s}\n", .{message});
     try std.testing.expectEqual(@as(c_int, 0), invalid);
+}
+
+test "native array element views preserve cleanup identity and absent companions" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .array = .{ .element = @enumFromInt(0), .length = 4 } } });
+    var layout: references.Layout = .{};
+    defer layout.deinit(a);
+    var counts: @import("../cleanup_layout.zig").Counts = .{};
+    defer counts.deinit(a);
+    const builder = c.LLVMCreateBuilder();
+    defer c.LLVMDisposeBuilder(builder);
+    const null_view = c.LLVMConstNull(storageViewType());
+    const projected = try elementView(builder, &layout, a, &graph, &counts, @enumFromInt(1), null_view, c.LLVMConstInt(c.LLVMInt32Type(), 3, 0));
+    try std.testing.expect(c.LLVMIsNull(try cleanupPointer(builder, projected)) != 0);
+    try std.testing.expect(c.LLVMIsNull(try referencesPointer(builder, projected)) != 0);
+    const owner = try runtimeOwner(builder, projected);
+    try std.testing.expectEqual(@as(c_ulonglong, 4), c.LLVMConstIntGetZExtValue(owner.offset));
+    try std.testing.expect(c.LLVMIsNull(owner.flags) != 0);
+    try std.testing.expect(c.LLVMIsNull(owner.refresh) != 0);
+    try std.testing.expectError(error.InvalidReferenceEvidenceStorage, elementView(builder, &layout, a, &graph, &counts, @enumFromInt(0), null_view, c.LLVMConstInt(c.LLVMInt32Type(), 0, 0)));
 }

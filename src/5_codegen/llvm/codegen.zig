@@ -1988,8 +1988,8 @@ pub const CodeGenerator = struct {
                 const array_type = try self.toLLVMType(access.array_type);
                 const element_type = try self.toLLVMType(access.element_type);
                 const pointer = try self.arrayElementPointer(base.value_ref, array_type, index, access.array_type);
-                const companion = if (base.reference_view) |view| try reference_evidence.elementStorage(self.builder, &self.reference_layouts, self.allocator, self.graph, access.array_type, try reference_evidence.referencesPointer(self.builder, view), index.value_ref) else null;
-                break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(element_type, 0), .ty = access.element_type, .reference_view = if (companion) |storage| try reference_evidence.storageView(self.builder, .{ .references = storage }) else null };
+                const companion: ?c.LLVMValueRef = if (base.reference_view) |view| try reference_evidence.elementView(self.builder, &self.reference_layouts, self.allocator, self.graph, &self.cleanup_counts, access.array_type, view, index.value_ref) else null;
+                break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(element_type, 0), .ty = access.element_type, .reference_view = companion };
             },
             .dereference => |deref| (try self.visitNode(deref.pointer)) orelse return CodegenError.ValueNotFound,
             else => CodegenError.InvalidType,
