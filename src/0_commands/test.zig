@@ -13,16 +13,14 @@ const DiscoverTest = struct {
 };
 
 const ParsedArgs = struct {
-    target: []const u8,
+    target: ?[]const u8 = null,
     filter: ?[]const u8 = null,
     sysroot_path: ?[]const u8 = null,
 };
 
 fn parseArgs(args: []const []const u8) !ParsedArgs {
-    if (args.len == 0) return error.MissingTestTarget;
-
-    var parsed = ParsedArgs{ .target = args[0] };
-    var idx: usize = 1;
+    var parsed: ParsedArgs = .{};
+    var idx: usize = 0;
     while (idx < args.len) : (idx += 1) {
         if (std.mem.eql(u8, args[idx], "--filter")) {
             idx += 1;
@@ -36,7 +34,8 @@ fn parseArgs(args: []const []const u8) !ParsedArgs {
             parsed.sysroot_path = args[idx];
             continue;
         }
-        return error.UnknownFlag;
+        if (std.mem.startsWith(u8, args[idx], "-") or parsed.target != null) return error.UnknownFlag;
+        parsed.target = args[idx];
     }
     return parsed;
 }
@@ -87,11 +86,13 @@ fn testCacheDirForModule(allocator: std.mem.Allocator, module_dir: []const u8) !
     hasher.update(module_dir);
     const module_hash = hasher.final();
     const cache_root = try build_plan.localCacheRoot(allocator);
+    defer allocator.free(cache_root);
     return try std.fmt.allocPrint(allocator, "{s}/tests/{x}", .{ cache_root, module_hash });
 }
 
 fn outputPathForTest(allocator: std.mem.Allocator, module_dir: []const u8, test_name: []const u8) ![]u8 {
     const cache_dir = try testCacheDirForModule(allocator, module_dir);
+    defer allocator.free(cache_dir);
     const safe_name = try sanitizeTestName(allocator, test_name);
     defer allocator.free(safe_name);
     return try std.fmt.allocPrint(allocator, "{s}/{s}", .{ cache_dir, safe_name });
@@ -99,6 +100,7 @@ fn outputPathForTest(allocator: std.mem.Allocator, module_dir: []const u8, test_
 
 fn clearTestCacheForModule(io: std.Io, allocator: std.mem.Allocator, module_dir: []const u8) !void {
     const cache_dir = try testCacheDirForModule(allocator, module_dir);
+    defer allocator.free(cache_dir);
     std.Io.Dir.cwd().access(io, cache_dir, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
@@ -126,73 +128,89 @@ pub fn run(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const module_dir = try build_plan.resolveBuildModuleDir(allocator, io, parsed.target);
-    const core_options = sf.CoreResolutionOptions{
-        .explicit_sysroot = parsed.sysroot_path,
-        .environ_map = environ_map,
-    };
-    const core_dir = try sf.resolveToolCoreDir(&allocator, io, core_options);
-    const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
-    const discovered = try discoverTests(io, allocator, core_options, module_dir);
-    try clearTestCacheForModule(io, allocator, module_dir);
-
+    const modules: []const []const u8 = if (parsed.target) |target|
+        &.{try build_plan.resolveBuildModuleDir(allocator, io, target)}
+    else
+        build_plan.configuredTestModules(allocator, io) catch |err| {
+            if (err == error.MissingTestConfiguration or err == error.InvalidTestConfiguration) {
+                std.debug.print("Error: configure [test] modules = [\"tests/unit\"] in argi.toml, or pass a module directory: argi test .\n", .{});
+                return 1;
+            }
+            return err;
+        };
     var ran_any = false;
     var had_failure = false;
-
-    for (discovered) |test_decl| {
-        if (parsed.filter) |filter| {
-            if (std.mem.indexOf(u8, test_decl.name, filter) == null) continue;
-        }
-        ran_any = true;
-
-        const output_path = try outputPathForTest(allocator, module_dir, test_decl.name);
-        const flags = build_plan.BuildFlags{
-            .frontend_jobs = .{ .count = 1 },
-            .show_cascade = true,
-            .output_path = output_path,
-            .sysroot_path = parsed.sysroot_path,
+    for (modules) |module_dir| {
+        const dir = std.Io.Dir.cwd().openDir(io, module_dir, .{}) catch |err| {
+            std.debug.print("Error: cannot open test module '{s}': {s}\n", .{ module_dir, @errorName(err) });
+            return 1;
         };
+        dir.close(io);
+        const core_options = sf.CoreResolutionOptions{
+            .explicit_sysroot = parsed.sysroot_path,
+            .environ_map = environ_map,
+        };
+        const core_dir = try sf.resolveToolCoreDir(&allocator, io, core_options);
+        const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
+        const discovered = try discoverTests(io, allocator, core_options, module_dir);
+        try clearTestCacheForModule(io, allocator, module_dir);
 
-        build.compileTarget(module_dir, flags, .{
-            .frontend_options = .{
-                .semantizing = .{
-                    .include_tests = true,
-                    .selected_test_name = test_decl.name,
-                    .implicit_testing_module_dir = testing_module_dir,
+        for (discovered) |test_decl| {
+            if (parsed.filter) |filter| {
+                if (std.mem.indexOf(u8, test_decl.name, filter) == null) continue;
+            }
+            ran_any = true;
+            const display_name = try std.fs.path.join(allocator, &.{ module_dir, test_decl.name });
+
+            const output_path = try outputPathForTest(allocator, module_dir, test_decl.name);
+            const flags = build_plan.BuildFlags{
+                .frontend_jobs = .{ .count = 1 },
+                .show_cascade = true,
+                .output_path = output_path,
+                .sysroot_path = parsed.sysroot_path,
+            };
+
+            build.compileTarget(module_dir, flags, .{
+                .frontend_options = .{
+                    .semantizing = .{
+                        .include_tests = true,
+                        .selected_test_name = test_decl.name,
+                        .implicit_testing_module_dir = testing_module_dir,
+                    },
                 },
-            },
-            .codegen_options = .{
-                .selected_test_name = test_decl.name,
-            },
-            .success_message = null,
-        }, io, environ_map) catch {
-            printResultLine("FAIL", test_decl.name);
-            had_failure = true;
-            continue;
-        };
+                .codegen_options = .{
+                    .selected_test_name = test_decl.name,
+                },
+                .success_message = null,
+            }, io, environ_map) catch {
+                printResultLine("FAIL", display_name);
+                had_failure = true;
+                continue;
+            };
 
-        const result = try std.process.run(allocator, io, .{
-            .argv = &.{output_path},
-        });
+            const result = try std.process.run(allocator, io, .{
+                .argv = &.{output_path},
+            });
 
-        switch (result.term) {
-            .exited => |code| switch (code) {
-                0 => printResultLine("PASS", test_decl.name),
-                77 => {
-                    printResultLine("SKIP", test_decl.name);
-                    printCapturedOutput(result);
+            switch (result.term) {
+                .exited => |code| switch (code) {
+                    0 => printResultLine("PASS", display_name),
+                    77 => {
+                        printResultLine("SKIP", display_name);
+                        printCapturedOutput(result);
+                    },
+                    else => {
+                        printResultLine("FAIL", display_name);
+                        printCapturedOutput(result);
+                        had_failure = true;
+                    },
                 },
                 else => {
-                    printResultLine("FAIL", test_decl.name);
+                    printResultLine("FAIL", display_name);
                     printCapturedOutput(result);
                     had_failure = true;
                 },
-            },
-            else => {
-                printResultLine("FAIL", test_decl.name);
-                printCapturedOutput(result);
-                had_failure = true;
-            },
+            }
         }
     }
 
@@ -208,6 +226,17 @@ test "test output path lives under local argi cache" {
     const output_path = try outputPathForTest(std.testing.allocator, "/tmp/module", "my test");
     defer std.testing.allocator.free(output_path);
 
-    try std.testing.expect(std.mem.indexOf(u8, output_path, "/.argi-cache/tests/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output_path, ".argi-cache/tests/") != null);
     try std.testing.expect(std.mem.endsWith(u8, output_path, "/my_test"));
+}
+
+test "test arguments allow configured suite and explicit module with filters" {
+    try std.testing.expect((try parseArgs(&.{})).target == null);
+    const configured = try parseArgs(&.{ "--filter", "example", "--sysroot", "/bundle" });
+    try std.testing.expect(configured.target == null);
+    try std.testing.expectEqualStrings("example", configured.filter.?);
+    const explicit = try parseArgs(&.{ "--filter", "example", "tests/unit" });
+    try std.testing.expectEqualStrings("tests/unit", explicit.target.?);
+    try std.testing.expectError(error.MissingFlagValue, parseArgs(&.{"--filter"}));
+    try std.testing.expectError(error.UnknownFlag, parseArgs(&.{ "one", "two" }));
 }

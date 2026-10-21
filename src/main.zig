@@ -36,7 +36,7 @@ fn printHelp() void {
     std.debug.print("  build [path] [flags]                   Build the current package, package path, or module path\n", .{});
     std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
     std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
-    std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
+    std.debug.print("  test [directory] [flags]               Build and run native Argi tests\n", .{});
     std.debug.print("  init [name]                            Create an executable package\n", .{});
     std.debug.print("  init --lib [name]                      Create a library package\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
@@ -64,6 +64,7 @@ fn printHelp() void {
     std.debug.print("  --c-sysroot <path>                      Select the target C toolchain sysroot\n", .{});
     std.debug.print("  --target <arch-os-abi>                   Select native or Linux x86_64/aarch64 GNU target\n", .{});
     std.debug.print("  --release                              Optimize LLVM IR and generated machine code\n", .{});
+    std.debug.print("\nTest defaults: [test].modules in the current directory's argi.toml\n", .{});
     std.debug.print("\nTest flags:\n", .{});
     std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
     std.debug.print("\nBuild diagnostic flags:\n", .{});
@@ -127,10 +128,6 @@ pub fn main(init: std.process.Init) !void {
         };
         std.process.exit(exit_code);
     } else if (std.mem.eql(u8, command, "test")) {
-        if (args.len < 3) {
-            std.debug.print("Error: module directory required\n", .{});
-            std.process.exit(1);
-        }
         const exit_code = test_cmd.run(io, init.environ_map, args[2..]) catch |err| {
             exitCommandError("Test error", err);
         };

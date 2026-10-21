@@ -340,6 +340,23 @@ fn run(name: []const u8) !void {
     try runExpect(name, 0);
 }
 
+fn qualifiedTestOutput(name: []const u8, output: []const u8) ![]u8 {
+    const allocator = std.testing.allocator;
+    const path = name;
+    var writer: std.Io.Writer.Allocating = .init(allocator);
+    defer writer.deinit();
+    var lines = std.mem.splitScalar(u8, output, '\n');
+    var first = true;
+    while (lines.next()) |line| {
+        if (!first) try writer.writer.writeByte('\n');
+        first = false;
+        if (std.mem.startsWith(u8, line, "PASS ") or std.mem.startsWith(u8, line, "FAIL ") or std.mem.startsWith(u8, line, "SKIP ")) {
+            try writer.writer.print("{s}{s}/{s}", .{ line[0..5], path, line[5..] });
+        } else try writer.writer.writeAll(line);
+    }
+    return allocator.dupe(u8, writer.written());
+}
+
 fn argiTestExpectStderr(
     name: []const u8,
     args: []const []const u8,
@@ -360,7 +377,9 @@ fn argiTestExpectStderr(
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
-    try expectEqualStrings(expected_stderr, result.stderr);
+    const qualified = try qualifiedTestOutput(name, expected_stderr);
+    defer std.testing.allocator.free(qualified);
+    try expectEqualStrings(qualified, result.stderr);
 }
 
 fn argiTestExpectStderrContains(
@@ -383,7 +402,9 @@ fn argiTestExpectStderrContains(
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
-    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr_fragment) != null);
+    const qualified = try qualifiedTestOutput(name, expected_stderr_fragment);
+    defer std.testing.allocator.free(qualified);
+    try expect(std.mem.indexOf(u8, result.stderr, qualified) != null);
 }
 
 fn runExpectStdoutWithArgs(
@@ -723,7 +744,7 @@ test "installed argi test resolves core from its installation prefix outside rep
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-    try expect(std.mem.indexOf(u8, result.stderr, "PASS installed_prefix\n") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "/installed_prefix\n") != null);
 }
 
 test "argi init creates executable package" {
@@ -5799,7 +5820,7 @@ test "argi test without target exits with error" {
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectEqualStrings("Error: module directory required\n", result.stderr);
+    try expect(std.mem.indexOf(u8, result.stderr, "configure [test] modules") != null);
 }
 
 test "argi init without name initializes current directory" {
@@ -5980,7 +6001,7 @@ test "argi test uses ARGI_SYSROOT when flag is absent" {
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-    try expect(std.mem.indexOf(u8, result.stderr, "PASS simple_pass\n") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "/simple_pass\n") != null);
 }
 
 test "argi build rejects invalid ARGI_SYSROOT without fallback" {
@@ -13395,4 +13416,44 @@ test "feature_tests/basics/88X_named_record_field_escape" {
 test "feature_tests/basics/89_named_record_middle_default" {
     try expectSuccessfulBuild("tests/feature_tests/basics/89_named_record_middle_default");
     try runExpect("tests/feature_tests/basics/89_named_record_middle_default", 0);
+}
+
+test "argi test runs configured modules and explicit target overrides suite" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const argi = try installedArgiPath();
+    defer std.testing.allocator.free(argi);
+    for ([_][]const u8{ "first", "second" }) |module| {
+        try tmp.dir.createDir(std.testing.io, module, .default_dir);
+        const source = try std.fs.path.join(std.testing.allocator, &.{ module, "main.rg" });
+        defer std.testing.allocator.free(source);
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = source, .data = "test same_name := (.system: System) -> !() { testing.expect(.condition = true)! }\n" });
+    }
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = "[test]\nmodules = [\n  'first',\n  'second',\n]\n" });
+    const suite = try runChildInCwd(&.{ argi, "test", "--filter", "same_name" }, root);
+    defer std.testing.allocator.free(suite.stdout);
+    defer std.testing.allocator.free(suite.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, suite.term);
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+    const relative_root = root[repo_root.len + 1 ..];
+    const expected = try std.fmt.allocPrint(std.testing.allocator, "PASS {s}/first/same_name\nPASS {s}/second/same_name\n", .{ relative_root, relative_root });
+    defer std.testing.allocator.free(expected);
+    try expectEqualStrings(expected, suite.stderr);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = "[test]\nmodules = ['first']\n" });
+    const explicit = try runChildInCwd(&.{ argi, "test", "second" }, root);
+    defer std.testing.allocator.free(explicit.stdout);
+    defer std.testing.allocator.free(explicit.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, explicit.term);
+    const single = try std.fmt.allocPrint(std.testing.allocator, "PASS {s}/second/same_name\n", .{relative_root});
+    defer std.testing.allocator.free(single);
+    try expectEqualStrings(single, explicit.stderr);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = "[test]\nmodules = [1]\n" });
+    const invalid = try runChildInCwd(&.{ argi, "test" }, root);
+    defer std.testing.allocator.free(invalid.stdout);
+    defer std.testing.allocator.free(invalid.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, invalid.term);
+    try expect(std.mem.indexOf(u8, invalid.stderr, "configure [test] modules") != null);
 }

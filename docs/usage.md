@@ -80,3 +80,27 @@ this is separate from the C toolchain's `--c-sysroot`.
 
 For installation, see the [binary guide](../.github/scripts/binary_installation.md)
 or [building from source](../CONTRIBUTING.md#building-from-source).
+
+### Project test suites
+
+Declare the modules run by `argi test` in the current directory's `argi.toml`:
+
+```toml
+[test]
+modules = [
+    "tests/unit",
+    "tests/integration",
+]
+```
+
+Paths are relative to the manifest. Each entry selects one folder-level module;
+subdirectories are not searched recursively. Modules run in the configured order.
+`argi test path/to/module` overrides the configured suite, and `argi test .`
+explicitly tests the current module. Without a configured suite or an explicit
+path, the command reports how to select modules instead of scanning the project.
+An empty suite reports no tests found and exits with status 1.
+
+`--filter text` applies to test names in either form. Results include the module
+path and test name, for example `PASS /project/tests/unit/example`, so identical
+names in different modules remain distinguishable. A failed test causes the
+command to exit with status 1 after running the remaining selected tests.
