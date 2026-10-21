@@ -160,8 +160,54 @@ fn run(io: std.Io, count: usize, core: bool, scenario: Scenario, limit: usize) !
     }
 }
 
+// Isolate verifier allocations from graph construction and session retention.
+// Diamonds retain one join per block; linear code has the same slot count.
+fn benchmarkVerifier(io: std.Io) !void {
+    const b = @import("5_codegen/bytecode/bytecode.zig");
+    const g = @import("4_semantics/global/graph.zig");
+    const verify = @import("5_codegen/bytecode/verify.zig").verify;
+    const a = std.heap.page_allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    const source = @import("4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    std.debug.print("shape,slots,instructions,verification_ms,requested_bytes,peak_bytes,retained_bytes\n", .{});
+    for ([_]usize{ 10, 100, 1000 }) |count| {
+        const slots = try a.alloc(b.Type, count);
+        defer a.free(slots);
+        @memset(slots, @enumFromInt(0));
+        for ([_]bool{ false, true }) |diamonds| {
+            const code = try a.alloc(b.Instruction, (if (diamonds) count * 3 else count) + 1);
+            defer a.free(code);
+            if (diamonds) {
+                for (0..count) |index| {
+                    const pc: u32 = @intCast(index * 3);
+                    code[pc] = .{ .source = source, .op = .{ .branch = .{ .condition = 0, .yes = pc + 1, .no = pc + 2 } } };
+                    code[pc + 1] = .{ .source = source, .op = .{ .jump = pc + 3 } };
+                    code[pc + 2] = .{ .source = source, .op = .{ .jump = pc + 3 } };
+                }
+            } else {
+                for (code[0..count], 0..) |*instruction, index| {
+                    instruction.* = .{ .source = source, .op = .{ .constant = .{ .dst = @intCast(index), .value = .{ .boolean = true } } } };
+                }
+            }
+            code[code.len - 1] = .{ .source = source, .op = .{ .ret = &.{0} } };
+            const function = b.Function{ .slots = slots, .inputs = &.{0}, .outputs = &.{0}, .code = code };
+            var memory: Memory = .{ .limit = 128 * 1024 * 1024 };
+            var requested: u64 = 0;
+            var allocations = @import("1_base/profile.zig").AllocationCounter{ .child = memory.allocator(), .requested_bytes = &requested };
+            const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+            try verify(allocations.allocator(), .{ .graph = &graph, .functions = &.{}, .expression = &function });
+            const duration = elapsed(io, start);
+            std.debug.print("{s},{d},{d},{d:.3},{d},{d},{d}\n", .{ if (diamonds) "diamonds" else "linear", count, code.len, ms(duration), requested, memory.peak, memory.live });
+            if (memory.live != 0) return error.VerifierRetainedMemory;
+        }
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--verifier")) return benchmarkVerifier(init.io);
     if (args.len > 5) return error.InvalidArguments;
     const count = if (args.len >= 2) try std.fmt.parseInt(usize, args[1], 10) else 1000;
     if (count == 0 or count == std.math.maxInt(usize)) return error.InvalidArguments;

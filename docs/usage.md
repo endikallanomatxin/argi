@@ -387,3 +387,29 @@ proofs, frame storage and compiled function/instruction counts are unchanged.
 Observed total time is 23,019 ms, including 147 ms lowering. This removes one
 redundant table snapshot per command without reusing function bodies across
 commands; semantic snapshots remain the largest measured component.
+
+To isolate verifier allocation behavior, run
+`zig build benchmark-execution -Doptimize=ReleaseSafe -- --verifier`.
+It constructs linear functions and chains of diamonds with 10, 100 and 1,000
+Boolean slots. Each diamond has two paths merging before the next branch.
+Graph/code construction is excluded from the measured allocator. The output
+distinguishes cumulative requested bytes, peak live requested bytes and bytes
+still owned after verification; these are not RSS measurements.
+
+One native ReleaseSafe sample reports:
+
+| Shape | Slots | Instructions | Requested bytes | Peak bytes | Retained bytes |
+|---|---:|---:|---:|---:|---:|
+| Linear | 10 | 11 | 681 | 539 | 0 |
+| Diamonds | 10 | 31 | 4,101 | 1,219 | 0 |
+| Linear | 100 | 101 | 3,021 | 2,789 | 0 |
+| Diamonds | 100 | 301 | 64,721 | 28,089 | 0 |
+| Linear | 1,000 | 1,001 | 26,421 | 25,289 | 0 |
+| Diamonds | 1,000 | 3,001 | 3,342,561 | 2,077,429 | 0 |
+
+Linear state transfer avoids one full slot vector per instruction. Joins still
+retain full vectors: the diamond workload grows with both join count and slot
+count. This synthetic sample identifies that remaining scaling cost; it does
+not establish its contribution to ordinary REPL workloads or justify changing
+the representation by itself. Observed verification time at 1,000 slots was
+0.86 ms for linear code and 27.52 ms for diamonds, without a timing threshold.
