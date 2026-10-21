@@ -30,6 +30,7 @@ pub const ComptimeFailure = struct {
     reason: []const u8,
     // Borrow the original module token; rendering happens after rollback.
     unknown_name: ?[]const u8 = null,
+    materialization_error: ?anyerror = null,
 };
 
 pub const Resolver = struct {

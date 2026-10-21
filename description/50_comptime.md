@@ -85,6 +85,8 @@ external inputs must be tracked as build dependencies before enabling them.
 > the accepted runtime state; reset starts a fresh execution context.
 > A concrete entry containing `#if` uses ordinary staged function materialization:
 > only its selected branch is resolved and safety-checked.
+> Interactive selection retains successful results across commands and rejects
+> invalid selected branches without changing the accepted session revision.
 > The current implementation still accepts the superseded `#run function(...)`
 > form; migration replaces it rather than preserving both forms.
 > This implementation accepts resolved function calls with constant scalar or

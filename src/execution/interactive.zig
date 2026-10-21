@@ -455,6 +455,24 @@ test "interactive anonymous compile-time entries preserve accepted state across 
     try session.close();
 }
 
+test "interactive conditional compile-time entries preserve selection across revisions" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("enabled := () -> (.result: Bool) { result = false }");
+    try session.submitStatements("saved ::= #run () -> (.result: Int32) { #if enabled() { result = missing() } #else { result = 42 } }");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("saved")).?.value.runtime.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.result: Int32) { #if enabled() { result = 42 } #else { result = missing() } }"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expect(session.runtime.context.state != .poisoned);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("saved")).?.value.runtime.integer);
+    try session.submitStatements("#run { #if enabled() { missing() } #else { local :: Int32 = 42 } }");
+    try session.reset();
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("#run () -> (.result: Int32) { #if false { result = missing() } #else { result = 42 } }")).?.value.runtime.integer);
+    try session.close();
+}
+
 test "interactive classification rejects mixed submissions and unresolved imports atomically" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});

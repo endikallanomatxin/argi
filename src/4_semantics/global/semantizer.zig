@@ -3781,6 +3781,8 @@ fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, 
     if (diagnostics) |bag| {
         if (failure.unknown_name) |name| {
             try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "unknown name '{s}' in this scope", .{name});
+        } else if (failure.materialization_error) |err| {
+            try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}: {s}", .{ failure.reason, @errorName(err) });
         } else try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
         return error.Reported;
     }

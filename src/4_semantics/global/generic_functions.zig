@@ -2061,7 +2061,8 @@ pub const Resolver = struct {
             if (self.nested_call_context) |contracts| if (contracts.participant_conformance_failure != null) return err;
             if (self.generics.comptime_failure == null) self.generics.comptime_failure = .{
                 .source = self.graph.declaration(function.declaration).source,
-                .reason = try std.fmt.allocPrint(self.allocator, "cannot materialize body of '{s}': {s}", .{ self.graph.text(self.graph.declarationSourceName(function.declaration)), @errorName(err) }),
+                .reason = "cannot materialize function body",
+                .materialization_error = err,
             };
             return err;
         };
