@@ -217,7 +217,7 @@ test "bytecode array verifier rejects malformed elements and indices" {
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[3].op = .{ .check_place = .{ .root = 2, .path = &.{.{ .field = 0 }} } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[3].op = .{ .check_place = .{ .root = 2, .path = &.{.{ .element = 99 }} } };
+    code[3].op = .{ .check_place = .{ .root = 2, .path = &.{.{ .element = .{ .slot = 99, .kind = .i32 } }} } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
 
@@ -826,13 +826,13 @@ test "bytecode captured write access retains bounds and storage liveness" {
     const slots = try storage.slots(frame);
     try slots.put(0, .{ .array = &.{ .{ .integer = 1 }, .{ .integer = 2 } } });
     try slots.put(1, .{ .integer = 0 });
-    const destination = try storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} }, false);
+    const destination = try storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = .{ .slot = 1, .kind = .i32 } }} }, false);
     try slots.put(1, .{ .integer = 1 });
     try std.testing.expectEqual(@as(usize, 0), try commitWrite(&storage, destination, .{ .integer = 42 }));
     try std.testing.expectEqual(@as(i128, 42), (try slots.get(0)).array[0].integer);
     try std.testing.expectEqual(@as(i128, 2), (try slots.get(0)).array[1].integer);
     try slots.put(1, .{ .integer = 2 });
-    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} }, false));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = .{ .slot = 1, .kind = .i32 } }} }, false));
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.captureWrite(frame, .{ .root = 2, .path = &.{} }, false));
     var path: [64]@import("../5_codegen/bytecode/value.zig").Projection = undefined;
     const array = try storage.resolve(frame, .{ .root = 0, .path = &.{} }, &path);
@@ -2298,7 +2298,7 @@ test "equivalent borrowed choices use representation tags rather than semantic I
             .{ .source = source, .op = .{ .copy = .{ .dst = 3, .src = 2 } } },
             .{ .source = source, .op = .{ .load = .{ .dst = 4, .place = .{ .root = 3, .path = &.{.dereference} } } } },
             .{ .source = source, .op = .{ .payload = .{ .dst = 5, .src = 4, .ordinal = 0, .variant = @enumFromInt(1) } } },
-            .{ .source = source, .op = .{ .borrow = .{ .dst = 6, .permission = .read_only, .place = .{ .root = 3, .path = &.{ .dereference, .{ .variant = @enumFromInt(1) } } } } } },
+            .{ .source = source, .op = .{ .borrow = .{ .dst = 6, .permission = .read_only, .place = .{ .root = 3, .path = &.{ .dereference, .{ .variant = .{ .identity = @enumFromInt(1), .ordinal = 0 } } } } } } },
             .{ .source = source, .op = .{ .load = .{ .dst = 5, .place = .{ .root = 6, .path = &.{.dereference} } } } },
             .{ .source = source, .op = .{ .ret = &.{5} } },
         },
@@ -2306,6 +2306,15 @@ test "equivalent borrowed choices use representation tags rather than semantic I
     var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }, .{});
     defer executor.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try executor.runExpression(&.{}))[0].integer);
+    const code = try a.dupe(b.Instruction, expression.code);
+    defer a.free(code);
+    var malformed = expression;
+    malformed.code = code;
+    const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &malformed };
+    code[6].op.borrow.place.path = &.{ .dereference, .{ .variant = .{ .identity = @enumFromInt(1), .ordinal = 1 } } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[6].op.borrow.place.path = &.{ .dereference, .{ .variant = .{ .identity = @enumFromInt(1) } } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
 
 test "bytecode cleanup branches refine only the active storage edge" {
@@ -2593,6 +2602,12 @@ test "negative narrow indices cannot address positive array elements" {
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, executor.runExpression(&.{}));
-    code[2].op = .{ .load = .{ .dst = 2, .place = .{ .root = 0, .path = &.{.{ .element = 1 }} } } };
-    try std.testing.expectError(error.ExecutionIndexOutOfBounds, executor.runExpression(&.{}));
+    code[2].op = .{ .load = .{ .dst = 2, .place = .{ .root = 0, .path = &.{.{ .element = .{ .slot = 1, .kind = .u8 } }} } } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.load.place.path = &.{.{ .element = .{ .slot = 1 } }};
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.load.place.path = &.{.{ .element = .{ .slot = 1, .kind = .i8 } }};
+    var projected = try vm.Vm.init(a, program, .{});
+    defer projected.deinit();
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, projected.runExpression(&.{}));
 }

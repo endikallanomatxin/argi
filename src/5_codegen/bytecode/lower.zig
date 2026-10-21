@@ -305,7 +305,7 @@ const FunctionLower = struct {
         for (0..shape.len()) |index| if (shape.child(self.parent.graph, index)) |child| {
             const projection: b.Projection = switch (child.projection) {
                 .field => |field| .{ .field = field },
-                .variant => |variant| .{ .variant = variant },
+                .variant => |variant| .{ .variant = .{ .identity = variant } },
             };
             _ = try self.buildDrop(child.ty, try self.project(target, projection));
         };
@@ -353,7 +353,7 @@ const FunctionLower = struct {
             },
             .choice_payload_access => |value| blk: {
                 const parent = self.nodeDrop(value.value) orelse break :blk null;
-                break :blk self.dropChild(parent, .{ .variant = value.variant });
+                break :blk self.dropChild(parent, .{ .variant = .{ .identity = value.variant } });
             },
             else => null,
         };
@@ -447,7 +447,7 @@ const FunctionLower = struct {
             self.lower.code.items[branch].op.branch_variant.no = self.lower.position();
         }
         pub fn project(self: @This(), target: Target, field: g.AutoDeinitField, selected: cleanup_plan.Child) !Target {
-            const projection: b.Projection = if (selected.variant) |variant| .{ .variant = variant } else .{ .field = field.field_index };
+            const projection: b.Projection = if (selected.variant) |variant| .{ .variant = .{ .identity = variant } } else .{ .field = field.field_index };
             return .{ .place = try self.lower.project(target.place, projection), .ty = selected.ty };
         }
         pub fn finish(self: @This(), target: Target, branch: u32) !void {
@@ -484,8 +484,35 @@ const FunctionLower = struct {
             inline .payload, .is_variant, .branch_variant => |*choice| choice.ordinal = try b.variantOrdinal(self.parent.graph, self.slots.items[choice.src], choice.variant),
             else => {},
         }
+        switch (resolved) {
+            .check_place => |*target| target.* = try self.finalizePlace(target.*),
+            inline .load, .capture_write, .borrow, .borrow_storage, .cleanup_test, .cleanup_set, .branch_cleanup => |*access| access.place = try self.finalizePlace(access.place),
+            else => {},
+        }
         try self.code.append(self.parent.allocator, .{ .source = source, .op = resolved });
         return pc;
+    }
+    fn finalizePlace(self: *FunctionLower, target: b.Place) !b.Place {
+        var needs_resolution = false;
+        for (target.path) |projection| if (projection == .variant or projection == .element) {
+            needs_resolution = true;
+            break;
+        };
+        if (!needs_resolution) return target;
+        const graph = self.parent.graph;
+        const root = switch (target.region) {
+            .local => self.slots.items[target.root],
+            .session => self.parent.session.?.bindings[target.root].slots[0],
+            .global => graph.binding(@enumFromInt(target.root)).ty,
+        };
+        const path = try self.parent.allocator.alloc(b.Projection, target.path.len);
+        try b.finalizePath(graph, root, target.path, path);
+        for (path) |*projection| if (projection.* == .element) {
+            projection.element.kind = b.scalarKind(graph, self.slots.items[projection.element.slot]);
+        };
+        var result = target;
+        result.path = path;
+        return result;
     }
     fn position(self: *FunctionLower) u32 {
         return @intCast(self.code.items.len);
@@ -555,7 +582,7 @@ const FunctionLower = struct {
                     return self.parent.reject(node.source, "owning replacement in indexed storage");
                 const base = try self.place(x.array_ptr);
                 const index = try self.expression(x.index);
-                const target = try self.project(base, .{ .element = index });
+                const target = try self.project(base, .{ .element = .{ .slot = index } });
                 const destination = try self.captureWrite(node.source, target, x.element_type, false);
                 const value = try self.coerce(node.source, try self.expression(x.value), x.element_type);
                 try self.commitWrite(node.source, destination, value);
@@ -679,7 +706,7 @@ const FunctionLower = struct {
                 const dst = try self.bindingSlot(binding);
                 switch (case.payload_mode) {
                     .borrow, .mut_borrow => {
-                        const place_ = try self.project(target.?, .{ .variant = case.variant });
+                        const place_ = try self.project(target.?, .{ .variant = .{ .identity = case.variant } });
                         _ = try self.emit(source, .{ .borrow = .{ .dst = dst, .place = place_, .permission = self.parent.graph.semanticType(self.slots.items[dst]).pointer.mutability } });
                     },
                     .value, .move => _ = try self.emit(source, .{ .payload = .{ .dst = dst, .src = value, .variant = case.variant } }),
@@ -790,11 +817,11 @@ const FunctionLower = struct {
             .address_of => |value| self.place(value),
             .dereference => |x| self.project(.{ .root = try self.expression(x.pointer), .path = &.{} }, .dereference),
             .struct_field_access => |x| self.project(try self.place(x.value), .{ .field = x.field_index }),
-            .choice_payload_access => |x| self.project(try self.place(x.value), .{ .variant = x.variant }),
+            .choice_payload_access => |x| self.project(try self.place(x.value), .{ .variant = .{ .identity = x.variant } }),
             .array_index => |x| blk: {
                 const base = try self.place(x.array_ptr);
                 const index = try self.expression(x.index);
-                const target = try self.project(base, .{ .element = index });
+                const target = try self.project(base, .{ .element = .{ .slot = index } });
                 _ = try self.emit(node.source, .{ .check_place = target });
                 break :blk target;
             },

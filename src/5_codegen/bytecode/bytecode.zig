@@ -79,7 +79,14 @@ pub const Session = struct { namespace: SessionNamespace, bindings: []const Sess
 pub const Value = @import("value.zig").Value;
 // A place starts in local storage and can follow checked safe references.
 // Index operands are snapshots evaluated by lowering in source order.
-pub const Projection = union(enum) { field: u32, element: Slot, variant: g.GlobalVariantId, dereference };
+// Representation descriptors are finalized by lowering and checked by verify;
+// runtime traversal needs neither semantic type lookup nor variant resolution.
+pub const Projection = union(enum) {
+    field: u32,
+    element: struct { slot: Slot, kind: ScalarKind = .unresolved },
+    variant: struct { identity: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32) },
+    dereference,
+};
 pub const Place = struct {
     // Root indexes local slots, the typed session table, or a global binding ID.
     // Dynamic index operands always name local slots in the executing frame.
@@ -334,7 +341,9 @@ pub fn variantIdentity(graph: *const g.GlobalSemanticGraph, ty: Type, ordinal: u
     return @enumFromInt(range.start + ordinal);
 }
 
-pub fn runtimePath(graph: *const g.GlobalSemanticGraph, root_type: Type, path: []const Projection, out: []Projection) !void {
+// Resolve representation descriptors while semantic types are available.
+// The executor traverses the finalized path without consulting this graph.
+pub fn finalizePath(graph: *const g.GlobalSemanticGraph, root_type: Type, path: []const Projection, out: []Projection) !void {
     if (path.len != out.len) return error.InvalidBytecode;
     var ty = root_type;
     for (path, out) |part, *runtime| {
@@ -346,8 +355,8 @@ pub fn runtimePath(graph: *const g.GlobalSemanticGraph, root_type: Type, path: [
                 ty = graph.fields.items[fields.start + index].ty;
             },
             .variant => |identity| {
-                runtime.* = .{ .variant = @enumFromInt(try variantOrdinal(graph, ty, identity)) };
-                ty = (try choiceVariant(graph, ty, identity)).payload_type orelse return error.InvalidBytecode;
+                runtime.* = .{ .variant = .{ .identity = identity.identity, .ordinal = try variantOrdinal(graph, ty, identity.identity) } };
+                ty = (try choiceVariant(graph, ty, identity.identity)).payload_type orelse return error.InvalidBytecode;
             },
             .element => ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode,
             .dereference => {
@@ -362,12 +371,12 @@ pub fn runtimePath(graph: *const g.GlobalSemanticGraph, root_type: Type, path: [
 pub fn runtimeCleanupPath(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: Type, path: []const Projection) ![]const @import("value.zig").Projection {
     var normalized: [64]Projection = undefined;
     if (path.len > normalized.len) return error.InvalidBytecode;
-    try runtimePath(graph, ty, path, normalized[0..path.len]);
+    try finalizePath(graph, ty, path, normalized[0..path.len]);
     const result = try allocator.alloc(@import("value.zig").Projection, path.len);
     errdefer allocator.free(result);
     for (normalized[0..path.len], result) |part, *out| out.* = switch (part) {
         .field => |index| .{ .field = index },
-        .variant => |ordinal| .{ .variant = @intFromEnum(ordinal) },
+        .variant => |ordinal| .{ .variant = ordinal.ordinal },
         else => return error.InvalidBytecode,
     };
     return result;

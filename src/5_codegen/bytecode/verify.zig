@@ -590,11 +590,12 @@ fn placeInfo(program: Program, slots: []const Type, place: Place) !struct { ty: 
             ty = graph.fields.items[fields.start + index].ty;
         },
         .element => |index| {
-            if (index >= slots.len or integerBounds(graph, slots[index]) == null) return error.InvalidBytecode;
+            if (index.slot >= slots.len or integerBounds(graph, slots[index.slot]) == null or !std.meta.eql(index.kind, b.scalarKind(graph, slots[index.slot]))) return error.InvalidBytecode;
             ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode;
         },
         .variant => |id| {
-            const variant = try choiceVariant(graph, ty, id);
+            if (id.ordinal != try b.variantOrdinal(graph, ty, id.identity)) return error.InvalidBytecode;
+            const variant = try choiceVariant(graph, ty, id.identity);
             ty = variant.payload_type orelse return error.InvalidBytecode;
         },
         .dereference => {
@@ -610,7 +611,7 @@ fn placeInfo(program: Program, slots: []const Type, place: Place) !struct { ty: 
 fn readPlace(a: std.mem.Allocator, place: Place, out: *std.ArrayList(Slot)) !void {
     if (place.region == .local) try out.append(a, place.root);
     for (place.path) |projection| switch (projection) {
-        .element => |index| try out.append(a, index),
+        .element => |index| try out.append(a, index.slot),
         .field, .variant, .dereference => {},
     };
 }

@@ -490,7 +490,7 @@ pub const Storage = struct {
             if (reference.byte_view != null or length == path.len) return error.ExecutionInvalidReference;
             const concrete: v.Projection = switch (projection) {
                 .field => |index| .{ .field = index },
-                .variant => |variant| .{ .variant = @intFromEnum(variant) },
+                .variant => |variant| .{ .variant = variant.ordinal },
                 .element => |index| blk: {
                     const array_length = blk_length: {
                         if (try self.acquiredView(reference)) |view| {
@@ -504,7 +504,9 @@ pub const Storage = struct {
                         if (array != .array) return error.ExecutionInvalidReference;
                         break :blk_length array.array.len;
                     };
-                    break :blk .{ .element = try elementIndex((try locals.get(index)).integer, array_length) };
+                    const bounds = index.kind.bounds() orelse return error.ExecutionInvalidReference;
+                    const ordinal = @import("../5_codegen/integer_arithmetic.zig").decode((try locals.get(index.slot)).integer, bounds);
+                    break :blk .{ .element = try elementIndex(ordinal, array_length) };
                 },
                 .dereference => unreachable,
             };
@@ -1149,7 +1151,7 @@ test "acquired array indices resolve from layout before elements are initialized
     try slots_.put(0, .{ .reference = reference });
     try slots_.put(1, .{ .integer = 1 });
     var path: [64]v.Projection = undefined;
-    const place: b.Place = .{ .root = 0, .path = &.{ .dereference, .{ .element = 1 } } };
+    const place: b.Place = .{ .root = 0, .path = &.{ .dereference, .{ .element = .{ .slot = 1, .kind = .u64 } } } };
     const target = try storage.resolveCleanup(frame, place, &path);
     try storage.store(target, .{ .integer = 42 });
     try std.testing.expectEqual(@as(i128, 42), (try storage.read(target)).integer);
