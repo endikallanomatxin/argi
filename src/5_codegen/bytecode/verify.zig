@@ -217,6 +217,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (!types.equal(program.graph, f.slots[x.dst], element) or integerBounds(program.graph, f.slots[x.index]) == null) return error.InvalidBytecode;
                 },
                 .choice => |x| {
+                    if (x.ordinal != try b.variantOrdinal(program.graph, f.slots[x.dst], x.variant)) return error.InvalidBytecode;
                     const variant = try choiceVariant(program.graph, f.slots[x.dst], x.variant);
                     if (variant.payload_type) |payload_type| {
                         const payload = x.payload orelse return error.InvalidBytecode;
@@ -224,14 +225,17 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     } else if (x.payload != null) return error.InvalidBytecode;
                 },
                 .payload => |x| {
+                    if (x.ordinal != try b.variantOrdinal(program.graph, f.slots[x.src], x.variant)) return error.InvalidBytecode;
                     const variant = try choiceVariant(program.graph, f.slots[x.src], x.variant);
                     if (!types.equal(program.graph, f.slots[x.dst], variant.payload_type orelse return error.InvalidBytecode)) return error.InvalidBytecode;
                 },
                 .is_variant => |x| {
+                    if (x.ordinal != try b.variantOrdinal(program.graph, f.slots[x.src], x.variant)) return error.InvalidBytecode;
                     _ = try choiceVariant(program.graph, f.slots[x.src], x.variant);
                     if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false })) return error.InvalidBytecode;
                 },
                 .branch_variant => |x| {
+                    if (x.ordinal != try b.variantOrdinal(program.graph, f.slots[x.src], x.variant)) return error.InvalidBytecode;
                     _ = try choiceVariant(program.graph, f.slots[x.src], x.variant);
                     if (x.yes >= f.code.len or x.no >= f.code.len) return error.InvalidBytecode;
                 },

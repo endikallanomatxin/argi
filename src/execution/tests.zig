@@ -631,13 +631,27 @@ test "bytecode choice verifier rejects foreign variants and incorrect payload ty
     var code = [_]b.Instruction{
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .boolean = true } } } },
-        .{ .source = source, .op = .{ .choice = .{ .dst = 2, .variant = @enumFromInt(0), .payload = 0 } } },
-        .{ .source = source, .op = .{ .payload = .{ .dst = 0, .src = 2, .variant = @enumFromInt(0) } } },
+        .{ .source = source, .op = .{ .choice = .{ .dst = 2, .ordinal = 0, .variant = @enumFromInt(0), .payload = 0 } } },
+        .{ .source = source, .op = .{ .payload = .{ .dst = 0, .src = 2, .ordinal = 0, .variant = @enumFromInt(0) } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
     const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code }};
     const program = b.Program{ .graph = &graph, .functions = &functions };
     try b.verify(a, program);
+    code[2].op.choice.ordinal = std.math.maxInt(u32);
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.choice.ordinal = 0;
+    code[3].op.payload.ordinal = 1;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[3].op = .{ .is_variant = .{ .dst = 1, .src = 2, .variant = @enumFromInt(0), .ordinal = 1, .invert = false } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[3].op.is_variant.ordinal = 0;
+    try b.verify(a, program);
+    code[3].op = .{ .branch_variant = .{ .src = 2, .variant = @enumFromInt(0), .ordinal = 1, .yes = 4, .no = 4 } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[3].op.branch_variant.ordinal = 0;
+    try b.verify(a, program);
+    code[3].op = .{ .payload = .{ .dst = 0, .src = 2, .variant = @enumFromInt(0), .ordinal = 0 } };
     code[2].op.choice.payload = 1;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[2].op.choice.payload = null;
@@ -645,6 +659,7 @@ test "bytecode choice verifier rejects foreign variants and incorrect payload ty
     code[2].op.choice.variant = @enumFromInt(99);
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[2].op.choice.variant = @enumFromInt(1);
+    code[2].op.choice.ordinal = 1;
     // The payload instruction is well typed but names an inactive alternative.
     // Runtime checks backstop the frontend's proof of the active variant.
     var executor = try vm.Vm.init(a, program, .{});
@@ -1893,11 +1908,11 @@ test "equivalent borrowed choices use representation tags rather than semantic I
         .outputs = &.{5},
         .code = &.{
             .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
-            .{ .source = source, .op = .{ .choice = .{ .dst = 1, .variant = @enumFromInt(0), .payload = 0 } } },
+            .{ .source = source, .op = .{ .choice = .{ .dst = 1, .ordinal = 0, .variant = @enumFromInt(0), .payload = 0 } } },
             .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .permission = .read_only, .place = .{ .root = 1, .path = &.{} } } } },
             .{ .source = source, .op = .{ .copy = .{ .dst = 3, .src = 2 } } },
             .{ .source = source, .op = .{ .load = .{ .dst = 4, .place = .{ .root = 3, .path = &.{.dereference} } } } },
-            .{ .source = source, .op = .{ .payload = .{ .dst = 5, .src = 4, .variant = @enumFromInt(1) } } },
+            .{ .source = source, .op = .{ .payload = .{ .dst = 5, .src = 4, .ordinal = 0, .variant = @enumFromInt(1) } } },
             .{ .source = source, .op = .{ .borrow = .{ .dst = 6, .permission = .read_only, .place = .{ .root = 3, .path = &.{ .dereference, .{ .variant = @enumFromInt(1) } } } } } },
             .{ .source = source, .op = .{ .load = .{ .dst = 5, .place = .{ .root = 6, .path = &.{.dereference} } } } },
             .{ .source = source, .op = .{ .ret = &.{5} } },

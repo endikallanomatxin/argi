@@ -525,15 +525,15 @@ pub const Vm = struct {
                         cell[0] = try slots.get(slot);
                         payload = &cell[0];
                     }
-                    try slots.put(x.dst, .{ .choice = .{ .variant = try b.variantOrdinal(unit.graph, f.slots[x.dst], x.variant), .payload = payload } });
+                    try slots.put(x.dst, .{ .choice = .{ .variant = x.ordinal, .payload = payload } });
                 },
                 .payload => |x| {
                     const choice = (try slots.get(x.src)).choice;
-                    if (choice.variant != try b.variantOrdinal(unit.graph, f.slots[x.src], x.variant) or choice.payload == null) return error.ExecutionInactiveVariant;
+                    if (choice.variant != x.ordinal or choice.payload == null) return error.ExecutionInactiveVariant;
                     try slots.put(x.dst, choice.payload.?.*);
                 },
-                .is_variant => |x| try slots.put(x.dst, .{ .boolean = ((try slots.get(x.src)).choice.variant == try b.variantOrdinal(unit.graph, f.slots[x.src], x.variant)) != x.invert }),
-                .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == try b.variantOrdinal(unit.graph, f.slots[x.src], x.variant)) x.yes else x.no,
+                .is_variant => |x| try slots.put(x.dst, .{ .boolean = ((try slots.get(x.src)).choice.variant == x.ordinal) != x.invert }),
+                .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == x.ordinal) x.yes else x.no,
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, true);
