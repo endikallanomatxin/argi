@@ -8,6 +8,10 @@ const syntaxer = @import("syntaxer.zig");
 fn parseTestFile(path: []const u8) !syntax_tree.FileSyntaxTree {
     const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(4 * 1024 * 1024));
     defer std.testing.allocator.free(source);
+    return parseTestSource(path, source);
+}
+
+fn parseTestSource(path: []const u8, source: []const u8) !syntax_tree.FileSyntaxTree {
     const files = [_]source_files.SourceFile{.{ .path = path, .code = source }};
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -26,6 +30,37 @@ fn parseTestFile(path: []const u8) !syntax_tree.FileSyntaxTree {
     const tree = try compact.parse();
     try std.testing.expect(!diagnostics.hasErrors());
     return tree;
+}
+
+test "compact syntaxing represents anonymous compile-time entries independently of calls" {
+    const sources = [_][]const u8{
+        "#run { calculate() }",
+        "answer ::= #run () -> (.result: Int32) { result = calculate(42) }",
+        "answer ::= #run (.system: System) -> (.result: Int32) { assume writer ::= $&system.terminal&.stdout\nresult = 42 }",
+    };
+    for (sources, 0..) |source, index| {
+        var tree = try parseTestSource("entry.rg", source);
+        defer tree.deinit(std.testing.allocator);
+        const node = firstNodeWithTag(&tree, .comptime_entry);
+        const entry = tree.comptimeEntry(node).?;
+        try std.testing.expectEqual(syntax_tree.Node.Tag.code_block, tree.tag(entry.body));
+        try std.testing.expectEqual(index != 0, entry.input != null);
+        try std.testing.expectEqual(index != 0, entry.output != null);
+        try std.testing.expect(tree.functionCall(node) == null);
+        try std.testing.expect(tree.functionDeclaration(node) == null);
+        try std.testing.expectEqualStrings("#", tree.tokenTextFromSource(source, tree.mainToken(node)));
+        if (entry.input) |input| {
+            const fields = tree.structTypeLiteral(input).?.fields;
+            try std.testing.expectEqual(@as(usize, if (index == 2) 1 else 0), fields.len);
+        }
+        if (entry.output) |output|
+            try std.testing.expectEqual(@as(usize, 1), tree.structTypeLiteral(output).?.fields.len);
+    }
+}
+
+test "compact syntaxing requires a complete compile-time entry signature" {
+    try std.testing.expectError(error.ExpectedArrow, parseTestSource("entry.rg", "#run () {}"));
+    try std.testing.expectError(error.ExpectedLeftBrace, parseTestSource("entry.rg", "#run () -> () calculate()"));
 }
 
 fn expectTags(path: []const u8, expected: []const syntax_tree.Node.Tag) !void {

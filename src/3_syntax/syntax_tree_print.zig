@@ -9,6 +9,12 @@ pub fn printNode(tree: *const syn.FileSyntaxTree, db: *const source_db.SourceDb,
     if (token_text.len != 0 and token_text[0] != '\n') std.debug.print(" `{s}`", .{token_text});
     std.debug.print(" @{d}\n", .{tree.location(node).offset});
 
+    if (tree.comptimeEntry(node)) |entry| {
+        if (entry.input) |input| printNode(tree, db, input, level + 1);
+        if (entry.output) |output| printNode(tree, db, output, level + 1);
+        printNode(tree, db, entry.body, level + 1);
+        return;
+    }
     if (tree.functionDeclaration(node)) |declaration| {
         printNode(tree, db, declaration.input, level + 1);
         printNode(tree, db, declaration.output, level + 1);

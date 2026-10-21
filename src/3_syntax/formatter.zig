@@ -416,6 +416,10 @@ const Layout = struct {
             if (tree.functionDeclaration(node) orelse if (tree.testDeclaration(node)) |test_decl| test_decl.function else null) |function| {
                 layout.markSignature(&tree, tokens, function.generic_params_struct, function.input, function.output);
             }
+            if (tree.comptimeEntry(node)) |entry| if (entry.input) |input| {
+                layout.markSignature(&tree, tokens, null, input, entry.output.?);
+                layout.space_before[@intFromEnum(tree.mainToken(input))] = true;
+            };
             if (tree.contractFunctionRequirement(node)) |requirement| {
                 layout.markSignature(&tree, tokens, null, requirement.input, requirement.output);
             }
@@ -1074,6 +1078,18 @@ fn expectSameSyntax(allocator: std.mem.Allocator, source: []const u8, formatted:
     defer result.deinit(temporary);
     try std.testing.expectEqual(original.roots.len, result.roots.len);
     try std.testing.expectEqualSlices(syn.Node.Tag, original.nodes.items(.tag), result.nodes.items(.tag));
+}
+
+test "formatter preserves anonymous compile-time entry structure" {
+    try expectFormat("#run{calculate()}\n", "#run { calculate() }\n");
+    try expectFormat(
+        "answer::=#run()->(.result:Int32){result=42}\n",
+        "answer ::= #run () -> (.result: Int32) { result = 42 }\n",
+    );
+    try expectFormat(
+        "answer::=#run(.system:System)->(.result:Int32){assume writer::=$&system.terminal&.stdout\nresult=42}\n",
+        "answer ::= #run (.system: System) -> (.result: Int32) {\n    assume writer ::= $&system.terminal&.stdout\n    result = 42\n}\n",
+    );
 }
 
 test "formatter preserves prefixes and grouping at statement boundaries" {

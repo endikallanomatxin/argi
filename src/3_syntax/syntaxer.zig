@@ -1527,6 +1527,18 @@ pub const Syntaxer = struct {
                 return error.ExpectedIdentifier;
             }
             self.advanceOne();
+            if (self.tokenIs(.open_brace) or self.tokenIs(.open_parenthesis)) {
+                var entry: syn.ComptimeEntryExtra = .{ .body = undefined };
+                if (self.tokenIs(.open_parenthesis)) {
+                    entry.input = syn.OptionalNodeIndex.init(try self.parseStructTypeLiteral());
+                    if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
+                    self.advanceOne();
+                    entry.output = syn.OptionalNodeIndex.init(try self.parseFunctionOutputType());
+                    self.skipNewLinesAndComments();
+                }
+                entry.body = try self.parseCodeBlock();
+                return self.addNode(.comptime_entry, prefix, .{ .extra = try self.addExtra(entry) });
+            }
             const value = try self.parsePrimary();
             if (self.file.tag(value) != .function_call) {
                 try self.diags.add(location, .syntax, "#run requires a function call", .{});

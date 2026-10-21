@@ -93,6 +93,7 @@ pub const Node = struct {
         reach_alternative,
         move_expression,
         function_call,
+        comptime_entry,
         unwrap_or,
         unwrap_or_do,
         handle_expression,
@@ -203,6 +204,8 @@ pub const FunctionExtra = struct {
     safety_contract: OptionalNodeIndex = .none,
 };
 pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex, comptime_selection: u32 = 0 };
+pub const ComptimeEntryExtra = struct { input: OptionalNodeIndex = .none, output: OptionalNodeIndex = .none, body: NodeIndex };
+pub const ComptimeEntry = struct { input: ?NodeIndex, output: ?NodeIndex, body: NodeIndex };
 pub const FieldExtra = struct { type_node: OptionalNodeIndex, default_value: OptionalNodeIndex };
 pub const GenericValueExtra = struct {
     implementation_members: OptionalNodeIndex = .none,
@@ -504,6 +507,12 @@ pub const FileSyntaxTree = struct {
             },
             else => fixedTokenText(contents),
         };
+    }
+
+    pub fn comptimeEntry(tree: *const FileSyntaxTree, node: NodeIndex) ?ComptimeEntry {
+        if (tree.tag(node) != .comptime_entry) return null;
+        const extra = tree.extraData(ComptimeEntryExtra, tree.data(node).extra);
+        return .{ .input = extra.input.unwrap(), .output = extra.output.unwrap(), .body = extra.body };
     }
 
     pub fn functionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
