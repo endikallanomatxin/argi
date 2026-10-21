@@ -13860,7 +13860,7 @@ test "feature_tests/execution/71X_computed_runtime_condition" {
 }
 
 test "feature_tests/execution/72X_computed_selected_branch" {
-    try buildExpectFail("tests/feature_tests/execution/72X_computed_selected_branch", "cannot materialize body");
+    try buildExpectFail("tests/feature_tests/execution/72X_computed_selected_branch", "cannot materialize function body");
 }
 
 test "feature_tests/execution/73_computed_condition_cleanup" {
