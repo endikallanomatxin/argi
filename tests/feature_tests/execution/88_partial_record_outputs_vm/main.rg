@@ -14,7 +14,7 @@ make := () -> (.result: Pair) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    compiled ::= #run make()
+    compiled ::= #run () -> (.value: Pair) { value = make() }
     if compiled.second.value != 42 { abort }
     #if make().second.value == 42 {
         status_code = make().second.value

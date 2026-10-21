@@ -12,8 +12,8 @@ make := () -> (.result: Packet) {
 }
 
 main := () -> (.status_code: Int32) {
-    empty ::= #run make_empty()
-    compiled ::= #run make()
+    empty ::= #run () -> (.value: Empty) { value = make_empty() }
+    compiled ::= #run () -> (.value: Packet) { value = make() }
     if compiled.value != 42 { abort }
     #if make().value == 42 {
         status_code = make().value

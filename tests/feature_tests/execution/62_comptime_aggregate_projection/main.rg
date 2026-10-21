@@ -5,5 +5,7 @@ values() -> (.data: (.items: [2](.answer: Int32))) := {
 identity(.value: Int32) -> (.result: Int32 = value) := {}
 
 main() -> (.status_code: Int32 = 0) := {
-    status_code = #run identity(.value = values().items[1].answer)
+    status_code = #run () -> (.value: Int32) {
+        value = identity(.value = values().items[1].answer)
+    }
 }

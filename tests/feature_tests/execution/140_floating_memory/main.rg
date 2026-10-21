@@ -35,7 +35,7 @@ exercise := () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32) {
-    if #run exercise() != 42 { abort }
+    if #run () -> (.value: Int32) { value = exercise() } != 42 { abort }
     if exercise() != 42 { abort }
     assume ffi ::= $&ForeignFunctionInterface()
     address ::= aligned_alloc(.alignment = 8, .size = size_of(.type = Numbers)).address

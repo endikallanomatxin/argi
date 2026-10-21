@@ -11,7 +11,7 @@ locations := () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    compiled ::= #run locations()
+    compiled ::= #run () -> (.value: Int32) { value = locations() }
     if compiled != 42 { abort }
     #if locations() == 42 {
         status_code = locations()

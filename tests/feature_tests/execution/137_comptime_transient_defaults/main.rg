@@ -15,6 +15,6 @@ with_default#(.T: Type) := (.value: T) -> (.result: Int32) {
 main() -> (.status_code: Int32) := {
     if with_default(.value = 7) != 42 { abort }
     if with_default(.value = true) != 42 { abort }
-    if [#run with_default(.value = 9)] != 42 { abort }
+    if [#run () -> (.value: Int32) { value = with_default(.value = 9) }] != 42 { abort }
     status_code = 42
 }
