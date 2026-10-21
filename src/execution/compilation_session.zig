@@ -81,14 +81,9 @@ const TemporalProof = struct {
 pub const Version = struct {
     graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph,
     stats: sema.Stats,
-    // Non-continuation snapshots own their complete analysis arena. Checked
-    // continuation annotations use graph-owned storage; their final temporal
-    // facts live separately in the compact published proof.
-    safety_arena: ?std.heap.ArenaAllocator = null,
 
     fn deinit(self: *Version, allocator: std.mem.Allocator) void {
         self.graph.deinit(allocator);
-        if (self.safety_arena) |*arena| arena.deinit();
         self.* = undefined;
     }
 };
@@ -300,8 +295,6 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
     defer publication.deinit();
     var result = try publication.finish();
     errdefer result.graph.deinit(allocator);
-    var safety_arena: ?std.heap.ArenaAllocator = if (proof == null) .init(allocator) else null;
-    errdefer if (safety_arena) |*arena| arena.deinit();
     var temporary = std.heap.ArenaAllocator.init(allocator);
     defer temporary.deinit();
     // Rejected analysis can leave its candidate tables in scratch storage.
@@ -311,7 +304,7 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
         owned.state.deinit();
         owned.state.init(owned.arena.allocator());
     };
-    const proof_allocator = if (proof != null) temporary.allocator() else safety_arena.?.allocator();
+    const proof_allocator = temporary.allocator();
     if (proof) |owned| {
         // All mutable tables and namespace growth during checking use one
         // allocator. Immutable incoming facts remain borrowed until sealing.
@@ -338,7 +331,7 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
         try once_verify.verifyContinuation(proof_allocator, &result.graph, diagnostics, function, &proof.?.once);
     } else try safety.analyze();
     try @import("comptime.zig").resolve(allocator, &result.graph, diagnostics);
-    if (proof) |owned| {
+    {
         // Checked calls outlive this analysis and can be used by older virtual
         // code units. Their annotation buffers belong to this graph version.
         var copy: @import("../4_semantics/safety/fact_snapshot.zig").Copy = .{
@@ -350,9 +343,9 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
             node.content.function_call = try copy.value(@TypeOf(node.content.function_call), node.content.function_call);
         };
         for (result.graph.virtual_calls.items) |*call| call.* = try copy.value(@TypeOf(call.*), call.*);
-        try owned.seal(temporary.allocator());
     }
-    return .{ .graph = result.graph, .stats = result.stats, .safety_arena = safety_arena };
+    if (proof) |owned| try owned.seal(temporary.allocator());
+    return .{ .graph = result.graph, .stats = result.stats };
 }
 
 test "compilation session publishes checked candidates and rejects stale revisions" {
@@ -687,7 +680,11 @@ test "execution session resolves accepted bindings in later command modules" {
 
 fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
     const a = std.testing.allocator;
-    const source = "answer := () -> (.result: Int32) { result = 42 }\n";
+    const source =
+        "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
+        "Resource: Type = ()\n" ++
+        "implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\n" ++
+        "answer := () -> () { resource: Resource = ()\n deinit(.self = $&resource) }\n";
     var diagnostic_arena = std.heap.ArenaAllocator.init(a);
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
@@ -696,16 +693,25 @@ fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
     defer diagnostics.deinit();
     var module = try sourceModule(a, source, &diagnostics);
     defer module.deinit(a);
+    module.is_bundled_core = true;
     var session = try CompilationSession.init(allocator, &.{}, .{});
     defer session.deinit();
     var candidate = try session.prepare(&.{module}, &diagnostics);
     defer candidate.deinit();
-    try std.testing.expect(candidate.checked.?.safety_arena != null);
+    try std.testing.expect(candidate.checked != null);
     try session.accept(&candidate);
     try std.testing.expectEqual(@as(usize, 1), session.versions.items.len);
-    try std.testing.expect(session.versions.items[0].safety_arena != null);
+    const graph = &session.versions.items[0].graph;
+    var consumed: usize = 0;
+    for (graph.nodes.items) |node| if (node.content == .function_call) {
+        for (node.content.function_call.consumed_auto_deinits) |cleanup| {
+            _ = graph.node(cleanup);
+            consumed += 1;
+        }
+    };
+    try std.testing.expect(consumed != 0);
 }
 
-test "definition publication retains safety allocations and releases failure paths" {
+test "definition publication owns checked annotations and releases failure paths" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{});
 }

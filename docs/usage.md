@@ -377,6 +377,11 @@ normal session cleanup without retained tracked allocations. Minimal/update at
 limit after 150 commands. Semantic snapshot retention remains the larger scaling
 problem. These single-run comparisons establish memory changes, not a speedup.
 
+Both definition and continuation publication now discard checker scratch after
+checking. Checked call annotations belong to their graph version; only a
+continuation's final temporal state needs a separate compact proof. Publishing a
+definition does not retain a second arena containing the complete safety analysis.
+
 Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
 ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
 timings are observations, not stable performance thresholds. Memory includes

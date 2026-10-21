@@ -1280,8 +1280,10 @@ pub const Resolver = struct {
                 const storage = &module.semantic.parameterized_storage;
                 for (storage.contract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
                     if (!std.mem.eql(u8, module.text(requirement.name), name)) continue;
-                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, &result.deferred, &result.failure)) |candidate|
+                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, &result.deferred, &result.failure)) |candidate| {
+                        errdefer self.allocator.free(candidate.participants);
                         try result.items.append(self.allocator, candidate);
+                    }
                 }
             }
         }
@@ -1386,17 +1388,16 @@ pub const Resolver = struct {
             };
         }
         const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
-        errdefer self.allocator.free(participants);
+        var transferred = false;
+        defer if (!transferred) self.allocator.free(participants);
         for (participants, 0..) |*participant, index| {
             participant.* = bindings.types[located.definition.participants.start + index] orelse {
                 if (unresolved_actual) deferred.* = true;
-                self.allocator.free(participants);
                 return null;
             };
         }
         if (!virtual) {
             const selected = self.selectConformance(declaration, participants, &bindings, 0, deferred) catch |err| {
-                self.allocator.free(participants);
                 if (err == error.OutOfMemory) return err;
                 if (self.participant_conformance_failure) |diagnostic| {
                     var retained = diagnostic;
@@ -1409,21 +1410,21 @@ pub const Resolver = struct {
                 return null;
             };
             if (selected == null) {
-                self.allocator.free(participants);
                 return null;
             }
         }
         const required = self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings) catch |err| {
-            self.allocator.free(participants);
             if (err == error.OutOfMemory) return err;
             return null;
         };
         switch (try self.core.matchCallInputWithReach(global_types.fields(self.graph, required) orelse return error.InvalidContractRequirementInput, input, context)) {
-            .applicable => return .{ .declaration = declaration, .participants = participants, .virtual = virtual },
+            .applicable => {
+                transferred = true;
+                return .{ .declaration = declaration, .participants = participants, .virtual = virtual };
+            },
             .deferred => deferred.* = true,
             .no_match => {},
         }
-        self.allocator.free(participants);
         return null;
     }
 
