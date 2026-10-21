@@ -14,11 +14,19 @@ selected#(.n: Int32) := () -> (.result: Int32) {
 
 identity#(.n: Int32) := () -> (.result: Int32) { result = n }
 
+Items#(.n: Int32): Type = (.items: Array#(.n = n, .t: Int32))
+
+read_items#(.n: Int32) := () -> (.result: Int32) {
+    values: Items#(.n = #run () -> (.count: Int32) { count = n }) = (.items = (20, 22))
+    result = values.items[0] + values.items[1]
+}
+
 forward#(.n: Int32) := () -> (.result: Int32) {
     result = identity#(.n = #run () -> (.value: Int32) { value = n })()
 }
 
 main() -> (.status_code: Int32) := {
+    if read_items#(.n = 2)() != 42 { abort }
     if forward#(.n = 41)() != 41 { abort }
     if forward#(.n = 42)() != 42 { abort }
     if calculate#(.T: Int8, .n = 41)() != 41 { abort }

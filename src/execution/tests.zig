@@ -1281,6 +1281,17 @@ test "bytecode anonymous entries supply computed specialization arguments" {
     , .{}));
 }
 
+test "bytecode anonymous entry results determine array dimensions" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Items#(.n: Int32): Type = (.items: Array#(.n = n, .t: Int32))
+        \\read#(.n: Int32) := () -> (.result: Int32) {
+        \\    values: Items#(.n = #run () -> (.count: Int32) { count = n }) = (.items = (20, 22))
+        \\    result = values.items[0] + values.items[1]
+        \\}
+        \\main() -> (.status_code: Int32) := { status_code = read#(.n = 2)() }
+    , .{}));
+}
+
 test "bytecode generic anonymous entries retain nested parameter-dependent selection" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\calculate#(.n: Int32) := () -> (.result: Int32) {
