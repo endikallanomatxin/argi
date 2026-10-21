@@ -28,8 +28,7 @@ pub const Slots = struct {
         if (index >= values.len) return error.ExecutionInvalidReference;
         if (values[index]) |value| return value;
         if (self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.getPtr(index)) |record| {
-            try self.storage.charge(try record.materializationCells(&.{}));
-            return record.read(self.storage.allocator, &.{});
+            return self.storage.readPartial(record, &.{});
         }
         return error.ExecutionUninitializedStorage;
     }
@@ -464,12 +463,17 @@ pub const Storage = struct {
         }
         const values = try self.slots(reference.frame);
         if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |record| {
-            try self.charge(try record.materializationCells(reference.path));
-            return record.read(self.allocator, reference.path);
+            return self.readPartial(record, reference.path);
         }
         var value = try values.get(reference.root);
         for (reference.path) |projection| value = try child(value, projection);
         return value;
+    }
+    fn readPartial(self: *Storage, record: *partial.Storage, path: []const v.Projection) !b.Value {
+        const cells = try record.materializationCells(path);
+        try self.charge(cells);
+        errdefer self.cells -= cells;
+        return record.read(self.allocator, path);
     }
     fn child(value: b.Value, projection: v.Projection) !b.Value {
         return switch (projection) {
@@ -554,8 +558,7 @@ pub const Storage = struct {
             if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |record| {
                 // Resolve the layout without requiring a value at its leaf.
                 if (try record.aggregatePrefix(reference.path) < reference.path.len)
-                    try self.charge(try record.materializationCells(reference.path));
-                try record.validatePath(self.allocator, reference.path);
+                    _ = try self.readPartial(record, reference.path);
             } else _ = try self.read(reference);
         }
     }
@@ -722,8 +725,7 @@ pub const Storage = struct {
                 try record.write(reference.path, value);
             } else {
                 const fields = reference.path[0..prefix];
-                try self.charge(try record.materializationCells(fields));
-                const previous = try record.read(self.allocator, fields);
+                const previous = try self.readPartial(record, fields);
                 try record.write(fields, try self.update(previous, reference.path[prefix..], value));
             }
             return;
@@ -1254,4 +1256,42 @@ test "choice tag observation neither materializes vacant siblings nor allocates 
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.choiceTag(sibling));
     storage.leave(frame);
     try std.testing.expectError(error.ExecutionDeadReference, storage.choiceTag(reference));
+}
+
+fn failedPartialSnapshot(allocator: std.mem.Allocator, through_slots: bool) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const frame = try storage.enter(1);
+    try storage.prepareStorage(frame, 0, .{ .nodes = &.{
+        .{ .kind = .array, .first = 1, .count = 2, .span = 5 },
+        .{ .kind = .record, .first = 2, .count = 1, .span = 2, .offset = 1 },
+        .{ .offset = 1 },
+    } });
+    const record = storage.frames.items[@intFromEnum(frame)].partial_storage.getPtr(0).?;
+    try record.write(&.{ .{ .element = 0 }, .{ .field = 0 } }, .{ .integer = 40 });
+    try record.write(&.{ .{ .element = 1 }, .{ .field = 0 } }, .{ .integer = 2 });
+    const before = storage.cells;
+    const reference: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    storage.allocator = allocator;
+    const value = (if (through_slots) (try storage.slots(frame)).get(0) else storage.read(reference)) catch |err| {
+        try std.testing.expectEqual(before, storage.cells);
+        try std.testing.expect(record.values[0] == null and record.values[1] == null and record.values[3] == null);
+        try std.testing.expectEqual(@as(u64, 40), record.values[2].?.integer);
+        try std.testing.expectEqual(@as(u64, 2), record.values[4].?.integer);
+        return err;
+    };
+    const backing: []const b.Value = value.array.ptr[0..4];
+    defer allocator.free(backing);
+    try std.testing.expectEqual(before + 4, storage.cells);
+    try std.testing.expectEqual(@as(u64, 40), value.array[0].record[0].integer);
+    try std.testing.expectEqual(@as(u64, 2), value.array[1].record[0].integer);
+    // Repeated reads reuse the published root snapshot without charging again.
+    try std.testing.expect((try storage.read(reference)).array.ptr == value.array.ptr);
+    try std.testing.expectEqual(before + 4, storage.cells);
+}
+
+test "partial snapshots publish one backing or preserve cells through slots and references" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedPartialSnapshot, .{false});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedPartialSnapshot, .{true});
 }

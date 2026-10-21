@@ -36,25 +36,36 @@ pub const Storage = struct {
 
     const Position = struct { node: u32 = 0, cell: u32 = 0 };
 
-    // Materialization never fills missing leaves or manufactures defaults.
+    // Validate every leaf and reserve one snapshot backing before publishing
+    // any cached aggregate. Failed allocation leaves the partial tree intact.
     pub fn read(self: *Storage, allocator: std.mem.Allocator, path: []const Projection) anyerror!b.Value {
-        return self.readAt(allocator, .{}, path, 0);
-    }
-    fn readAt(self: *Storage, allocator: std.mem.Allocator, position: Position, path: []const Projection, depth: usize) anyerror!b.Value {
-        if (depth > 64) return error.ExecutionValueDepthLimit;
+        var position: Position = .{};
+        var consumed: usize = 0;
+        while (self.values[position.cell] == null and consumed < path.len) : (consumed += 1)
+            position = try self.selectChild(position, path[consumed]);
         if (self.values[position.cell]) |value| {
             var result = value;
-            for (path) |projection| result = try project(result, projection);
+            for (path[consumed..]) |projection| result = try project(result, projection);
             return result;
         }
-        const node = self.layout.nodes[position.node];
-        if (path.len != 0) return self.readAt(allocator, try self.selectChild(position, path[0]), path[1..], depth + 1);
-        if (node.kind == .leaf or node.count == 0) return error.ExecutionUninitializedStorage;
-        const fields = try allocator.alloc(b.Value, node.count);
-        for (fields, 0..) |*value, offset| value.* = try self.readAt(allocator, try self.selectChild(position, projectionFor(node, @intCast(offset))), &.{}, depth + 1);
-        const result: b.Value = if (node.kind == .array) .{ .array = fields } else .{ .record = fields };
+        const cells = try self.requiredCells(position, &.{}, 0);
+        const backing = try allocator.alloc(b.Value, cells);
+        errdefer allocator.free(backing);
+        var remaining = backing;
+        const result = try self.materialize(position, &remaining, 0);
+        std.debug.assert(remaining.len == 0);
         self.values[position.cell] = result;
         return result;
+    }
+    fn materialize(self: *const Storage, position: Position, remaining: *[]b.Value, depth: usize) anyerror!b.Value {
+        if (depth > 64) return error.ExecutionValueDepthLimit;
+        if (self.values[position.cell]) |value| return value;
+        const node = self.layout.nodes[position.node];
+        if (node.kind == .leaf or node.count == 0) return error.ExecutionUninitializedStorage;
+        const fields = remaining.*[0..node.count];
+        remaining.* = remaining.*[node.count..];
+        for (fields, 0..) |*value, offset| value.* = try self.materialize(try self.selectChild(position, projectionFor(node, @intCast(offset))), remaining, depth + 1);
+        return if (node.kind == .array) .{ .array = fields } else .{ .record = fields };
     }
     // Observe an existing value without constructing aggregate snapshots. Tag
     // queries use this path so unrelated vacant fields are never materialized.
@@ -101,10 +112,6 @@ pub const Storage = struct {
         while (count < path.len and self.layout.nodes[position.node].kind != .leaf) : (count += 1)
             position = try self.selectChild(position, path[count]);
         return count;
-    }
-    pub fn validatePath(self: *Storage, allocator: std.mem.Allocator, path: []const Projection) !void {
-        const prefix = try self.aggregatePrefix(path);
-        if (prefix < path.len) _ = try self.read(allocator, path);
     }
     fn project(value: b.Value, selected: Projection) !b.Value {
         return switch (selected) {
