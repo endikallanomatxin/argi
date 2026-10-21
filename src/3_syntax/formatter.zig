@@ -798,6 +798,8 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (right == .comment) return true;
     if (left == .arrow and right == .bang) return true;
     if (left == .bang and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
+    if (right == .semicolon) return false;
+    if (left == .semicolon) return true;
     if (right == .comma or right == .close_parenthesis or right == .close_bracket) return false;
     if (left == .comma) return true;
     if (right == .dot or right == .hash or right == .bang or right == .double_bang or right == .triple_bang) return false;
@@ -1401,5 +1403,16 @@ test "formatter preserves implementation and defer keywords" {
     try expectFormat(
         "implement Marker#(Value)()\nmain:=()->(){defer cleanup()}\n",
         "implement Marker#(Value) ()\n\nmain := () -> () { defer cleanup() }\n",
+    );
+}
+
+test "formatter preserves explicit semicolon statement boundaries" {
+    try expectFormat(
+        "x:=1;y:=2;\nmain:=()->(){return;}\n",
+        "x := 1; y := 2;\n\nmain := () -> () { return; }\n",
+    );
+    try expectFormat(
+        "main:=()->(){x:=1;y:=2;}\n",
+        "main := () -> () {\n    x := 1;\n    y := 2;\n}\n",
     );
 }

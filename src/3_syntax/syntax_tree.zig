@@ -919,6 +919,7 @@ fn fixedTokenText(content: token.Content) []const u8 {
         .dot => ".",
         .double_dot => "..",
         .comma => ",",
+        .semicolon => ";",
         .keyword_abort => "abort",
         .keyword_return => "return",
         .keyword_if => "if",

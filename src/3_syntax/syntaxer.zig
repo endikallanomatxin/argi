@@ -86,6 +86,8 @@ pub const Syntaxer = struct {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected a contract type after the conformance relation", .{});
             } else if (err == SyntaxerError.ExpectedType) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected an underlying type after 'Type ='", .{});
+            } else if (self.tokenIs(.semicolon)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "';' separates statements, not arguments, fields, or expression parts", .{});
             } else {
                 try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
             }
@@ -2423,6 +2425,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.currentContent()) {
+                .semicolon => self.advanceOne(),
                 .new_line, .comment => self.skipNewLinesAndComments(),
                 else => {
                     const stmt = try self.parseStatement();
@@ -2573,7 +2576,7 @@ pub const Syntaxer = struct {
         // ── Is there anything else on the line?  -----------------
         // If the next token is a newline, '}', or EOF, there is no expression.
         switch (self.currentContent()) {
-            .new_line, .close_brace, .eof => {
+            .semicolon, .new_line, .close_brace, .eof => {
                 return try self.addNode(.return_statement, start, .{ .optional_node = .none });
             },
             else => {},

@@ -363,6 +363,12 @@ pub const Tokenizer = struct {
             return;
         }
 
+        if (current == ';') {
+            try self.addToken(tok.Content{ .semicolon = .{} }, loc);
+            _ = self.advance();
+            return;
+        }
+
         // Comma
         if (current == ',') {
             try self.addToken(tok.Content{ .comma = .{} }, loc);

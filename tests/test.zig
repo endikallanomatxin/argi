@@ -5765,7 +5765,7 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "build [path] [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "run [executable] [build flags]") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [flags]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "test [directory] [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot <path>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--exec <name>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--filter <name>") != null);
@@ -13456,4 +13456,13 @@ test "argi test runs configured modules and explicit target overrides suite" {
     defer std.testing.allocator.free(invalid.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, invalid.term);
     try expect(std.mem.indexOf(u8, invalid.stderr, "configure [test] modules") != null);
+}
+
+test "feature_tests/basics/90_semicolon_statements" {
+    try expectSuccessfulBuild("tests/feature_tests/basics/90_semicolon_statements");
+    try runExpect("tests/feature_tests/basics/90_semicolon_statements", 0);
+}
+
+test "feature_tests/basics/91X_semicolon_arguments" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/basics/91X_semicolon_arguments", "';' separates statements, not arguments, fields, or expression parts", "panic");
 }

@@ -12,7 +12,10 @@ Opening braces remain on the same line as their declaration or condition.
 A short body containing one statement can remain on one line; a body with
 multiple statements expands, including loops and conditional bodies. Empty
 bodies use `{}`. Multiline bodies remain multiline; formatting does not add
-implicit returns. Functions and global type declarations have at least one
+implicit returns. Explicit semicolon statement separators are preserved; the
+formatter adds a space after them when the next statement remains on the same
+line. Multiple-statement blocks still expand under the ordinary block rules.
+Functions and global type declarations have at least one
 blank line between declarations, with leading documentation comments kept
 attached to their declaration.
 
