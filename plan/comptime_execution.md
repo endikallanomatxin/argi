@@ -28,11 +28,22 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Compile-time integration
 
+- Complete `#run (.system: System)` with checked host-resource initialization
+  and cleanup, sharing the execution host boundary with VM programs and the REPL.
+  Keep capabilities explicit; define host effects and build dependencies before
+  enabling filesystem, stdin, networking, processes or unrestricted FFI.
+- Resolve staged capture types that depend on pending calls through GlobalSema.
+  Do not require explicit annotations long term, execute initializers again,
+  or infer types from function names. Concrete captures already use a deferred
+  value/type relation; generic captures currently reuse retained initializer types.
+- Transport enclosing lexical captures into concrete staged entries containing
+  `#if`, preserving selected-branch resolution and per-invocation identity.
 - Extend temporary type recipes beyond captured defaults to inferred identities
   and transient declaration origins; validate branch selection in native and
   retained sessions.
-- Keep dependency readiness in the scheduler and execution in the VM. Add no
-  coordination stages without a demonstrated need.
+- Keep dependency readiness in the scheduler and execution in the VM. Preserve
+  cycle checks, shared execution budgets and rejected-session rollback. Nested
+  entries share the enclosing execution but retain their output restrictions.
 
 ## Execution boundaries
 
