@@ -1232,6 +1232,44 @@ test "bytecode anonymous compile-time entries retain defaults and independent sc
     , .{}));
 }
 
+test "bytecode anonymous compile-time blocks support local storage and no outputs" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\main() -> (.status_code: Int32) := {
+        \\    #run {
+        \\        local :: Int32 = 41
+        \\        pointer ::= $&local
+        \\        pointer&= pointer& + 1
+        \\        if local != 42 { abort }
+        \\    }
+        \\    status_code = #run () -> (.result: Int32) {
+        \\        local :: Int32 = 42
+        \\        pointer ::= &local
+        \\        result = pointer&
+        \\    }
+        \\}
+    , .{}));
+}
+
+test "anonymous compile-time entries cannot export temporary references" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\main() -> () := {
+        \\    pointer ::= #run () -> (.result: &Int32) {
+        \\        local :: Int32 = 42
+        \\        result = &local
+        \\    }
+        \\}
+    }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+    try std.testing.expect(diagnostics.hasErrors());
+}
+
 test "bytecode source run evaluates closed argument calls through selected operations" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
