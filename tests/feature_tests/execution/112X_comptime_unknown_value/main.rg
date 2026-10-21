@@ -3,5 +3,5 @@ broken := () -> (.value: Int32) {
 }
 
 main := () -> (.status_code: Int32) {
-    status_code = #run broken()
+    status_code = #run () -> (.value: Int32) { value = broken() }
 }

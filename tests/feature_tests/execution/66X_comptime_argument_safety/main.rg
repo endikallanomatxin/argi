@@ -13,5 +13,5 @@ compute() -> (.value: Int32 = 2) := {
 result#(.n: Int32)() -> (.value: Int32 = n) := {}
 
 main() -> (.status_code: Int32 = 0) := {
-    status_code = result#(.n = #run compute())()
+    status_code = result#(.n = #run () -> (.value: Int32) { value = compute() })()
 }
