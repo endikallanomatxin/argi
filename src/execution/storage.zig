@@ -173,8 +173,11 @@ pub const Storage = struct {
     pub fn virtualize(self: *Storage, receiver: v.Reference, program: *const b.Program, table: *const b.VirtualTable) !b.Value {
         _ = try self.read(receiver);
         const descriptor_cells = comptime std.math.divCeil(usize, @sizeOf(v.Virtual), @sizeOf(b.Value)) catch unreachable;
-        try self.charge(descriptor_cells + receiver.path.len);
+        const charge_count = std.math.add(usize, descriptor_cells, receiver.path.len) catch return error.ExecutionMemoryLimit;
+        try self.charge(charge_count);
+        errdefer self.cells -= charge_count;
         const descriptor = try self.allocator.create(v.Virtual);
+        errdefer self.allocator.destroy(descriptor);
         var retained = receiver;
         retained.path = try self.allocator.dupe(v.Projection, receiver.path);
         descriptor.* = .{ .receiver = retained, .program = program.*, .table = table };
@@ -914,6 +917,32 @@ test "compact partial array layouts charge concrete cells before allocation" {
     } }));
     try std.testing.expectEqual(before, storage.cells);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+}
+
+fn failedVirtualStorage(a: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 10000);
+    const frame = try storage.enter(1);
+    try (try storage.slots(frame)).put(0, .{ .record = &.{.{ .integer = 42 }} });
+    const receiver: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{.{ .field = 0 }}, .mutability = .read_only };
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    const program: b.Program = .{ .graph = &graph, .functions = &.{} };
+    const table: b.VirtualTable = .{ .virtual_type = @enumFromInt(0), .concrete_type = @enumFromInt(0), .methods = &.{} };
+    const before = storage.cells;
+    storage.allocator = a;
+    const result = storage.virtualize(receiver, &program, &table) catch |err| {
+        try std.testing.expectEqual(before, storage.cells);
+        try std.testing.expectEqual(@as(u64, 42), (try storage.read(receiver)).integer);
+        return err;
+    };
+    defer a.destroy(result.virtual_);
+    defer a.free(result.virtual_.receiver.path);
+}
+
+test "virtual descriptor allocation failures preserve receiver and storage quota" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedVirtualStorage, .{});
 }
 
 test "literal creation checks its complete storage quota before publication" {
