@@ -193,28 +193,59 @@ pub const Storage = struct {
     /// copies cleanup obligations or grants permission to duplicate an owner.
     /// Callers supply the frontend's checked copy/move and publication plans.
     pub fn cloneValues(self: *Storage, values: []const b.Value) ![]const b.Value {
-        return self.cloneValuesDepth(values, 0);
+        var count: CloneSize = .{};
+        try self.countClone(values, 0, &count);
+        const charge_count = std.math.add(usize, count.values, count.projections) catch return error.ExecutionMemoryLimit;
+        try self.charge(charge_count);
+        errdefer self.cells -= charge_count;
+        const backing = try self.allocator.alloc(b.Value, count.values);
+        errdefer self.allocator.free(backing);
+        const paths = try self.allocator.alloc(v.Projection, count.projections);
+        errdefer self.allocator.free(paths);
+        var remaining_values = backing;
+        var remaining_paths = paths;
+        const result = fillClone(values, &remaining_values, &remaining_paths);
+        std.debug.assert(remaining_values.len == 0 and remaining_paths.len == 0);
+        return result;
     }
-    fn cloneValuesDepth(self: *Storage, values: []const b.Value, depth: usize) anyerror![]const b.Value {
+
+    const CloneSize = struct { values: usize = 0, projections: usize = 0 };
+
+    // Preflight the complete tree before reserving either backing buffer. A
+    // rejected context, depth or quota cannot leave a partially retained copy.
+    fn countClone(self: *Storage, values: []const b.Value, depth: usize, count: *CloneSize) anyerror!void {
         if (depth > 64) return error.ExecutionValueDepthLimit;
-        const result = try self.allocate(values.len);
+        count.values = std.math.add(usize, count.values, values.len) catch return error.ExecutionMemoryLimit;
+        for (values) |value| switch (value) {
+            .array => |elements| try self.countClone(elements, depth + 1, count),
+            .record => |fields| try self.countClone(fields, depth + 1, count),
+            .choice => |choice| if (choice.payload) |payload| try self.countClone(payload[0..1], depth + 1, count),
+            .virtual_ => |handle| try self.validateContext(handle.receiver),
+            .reference => |reference| {
+                try self.validateContext(reference);
+                count.projections = std.math.add(usize, count.projections, reference.path.len) catch return error.ExecutionMemoryLimit;
+            },
+            else => {},
+        };
+    }
+
+    fn fillClone(values: []const b.Value, remaining: *[]b.Value, paths: *[]v.Projection) []const b.Value {
+        const result = remaining.*[0..values.len];
+        remaining.* = remaining.*[values.len..];
         for (result, values) |*out, value| out.* = switch (value) {
-            .array => |elements| .{ .array = try self.cloneValuesDepth(elements, depth + 1) },
-            .record => |fields| .{ .record = try self.cloneValuesDepth(fields, depth + 1) },
+            .array => |elements| .{ .array = fillClone(elements, remaining, paths) },
+            .record => |fields| .{ .record = fillClone(fields, remaining, paths) },
             .choice => |choice| .{ .choice = .{
                 .variant = choice.variant,
-                .payload = if (choice.payload) |payload| &(try self.cloneValuesDepth(payload[0..1], depth + 1))[0] else null,
+                .payload = if (choice.payload) |payload| &fillClone(payload[0..1], remaining, paths)[0] else null,
             } },
-            .virtual_ => |handle| blk: {
-                try self.validateContext(handle.receiver);
-                break :blk value;
-            },
-            .reference => |reference| blk: {
-                try self.validateContext(reference);
-                try self.charge(reference.path.len);
+            .reference => |reference| result: {
+                const path = paths.*[0..reference.path.len];
+                @memcpy(path, reference.path);
+                paths.* = paths.*[path.len..];
                 var retained = reference;
-                retained.path = try self.allocator.dupe(v.Projection, reference.path);
-                break :blk .{ .reference = retained };
+                retained.path = path;
+                break :result .{ .reference = retained };
             },
             else => value,
         };
@@ -1419,4 +1450,47 @@ test "reference factories roll back unpublished projection quota on allocation f
         try std.testing.expectEqual(@as(u64, 42), (try storage.read(reference)).integer);
         try std.testing.expectEqual(@as(usize, 1), storage.frames.items.len);
     }
+}
+
+test "nested session copies publish complete buffers or preserve destination and quota" {
+    for (0..3) |fail_index| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var storage = try Storage.init(arena.allocator(), 10000);
+        const target = try storage.enterSession(1, &.{});
+        try storage.initializeSession(target, 0, .{ .integer = 7 });
+        const origin = try storage.enterSession(1, &.{});
+        try storage.initializeSession(origin, 0, .{ .record = &.{.{ .integer = 42 }} });
+        const reference: v.Reference = .{ .context = storage.context, .frame = origin.frame, .root = 0, .path = &.{.{ .field = 0 }}, .mutability = .read_only };
+        const source: b.Value = .{ .record = &.{.{ .array = &.{.{ .choice = .{ .variant = 0, .payload = &.{ .reference = reference } } }} }} };
+        const cells = storage.cells;
+        var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = fail_index });
+        storage.allocator = failure.allocator();
+        if (storage.reinitializeSession(target, 0, source)) |_| {
+            try std.testing.expect(!failure.has_induced_failure);
+            const retained = (try target.get(0)).record[0].array[0].choice.payload.?.reference;
+            try std.testing.expect(retained.path.ptr != reference.path.ptr);
+            try std.testing.expectEqual(@as(u64, 42), (try storage.read(retained)).integer);
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            try std.testing.expectEqual(cells, storage.cells);
+            try std.testing.expectEqual(@as(u64, 7), (try target.get(0)).integer);
+        }
+    }
+}
+
+test "value copies reject foreign nested references and quota before publication" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1000);
+    var other = try Storage.init(arena.allocator(), 1000);
+    const frame = try other.enter(1);
+    const reference: v.Reference = .{ .context = other.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_only };
+    const source = &.{b.Value{ .record = &.{.{ .reference = reference }} }};
+    const before = storage.cells;
+    try std.testing.expectError(error.ExecutionForeignReference, storage.cloneValues(source));
+    try std.testing.expectEqual(before, storage.cells);
+    storage.limit = 1;
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.cloneValues(&.{.{ .record = &.{.{ .integer = 42 }} }}));
+    try std.testing.expectEqual(before, storage.cells);
 }
