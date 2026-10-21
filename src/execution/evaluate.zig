@@ -46,6 +46,15 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
         if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationResult;
     }
     const program = try lower.compile(entry);
+    // Nested entries execute in the outer VM invocation, but retain their
+    // declared output boundary even without an independently frozen request.
+    for (program.functions, 0..) |compiled, index| {
+        if (compiled == null) continue;
+        const nested = graph.functions.items[index];
+        if (!nested.flags.is_comptime_entry) continue;
+        for (graph.fields.items[nested.output.start..][0..nested.output.len]) |field|
+            if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationResult;
+    }
     var executor = try Vm.init(temporary, program, budget.*);
     defer executor.deinit();
     defer {

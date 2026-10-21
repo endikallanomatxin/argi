@@ -14297,3 +14297,7 @@ test "feature_tests/execution/155_nested_comptime_capture_context" {
     try runExpect("tests/feature_tests/execution/155_nested_comptime_capture_context", 42);
     try vmExpect("tests/feature_tests/execution/155_nested_comptime_capture_context", 42, null);
 }
+
+test "feature_tests/execution/156X_nested_comptime_reference_output" {
+    try buildExpectFail("tests/feature_tests/execution/156X_nested_comptime_reference_output", "cannot return references or values requiring cleanup");
+}

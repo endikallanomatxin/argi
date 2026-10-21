@@ -84,6 +84,7 @@ pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer
     const body = try context.lowerBlock(entry.body);
     try graph.semantic.parameterized_storage.parameterized_functions.append(writer.allocator, .{
         .declaration = declaration,
+        .is_comptime_entry = true,
         .concrete_function = function,
         .parameters = .{ .start = 0, .len = 0 },
         .input = input,
@@ -1112,6 +1113,7 @@ pub const Context = struct {
         const capture_count: u32 = @intCast(child.entry_captures.items.len);
         const capture_input = try self.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = capture_field_start, .len = capture_count } } } });
         try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
+            .is_comptime_entry = true,
             .declaration = declaration,
             .parameters = parameters,
             .input = capture_input,

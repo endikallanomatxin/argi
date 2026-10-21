@@ -181,7 +181,8 @@ pub const FunctionFlags = packed struct(u16) {
     is_c_export: bool = false,
     has_foreign_capability: bool = false,
     is_c_function_pointer: bool = false,
-    _padding: u5 = 0,
+    is_comptime_entry: bool = false,
+    _padding: u4 = 0,
 };
 
 pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };

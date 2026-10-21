@@ -876,7 +876,7 @@ const Context = struct {
             .body = block,
             .input_bindings = input_bindings,
             .output_bindings = output_bindings,
-            .flags = .{ .has_declared_body = true, .uses_inferred_error_reasons = try body.interfaceUsesInferredErrable(output) },
+            .flags = .{ .has_declared_body = true, .is_comptime_entry = true, .uses_inferred_error_reasons = try body.interfaceUsesInferredErrable(output) },
         });
         const result_type = if (output.len == 0) try self.builtin(.Void) else if (output.len == 1)
             (try views.fieldView(self.graph, @enumFromInt(output.start))).ty

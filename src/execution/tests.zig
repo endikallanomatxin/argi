@@ -1489,6 +1489,33 @@ test "anonymous compile-time entries diagnose unsupported argument interfaces" {
     }
 }
 
+test "nested compile-time entries retain their output representation boundary" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = #run () -> (.answer: Int32) {
+        \\        local :: Int32 = 42
+        \\        pointer ::= &local
+        \\        borrowed := #run () -> (.value: &Int32) { value = pointer }
+        \\        answer = borrowed&
+        \\    }
+        \\}
+    }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+    var found = false;
+    for (diagnostics.list.items) |message|
+        if (std.mem.indexOf(u8, message.msg, "cannot return references or values requiring cleanup") != null) {
+            found = true;
+        };
+    try std.testing.expect(found);
+}
+
 test "anonymous compile-time entries cannot export temporary references" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

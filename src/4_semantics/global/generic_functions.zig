@@ -1939,6 +1939,7 @@ pub const Resolver = struct {
             .flags = .{
                 .has_declared_body = located.parameterized.body != null,
                 .is_generic_instantiation = true,
+                .is_comptime_entry = located.parameterized.is_comptime_entry,
                 .uses_inferred_error_reasons = inferred_errors,
                 // A contract template has no runtime ABI; its inferred
                 // instance does, once every generic parameter is concrete.
