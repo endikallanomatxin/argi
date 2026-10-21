@@ -2,9 +2,11 @@ compute() -> (.value: Int32 = 42) := {}
 
 result#(.n: Int32)() -> (.value: Int32 = n) := {}
 
-defaulted#(.T: Type)(.ignored: T, .value: Int32 = result#(.n = #run compute())()) -> (
-    .output : Int32 = value
-) := {}
+defaulted#(.T: Type)(
+    .ignored : T,
+    .value   : Int32 = result#(.n = #run () -> (.value: Int32) { value = compute() })()
+    .tail    : Int32 = 0
+) -> (.output: Int32 = [value + tail]) := {}
 
 ordinary#(.T: Type)(.ignored: T, .value: Int32 = result#(.n = 42)()) -> (.output: Int32 = value) := {}
 

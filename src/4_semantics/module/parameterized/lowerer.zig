@@ -78,11 +78,8 @@ pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer
     const empty = try context.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
     const input = if (entry.input) |syntax| try context.lowerType(syntax, false) else empty;
     const output = if (entry.output) |syntax| try context.lowerType(syntax, false) else empty;
-    const input_start: u32 = @intCast(graph.semantic.parameterized_storage.ir.bindings.items.len);
-    if (entry.input) |syntax| try context.seedFunctionBindings(syntax, .constant);
-    const output_start: u32 = @intCast(graph.semantic.parameterized_storage.ir.bindings.items.len);
-    if (entry.output) |syntax| try context.seedFunctionBindings(syntax, .variable);
-    const output_end: u32 = @intCast(graph.semantic.parameterized_storage.ir.bindings.items.len);
+    const input_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.input) |syntax| try context.seedFunctionBindings(syntax, .constant) else .{ .start = 0, .len = 0 };
+    const output_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.output) |syntax| try context.seedFunctionBindings(syntax, .variable) else .{ .start = 0, .len = 0 };
     const body = try context.lowerBlock(entry.body);
     try graph.semantic.parameterized_storage.parameterized_functions.append(writer.allocator, .{
         .declaration = declaration,
@@ -91,8 +88,8 @@ pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer
         .input = input,
         .output = output,
         .body = body,
-        .input_bindings = .{ .start = input_start, .len = output_start - input_start },
-        .output_bindings = .{ .start = output_start, .len = output_end - output_start },
+        .input_bindings = input_bindings,
+        .output_bindings = output_bindings,
     });
 }
 
@@ -235,11 +232,8 @@ pub const Context = struct {
                     if (params.len == 0 and !function.contract_member and !staged_body) continue;
                     const input = try self.lowerType(function.input, false);
                     const output = try self.lowerType(function.output, false);
-                    const input_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
-                    try self.seedFunctionBindings(function.input, .constant);
-                    const output_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
-                    try self.seedFunctionBindings(function.output, .variable);
-                    const output_end: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+                    const input_bindings = try self.seedFunctionBindings(function.input, .constant);
+                    const output_bindings = try self.seedFunctionBindings(function.output, .variable);
                     const body = if (function.body) |node| try self.lowerBlock(node) else null;
                     try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
                         .declaration = decl_id,
@@ -248,8 +242,8 @@ pub const Context = struct {
                         .input = input,
                         .output = output,
                         .body = body,
-                        .input_bindings = .{ .start = input_start, .len = output_start - input_start },
-                        .output_bindings = .{ .start = output_start, .len = output_end - output_start },
+                        .input_bindings = input_bindings,
+                        .output_bindings = output_bindings,
                     });
                     stats.generic_functions += 1;
                 },
@@ -1051,7 +1045,9 @@ pub const Context = struct {
         const entry = self.tree.comptimeEntry(node).?;
         if (entry.input) |syntax| if (self.tree.structTypeLiteral(syntax).?.fields.len != 0)
             return error.UnsupportedParameterizedEntryInput;
-        const name_text = try std.fmt.allocPrint(self.allocator, "_comptime_entry_{d}_{d}", .{ self.file_index, self.sourceRef(node).offset });
+        // The same default syntax can be lowered in distinct semantic contexts;
+        // source coordinates alone do not identify a generated declaration.
+        const name_text = try std.fmt.allocPrint(self.allocator, "_comptime_entry_{d}_{d}_{d}", .{ self.file_index, self.sourceRef(node).offset, self.graph.declarations.items.len });
         defer self.allocator.free(name_text);
         const name = try self.writer.addString(name_text);
         const declaration: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
@@ -1080,9 +1076,7 @@ pub const Context = struct {
         try child.parameters.appendSlice(self.parameters.items);
         const empty = try child.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
         const output = if (entry.output) |syntax| try child.lowerType(syntax, false) else empty;
-        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
-        if (entry.output) |syntax| try child.seedFunctionBindings(syntax, .variable);
-        const end: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+        const output_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.output) |syntax| try child.seedFunctionBindings(syntax, .variable) else .{ .start = 0, .len = 0 };
         const body = try child.lowerBlock(entry.body);
         // Forward only the declaration-order prefix needed by the entry. In a
         // parameter default, forwarding the parameter being defined would turn
@@ -1100,7 +1094,7 @@ pub const Context = struct {
             .input = empty,
             .output = output,
             .body = body,
-            .output_bindings = .{ .start = start, .len = end - start },
+            .output_bindings = output_bindings,
         });
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
@@ -1164,23 +1158,37 @@ pub const Context = struct {
         } });
     }
 
-    fn seedFunctionBindings(self: *Context, struct_node: syn.NodeIndex, mutability: primitives.Mutability) !void {
-        const literal = self.tree.structTypeLiteral(struct_node) orelse return;
+    fn seedFunctionBindings(self: *Context, struct_node: syn.NodeIndex, mutability: primitives.Mutability) !primitives.Range(ir.ParameterizedBindingId) {
+        const literal = self.tree.structTypeLiteral(struct_node) orelse return .{ .start = 0, .len = 0 };
+        var count: u32 = 0;
+        for (literal.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node) orelse continue;
+            if (field.type_node != null) count += 1;
+        }
+        // Defaults can lower nested functions with bindings of their own. Reserve
+        // this interface's contiguous range before lowering any child expression.
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+        try self.graph.semantic.parameterized_storage.ir.bindings.appendNTimes(self.allocator, undefined, count);
+        var offset: u32 = 0;
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse continue;
             const type_node = field.type_node orelse continue;
             const name = if (field.inferred_result) "result" else self.tree.tokenTextFromSource(self.source, field.name_token);
             const initialization = if (field.default_value) |value| try self.lowerBodyNode(value) else null;
-            const binding_id: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len)));
-            try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{
-                .name = try self.writer.addString(name),
+            const binding_id: ir.ParameterizedBindingId = @enumFromInt(start + offset);
+            const ty = try self.lowerType(type_node, false);
+            const stored_name = try self.writer.addString(name);
+            self.graph.semantic.parameterized_storage.ir.bindings.items[start + offset] = .{
+                .name = stored_name,
                 .source = self.sourceRef(field_node),
-                .ty = try self.lowerType(type_node, false),
+                .ty = ty,
                 .initialization = initialization,
                 .mutability = mutability,
-            });
+            };
             try self.bindings.append(.{ .name = name, .id = binding_id });
+            offset += 1;
         }
+        return .{ .start = start, .len = count };
     }
 
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedBlockId {
