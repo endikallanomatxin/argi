@@ -388,6 +388,13 @@ reconstructing their signatures from the semantic graph. Virtual method tables
 also carry verified receiver permissions, so invocation does not inspect a
 method parameter type to determine its access.
 
+Finished call frames now make their slot buffers available to later frames of
+the same size. Frame identities remain retired, and reused cells and cleanup
+flags are reinitialized. Session and acquired storage are not retired by this
+mechanism. Cumulative execution-cell budgets are unchanged. A fresh retained
+memory comparison remains pending; the benchmark rebuild exceeded local process
+memory limits during validation.
+
 Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
 ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
 timings are observations, not stable performance thresholds. Memory includes

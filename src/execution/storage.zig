@@ -12,6 +12,7 @@ const Frame = struct {
     cleanup: []const b.Cleanup = &.{},
     bytes: []const u8 = &.{},
     alive: bool = true,
+    reusable_next: ?v.FrameId = null,
     duration: enum { call, session, static, acquired } = .call,
 };
 
@@ -68,6 +69,9 @@ pub const Storage = struct {
     limit: usize,
     cells: usize = 0,
     frames: std.ArrayList(Frame) = .empty,
+    // Exact-size bins hold dead call buffers, never reusable frame identities.
+    // A bin is reserved on entry so leaving a frame cannot allocate or fail.
+    reusable_frames: std.AutoHashMapUnmanaged(usize, ?v.FrameId) = .empty,
     acquisitions: acquired.Regions = .{},
     acquired_views: std.AutoHashMapUnmanaged(v.FrameId, AcquiredView) = .empty,
 
@@ -386,20 +390,35 @@ pub const Storage = struct {
         const charge_count = std.math.add(usize, count, 1) catch return error.ExecutionMemoryLimit;
         try self.charge(charge_count);
         errdefer self.cells -= charge_count;
-        const values = try self.allocator.alloc(?b.Value, count);
-        errdefer self.allocator.free(values);
+        try self.frames.ensureUnusedCapacity(self.allocator, 1);
+        const bin = try self.reusable_frames.getOrPut(self.allocator, count);
+        if (!bin.found_existing) bin.value_ptr.* = null;
+        const values = if (bin.value_ptr.*) |previous| reused: {
+            const retired = &self.frames.items[@intFromEnum(previous)];
+            std.debug.assert(!retired.alive and retired.duration == .call);
+            const buffer = retired.values;
+            bin.value_ptr.* = retired.reusable_next;
+            retired.values = &.{};
+            retired.reusable_next = null;
+            break :reused buffer;
+        } else try self.allocator.alloc(?b.Value, count);
         @memset(values, null);
         for (cleanup) |entry| {
             values[entry.flag] = .{ .boolean = false };
             if (entry.presence) |flag| values[flag] = .{ .boolean = false };
         }
         const id: v.FrameId = @enumFromInt(self.frames.items.len);
-        try self.frames.append(self.allocator, .{ .values = values, .cleanup = cleanup });
+        self.frames.appendAssumeCapacity(.{ .values = values, .cleanup = cleanup });
         return id;
     }
     pub fn leave(self: *Storage, id: v.FrameId) void {
-        std.debug.assert(self.frames.items[@intFromEnum(id)].duration == .call);
-        self.frames.items[@intFromEnum(id)].alive = false;
+        const frame = &self.frames.items[@intFromEnum(id)];
+        std.debug.assert(frame.duration == .call);
+        if (!frame.alive) return;
+        frame.alive = false;
+        const bin = self.reusable_frames.getPtr(frame.values.len).?;
+        frame.reusable_next = bin.*;
+        bin.* = id;
     }
     pub fn slots(self: *Storage, id: v.FrameId) !Slots {
         _ = try self.frameValues(id);
@@ -1294,4 +1313,36 @@ fn failedPartialSnapshot(allocator: std.mem.Allocator, through_slots: bool) !voi
 test "partial snapshots publish one backing or preserve cells through slots and references" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, failedPartialSnapshot, .{false});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, failedPartialSnapshot, .{true});
+}
+
+test "call buffers reuse cells without reviving retired frame identities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 10000);
+    const first = try storage.enterCleanup(3, &.{.{ .root = 0, .path = &.{}, .flag = 1 }});
+    const old_slots = try storage.slots(first);
+    try old_slots.put(0, .{ .integer = 42 });
+    try old_slots.put(1, .{ .boolean = true });
+    const reference: v.Reference = .{ .context = storage.context, .frame = first, .root = 0, .path = &.{}, .mutability = .read_write };
+    const backing = storage.frames.items[@intFromEnum(first)].values.ptr;
+    storage.leave(first);
+    const differently_sized = try storage.enter(4);
+    const second = try storage.enterCleanup(3, &.{.{ .root = 0, .path = &.{}, .flag = 2 }});
+    try std.testing.expect(first != second);
+    try std.testing.expect(storage.frames.items[@intFromEnum(second)].values.ptr == backing);
+    try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(first)].values.len);
+    const new_slots = try storage.slots(second);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, new_slots.get(0));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, new_slots.get(1));
+    try std.testing.expect(!(try new_slots.get(2)).boolean);
+    try new_slots.put(0, .{ .integer = 7 });
+    try std.testing.expectError(error.ExecutionDeadReference, old_slots.get(0));
+    try std.testing.expectError(error.ExecutionDeadReference, storage.read(reference));
+    storage.leave(second);
+    storage.leave(differently_sized);
+    for (0..100) |_| {
+        const next = try storage.enter(3);
+        try std.testing.expect(storage.frames.items[@intFromEnum(next)].values.ptr == backing);
+        storage.leave(next);
+    }
 }
