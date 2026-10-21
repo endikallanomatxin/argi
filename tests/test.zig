@@ -14238,14 +14238,13 @@ test "argi repl distinguishes transient expression default specializations" {
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );
 }
-
 test "feature_tests/execution/139_comptime_default_effects" {
     try expectSuccessfulBuild("tests/feature_tests/execution/139_comptime_default_effects");
     try runExpect("tests/feature_tests/execution/139_comptime_default_effects", 42);
     try vmExpect("tests/feature_tests/execution/139_comptime_default_effects", 42, null);
 }
 
-fn expectReplFixture(fixture_path: []const u8, commands: []const u8, expected: []const u8) !void {
+fn expectReplFixture(fixture_path: ?[]const u8, commands: []const u8, expected: []const u8) !void {
     const installed_argi = try installedArgiPath();
     defer std.testing.allocator.free(installed_argi);
     var child = try std.process.spawn(std.testing.io, .{
@@ -14256,12 +14255,14 @@ fn expectReplFixture(fixture_path: []const u8, commands: []const u8, expected: [
         .stderr = .pipe,
     });
     defer child.kill(std.testing.io);
-    const fixture = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, fixture_path, std.testing.allocator, .limited(64 * 1024));
-    defer std.testing.allocator.free(fixture);
-    const definitions_end = std.mem.indexOf(u8, fixture, "main()") orelse return error.MissingFixtureEntrypoint;
-    try child.stdin.?.writeStreamingAll(std.testing.io, ":begin\n");
-    try child.stdin.?.writeStreamingAll(std.testing.io, fixture[0..definitions_end]);
-    try child.stdin.?.writeStreamingAll(std.testing.io, ":end\n");
+    if (fixture_path) |path| {
+        const fixture = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(64 * 1024));
+        defer std.testing.allocator.free(fixture);
+        const definitions_end = std.mem.indexOf(u8, fixture, "main()") orelse return error.MissingFixtureEntrypoint;
+        try child.stdin.?.writeStreamingAll(std.testing.io, ":begin\n");
+        try child.stdin.?.writeStreamingAll(std.testing.io, fixture[0..definitions_end]);
+        try child.stdin.?.writeStreamingAll(std.testing.io, ":end\n");
+    }
     try child.stdin.?.writeStreamingAll(std.testing.io, commands);
     try child.stdin.?.writeStreamingAll(std.testing.io, ":reset\n");
     child.stdin.?.close(std.testing.io);
@@ -14343,4 +14344,12 @@ test "feature_tests/execution/161_partial_choice_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/execution/161_partial_choice_cleanup");
     try runExpect("tests/feature_tests/execution/161_partial_choice_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/161_partial_choice_cleanup", 42, null);
+}
+
+test "argi repl supplies persistent allocator capabilities across reset" {
+    try expectReplFixture(
+        null,
+        "text ::= unwrap_or_abort(.value = String(.length = 3))\nbyte_length(.self = &text)\nnumbers ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)\nunwrap_or_abort(.value = get(.self = &numbers, .index = 0))\n:reset\ntext ::= unwrap_or_abort(.value = String(.length = 4))\nbyte_length(.self = &text)\n",
+        "_0 = 3\n_1 = ()\n_2 = 42\n_0 = 4\n",
+    );
 }

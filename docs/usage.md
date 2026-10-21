@@ -243,7 +243,11 @@ installation prefix. Input can come from a terminal or a pipe.
 At startup, ordinary checked Argi statements create a buffered `error_tracer`.
 The terminal displays that prelude; `:reset` cleans the session and executes it
 again. The prelude also acquires `ffi` and `Terminal`, borrowing stdout as `writer`,
-so `print("hola")` works directly. Allocator capabilities are not supplied yet.
+so `print("hola")` works directly. An ordinary `CAllocator` supplies the persistent
+`allocator` assumption. Owning values retain their allocations between commands;
+healthy exit and reset run their checked cleanup before releasing the context.
+Allocation uses VM regions rather than native pointers; the supported value and
+storage restrictions still apply.
 In a terminal, Up/Down recall earlier lines and restore the unfinished draft.
 Recalled lines can be edited before submission; Ctrl-C cancels the current line
 and Ctrl-D on an empty line exits. History lasts for the current REPL process.
@@ -306,8 +310,10 @@ and exits. Preparation failures publish no state and subsequent input can retry.
 Diagnostics for wrapped statements and expression results point to the submitted
 text. Unsupported bytecode operations report their source location.
 A runtime trap retains any writes already executed and poisons the session; use
-`:reset` before continuing. Trapped code cannot be safely unwound. No System/FFI
-capabilities or native calls are implicitly granted by the REPL.
+`:reset` before continuing. Trapped code cannot be safely unwound. The checked
+prelude installs only the capabilities described above; `System` and unrestricted
+native calls remain unavailable. Foreign declarations require explicit host
+bindings, and their logical `ffi` input still participates in safety checking.
 
 ## Measuring retained execution
 

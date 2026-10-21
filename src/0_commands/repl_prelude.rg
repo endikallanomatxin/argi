@@ -5,3 +5,5 @@ assume error_tracer ::= $&_repl_trace_handle
 assume ffi ::= $&ForeignFunctionInterface()
 _repl_terminal ::= Terminal()
 assume writer ::= $&_repl_terminal.stdout
+_repl_allocator ::= CAllocator(.ffi = ffi)
+assume allocator ::= $&_repl_allocator

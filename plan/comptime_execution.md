@@ -23,8 +23,6 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   nominal records with remaining live resource fields, and conditional caller
   cleanup activation. Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
-- Enable the persistent REPL allocator only after its ordinary initialization,
-  resource operations and reset/exit cleanup work end to end.
 
 ## Compile-time integration
 

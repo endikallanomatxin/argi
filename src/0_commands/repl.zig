@@ -298,7 +298,7 @@ test "REPL presents persistent string literals as escaped text" {
     try std.testing.expectEqualStrings("_0 = \"hello\"\n_1 = \"hello\"\n_2 = \"ñ€\"\n_3 = \"\"\n", output.written());
 }
 
-test "REPL standard prelude prints ordinary text across reset" {
+test "REPL standard prelude supplies output and persistent allocation across reset" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -325,7 +325,25 @@ test "REPL standard prelude prints ordinary text across reset" {
     };
     try session.submitStatements("print(\"hola\")");
     try std.testing.expectEqualStrings("hola\n", output.written());
+    session.submitStatements("text ::= unwrap_or_abort(.value = String(.length = 3))") catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 1), session.runtime.context.storage.acquisitions.entries.items.len);
+    try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+    try session.submitStatements("deinit(.self = $&text)");
+    try std.testing.expect(!session.runtime.context.storage.acquisitions.entries.items[0].live);
+    try session.submitStatements("retained ::= unwrap_or_abort(.value = String(.length = 2))");
+    try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[1].live);
     try session.reset();
+    try std.testing.expectEqual(@as(usize, 0), session.runtime.context.storage.acquisitions.entries.items.len);
+    try session.submitStatements("after_reset ::= unwrap_or_abort(.value = String(.length = 4))");
+    try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+    session.submitStatements("numbers ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)") catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("unwrap_or_abort(.value = get(.self = &numbers, .index = 0))")).?.value.runtime.integer);
     try session.submitStatements("print(\"ñ después\")");
     try std.testing.expectEqualStrings("hola\nñ después\n", output.written());
     try session.submitStatements("init_stderr(.p = $&_repl_terminal.stdout)\nprint(\"error output\")");
