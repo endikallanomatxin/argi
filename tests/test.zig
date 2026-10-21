@@ -318,6 +318,11 @@ fn runExpect(name: []const u8, expected_code: u8) !void {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
+    if (result.term != .exited or result.term.exited != expected_code) {
+        std.debug.print("execution of {s}: expected exit {d}, got {any}\nstdout:\n{s}\nstderr:\n{s}\n", .{
+            name, expected_code, result.term, result.stdout, result.stderr,
+        });
+    }
     try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
 }
 
