@@ -132,6 +132,7 @@ comptime {
     _ = @import("4_semantics/global/module_fragments_test.zig");
     _ = @import("4_semantics/global/source_location.zig");
     _ = @import("4_semantics/global/type_recipe.zig");
+    _ = @import("4_semantics/safety/fact_snapshot.zig");
     _ = @import("4_semantics/global/resolver_context.zig");
     _ = global_semantic_graph;
     _ = global_semantic_types;

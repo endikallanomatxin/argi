@@ -367,6 +367,16 @@ and proof state; resource bytes and finished-frame slots do not explain this
 sample's growth. The limit failures are measured bounds, not completed
 1,000-command runs. These samples are not an AOT compile-time benchmark.
 
+Publishing independent compact continuation proofs and releasing checker scratch
+reduced the ten-resource checkpoint from 319.47 to 229.35 MiB. Its retained proof
+arenas fell from 90.17 to 0.06 MiB; graph, code and live resource sizes were
+unchanged. Under the same limit, the resource session completed 74 commands
+instead of 47 before reporting OutOfMemory. A separate ten-command run completed
+normal session cleanup without retained tracked allocations. Minimal/update at
+1,000 commands fell from 526.76 to 503.23 MiB; prelude/update still reached its
+limit after 150 commands. Semantic snapshot retention remains the larger scaling
+problem. These single-run comparisons establish memory changes, not a speedup.
+
 Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
 ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
 timings are observations, not stable performance thresholds. Memory includes

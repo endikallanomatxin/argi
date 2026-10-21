@@ -17,8 +17,8 @@ const once_verify = @import("../4_semantics/global/once_verify.zig");
 
 const Safety = @import("../4_semantics/safety/checker.zig").SafetyChecker;
 
-// Immutable facts can refer to preceding accepted facts. Each candidate owns
-// its new arena and retains the parent proof; rejection releases only its tail.
+// Candidate analysis can borrow preceding facts. Publication copies only its
+// final fact graph and then releases that temporary parent dependency.
 const TemporalProof = struct {
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
@@ -41,6 +41,28 @@ const TemporalProof = struct {
         } else proof.state.init(proof.arena.allocator());
         return proof;
     }
+    // Retain only the final state, independently of parents and scratch facts.
+    // The caller must first move graph annotations into graph-owned storage.
+    fn seal(self: *TemporalProof, scratch: std.mem.Allocator) !void {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        errdefer arena.deinit();
+        var state: Safety.ContinuationState = undefined;
+        try self.state.snapshot(&state, arena.allocator(), scratch);
+        errdefer state.deinit();
+        var once = try self.once.cloneWithAllocator(arena.allocator());
+        errdefer once.deinit();
+        self.state.deinit();
+        self.once.deinit();
+        self.arena.deinit();
+        self.arena = arena;
+        self.state = state;
+        self.state.rebindAllocator(self.arena.allocator());
+        self.once = once;
+        self.once.allocator = self.arena.allocator();
+        const previous = self.parent;
+        self.parent = null;
+        if (previous) |parent| parent.release();
+    }
     fn release(initial: *TemporalProof) void {
         var current: ?*TemporalProof = initial;
         while (current) |proof| {
@@ -59,8 +81,9 @@ const TemporalProof = struct {
 pub const Version = struct {
     graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph,
     stats: sema.Stats,
-    // Non-continuation snapshots own all facts/annotations from their proof.
-    // Continuation facts instead live in the retained TemporalProof chain.
+    // Non-continuation snapshots own their complete analysis arena. Checked
+    // continuation annotations use graph-owned storage; their final temporal
+    // facts live separately in the compact published proof.
     safety_arena: ?std.heap.ArenaAllocator = null,
 
     fn deinit(self: *Version, allocator: std.mem.Allocator) void {
@@ -279,7 +302,25 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
     errdefer result.graph.deinit(allocator);
     var safety_arena: ?std.heap.ArenaAllocator = if (proof == null) .init(allocator) else null;
     errdefer if (safety_arena) |*arena| arena.deinit();
-    const proof_allocator = if (proof) |owned| owned.arena.allocator() else safety_arena.?.allocator();
+    var temporary = std.heap.ArenaAllocator.init(allocator);
+    defer temporary.deinit();
+    // Rejected analysis can leave its candidate tables in scratch storage.
+    // Dispose them while that storage is alive; the caller then releases the
+    // candidate's own arena and its retained parent in the ordinary error path.
+    errdefer if (proof) |owned| {
+        owned.state.deinit();
+        owned.state.init(owned.arena.allocator());
+    };
+    const proof_allocator = if (proof != null) temporary.allocator() else safety_arena.?.allocator();
+    if (proof) |owned| {
+        // All mutable tables and namespace growth during checking use one
+        // allocator. Immutable incoming facts remain borrowed until sealing.
+        var working: Safety.ContinuationState = undefined;
+        try owned.state.fork(&working, proof_allocator);
+        owned.state.deinit();
+        owned.state = working;
+        owned.state.rebindAllocator(proof_allocator);
+    }
     var safety = Safety.init(proof_allocator, diagnostics, &result.graph);
     safety.graph_allocator = allocator;
     defer safety.deinit();
@@ -297,6 +338,20 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
         try once_verify.verifyContinuation(proof_allocator, &result.graph, diagnostics, function, &proof.?.once);
     } else try safety.analyze();
     try @import("comptime.zig").resolve(allocator, &result.graph, diagnostics);
+    if (proof) |owned| {
+        // Checked calls outlive this analysis and can be used by older virtual
+        // code units. Their annotation buffers belong to this graph version.
+        var copy: @import("../4_semantics/safety/fact_snapshot.zig").Copy = .{
+            .allocator = try result.graph.safetyAllocator(allocator),
+            .scratch = temporary.allocator(),
+        };
+        defer copy.deinit();
+        for (result.graph.nodes.items) |*node| if (node.content == .function_call) {
+            node.content.function_call = try copy.value(@TypeOf(node.content.function_call), node.content.function_call);
+        };
+        for (result.graph.virtual_calls.items) |*call| call.* = try copy.value(@TypeOf(call.*), call.*);
+        try owned.seal(temporary.allocator());
+    }
     return .{ .graph = result.graph, .stats = result.stats, .safety_arena = safety_arena };
 }
 
@@ -482,13 +537,16 @@ fn prepareContinuationsWithAllocationFailures(allocator: std.mem.Allocator) !voi
     try std.testing.expectEqual(revision, session.revision);
     var candidate = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
     defer candidate.deinit();
-    try std.testing.expect(candidate.temporal.?.parent.? == accepted);
-    try std.testing.expectEqual(@as(usize, 2), accepted.references);
+    try std.testing.expect(candidate.temporal.?.parent == null);
+    try std.testing.expectEqual(@as(usize, 1), accepted.references);
     var stale = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
     defer stale.deinit();
+    const next_proof = candidate.temporal.?;
     try session.accept(&candidate);
-    try std.testing.expect(session.temporal.?.parent.? == accepted);
-    try std.testing.expectEqual(@as(usize, 2), accepted.references);
+    try std.testing.expect(session.temporal.? == next_proof);
+    try std.testing.expect(session.temporal.?.parent == null);
+    try std.testing.expect(stale.temporal.?.parent == null);
+    try std.testing.expectEqual(@as(usize, 1), session.temporal.?.references);
     try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&stale));
 }
 

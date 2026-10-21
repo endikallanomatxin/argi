@@ -152,8 +152,8 @@ pub const SafetyChecker = struct {
     /// Retained temporal proof state for checked command continuations. Fact
     /// slices are immutable and borrow the proof allocator's lifetime, just as
     /// branch states do; keep that arena and referenced graph identities alive.
-    /// Initialize in final storage. Forks own their mutable tables and namespace
-    /// while retaining immutable facts from all preceding accepted commands.
+    /// Initialize in final storage. Forks own mutable tables and borrow incoming
+    /// facts; snapshot() owns its final fact graph independently of those arenas.
     pub const ContinuationState = struct {
         namespace: facts.Tracker.RootNamespace = .{},
         state: FunctionState,
@@ -168,6 +168,32 @@ pub const SafetyChecker = struct {
             errdefer destination.state.deinit();
             destination.namespace = try self.namespace.clone(allocator);
             destination.state.tracker.namespace = &destination.namespace;
+        }
+        /// Publish an independent immutable fact graph, excluding analysis
+        /// worklists, discarded branch states and superseded approximations.
+        pub fn snapshot(self: *const ContinuationState, destination: *ContinuationState, allocator: std.mem.Allocator, scratch: std.mem.Allocator) !void {
+            try self.fork(destination, allocator);
+            errdefer destination.deinit();
+            var copy: @import("fact_snapshot.zig").Copy = .{ .allocator = allocator, .scratch = scratch };
+            defer copy.deinit();
+            inline for (@typeInfo(FunctionState).@"struct".fields) |field| {
+                if (comptime std.mem.eql(u8, field.name, "tracker") or std.mem.eql(u8, field.name, "reachable")) continue;
+                const list = &@field(destination.state, field.name);
+                for (list.items) |*item| item.* = try copy.value(@TypeOf(item.*), item.*);
+            }
+            for (destination.namespace.initial_storage.items) |*item| item.* = try copy.value(@TypeOf(item.*), item.*);
+            // Projected symbolic identities contain scalar IDs and projections.
+        }
+        /// Reconnect managed tables after moving their backing arena object.
+        /// The allocator must still own these same buffers.
+        pub fn rebindAllocator(self: *ContinuationState, allocator: std.mem.Allocator) void {
+            self.state.tracker.allocator = allocator;
+            self.state.tracker.roots.allocator = allocator;
+            self.state.tracker.namespace = &self.namespace;
+            inline for (@typeInfo(FunctionState).@"struct".fields) |field| {
+                if (comptime std.mem.eql(u8, field.name, "tracker") or std.mem.eql(u8, field.name, "reachable")) continue;
+                @field(self.state, field.name).allocator = allocator;
+            }
         }
         pub fn deinit(self: *ContinuationState) void {
             self.namespace.initial_storage.deinit(self.state.tracker.allocator);
@@ -8866,4 +8892,35 @@ test "summary dereferences require a known referent rather than a synthetic chil
     try checker.setPlace(&state, slot, .initialized, .{ .referenced_place = external });
     const resolved = (try checker.resolveSummaryInputPath(path, &.{}, &arguments, &state)).?;
     try std.testing.expect(resolved.eql(try checker.project(external, .{ .field = 0 })));
+}
+
+test "published continuation snapshots own place paths and root namespaces" {
+    const a = std.testing.allocator;
+    var retained_arena = std.heap.ArenaAllocator.init(a);
+    defer retained_arena.deinit();
+    var retained: SafetyChecker.ContinuationState = undefined;
+    {
+        var temporary = std.heap.ArenaAllocator.init(a);
+        defer temporary.deinit();
+        const allocator = temporary.allocator();
+        var source: SafetyChecker.ContinuationState = undefined;
+        source.init(allocator);
+        defer source.deinit();
+        const root = try source.state.tracker.establish(.fresh);
+        const paths = try allocator.dupe(facts.Projection, &.{.{ .field = 2 }});
+        const storage: facts.Place = .{ .root = @enumFromInt(7), .projections = paths };
+        try source.namespace.initial_storage.append(allocator, .{ .storage = storage, .root = root });
+        try source.state.places.append(.{ .storage = storage, .value = .{ .referenced_place = storage, .dependencies = try allocator.dupe(facts.ValidityDependency, &.{.{ .root = root }}) } });
+        try source.state.storage_generations.append(.{ .storage = storage, .generation = root });
+        try source.snapshot(&retained, retained_arena.allocator(), a);
+        try std.testing.expect(retained.state.places.items[0].storage.projections.ptr != paths.ptr);
+        source.state.tracker.end(root);
+        paths[0] = .{ .field = 99 };
+    }
+    defer retained.deinit();
+    try std.testing.expect(retained.state.tracker.namespace.? == &retained.namespace);
+    try std.testing.expect(retained.state.tracker.isAlive(@enumFromInt(0)));
+    try std.testing.expectEqual(@as(u32, 2), retained.namespace.initial_storage.items[0].storage.projections[0].field);
+    try std.testing.expectEqual(@as(u32, 2), retained.state.places.items[0].value.referenced_place.?.projections[0].field);
+    try std.testing.expectEqual(@as(u32, 2), retained.state.storage_generations.items[0].storage.projections[0].field);
 }

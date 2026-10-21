@@ -1308,12 +1308,9 @@ pub const Infer = struct {
             errdefer result.deinit();
             try result.counts.appendSlice(self.counts.items);
             try result.conflicts.appendSlice(self.conflicts.items);
-            result.bindings.deinit();
-            result.bindings = try self.bindings.clone();
-            result.calls.deinit();
-            result.calls = try self.calls.clone();
-            result.addresses.deinit();
-            result.addresses = try self.addresses.clone();
+            result.bindings = try self.bindings.cloneWithAllocator(allocator);
+            result.calls = try self.calls.cloneWithAllocator(allocator);
+            result.addresses = try self.addresses.cloneWithAllocator(allocator);
             result.reachable = self.reachable;
             result.breaks_loop = self.breaks_loop;
             return result;
@@ -6184,4 +6181,22 @@ test "definite aggregate replacement renews embedded post-states but preserves b
     try std.testing.expect(states.items[0].ends_previous_roots);
     try std.testing.expect(states.items[0].refreshes_storage_generation);
     try std.testing.expectEqual(.deinitialized, states.items[1].initializedness);
+}
+
+fn capabilityFlowCloneFailures(allocator: std.mem.Allocator) !void {
+    var source = Infer.CapabilityFlow.init(std.testing.allocator);
+    defer source.deinit();
+    try source.bindings.put(@enumFromInt(0), .{});
+    try source.calls.put(@enumFromInt(1), {});
+    try source.addresses.put(@enumFromInt(2), &.{@enumFromInt(3)});
+    try source.counts.append(.{ .source = .{ .fresh = 7 }, .minimum = 1, .maximum = 1 });
+    var result = try source.clone(allocator);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(usize, 1), result.bindings.count());
+    try std.testing.expectEqual(@as(usize, 1), result.calls.count());
+    try std.testing.expectEqual(@as(usize, 1), result.addresses.count());
+}
+
+test "capability flow cloning preserves initialized maps on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, capabilityFlowCloneFailures, .{});
 }
