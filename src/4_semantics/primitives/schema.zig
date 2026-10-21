@@ -182,7 +182,10 @@ pub const FunctionFlags = packed struct(u16) {
     has_foreign_capability: bool = false,
     is_c_function_pointer: bool = false,
     is_comptime_entry: bool = false,
-    _padding: u4 = 0,
+    // Trusted metadata identities retain ordinary function-body safety.
+    is_source_location_id: bool = false,
+    is_source_location_resolver: bool = false,
+    _padding: u2 = 0,
 };
 
 pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };

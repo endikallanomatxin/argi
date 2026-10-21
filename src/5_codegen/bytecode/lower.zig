@@ -996,8 +996,8 @@ const FunctionLower = struct {
     fn call(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?b.Slot {
         const node = self.parent.graph.node(id);
         const x = node.content.function_call;
-        if (self.coreFunction(x.callee, "error_location_id")) return try self.traceLocation(node);
-        if (self.coreFunction(x.callee, "source_location")) {
+        if (self.parent.graph.function(x.callee).flags.is_source_location_id) return try self.traceLocation(node);
+        if (self.parent.graph.function(x.callee).flags.is_source_location_resolver) {
             const literal = self.parent.graph.node(x.input).content.struct_value_literal;
             if (literal.fields.len != 1) return error.InvalidBytecode;
             const input_value = try self.expression(self.parent.graph.value_fields.items[literal.fields.start].value);

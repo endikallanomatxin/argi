@@ -238,7 +238,7 @@ pub const CodeGenerator = struct {
 
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null) continue;
-            if (self.isCoreFunction(@enumFromInt(@as(u32, @intCast(raw))), "source_location")) continue;
+            if (function.flags.is_source_location_resolver) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (!executable.contains(id)) continue;
             self.generateFunctionBody(id) catch |err| {
@@ -251,7 +251,7 @@ pub const CodeGenerator = struct {
 
         for (self.graph.functions.items, 0..) |_, raw| {
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (self.isCoreFunction(id, "source_location")) try self.generateTraceLocationResolver(id);
+            if (self.graph.function(id).flags.is_source_location_resolver) try self.generateTraceLocationResolver(id);
         }
 
         if (self.options.selected_test_name != null) {
@@ -2590,7 +2590,7 @@ pub const CodeGenerator = struct {
     }
 
     fn genFunctionCall(self: *CodeGenerator, call: anytype, source: primitives.SourceRef) !?TypedValue {
-        if (self.isCoreFunction(call.callee, "error_location_id")) {
+        if (self.graph.function(call.callee).flags.is_source_location_id) {
             const function = self.graph.function(call.callee);
             const ty = self.graph.fields.items[function.output.start].ty;
             const type_ref = try self.toLLVMType(ty);

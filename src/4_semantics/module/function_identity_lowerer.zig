@@ -19,6 +19,8 @@ pub fn lower(
         const file = files[declaration.module_file_index];
         if (file.is_bundled_core) if (registry.findBundled(graph.text(declaration.name), file.path)) |spec| {
             semantic.safety_primitive = spec.primitive;
+            semantic.flags.is_source_location_id = spec.flags.is_source_location_id;
+            semantic.flags.is_source_location_resolver = spec.flags.is_source_location_resolver;
         };
     }
 
@@ -106,4 +108,43 @@ fn validatePrimitiveDeclaration(
             );
     }
     return error.PrimitiveContractMismatch;
+}
+
+test "source metadata identities require canonical trusted declarations" {
+    const source =
+        "SourceLocationId: Type = (.value: UInt32)\n" ++
+        "SourceLocation: Type = (.line: UIntNative)\n" ++
+        "error_location_id() -> (.location: SourceLocationId) := { location = (.value = 0) }\n" ++
+        "source_location(.id: SourceLocationId) -> (.location: SourceLocation) := { location = (.line = 42) }\n";
+    const cases = [_]struct { path: []const u8, trusted: bool, selected: bool }{
+        .{ .path = "core/errors/source_location.rg", .trusted = true, .selected = true },
+        .{ .path = "core/errors/other.rg", .trusted = true, .selected = false },
+        .{ .path = "core/errors/source_location.rg", .trusted = false, .selected = false },
+    };
+    for (cases) |case| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = case.path, .code = source }};
+        var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+        defer diagnostics.deinit();
+        var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(a, &diagnostics, source, @enumFromInt(0));
+        defer tokenizer.deinit();
+        _ = try tokenizer.tokenize();
+        var syntaxer = @import("../../3_syntax/syntaxer.zig").Syntaxer.initFile(a, @import("../../3_syntax/syntax_tree.zig").FileSyntaxTree.initOwnedTokens(@enumFromInt(0), tokenizer.takeTokens()), source, &diagnostics);
+        defer syntaxer.deinit();
+        var tree = try syntaxer.parse();
+        defer tree.deinit(a);
+        var built = try @import("semantizer.zig").build(a, "core", &.{.{ .path = case.path, .tree = &tree, .source = source, .is_bundled_core = case.trusted }});
+        defer built.graph.deinit(a);
+        var location_id = false;
+        var resolver = false;
+        for (built.graph.semantic.function_semantics.items) |semantic| {
+            location_id = location_id or semantic.flags.is_source_location_id;
+            resolver = resolver or semantic.flags.is_source_location_resolver;
+            try std.testing.expectEqual(.none, semantic.safety_primitive);
+        }
+        try std.testing.expectEqual(case.selected, location_id);
+        try std.testing.expectEqual(case.selected, resolver);
+    }
 }

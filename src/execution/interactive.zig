@@ -704,6 +704,12 @@ test "interactive source IDs retain original metadata across commands" {
         "core_located := (.location: SourceLocationId = error_location_id()) -> (.value: UInt32) { value = location.value }\n");
     var core = loaded.*;
     core.is_bundled_core = true;
+    // This isolated fixture supplies explicit checked metadata identities.
+    for (core.semantic.function_semantics.items) |*semantic| {
+        const declaration = core.declarations.items[@intFromEnum(core.functions.items[@intFromEnum(semantic.function)].declaration)];
+        semantic.flags.is_source_location_id = std.mem.eql(u8, core.text(declaration.name), "error_location_id");
+        semantic.flags.is_source_location_resolver = std.mem.eql(u8, core.text(declaration.name), "source_location");
+    }
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();

@@ -7,8 +7,10 @@ const syntax = @import("../../3_syntax/syntax_tree.zig");
 /// describes the complete source-level interface, including generic type
 /// parameters, argument names/modes and output shape. Runtime safety effects
 /// are the Transfer below and are selected by the same primitive identity.
+/// Metadata-only declarations set function flags without replacing body safety.
 pub const Spec = struct {
-    primitive: primitives.SafetyPrimitive,
+    primitive: primitives.SafetyPrimitive = .none,
+    flags: primitives.FunctionFlags = .{},
     path: []const u8,
     name: []const u8,
     signatures: []const []const u8,
@@ -17,6 +19,8 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
+    .{ .flags = .{ .is_source_location_id = true }, .path = "core/errors/source_location.rg", .name = "error_location_id", .signatures = &.{"() -> (.location: SourceLocationId)"} },
+    .{ .flags = .{ .is_source_location_resolver = true }, .path = "core/errors/source_location.rg", .name = "source_location", .signatures = &.{"(.id: SourceLocationId) -> (.location: SourceLocation)"} },
     .{ .primitive = .float_math, .path = "core/numbers/math.rg", .name = "_float_math", .signatures = &.{"#(.t: Type: Float)(.operation: UInt32, .left: t, .right: t) -> (.result: t)"} },
     .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
