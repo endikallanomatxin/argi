@@ -13391,3 +13391,8 @@ test "feature_tests/basics/87_named_record_field_order" {
 test "feature_tests/basics/88X_named_record_field_escape" {
     try buildExpectFail("tests/feature_tests/basics/88X_named_record_field_escape", "local storage generation");
 }
+
+test "feature_tests/basics/89_named_record_middle_default" {
+    try expectSuccessfulBuild("tests/feature_tests/basics/89_named_record_middle_default");
+    try runExpect("tests/feature_tests/basics/89_named_record_middle_default", 0);
+}

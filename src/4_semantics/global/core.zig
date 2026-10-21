@@ -1923,8 +1923,8 @@ pub const Resolver = struct {
     fn normalizeNamedStructLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
         const literal = self.graph.node(node).content.struct_value_literal;
         const expected_fields = types.fields(self.graph, target) orelse return false;
-        if (literal.fields.len != expected_fields.len) return false;
-        var ordered = true;
+        if (literal.fields.len > expected_fields.len) return false;
+        var ordered = literal.fields.len == expected_fields.len;
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
             const expected = self.graph.fields.items[expected_fields.start + offset];
             if (!std.mem.eql(u8, self.graph.text(field.name), self.graph.text(expected.name))) {
@@ -1934,11 +1934,11 @@ pub const Resolver = struct {
         }
         if (ordered) return false;
         // Safety projections and codegen both consume storage positions. Match
-        // complete named literals to that order before attaching their target
-        // type, using the same completion path as named constructor arguments.
+        // named literals to that order before attaching their target
+        // type, filling omitted defaults through the constructor completion path.
         // Positional structural conversions retain their existing ordering.
         var named = true;
-        var reordered = false;
+        var reordered = literal.fields.len != expected_fields.len;
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
             const hit = types.findField(self.graph, target, self.graph.text(field.name)) orelse {
                 named = false;
