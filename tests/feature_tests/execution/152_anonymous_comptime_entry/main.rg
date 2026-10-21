@@ -1,5 +1,7 @@
 calculate(.value: Int32) -> (.result: Int32) := { result = value + 1 }
 
+enabled() -> (.result: Bool) := { result = true }
+
 main() -> (.status_code: Int32) := {
     #run {
         local :: Int32 = 41
@@ -13,6 +15,15 @@ main() -> (.status_code: Int32) := {
         right = 22
     }
     if pair.left + pair.right != 42 { abort }
+    selected ::= #run () -> (.result: Int32) {
+        #if enabled() {
+            local ::= 42
+            result = local
+        } #else {
+            result = missing()
+        }
+    }
+    if selected != 42 { abort }
     second ::= #run () -> (.result: Int32) {
         local ::= #run () -> (.result: Int32 = 21) {}
         pointer ::= &local

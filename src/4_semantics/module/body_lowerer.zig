@@ -812,7 +812,9 @@ const Context = struct {
         try body.bindInterface(output, .variable, &outputs);
         const output_bindings = try body.writer.appendBindingRefs(outputs.items);
         body.writer.pending_owner_function = function_id;
-        const block = if (entry.output) |output_syntax|
+        const staged = self.tree.hasComptimeSelection(entry.body);
+        if (staged) try @import("parameterized/lowerer.zig").lowerConcreteEntry(self.graph, &self.writer, self.file_index, self.tree, self.source, node, declaration_id, function_id);
+        const block = if (staged) null else if (entry.output) |output_syntax|
             try body.lowerBlockWithDefaults(entry.body, .{ .syntax = output_syntax, .bindings = outputs.items })
         else
             try body.lowerBlock(entry.body);

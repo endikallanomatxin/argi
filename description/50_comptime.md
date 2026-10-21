@@ -83,6 +83,8 @@ external inputs must be tracked as build dependencies before enabling them.
 > Persistent sessions retain successful entry results. Rejected runtime captures
 > and aborted compile-time entries publish no session revision and do not poison
 > the accepted runtime state; reset starts a fresh execution context.
+> A concrete entry containing `#if` uses ordinary staged function materialization:
+> only its selected branch is resolved and safety-checked.
 > The current implementation still accepts the superseded `#run function(...)`
 > form; migration replaces it rather than preserving both forms.
 > This implementation accepts resolved function calls with constant scalar or

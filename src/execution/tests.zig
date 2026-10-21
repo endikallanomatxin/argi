@@ -1250,6 +1250,17 @@ test "bytecode anonymous compile-time blocks support local storage and no output
     , .{}));
 }
 
+test "bytecode anonymous compile-time entries select only their active branch" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\enabled() -> (.result: Bool) := { result = true }
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = #run () -> (.result: Int32) {
+        \\        #if enabled() { result = 42 } #else { result = missing() }
+        \\    }
+        \\}
+    , .{}));
+}
+
 test "bytecode anonymous compile-time entries preserve named multiple outputs" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\main() -> (.status_code: Int32) := {

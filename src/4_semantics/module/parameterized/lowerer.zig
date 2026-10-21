@@ -58,9 +58,45 @@ pub fn lowerDiagnosed(
     return ctx.lowerDeclarations();
 }
 
-/// Retain a closed source expression for staged evaluation. It has no implicit
-/// runtime inputs or fabricated function identity; ordinary names and calls
-/// resolve in the supplied module when the request is materialized.
+/// Retain an anonymous entry body in the ordinary staged-function representation.
+/// Its declared inputs/outputs are the only bindings initially in scope.
+pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex, declaration: entities.ModuleDeclId, function: entities.ModuleFunctionId) !void {
+    var context = Context{
+        .allocator = writer.allocator,
+        .graph = graph,
+        .files = &.{},
+        .writer = writer.*,
+        .parameters = std.array_list.Managed(ParameterBinding).init(writer.allocator),
+        .bindings = std.array_list.Managed(BindingName).init(writer.allocator),
+        .file_index = file_index,
+        .tree = tree,
+        .source = source,
+    };
+    defer context.parameters.deinit();
+    defer context.bindings.deinit();
+    const entry = tree.comptimeEntry(node).?;
+    const empty = try context.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
+    const input = if (entry.input) |syntax| try context.lowerType(syntax, false) else empty;
+    const output = if (entry.output) |syntax| try context.lowerType(syntax, false) else empty;
+    const input_start: u32 = @intCast(graph.semantic.parameterized_storage.ir.bindings.items.len);
+    if (entry.input) |syntax| try context.seedFunctionBindings(syntax, .constant);
+    const output_start: u32 = @intCast(graph.semantic.parameterized_storage.ir.bindings.items.len);
+    if (entry.output) |syntax| try context.seedFunctionBindings(syntax, .variable);
+    const output_end: u32 = @intCast(graph.semantic.parameterized_storage.ir.bindings.items.len);
+    const body = try context.lowerBlock(entry.body);
+    try graph.semantic.parameterized_storage.parameterized_functions.append(writer.allocator, .{
+        .declaration = declaration,
+        .concrete_function = function,
+        .parameters = .{ .start = 0, .len = 0 },
+        .input = input,
+        .output = output,
+        .body = body,
+        .input_bindings = .{ .start = input_start, .len = output_start - input_start },
+        .output_bindings = .{ .start = output_start, .len = output_end - output_start },
+    });
+}
+
+/// Retain a closed expression for staged evaluation in the supplied module.
 pub fn lowerConcreteExpression(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !ir.ParameterizedNodeId {
     var context = Context{
         .allocator = writer.allocator,
