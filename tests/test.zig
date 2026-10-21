@@ -14155,6 +14155,12 @@ test "feature_tests/execution/149_comptime_record_defaults" {
     try vmExpect("tests/feature_tests/execution/149_comptime_record_defaults", 42, null);
 }
 
+test "feature_tests/execution/150_comptime_array_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/150_comptime_array_defaults");
+    try runExpect("tests/feature_tests/execution/150_comptime_array_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/150_comptime_array_defaults", 42, null);
+}
+
 test "feature_tests/execution/121_type_queries" {
     try expectSuccessfulBuild("tests/feature_tests/execution/121_type_queries");
     try runExpect("tests/feature_tests/execution/121_type_queries", 42);
@@ -14250,6 +14256,14 @@ fn expectReplFixture(fixture_path: []const u8, commands: []const u8, expected: [
 test "argi repl preserves record defaults across specializations" {
     try expectReplFixture(
         "tests/feature_tests/execution/149_comptime_record_defaults/main.rg",
+        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run with_default#(.T: Bool, .n = 16)(.value = true)\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
+        "_0 = 42\n_1 = 41\n_2 = 42\n",
+    );
+}
+
+test "argi repl preserves array defaults across specializations" {
+    try expectReplFixture(
+        "tests/feature_tests/execution/150_comptime_array_defaults/main.rg",
         "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run with_default#(.T: Bool, .n = 16)(.value = true)\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );

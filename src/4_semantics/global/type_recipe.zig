@@ -24,7 +24,7 @@ const Default = union(enum) {
     literal: struct {
         source: p.SourceRef,
         ty: ?Ids.TypeId,
-        value: union(enum) { int: i128, float: f64, char: u32, boolean: bool, string: p.StringRange, type: Ids.TypeId, pending: PendingDefault, record: struct { fields: p.Range(u32), positional: u32 } },
+        value: union(enum) { int: i128, float: f64, char: u32, boolean: bool, string: p.StringRange, type: Ids.TypeId, pending: PendingDefault, record: struct { fields: p.Range(u32), positional: u32 }, array: struct { elements: p.Range(u32), element_type: Ids.TypeId, length: u32 } },
     },
 };
 
@@ -37,6 +37,7 @@ pub const Recipe = struct {
     defaults: std.ArrayList(Default) = .empty,
     default_bindings: std.ArrayList(DefaultBinding) = .empty,
     default_fields: std.ArrayList(DefaultField) = .empty,
+    default_elements: std.ArrayList(Ids.NodeId) = .empty,
     fields: std.ArrayList(p.Field(Ids)) = .empty,
     variants: std.ArrayList(p.ChoiceVariant(Ids)) = .empty,
     arguments: std.ArrayList(p.GenericArgument(Ids)) = .empty,
@@ -48,6 +49,7 @@ pub const Recipe = struct {
         self.defaults.deinit(a);
         self.default_bindings.deinit(a);
         self.default_fields.deinit(a);
+        self.default_elements.deinit(a);
         self.fields.deinit(a);
         self.variants.deinit(a);
         self.arguments.deinit(a);
@@ -59,7 +61,7 @@ pub const Recipe = struct {
     pub fn clone(self: *const Recipe, a: std.mem.Allocator) !Recipe {
         var result: Recipe = .{};
         errdefer result.deinit(a);
-        inline for (.{ "nodes", "defaults", "default_bindings", "default_fields", "fields", "variants", "arguments", "strings" }) |name|
+        inline for (.{ "nodes", "defaults", "default_bindings", "default_fields", "default_elements", "fields", "variants", "arguments", "strings" }) |name|
             try @field(result, name).appendSlice(a, @field(self, name).items);
         result.roots = try a.dupe(?Ids.TypeId, self.roots);
         return result;
@@ -141,6 +143,14 @@ pub const Recipe = struct {
                 .boolean => |v| actual.content == .bool_literal and actual.content.bool_literal == v,
                 .string => |v| actual.content == .string_literal and std.mem.eql(u8, self.recipe.text(v), self.graph.text(actual.content.string_literal)),
                 .type => |v| actual.content == .type_literal and try self.typeId(v, actual.content.type_literal),
+                .array => |v| array: {
+                    if (actual.content != .array_literal) break :array false;
+                    const literal_array = actual.content.array_literal;
+                    if (literal_array.length != v.length or literal_array.elements.len != v.elements.len or !try self.typeId(v.element_type, literal_array.element_type)) break :array false;
+                    for (self.recipe.default_elements.items[v.elements.start..][0..v.elements.len], self.graph.node_refs.items[literal_array.elements.start..][0..v.elements.len]) |left, right|
+                        if (!try self.defaultValue(left, right)) break :array false;
+                    break :array true;
+                },
                 .record => |v| record: {
                     if (actual.content != .struct_value_literal) break :record false;
                     const literal_record = actual.content.struct_value_literal;
@@ -279,6 +289,15 @@ pub const Recipe = struct {
                     .bool_literal => |v| .{ .boolean = v },
                     .string_literal => |v| .{ .string = try self.string(v) },
                     .type_literal => |v| .{ .type = try self.typeId(v, depth) },
+                    .array_literal => |v| array: {
+                        const elements = try self.a.alloc(Ids.NodeId, v.elements.len);
+                        defer self.a.free(elements);
+                        for (self.graph.node_refs.items[v.elements.start..][0..v.elements.len], elements) |element, *out| out.* = try self.defaultValue(element, depth + 1);
+                        const element_type = try self.typeId(v.element_type, depth + 1);
+                        const start = std.math.cast(u32, self.recipe.default_elements.items.len) orelse return error.SemanticGraphTooLarge;
+                        try self.recipe.default_elements.appendSlice(self.a, elements);
+                        break :array .{ .array = .{ .elements = .{ .start = start, .len = v.elements.len }, .element_type = element_type, .length = v.length } };
+                    },
                     .struct_value_literal => |v| record: {
                         if (v.assumed_fields.len != 0) return error.ComptimeTypeRecipePending;
                         const fields = try self.a.alloc(DefaultField, v.fields.len);
@@ -387,6 +406,15 @@ pub const Recipe = struct {
                         .boolean => |v| .{ .bool_literal = v },
                         .string => |v| .{ .string_literal = try self.string(v) },
                         .type => |v| .{ .type_literal = try self.typeId(v) },
+                        .array => |v| array: {
+                            const elements = try self.a.alloc(g.GlobalNodeId, v.elements.len);
+                            defer self.a.free(elements);
+                            for (self.recipe.default_elements.items[v.elements.start..][0..v.elements.len], elements) |element, *out| out.* = try self.defaultValue(element);
+                            const element_type = try self.typeId(v.element_type);
+                            const start = std.math.cast(u32, self.generics.graph.node_refs.items.len) orelse return error.SemanticGraphTooLarge;
+                            try self.generics.graph.node_refs.appendSlice(self.a, elements);
+                            break :array .{ .array_literal = .{ .elements = .{ .start = start, .len = v.elements.len }, .element_type = element_type, .length = v.length } };
+                        },
                         .record => |v| record: {
                             const fields = try self.a.alloc(g.ValueField, v.fields.len);
                             defer self.a.free(fields);
@@ -503,7 +531,7 @@ test "type recipes release failed capture cloning and comparison" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, captureAndCloneFailures, .{});
 }
 
-fn recordDefaultFailures(a: std.mem.Allocator) !void {
+fn aggregateDefaultFailures(a: std.mem.Allocator, array: bool) !void {
     const owner = a;
     var graph: g.GlobalSemanticGraph = .{};
     defer graph.deinit(owner);
@@ -518,6 +546,11 @@ fn recordDefaultFailures(a: std.mem.Allocator) !void {
     try graph.nodes.append(owner, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 2 } } } });
     try graph.fields.append(owner, .{ .name = try graph.addString(owner, "options"), .source = source, .ty = @enumFromInt(1), .default_value = @enumFromInt(1) });
     try graph.types.append(owner, .{ .structural = .{ .fields = .{ .start = 2, .len = 1 } } });
+    if (array) {
+        graph.types.items[1] = .{ .array = .{ .element = @enumFromInt(0), .length = 2 } };
+        try graph.node_refs.appendSlice(a, &.{ @enumFromInt(0), @enumFromInt(0) });
+        graph.nodes.items[1].content = .{ .array_literal = .{ .elements = .{ .start = 0, .len = 2 }, .element_type = @enumFromInt(0), .length = 2 } };
+    }
     const roots = [_]?g.GlobalTypeId{@enumFromInt(2)};
     var recipe = try Recipe.capture(a, &graph, .{ .types = 1, .declarations = 0, .nodes = 0 }, &roots);
     defer recipe.deinit(a);
@@ -538,6 +571,15 @@ fn recordDefaultFailures(a: std.mem.Allocator) !void {
     try std.testing.expect(try retained.matches(a, &graph, &published));
     const outer = graph.types.items[@intFromEnum(published[0].?)].structural.fields;
     const default = graph.node(graph.fields.items[outer.start].default_value.?);
+    if (array) {
+        const elements = default.content.array_literal.elements;
+        try std.testing.expectEqual(@as(u32, 2), elements.len);
+        const first = graph.node_refs.items[elements.start];
+        try std.testing.expectEqual(first, graph.node_refs.items[elements.start + 1]);
+        try std.testing.expectEqual(@as(i128, 42), graph.node(first).content.int_literal);
+        try std.testing.expectEqual(@as(u64, 2), graph.semanticType(default.ty.?).array.length);
+        return;
+    }
     const fields = default.content.struct_value_literal.fields;
     try std.testing.expectEqual(@as(u32, 2), fields.len);
     const first = graph.value_fields.items[fields.start];
@@ -547,7 +589,11 @@ fn recordDefaultFailures(a: std.mem.Allocator) !void {
 }
 
 test "type recipes preserve record defaults across rollback and allocation failures" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, recordDefaultFailures, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, aggregateDefaultFailures, .{false});
+}
+
+test "type recipes preserve array defaults across rollback and allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, aggregateDefaultFailures, .{true});
 }
 
 test "record default recipes do not transport lexical capability candidate pools" {
