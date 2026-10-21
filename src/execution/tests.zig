@@ -1221,6 +1221,18 @@ test "bytecode anonymous compile-time entry executes an ordinary function body" 
     , .{}));
 }
 
+test "bytecode anonymous entries capture only used constant values" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\main() -> (.status_code: Int32) := {
+        \\    known: Int32 = 40
+        \\    runtime :: Int32 = 99
+        \\    status_code = #run () -> (.answer: Int32) {
+        \\        answer = known + known - 38
+        \\    }
+        \\}
+    , .{ .instructions = 1000 }));
+}
+
 test "bytecode anonymous compile-time entries retain defaults and independent scopes" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\main() -> (.status_code: Int32) := {
