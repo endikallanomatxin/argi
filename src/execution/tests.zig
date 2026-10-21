@@ -1267,6 +1267,31 @@ test "bytecode generic anonymous entries transport retained lexical capture type
     , .{}));
 }
 
+test "staged compile-time captures diagnose types pending call resolution" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\identity(.value: Int32) -> (.result: Int32 = value) := {}
+        \\compute#(.n: Int32)() -> (.result: Int32) := {
+        \\    pending := identity(.value = n)
+        \\    result = #run () -> (.value: Int32) { value = pending }
+        \\}
+        \\main() -> (.status_code: Int32) := { status_code = compute#(.n = 42)() }
+    }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+    var found = false;
+    for (diagnostics.list.items) |message|
+        if (std.mem.indexOf(u8, message.msg, "cannot yet capture 'pending'") != null) {
+            found = true;
+        };
+    try std.testing.expect(found);
+}
+
 test "bytecode anonymous entries complete inferred capture types" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\compute() -> (.value: Int32 = 41) := {}
