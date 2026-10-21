@@ -617,8 +617,8 @@ test "continuation scopes retain direct owners and clean nested owners" {
     var runtime = @import("session.zig").Session.init(a, &session, .{});
     defer runtime.deinit();
     try runtime.executeCommand(&candidate);
-    const stored = try runtime.context.storage.slots(runtime.context.bindings.get(binding).?);
-    try std.testing.expect((try stored.get(1)).boolean);
+    const stored = runtime.context.storage.frames.items[@intFromEnum(runtime.context.bindings.get(binding).?)];
+    try std.testing.expect(stored.cleanup_flags[0]);
     var exit = try session.prepareExit(&modules, &diagnostics, @enumFromInt(@intFromEnum(exit_function)), &.{binding});
     defer exit.deinit();
     const exit_graph = &exit.checked.?.graph;
@@ -653,7 +653,7 @@ test "execution session publishes commands and runs checked exit before reset" {
     const binding = for (checked.bindings.items, 0..) |record, index| {
         if (std.mem.eql(u8, checked.text(record.name), "retained")) break @as(@import("../4_semantics/global/graph.zig").GlobalBindingId, @enumFromInt(index));
     } else return error.MissingBinding;
-    const layouts = [_]bytecode.SessionBinding{.{ .binding = binding, .slots = &.{checked.binding(binding).ty} }};
+    const layouts = [_]bytecode.SessionBinding{.{ .binding = binding, .ty = checked.binding(binding).ty }};
     try std.testing.expectError(error.InvalidExitCommand, runtime.executeExit(&command, @enumFromInt(0), &layouts));
     try std.testing.expectEqual(@as(u64, 0), compiler.revision);
     try runtime.execute(&command, @enumFromInt(0), &layouts);
@@ -690,7 +690,7 @@ test "execution session resolves accepted bindings in later command modules" {
     var command = try compiler.prepareContinuation(modules[0..1], &diagnostics, @enumFromInt(0));
     defer command.deinit();
     const binding = command.semantic.?.resolvers.expressions.session_bindings.items[0];
-    const layouts = [_]bytecode.SessionBinding{.{ .binding = binding, .slots = &.{command.checked.?.graph.binding(binding).ty} }};
+    const layouts = [_]bytecode.SessionBinding{.{ .binding = binding, .ty = command.checked.?.graph.binding(binding).ty }};
     try runtime.execute(&command, @enumFromInt(0), &layouts);
     var update = try compiler.prepareContinuation(&modules, &diagnostics, @enumFromInt(first.functions.items.len));
     defer update.deinit();

@@ -20,9 +20,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   with its length/stride and evaluated index identity; avoid expanding metadata
   for every element. Integrate whole-array exit, partial moves and initialization.
   This needs coordinated changes to frontend cleanup plans, shared flag layouts,
-  native ancestor refresh and bytecode cleanup tables: the latter currently
-  allocate a slot and path per child. An indexed view must select its flag range
-  by logical element identity, including zero-sized elements. Do not enable array
+  native ancestor refresh and bytecode cleanup tables: the latter still
+  retain one concrete path per child. Runtime flags now occupy a separate
+  compact buffer rather than typed value slots. An indexed view must select its
+  flag range by logical element identity, including zero-sized elements. Do not enable array
   destruction while partial initialization or projected flag transport is missing.
 - Complete indexed cleanup identities in both backends. Whole indirect pointer
   and record-field replacements use checked plans, including the three-drop

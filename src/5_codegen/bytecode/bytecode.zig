@@ -70,8 +70,8 @@ pub fn scalarKind(graph: *const g.GlobalSemanticGraph, ty: Type) ScalarKind {
 }
 pub const SessionNamespace = enum(u64) { _ };
 // Runtime storage is keyed by durable graph bindings inside one compilation
-// namespace. Each binding has a value slot followed only by cleanup flag slots.
-pub const SessionBinding = struct { binding: g.GlobalBindingId, slots: []const Type, cleanup: []const Cleanup = &.{} };
+// namespace. Cleanup flags have separate compact storage, never value slots.
+pub const SessionBinding = struct { binding: g.GlobalBindingId, ty: Type, cleanup: []const Cleanup = &.{} };
 // The compilation owner issues the namespace and preserves binding/type
 // identities and layouts across revisions. It must never stamp independently
 // rebuilt graphs with the same namespace. This metadata is immutable like code.
@@ -102,10 +102,24 @@ pub const Place = struct {
 pub const Cleanup = struct {
     root: Slot,
     path: []const @import("value.zig").Projection,
-    flag: Slot,
+    flag: u32,
     // A choice can retain its discriminant after losing part of its payload.
-    presence: ?Slot = null,
+    presence: ?u32 = null,
 };
+// Flags form their own dense namespace. Bound it by descriptor count before
+// allocating anything; untrusted metadata cannot request arbitrary flag ranges.
+pub fn cleanupFlagCount(cleanup: []const Cleanup) !usize {
+    var count: usize = cleanup.len;
+    for (cleanup) |entry| if (entry.presence != null) {
+        count = try std.math.add(usize, count, 1);
+    };
+    for (cleanup) |entry| {
+        if (entry.flag >= count) return error.InvalidCleanupLayout;
+        if (entry.presence) |flag| if (flag >= count or flag == entry.flag) return error.InvalidCleanupLayout;
+    }
+    return count;
+}
+
 pub const CleanupAccess = @import("../cleanup_plan.zig").Access;
 
 pub fn cleanupOrder(a: Cleanup, c: Cleanup) std.math.Order {

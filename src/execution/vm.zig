@@ -180,7 +180,7 @@ pub const Context = struct {
         if (self.bindings.contains(binding.binding)) return error.ExecutionInitializedStorage;
         try self.storage.charge(1);
         try self.bindings.ensureUnusedCapacity(self.arena.allocator(), 1);
-        const target = try self.storage.enterSession(binding.slots.len, binding.cleanup);
+        const target = try self.storage.enterSession(1, binding.cleanup);
         self.bindings.putAssumeCapacity(binding.binding, target.frame);
     }
     fn initializeBinding(self: *Context, binding: b.SessionBinding, value: b.Value, reinitialize: bool) !void {

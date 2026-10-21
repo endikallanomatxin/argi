@@ -13,9 +13,6 @@ pub fn build(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, 
     defer allocator.free(required);
     var counts: shape.Counts = .{};
     defer counts.deinit(allocator);
-    const boolean: ?g.GlobalTypeId = for (graph.types.items, 0..) |ty, index| {
-        if (ty == .builtin and ty.builtin == .Bool) break @enumFromInt(index);
-    } else null;
     var result: std.ArrayList(b.SessionBinding) = .empty;
     errdefer result.deinit(allocator);
     for (bindings, 0..) |binding, index| {
@@ -24,17 +21,12 @@ pub fn build(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, 
         if (types.staticTypeBinding(graph, binding) != null) continue;
         const ty = graph.binding(binding).ty;
         const flags = if (required[@intFromEnum(binding)]) try counts.count(allocator, graph, ty) else 0;
-        const slot_count = try std.math.add(usize, flags, 1);
-        if (slot_count > std.math.maxInt(u32)) return error.InvalidSessionBinding;
-        const slots = try allocator.alloc(b.Type, slot_count);
-        slots[0] = ty;
-        if (flags != 0) @memset(slots[1..], boolean orelse return error.MissingSessionCleanupType);
         const cleanup = try allocator.alloc(b.Cleanup, flags);
         var cursor: usize = 0;
-        var flag_cursor: usize = 1;
+        var flag_cursor: usize = 0;
         if (flags != 0) try fill(allocator, graph, ty, &.{}, cleanup, &cursor, &flag_cursor, 0);
-        std.debug.assert(flag_cursor == slot_count);
-        try result.append(allocator, .{ .binding = binding, .slots = slots, .cleanup = cleanup[0..cursor] });
+        std.debug.assert(flag_cursor == flags);
+        try result.append(allocator, .{ .binding = binding, .ty = ty, .cleanup = cleanup[0..cursor] });
     }
     return result.toOwnedSlice(allocator);
 }
@@ -45,7 +37,7 @@ fn fill(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g
     const children = shape.Shape.of(graph, ty);
     const flag = flag_cursor.*;
     flag_cursor.* += 1;
-    const presence: ?b.Slot = if (children == .variants) blk: {
+    const presence: ?u32 = if (children == .variants) blk: {
         const slot = flag_cursor.*;
         flag_cursor.* += 1;
         break :blk @intCast(slot);

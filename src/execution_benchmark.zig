@@ -77,6 +77,8 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     var dead_frame_slot_bytes: usize = 0;
     var live_frame_slot_bytes: usize = 0;
     var frame_identity_bytes: usize = 0;
+    var dead_cleanup_flag_bytes: usize = 0;
+    var live_cleanup_flag_bytes: usize = 0;
     if (session.runtime.context.state != .fresh) {
         const frames = session.runtime.context.storage.frames.items;
         frame_identity_bytes = frames.len * @sizeOf(@TypeOf(frames[0]));
@@ -85,7 +87,11 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
             if (!frame.alive) {
                 dead_frames += 1;
                 dead_frame_slot_bytes += bytes;
-            } else live_frame_slot_bytes += bytes;
+                dead_cleanup_flag_bytes += frame.cleanup_flags.len;
+            } else {
+                live_frame_slot_bytes += bytes;
+                live_cleanup_flag_bytes += frame.cleanup_flags.len;
+            }
         }
     }
     var live_acquisitions: usize = 0;
@@ -102,7 +108,7 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     }
     if (scenario == .resources and live_acquisitions != commands) return error.InvalidBenchmarkAcquisitions;
     const runtime = if (session.runtime.context.state == .fresh) 0 else session.runtime.context.arena.queryCapacity();
-    std.debug.print("{s},{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
+    std.debug.print("{s},{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
         @tagName(scenario),          @tagName(modules),                          commands,
         ms(total_ns),                ms(total_ns -| backend_ns),                 ms(stats.lowering_ns),
         ms(stats.verification_ns),   ms(stats.execution_ns),                     mib(memory.live),
@@ -111,7 +117,7 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
         runtime,                     dead_frames,                                stats.compiled_functions,
         stats.compiled_instructions, dead_frame_slot_bytes,                      live_frame_slot_bytes,
         frame_identity_bytes,        live_acquisitions,                          live_acquired_bytes,
-        retained_acquired_bytes,
+        retained_acquired_bytes,     dead_cleanup_flag_bytes,                    live_cleanup_flag_bytes,
     });
     // Check the actual retained value without adding a measurement submission.
     const bindings = session.compiler.semantic.resolvers.expressions.session_bindings.items;
@@ -248,6 +254,6 @@ pub fn main(init: std.process.Init) !void {
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
     std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions] [memory-limit-MiB=2048]\n", .{});
-    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,checked_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes\n", .{});
+    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,checked_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes\n", .{});
     try run(init.io, count, modules, scenario, limit);
 }

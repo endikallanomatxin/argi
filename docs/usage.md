@@ -343,7 +343,9 @@ regions and their extents; `retained_acquired_bytes` includes byte backing and
 initialization bitmaps of both live and released regions. These counts overlap
 the runtime arena, rather than adding to it. Completed frames are counted separately.
 `dead_frame_slot_bytes`
-and `live_frame_slot_bytes` count their slot payloads; `frame_identity_bytes`
+and `live_frame_slot_bytes` count their value-slot payloads.
+`dead_cleanup_flag_bytes` and `live_cleanup_flag_bytes` count their separate
+compact cleanup buffers; `frame_identity_bytes`
 counts the logical frame records (including dead-reference tombstones), excluding
 spare capacity and aggregate snapshots. These payload counts overlap the runtime
 arena total. The memory limit bounds tracked requested bytes; a run that reaches

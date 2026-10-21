@@ -78,7 +78,6 @@ pub const Session = struct {
         const retained = try a.alloc(bytecode.SessionBinding, bindings.len);
         for (retained, bindings) |*out, binding| {
             out.* = binding;
-            out.slots = try a.dupe(bytecode.Type, binding.slots);
             const cleanup = try a.dupe(bytecode.Cleanup, binding.cleanup);
             for (cleanup) |*entry| entry.path = try a.dupe(@import("../5_codegen/bytecode/value.zig").Projection, entry.path);
             out.cleanup = cleanup;
@@ -136,8 +135,8 @@ pub const Session = struct {
         var iterator = self.context.bindings.valueIterator();
         while (iterator.next()) |frame| {
             const stored = &self.context.storage.frames.items[@intFromEnum(frame.*)];
-            const slots = try self.context.storage.slots(frame.*);
-            for (stored.cleanup) |entry| if ((try slots.get(entry.flag)).boolean or (if (entry.presence) |flag| (try slots.get(flag)).boolean else false)) {
+            _ = try self.context.storage.slots(frame.*);
+            for (stored.cleanup) |entry| if (stored.cleanup_flags[entry.flag] or (if (entry.presence) |flag| stored.cleanup_flags[flag] else false)) {
                 self.context.state = .poisoned;
                 return error.ExecutionActiveCleanup;
             };

@@ -197,7 +197,7 @@ const DropState = enum(u32) { _ };
 // One preorder table during lowering; handles stay valid when it grows.
 // Each subtree ends at `end`, so projection skips siblings without a second
 // recursively allocated tree or entries for payloadless variants.
-const CleanupEntry = struct { place: b.Place, flag: b.Slot, presence: ?b.Slot, end: u32 };
+const CleanupEntry = struct { place: b.Place, flag: u32, presence: ?u32, end: u32 };
 const FunctionLower = struct {
     parent: *Lower,
     safety_primitive: p.SafetyPrimitive = .none,
@@ -208,6 +208,7 @@ const FunctionLower = struct {
     default_location_source: ?p.SourceRef = null,
     drops: std.AutoHashMapUnmanaged(g.GlobalBindingId, DropState) = .empty,
     cleanup: std.ArrayList(CleanupEntry) = .empty,
+    cleanup_flags: u32 = 0,
     write_destinations: std.ArrayList(b.Type) = .empty,
     loops: std.ArrayList(Loop) = .empty,
     replacement: ?struct { plan: replacement.Plan, target: ?b.Place = null, ty: ?b.Type = null } = null,
@@ -284,12 +285,12 @@ const FunctionLower = struct {
         const session = self.parent.session orelse return;
         for (session.bindings, 0..) |binding, index| {
             if (binding.cleanup.len == 0) continue;
-            const drop = try self.buildDrop(binding.slots[0], .{ .root = @intCast(index), .region = .session, .path = &.{} });
+            const drop = try self.buildDrop(binding.ty, .{ .root = @intCast(index), .region = .session, .path = &.{} });
             const entries = self.cleanup.items[@intFromEnum(drop)..];
             if (entries.len != binding.cleanup.len) return error.InvalidBytecode;
             for (entries, binding.cleanup) |entry, supplied| {
                 if (entry.place.path.len != supplied.path.len) return error.InvalidBytecode;
-                const expected_path = try b.runtimeCleanupPath(self.parent.allocator, self.parent.graph, binding.slots[0], entry.place.path);
+                const expected_path = try b.runtimeCleanupPath(self.parent.allocator, self.parent.graph, binding.ty, entry.place.path);
                 defer self.parent.allocator.free(expected_path);
                 for (expected_path, supplied.path) |expected, actual| if (!std.meta.eql(expected, actual)) return error.InvalidBytecode;
             }
@@ -299,12 +300,17 @@ const FunctionLower = struct {
     fn boolType(self: *FunctionLower) !b.Type {
         return self.parent.bool_type orelse error.InvalidBytecode;
     }
+    fn nextCleanupFlag(self: *FunctionLower) !u32 {
+        const flag = self.cleanup_flags;
+        self.cleanup_flags = try std.math.add(u32, flag, 1);
+        return flag;
+    }
     fn buildDrop(self: *FunctionLower, ty: b.Type, target: b.Place) anyerror!DropState {
         const a = self.parent.allocator;
         const id: DropState = @enumFromInt(@as(u32, @intCast(self.cleanup.items.len)));
-        const flag = if (target.region == .local) try self.newSlot(try self.boolType()) else 0;
+        const flag = if (target.region == .local) try self.nextCleanupFlag() else 0;
         const shape = cleanup_layout.Shape.of(self.parent.graph, ty);
-        const presence = if (shape == .variants) (if (target.region == .local) try self.newSlot(try self.boolType()) else 0) else null;
+        const presence = if (shape == .variants) (if (target.region == .local) try self.nextCleanupFlag() else 0) else null;
         try self.cleanup.append(a, .{ .place = target, .flag = flag, .presence = presence, .end = 0 });
         for (0..shape.len()) |index| if (shape.child(self.parent.graph, index)) |child| {
             const projection: b.Projection = switch (child.projection) {
@@ -512,7 +518,7 @@ const FunctionLower = struct {
         const graph = self.parent.graph;
         const root = switch (target.region) {
             .local => self.slots.items[target.root],
-            .session => self.parent.session.?.bindings[target.root].slots[0],
+            .session => self.parent.session.?.bindings[target.root].ty,
             .global => graph.binding(@enumFromInt(target.root)).ty,
         };
         const path = try self.parent.allocator.alloc(b.Projection, target.path.len);

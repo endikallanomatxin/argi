@@ -21,13 +21,12 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     if (program.functions.len != program.graph.functions.items.len) return error.InvalidBytecode;
     if (program.session) |session| {
         for (session.bindings, 0..) |binding, index| {
-            if (@intFromEnum(binding.binding) >= program.graph.bindings.items.len or binding.slots.len == 0 or
-                !types.equal(program.graph, binding.slots[0], program.graph.binding(binding.binding).ty)) return error.InvalidBytecode;
+            if (@intFromEnum(binding.binding) >= program.graph.bindings.items.len or
+                !types.equal(program.graph, binding.ty, program.graph.binding(binding.binding).ty)) return error.InvalidBytecode;
             for (session.bindings[0..index]) |previous| if (previous.binding == binding.binding) return error.InvalidBytecode;
-            for (binding.slots) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
-            for (binding.slots[1..]) |ty| if (!valueFits(program.graph, ty, .{ .boolean = false })) return error.InvalidBytecode;
-            for (binding.cleanup) |entry| if (entry.root != 0 or entry.flag == 0) return error.InvalidBytecode;
-            try verifyCleanup(allocator, program.graph, .{ .slots = binding.slots, .inputs = &.{}, .outputs = &.{}, .code = &.{}, .cleanup = binding.cleanup });
+            if (!supportedType(program.graph, binding.ty, 0)) return error.InvalidBytecode;
+            for (binding.cleanup) |entry| if (entry.root != 0) return error.InvalidBytecode;
+            try verifyCleanup(allocator, program.graph, .{ .slots = &.{binding.ty}, .inputs = &.{}, .outputs = &.{}, .code = &.{}, .cleanup = binding.cleanup });
         }
     }
     for (program.host_functions, 0..) |function, index| {
@@ -175,7 +174,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 .session_declare => |x| {
                     const binding = try sessionBinding(program, x.binding);
                     if (x.layout) |layout| {
-                        const expected = try @import("storage_layout.zig").compile(allocator, program.graph, binding.slots[0]);
+                        const expected = try @import("storage_layout.zig").compile(allocator, program.graph, binding.ty);
                         defer allocator.free(expected.nodes);
                         if (expected.nodes.len != layout.nodes.len) return error.InvalidBytecode;
                         for (expected.nodes, layout.nodes) |wanted, actual| if (!std.meta.eql(wanted, actual)) return error.InvalidBytecode;
@@ -183,7 +182,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 },
                 .session_initialize => |x| {
                     const binding = try sessionBinding(program, x.binding);
-                    if (!types.equal(program.graph, binding.slots[0], f.slots[x.value])) return error.InvalidBytecode;
+                    if (!types.equal(program.graph, binding.ty, f.slots[x.value])) return error.InvalidBytecode;
                 },
                 .readonly => |x| {
                     const from = program.graph.semanticType(f.slots[x.src]);
@@ -343,10 +342,6 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
         states[0] = try allocator.alloc(u8, std.math.add(usize, f.slots.len, f.write_destinations.len) catch return error.InvalidBytecode);
         @memset(states[0].?, 0);
         for (f.inputs) |slot| states[0].?[slot] = 1;
-        for (f.cleanup) |entry| {
-            states[0].?[entry.flag] = 1;
-            if (entry.presence) |flag| states[0].?[flag] = 1;
-        }
         var pending: std.ArrayList(u32) = .empty;
         defer pending.deinit(allocator);
         try pending.append(allocator, 0);
@@ -550,15 +545,15 @@ fn readCleanupPlace(a: std.mem.Allocator, place: Place, out: *std.ArrayList(Slot
 }
 
 fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, f: b.Function) !void {
-    const flags = try a.alloc(bool, f.slots.len);
+    const flag_count = b.cleanupFlagCount(f.cleanup) catch return error.InvalidBytecode;
+    const flags = try a.alloc(bool, flag_count);
     defer a.free(flags);
     @memset(flags, false);
     for (f.cleanup, 0..) |entry, index| {
-        if (entry.root >= f.slots.len or entry.flag >= f.slots.len or flags[entry.flag] or
-            entry.path.len > 64 or !valueFits(graph, f.slots[entry.flag], .{ .boolean = false })) return error.InvalidBytecode;
+        if (entry.root >= f.slots.len or flags[entry.flag] or entry.path.len > 64) return error.InvalidBytecode;
         flags[entry.flag] = true;
         if (entry.presence) |flag| {
-            if (flag >= f.slots.len or flags[flag] or !valueFits(graph, f.slots[flag], .{ .boolean = false })) return error.InvalidBytecode;
+            if (flags[flag]) return error.InvalidBytecode;
             flags[flag] = true;
         }
         var ty = f.slots[entry.root];
@@ -577,16 +572,13 @@ fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, f: b
         if ((entry.presence != null) != (types.variants(graph, ty) != null)) return error.InvalidBytecode;
         if (index != 0 and b.cleanupOrder(f.cleanup[index - 1], entry) != .lt) return error.InvalidBytecode;
     }
-    for (f.cleanup) |entry| if (flags[entry.root]) return error.InvalidBytecode;
-    for (f.inputs) |slot| if (flags[slot]) return error.InvalidBytecode;
-    for (f.outputs) |slot| if (flags[slot]) return error.InvalidBytecode;
 }
 
 fn placeInfo(program: Program, slots: []const Type, place: Place) !struct { ty: Type, writable: bool } {
     const graph = program.graph;
     if (place.path.len > 64) return error.InvalidBytecode;
     var ty = if (place.region == .session)
-        (try sessionBinding(program, place.root)).slots[0]
+        (try sessionBinding(program, place.root)).ty
     else if (place.region == .global) blk: {
         for (program.globals) |global| if (@intFromEnum(global.binding) == place.root) break :blk global.ty;
         return error.InvalidBytecode;

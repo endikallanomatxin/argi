@@ -404,10 +404,10 @@ test "interactive expression owners retain cleanup until checked exit" {
     try std.testing.expectEqualStrings("_0", result.name);
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
     const frame = session.runtime.context.bindings.get(binding).?;
-    const slots = try session.runtime.context.storage.slots(frame);
+    const flags = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup_flags;
     const cleanup = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup;
     try std.testing.expect(cleanup.len != 0);
-    try std.testing.expect((try slots.get(cleanup[0].flag)).boolean);
+    try std.testing.expect(flags[cleanup[0].flag]);
     try session.close();
     try std.testing.expectEqual(.fresh, session.runtime.context.state);
 }
@@ -914,13 +914,13 @@ test "interactive deferred owners retain their checked cleanup" {
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
     const frame = session.runtime.context.bindings.get(binding).?;
-    const slots = try session.runtime.context.storage.slots(frame);
+    const flags = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup_flags;
     const cleanup = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup;
     try std.testing.expect(cleanup.len != 0);
     const flag = cleanup[0].flag;
-    try std.testing.expect((try slots.get(flag)).boolean);
+    try std.testing.expect(flags[flag]);
     try session.close();
-    try std.testing.expect(!(try slots.get(flag)).boolean);
+    try std.testing.expect(!flags[flag]);
 }
 
 test "interactive deferred condition storage can be initialized repeatedly" {
@@ -1099,15 +1099,15 @@ test "interactive partial records clean initialized owners at exit" {
     try session.submitStatements("pair.first = make()");
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
     const frame = session.runtime.context.bindings.get(binding).?;
-    const slots = try session.runtime.context.storage.slots(frame);
+    const flags = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup_flags;
     const cleanup = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup;
     var active: usize = 0;
-    for (cleanup) |entry| if ((try slots.get(entry.flag)).boolean) {
+    for (cleanup) |entry| if (flags[entry.flag]) {
         active += 1;
     };
     try std.testing.expectEqual(@as(usize, 1), active);
     try session.close();
-    for (cleanup) |entry| try std.testing.expect(!(try slots.get(entry.flag)).boolean);
+    for (cleanup) |entry| try std.testing.expect(!flags[entry.flag]);
 }
 
 test "interactive arrays retain initialized elements across commands" {
@@ -1426,16 +1426,16 @@ test "interactive exit cleans the live sibling of an incomplete choice payload" 
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
     const frame = session.runtime.context.bindings.get(binding).?;
     const storage = &session.runtime.context.storage;
-    const slots = try storage.slots(frame);
+    const flags = storage.frames.items[@intFromEnum(frame)].cleanup_flags;
     const cleanup = storage.frames.items[@intFromEnum(frame)].cleanup;
-    try std.testing.expect(!(try slots.get(cleanup[0].flag)).boolean);
-    try std.testing.expect((try slots.get(cleanup[0].presence.?)).boolean);
+    try std.testing.expect(!flags[cleanup[0].flag]);
+    try std.testing.expect(flags[cleanup[0].presence.?]);
     var found_sibling = false;
     for (cleanup) |entry| {
         if (entry.path.len != 2 or entry.path[1] != .field) continue;
-        if (entry.path[1].field == 0) try std.testing.expect(!(try slots.get(entry.flag)).boolean);
+        if (entry.path[1].field == 0) try std.testing.expect(!flags[entry.flag]);
         if (entry.path[1].field == 1) {
-            try std.testing.expect((try slots.get(entry.flag)).boolean);
+            try std.testing.expect(flags[entry.flag]);
             found_sibling = true;
         }
     }
