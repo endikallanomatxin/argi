@@ -217,7 +217,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 },
                 .index => |x| {
                     const element = types.arrayElement(program.graph, f.slots[x.base]) orelse return error.InvalidBytecode;
-                    if (!types.equal(program.graph, f.slots[x.dst], element) or integerBounds(program.graph, f.slots[x.index]) == null) return error.InvalidBytecode;
+                    if (!types.equal(program.graph, f.slots[x.dst], element) or x.kind.bounds() == null or x.kind != b.scalarKind(program.graph, f.slots[x.index])) return error.InvalidBytecode;
                 },
                 .choice => |x| {
                     if (x.ordinal != try b.variantOrdinal(program.graph, f.slots[x.dst], x.variant)) return error.InvalidBytecode;

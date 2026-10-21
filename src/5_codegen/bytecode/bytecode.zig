@@ -167,7 +167,7 @@ pub const Instruction = struct {
         record: struct { dst: Slot, fields: []const Slot },
         field: struct { dst: Slot, base: Slot, index: u32 },
         array: struct { dst: Slot, elements: []const Slot },
-        index: struct { dst: Slot, base: Slot, index: Slot },
+        index: struct { dst: Slot, base: Slot, index: Slot, kind: ScalarKind = .unresolved },
         choice: struct { dst: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32), payload: ?Slot },
         payload: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32) },
         is_variant: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32), invert: bool },

@@ -392,7 +392,9 @@ pub const Vm = struct {
                     reference.mutability = x.permission;
                     try slots.put(x.dst, .{ .reference = reference });
                 },
-                .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, integer.decode((try slots.get(x.elements)).integer, b.integerBounds(unit.graph, f.slots[x.elements]).?)) }),
+                // The verifier fixes this input to UIntNative: its bits already
+                // express a nonnegative count, independent of target width.
+                .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, (try slots.get(x.elements)).integer) }),
                 .virtualize => |x| {
                     const receiver = try slots.get(x.receiver);
                     if (receiver != .reference) return error.ExecutionInvalidVirtual;
@@ -515,7 +517,7 @@ pub const Vm = struct {
                 },
                 .index => |x| {
                     const elements = (try slots.get(x.base)).array;
-                    const index = try Storage.elementIndex(integer.decode((try slots.get(x.index)).integer, b.integerBounds(unit.graph, f.slots[x.index]).?), elements.len);
+                    const index = try Storage.elementIndex(integer.decode((try slots.get(x.index)).integer, x.kind.bounds().?), elements.len);
                     try slots.put(x.dst, elements[index]);
                 },
                 .choice => |x| {

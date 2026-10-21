@@ -198,7 +198,7 @@ test "bytecode array verifier rejects malformed elements and indices" {
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 0 } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .boolean = false } } } },
         .{ .source = source, .op = .{ .array = .{ .dst = 2, .elements = &.{0} } } },
-        .{ .source = source, .op = .{ .index = .{ .dst = 3, .base = 2, .index = 0 } } },
+        .{ .source = source, .op = .{ .index = .{ .dst = 3, .base = 2, .index = 0, .kind = .i32 } } },
         .{ .source = source, .op = .{ .ret = &.{3} } },
     };
     const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{3}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
@@ -2195,11 +2195,16 @@ test "negative narrow indices cannot address positive array elements" {
     var code = [_]b.Instruction{
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .array = &values } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 255 } } } },
-        .{ .source = source, .op = .{ .index = .{ .dst = 2, .base = 0, .index = 1 } } },
+        .{ .source = source, .op = .{ .index = .{ .dst = 2, .base = 0, .index = 1, .kind = .i8 } } },
         .{ .source = source, .op = .{ .ret = &.{2} } },
     };
     const expression: b.Function = .{ .slots = &.{ @enumFromInt(2), @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{2}, .code = &code };
     const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &expression };
+    code[2].op.index.kind = .u8;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.index.kind = .unresolved;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.index.kind = .i8;
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, executor.runExpression(&.{}));
