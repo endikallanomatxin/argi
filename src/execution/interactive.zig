@@ -1438,3 +1438,23 @@ test "interactive exit cleans the live sibling of an incomplete choice payload" 
     try session.close();
     try std.testing.expectEqual(.fresh, session.runtime.context.state);
 }
+
+test "interactive Init wrappers retain assumed capabilities from earlier commands" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "Init#(.T: Type, .Args: Type): Contract = (.Result: Type\n.init: (.args: Args) -> (.result: Result))");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Capability: Type = (.value: Int32)\nBox: Type = (.value: Int32)\nread_capability := (.permission: &Capability = reach permission) -> (.value: Int32) { value = permission&.value }\nimplement Init#(Box, ()) (.Result: Type = Box\n.init = (.args: ()) -> (.result: Result) { result = (.value = read_capability()) })");
+    try session.submitStatements("token :: Capability = (.value = 42)\nassume permission ::= &token");
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Box().value")).?.value.runtime.integer);
+    try std.testing.expectError(error.Reported, session.submitInput("missing_capability_command"));
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Box().value")).?.value.runtime.integer);
+    try session.close();
+}

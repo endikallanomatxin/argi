@@ -268,7 +268,10 @@ pub const Resolver = struct {
         const value_start: u32 = @intCast(self.graph.value_fields.items.len);
         try self.graph.value_fields.append(self.core.allocator, .{ .name = try self.graph.addString(self.core.allocator, "args"), .value = input });
         const wrapped: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-        try self.graph.nodes.append(self.core.allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = value_start, .len = 1 } } } });
+        // Wrapping Args must preserve the caller's lexical capability pool.
+        // Late reached inputs belong to init itself, not to fields of Args.
+        const assumptions = self.graph.node(input).content.struct_value_literal.assumed_fields;
+        try self.graph.nodes.append(self.core.allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = value_start, .len = 1 }, .assumed_fields = assumptions } } });
         const call = try contracts.makeScopedOperationCall(module_index, contract_type, "init", wrapped, reach, source) orelse return error.DeferredContractInitializer;
         const result_type = call.ty orelse return error.DeferredContractInitializer;
         if (self.graph.isTypeUnresolved(result_type)) return error.DeferredContractInitializer;
