@@ -2069,6 +2069,7 @@ fn pendingOwnerTag(tag: PendingTag) PendingOwner {
         .resolve_type => .types,
         .resolve_call, .resolve_local_reach => .calls,
         .resolve_index => .indexing,
+        .resolve_value_type,
         .resolve_field,
         .resolve_binary,
         .resolve_comparison,

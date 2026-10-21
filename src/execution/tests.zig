@@ -1225,6 +1225,16 @@ test "bytecode anonymous compile-time entry executes an ordinary function body" 
     , .{}));
 }
 
+test "bytecode anonymous entries complete inferred capture types" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\compute() -> (.value: Int32 = 41) := {}
+        \\main() -> (.status_code: Int32) := {
+        \\    known := compute()
+        \\    status_code = #run () -> (.answer: Int32) { answer = known + 1 }
+        \\}
+    , .{}));
+}
+
 test "bytecode anonymous entries capture only used constant values" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\main() -> (.status_code: Int32) := {

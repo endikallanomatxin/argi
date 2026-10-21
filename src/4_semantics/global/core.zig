@@ -400,6 +400,12 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_type => |value| try self.resolveTypeHole(module_index, module, o, value),
+            .resolve_value_type => |value| blk: {
+                const ty = self.graph.node(globalizer.globalNode(o, value.value)).ty orelse break :blk .deferred;
+                if (self.graph.isTypeUnresolved(ty)) break :blk .deferred;
+                try self.graph.resolveType(globalizer.globalType(o, value.destination), self.graph.types.items[@intFromEnum(ty)]);
+                break :blk .resolved;
+            },
             .resolve_call => |value| try self.resolveCall(module_index, module, o, value),
             .resolve_field => |value| resolution.Result.fromBool(try self.resolveField(module, o, value)),
             .resolve_comparison => |value| resolution.Result.fromBool(try self.resolveComparison(module_index, o, value)),

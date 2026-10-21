@@ -114,7 +114,7 @@ const Context = struct {
     current_function: ?entities.ModuleFunctionId = null,
     temporary_declarations: ?*std.array_list.Managed(entities.ModuleNodeId) = null,
     entry_parent: ?*Context = null,
-    entry_captures: std.ArrayList(struct { outer: NamedBinding, local: entities.ModuleBindingId }) = .empty,
+    entry_captures: std.ArrayList(struct { name: primitives.StringRange, ty: entities.ModuleTypeId, value: entities.ModuleNodeId, local: entities.ModuleBindingId }) = .empty,
 
     fn lowerFunctions(self: *Context) !Stats {
         var stats: Stats = .{};
@@ -514,22 +514,35 @@ const Context = struct {
         } }, expected);
     }
 
-    fn captureEntryBinding(self: *Context, name: []const u8, node: syn.NodeIndex) !?NamedBinding {
+    fn captureEntryBinding(self: *Context, name: []const u8, node: syn.NodeIndex) anyerror!?NamedBinding {
         const parent = self.entry_parent orelse return null;
         for (self.entry_captures.items) |capture| {
-            if (std.mem.eql(u8, self.graph.text(capture.outer.name), name))
-                return .{ .name = capture.outer.name, .id = capture.local, .ty = capture.outer.ty };
+            if (std.mem.eql(u8, self.graph.text(capture.name), name))
+                return .{ .name = capture.name, .id = capture.local, .ty = capture.ty };
         }
-        const outer = parent.lookupBinding(name) orelse (try parent.captureEntryBinding(name, node)) orelse return null;
-        const ty = outer.ty orelse return self.foreignOptionError(node, "captured compile-time values currently require an explicit type");
+        // Module declarations keep their ordinary global resolution. Only names
+        // belonging to the enclosing lexical context become entry inputs.
+        if (parent.lookupBinding(name) == null) {
+            for (self.graph.declarations.items) |declaration|
+                if (std.mem.eql(u8, self.graph.text(declaration.name), name)) return null;
+        }
+        const outer = try parent.lowerIdentifier(node, null);
+        const stored_name = try self.writer.addString(name);
+        const ty = if (outer.ty) |known| known else blk: {
+            // Resolve this hole from the outer value, never by named type lookup.
+            const external = try self.writer.addExternalRef(.{ .kind = .type, .module_path = null, .name = stored_name, .source = self.sourceRef(node) });
+            const destination = try self.writer.addExternalType(external);
+            _ = try self.writer.addPendingOperation(.{ .resolve_value_type = .{ .value = outer.node, .destination = destination } });
+            break :blk destination;
+        };
         const local = try self.writer.addBinding(.{
-            .name = outer.name,
+            .name = stored_name,
             .source = self.sourceRef(node),
             .ty = ty,
             .mutability = .constant,
         });
-        try self.entry_captures.append(self.allocator, .{ .outer = outer, .local = local });
-        return .{ .name = outer.name, .id = local, .ty = ty };
+        try self.entry_captures.append(self.allocator, .{ .name = stored_name, .ty = ty, .value = outer.node, .local = local });
+        return .{ .name = stored_name, .id = local, .ty = ty };
     }
 
     fn lowerBinding(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -852,10 +865,9 @@ const Context = struct {
         const captured_fields_start: u32 = @intCast(self.graph.fields.items.len + self.graph.structural_fields.items.len + self.graph.semantic.fields.items.len);
         const captured_values_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
         for (body.entry_captures.items) |capture| {
-            _ = try self.writer.addField(.{ .name = capture.outer.name, .source = self.sourceRef(node), .ty = capture.outer.ty.? });
+            _ = try self.writer.addField(.{ .name = capture.name, .source = self.sourceRef(node), .ty = capture.ty });
             try captured_bindings.append(capture.local);
-            const value = try self.resolved(node, capture.outer.ty, .{ .binding_use = capture.outer.id });
-            try self.graph.semantic.value_fields.append(self.allocator, .{ .name = capture.outer.name, .value = value.node });
+            try self.graph.semantic.value_fields.append(self.allocator, .{ .name = capture.name, .value = capture.value });
         }
         self.graph.functions.items[@intFromEnum(function_id)].input = .{ .start = captured_fields_start, .len = @intCast(body.entry_captures.items.len) };
         const input_bindings = try self.writer.appendBindingRefs(captured_bindings.items);

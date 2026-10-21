@@ -251,6 +251,7 @@ pub const Resolver = struct {
     /// Resolve implicit copying identically for lowered and inherited inputs.
     pub fn resolveGlobalCopy(self: *Resolver, source: global_sg.GlobalNodeId, target: global_sg.GlobalNodeId) !bool {
         const ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return false;
+        if (self.graph.isTypeUnresolved(ty)) return false;
         // Index syntax can resolve to an operator call after lowering has
         // inserted an implicit copy. The call already produces a fresh value;
         // copying its result would require a spurious copy of owned outputs.
