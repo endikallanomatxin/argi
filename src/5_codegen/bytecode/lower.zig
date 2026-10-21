@@ -170,6 +170,8 @@ pub const Lower = struct {
             };
             if (found) continue;
             const record = self.graph.binding(id);
+            if (self.mode == .compile_time and record.mutability != .constant)
+                return self.reject(record.source, "mutable runtime global storage during compile-time execution");
             if (self.cleanup_types[@intFromEnum(record.ty)]) return self.reject(record.source, "global storage with cleanup obligations");
             const initializer = record.initialization orelse return self.reject(record.source, "global storage without an explicit initializer");
             var function = FunctionLower{ .parent = self };

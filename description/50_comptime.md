@@ -87,6 +87,8 @@ external inputs must be tracked as build dependencies before enabling them.
 > only its selected branch is resolved and safety-checked.
 > Anonymous entries can initialize module constants and field defaults through
 > the same execution request and constant-freezing path.
+> Known module constants may be read during evaluation; mutable runtime globals
+> are rejected, rather than reconstructed from their initializers as a snapshot.
 > Interactive selection retains successful results across commands and rejects
 > invalid selected branches without changing the accepted session revision.
 > The current implementation still accepts the superseded `#run function(...)`

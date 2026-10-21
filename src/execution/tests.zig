@@ -19,12 +19,14 @@ fn execute(source: []const u8, limits: vm.Limits) !i128 {
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
     const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+        std.debug.print("execution fixture semantic failure: {s}\n", .{@errorName(err)});
         for (diagnostics.list.items) |d| std.debug.print("{s}\n", .{d.msg});
         return err;
     };
     for (graph.functions.items, 0..) |f, i| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(f.declaration)), "main")) continue;
         var compiler = try lower.Lower.init(allocator, graph);
+        compiler.mode = .runtime;
         const program = compiler.compile(@enumFromInt(i)) catch |err| {
             return err;
         };
@@ -1248,6 +1250,33 @@ test "bytecode anonymous compile-time blocks support local storage and no output
         \\    }
         \\}
     , .{}));
+}
+
+test "bytecode anonymous compile-time entries consume known module values" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\base := 41
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = #run () -> (.result: Int32) { result = base + 1 }
+        \\}
+    , .{}));
+}
+
+test "anonymous compile-time entries cannot observe mutable runtime globals" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\runtime_value :: Int32 = 42
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = #run () -> (.result: Int32) { result = runtime_value }
+        \\}
+    }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+    try std.testing.expect(diagnostics.hasErrors());
 }
 
 test "bytecode anonymous compile-time entries initialize module constants" {
