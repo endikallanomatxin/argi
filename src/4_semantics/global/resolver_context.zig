@@ -84,6 +84,8 @@ pub const Context = struct {
             .stable_declaration_count = graph.declarations.items.len,
             .stable_node_count = graph.nodes.items.len,
         };
+        self.generics.binding_type_context = &self.generic_functions;
+        self.generics.resolve_binding_type = generic_functions_mod.Resolver.resolveCapturedBindingType;
         self.generics.execution_context = &self.staged_execution;
         self.generics.checkpoint_execution = execution.Scheduler.checkpoint;
         self.generics.rollback_execution = execution.Scheduler.rollback;
@@ -158,7 +160,7 @@ pub const Context = struct {
     /// Source modules remain borrowed; all mutable caches and effects are owned.
     pub fn cloneFrom(self: *Context, source: *const Context, allocator: std.mem.Allocator, graph: *global_sg.GlobalSemanticGraph, offsets: []const globalizer.Offsets, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
         if (self == source or offsets.len != source.core.modules.len or graph.modules.items.len != source.core.modules.len or
-            source.generic_functions.publishing_signature or source.ownership.loop_cleanup_base != null)
+            source.generic_functions.publishing_signature or source.generic_functions.active_instance != null or source.ownership.loop_cleanup_base != null)
             return error.InvalidSemanticForkState;
         self.init(allocator, graph, source.core.modules, offsets, diagnostics, source.core.profile_io);
         errdefer self.deinit();
@@ -376,6 +378,8 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     defer candidate.deinit();
     try std.testing.expect(candidate.core.graph == &candidate_graph);
     try std.testing.expect(candidate.generics.core == &candidate.core);
+    try std.testing.expect(candidate.generics.binding_type_context.? == @as(*anyopaque, &candidate.generic_functions));
+    try std.testing.expect(candidate.generic_functions.active_instance == null);
     try std.testing.expect(candidate.generics.execution_context.? == @as(*anyopaque, &candidate.staged_execution));
     try std.testing.expect(candidate.staged_execution.functions == &candidate.generic_functions);
     try std.testing.expect(candidate.ownership.dispatch.? == &candidate.dispatch);

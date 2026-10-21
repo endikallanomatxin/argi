@@ -48,6 +48,8 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     stats: Stats = .{},
     comptime_failure: ?ComptimeFailure = null,
+    binding_type_context: ?*anyopaque = null,
+    resolve_binding_type: ?*const fn (*anyopaque, usize, ir.ParameterizedBindingId) anyerror!global_sg.GlobalTypeId = null,
     execution_context: ?*anyopaque = null,
     checkpoint_execution: ?*const fn (*anyopaque) usize = null,
     rollback_execution: ?*const fn (*anyopaque, usize) void = null,
@@ -424,6 +426,7 @@ pub const Resolver = struct {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
         return switch (storage.types.items[@intFromEnum(id)]) {
+            .binding_type => |binding| self.resolve_binding_type.?(self.binding_type_context.?, module_index, binding),
             .concrete => |value| globalizer.globalType(self.offsets[module_index], value),
             .parameter => |parameter| bindings.types[@intFromEnum(parameter)] orelse return error.UnboundGenericTypeParameter,
             .projection => |value| blk: {

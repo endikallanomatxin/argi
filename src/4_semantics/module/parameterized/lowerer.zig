@@ -1146,14 +1146,6 @@ pub const Context = struct {
         return result;
     }
 
-    fn unresolvedCaptureType(self: *Context, node: syn.NodeIndex, name: []const u8) anyerror {
-        if (self.diagnostics) |bag| {
-            try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "cannot yet capture '{s}' in a staged #run entry before its type is resolved; declare its type explicitly", .{name});
-            return error.Reported;
-        }
-        return error.UnresolvedCompileTimeCaptureType;
-    }
-
     fn captureEntryValue(self: *Context, node: syn.NodeIndex, name: []const u8) anyerror!?ir.ParameterizedNodeId {
         const parent = self.entry_parent orelse return null;
         for (self.entry_captures.items) |capture|
@@ -1163,18 +1155,8 @@ pub const Context = struct {
         else
             (try parent.captureEntryValue(node, name)) orelse return null;
         const ty = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer)].resolved.ty orelse blk: {
-            const outer_binding = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer)].resolved.content.binding_use;
-            const storage = &self.graph.semantic.parameterized_storage.ir;
-            const initialization = storage.bindings.items[@intFromEnum(outer_binding)].initialization orelse return self.unresolvedCaptureType(node, name);
-            // Reuse a type already retained by the ordinary initializer lowering.
-            // This observes no value and never executes the initializer again.
-            break :blk switch (storage.nodes.items[@intFromEnum(initialization)]) {
-                .resolved => |value| value.ty orelse return self.unresolvedCaptureType(node, name),
-                .pending => |pending| switch (storage.pending.items[@intFromEnum(pending)]) {
-                    .resolve_expression => |expression| expression.expected_type orelse return self.unresolvedCaptureType(node, name),
-                    else => return self.unresolvedCaptureType(node, name),
-                },
-            };
+            const binding = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer)].resolved.content.binding_use;
+            break :blk try self.addType(.{ .binding_type = binding });
         };
         // This node is patched to its private input binding before publication;
         // it is never a value literal in retained or instantiated IR.

@@ -459,7 +459,8 @@ test "interactive generic compile-time entries retain independent specialization
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submit("calculate#(.T: Type, .n: Int32) := () -> (.result: T) { result = #run () -> (.value: T) { value = n } }");
+    try session.submit("copy_value#(.T: Type) := (.value: T) -> (.result: T = value) {}");
+    try session.submit("calculate#(.T: Type, .n: Int32) := () -> (.result: T) { local := copy_value#(.T: T)(.value = n)\nresult = #run () -> (.value: T) { value = #run () -> (.inner: T) { inner = local } } }");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("calculate#(.T: Int32, .n = 42)()")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("calculate#(.T: Int32, .n = 41)()")).?.value.runtime.integer);
     try session.submit("invalid#(.T: Type) := (.runtime_value: T) -> (.result: T) { result = #run () -> (.value: T) { value = runtime_value } }");

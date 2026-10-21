@@ -25,6 +25,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     };
 
     for (storage.types.items) |ty| switch (ty) {
+        .binding_type => |id| try require(verify.idFits(id, storage.bindings.items.len)),
         .concrete => |id| try require(verify.idFits(id, views.typeCount(graph))),
         .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .projection => |value| {
@@ -241,4 +242,13 @@ test "parameterized IR verifier accepts semantic variants and qualified generic 
     } });
     try graph.semantic.parameterized_storage.ir.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try verifyIR(&graph);
+}
+
+test "parameterized capture type relations require an existing binding" {
+    const std = @import("std");
+    const a = std.testing.allocator;
+    var graph: graph_mod.ModuleSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.semantic.parameterized_storage.ir.types.append(a, .{ .binding_type = @enumFromInt(0) });
+    try std.testing.expectError(error.InvalidModuleParameterizedIR, verifyIR(&graph));
 }

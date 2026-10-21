@@ -1,3 +1,5 @@
+copy_value(.value: Int32) -> (.result: Int32 = value) := {}
+
 calculate#(.T: Type, .n: Int32) := () -> (.result: T) {
     result = #run () -> (.value: T) { value = n }
 }
@@ -13,7 +15,7 @@ selected#(.n: Int32) := () -> (.result: Int32) {
 }
 
 captured_local#(.n: Int32) := () -> (.result: Int32) {
-    local := n
+    local := copy_value(.value = n)
     offset := 0
     result = #run () -> (.value: Int32) {
         value = #run () -> (.inner: Int32) { inner = local + offset }

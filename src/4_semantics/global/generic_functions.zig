@@ -54,6 +54,7 @@ pub const ConstraintFailure = struct {
 };
 
 pub const Resolver = struct {
+    active_instance: ?*InstanceContext = null,
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -2190,7 +2191,25 @@ pub const Resolver = struct {
         return instance.instantiateNode(node);
     }
 
+    // Read the existing lexical instance; type queries must not materialize a
+    // second owner, run an initializer or publish unrelated speculative nodes.
+    pub fn resolveCapturedBindingType(context: *anyopaque, module_index: usize, binding: ir.ParameterizedBindingId) anyerror!global_sg.GlobalTypeId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        var active = self.active_instance;
+        while (active) |instance| : (active = instance.active_parent) {
+            if (instance.module_index != module_index) continue;
+            if (instance.binding_map.get(@intFromEnum(binding)) == null) continue;
+            const global = try instance.lexicalBinding(binding);
+            if (self.graph.isBindingTypeUnresolved(global)) return error.UnresolvedCompileTimeCaptureType;
+            const ty = self.graph.binding(global).ty;
+            if (self.graph.isTypeUnresolved(ty)) return error.UnresolvedCompileTimeCaptureType;
+            return ty;
+        }
+        return error.UnresolvedCompileTimeCaptureType;
+    }
+
     const InstanceContext = struct {
+        active_parent: ?*InstanceContext = null,
         resolver: *Resolver,
         module_index: usize,
         parameterized: parameterized_storage.ParameterizedFunction,
@@ -2333,6 +2352,16 @@ pub const Resolver = struct {
         }
 
         fn instantiateNode(self: *InstanceContext, id: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
+            const previous = self.resolver.active_instance;
+            const previous_parent = self.active_parent;
+            if (previous != self) {
+                self.active_parent = previous;
+                self.resolver.active_instance = self;
+            }
+            defer {
+                self.resolver.active_instance = previous;
+                self.active_parent = previous_parent;
+            }
             if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];

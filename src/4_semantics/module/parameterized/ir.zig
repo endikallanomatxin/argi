@@ -90,6 +90,7 @@ pub const IntExpression = union(enum) {
 };
 
 pub const Type = union(enum) {
+    binding_type: ParameterizedBindingId,
     concrete: entities.ModuleTypeId,
     parameter: ComptimeParameterId,
     projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
