@@ -1215,7 +1215,10 @@ const FunctionLower = struct {
                 for (methods, self.parent.graph.function_refs.items[selected.methods.start..][0..selected.methods.len], 0..) |*out, method, index| {
                     try self.parent.pending.append(self.parent.allocator, method);
                     const registry_id = self.parent.graph.virtual_registry_refs.items[selected.safety_methods.start + index];
-                    out.* = .{ .function = method, .receiver_input_index = self.parent.graph.virtual_registries.items[@intFromEnum(registry_id)].receiver_input_index };
+                    const receiver_index = self.parent.graph.virtual_registries.items[@intFromEnum(registry_id)].receiver_input_index;
+                    const implementation = self.parent.graph.function(method);
+                    const receiver = self.parent.graph.fields.items[implementation.input.start + receiver_index].ty;
+                    out.* = .{ .function = method, .receiver_input_index = receiver_index, .receiver_permission = self.parent.graph.semanticType(receiver).pointer.mutability };
                 }
                 table.* = .{ .virtual_type = selected.virtual_type, .concrete_type = selected.concrete_type, .methods = methods };
                 _ = try self.emit(node.source, .{ .virtualize = .{ .dst = dst, .receiver = try self.expression(selected.value), .table = table } });

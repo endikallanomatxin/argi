@@ -402,8 +402,7 @@ pub const Vm = struct {
                     const universe = if (unit.graph.types.items.len >= virtual.program.graph.types.items.len) unit.graph else virtual.program.graph;
                     const selected = virtual.table;
                     const signature = &x.signature;
-                    const handle_type = unit.graph.semanticType(f.slots[x.handle]).pointer.child;
-                    if (!types.equal(universe, handle_type, selected.virtual_type) or signature.method_count != selected.methods.len) return error.ExecutionInvalidVirtual;
+                    if (!types.equal(universe, signature.virtual_type, selected.virtual_type) or signature.method_count != selected.methods.len) return error.ExecutionInvalidVirtual;
                     const method = selected.methods[signature.method_index];
                     if (method.receiver_input_index != signature.receiver_input_index) return error.ExecutionInvalidVirtual;
                     const callee = &virtual.program.functions[@intFromEnum(method.function)].?;
@@ -412,7 +411,7 @@ pub const Vm = struct {
                     for (values, x.args, callee.inputs, 0..) |*value, slot, input, index| {
                         if (index == signature.receiver_input_index) {
                             var receiver = virtual.receiver;
-                            const permission = virtual.program.graph.semanticType(callee.slots[input]).pointer.mutability;
+                            const permission = method.receiver_permission;
                             if (permission == .read_write and (pointer.reference.mutability != .read_write or receiver.mutability != .read_write)) return error.ExecutionReadonlyReference;
                             receiver.mutability = permission;
                             value.* = .{ .reference = receiver };

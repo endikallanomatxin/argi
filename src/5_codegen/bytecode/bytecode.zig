@@ -135,7 +135,7 @@ pub fn cleanupContains(parent: Cleanup, child: Cleanup) bool {
 pub const VirtualTable = struct {
     virtual_type: Type,
     concrete_type: Type,
-    methods: []const struct { function: g.GlobalFunctionId, receiver_input_index: u32 },
+    methods: []const struct { function: g.GlobalFunctionId, receiver_input_index: u32, receiver_permission: p.PointerMutability },
 };
 pub const VirtualSignature = struct {
     virtual_type: Type,

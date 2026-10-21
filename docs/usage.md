@@ -384,7 +384,9 @@ definition does not retain a second arena containing the complete safety analysi
 
 Scalar host calls carry verified symbol and integer-range descriptors in bytecode.
 Linking checks these descriptors against the execution environment without
-reconstructing their signatures from the semantic graph.
+reconstructing their signatures from the semantic graph. Virtual method tables
+also carry verified receiver permissions, so invocation does not inspect a
+method parameter type to determine its access.
 
 Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
 ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;

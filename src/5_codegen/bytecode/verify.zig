@@ -147,7 +147,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                         const implementation = program.functions[@intFromEnum(method.function)].?;
                         if (method.receiver_input_index >= implementation.inputs.len) return error.InvalidBytecode;
                         const expected = program.graph.semanticType(implementation.slots[implementation.inputs[method.receiver_input_index]]);
-                        if (expected != .pointer or !types.equal(program.graph, expected.pointer.child, selected.concrete_type) or
+                        if (expected != .pointer or expected.pointer.mutability != method.receiver_permission or !types.equal(program.graph, expected.pointer.child, selected.concrete_type) or
                             (expected.pointer.mutability == .read_write and receiver.pointer.mutability != .read_write)) return error.InvalidBytecode;
                     }
                 },

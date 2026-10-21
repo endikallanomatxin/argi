@@ -2642,3 +2642,40 @@ test "bytecode storage variant branches verify representation ordinals before ex
     defer executor.deinit();
     try std.testing.expectEqual(@as(u64, 42), (try executor.runExpression(&.{}))[0].integer);
 }
+
+test "bytecode virtual tables verify receiver access descriptors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
+        \\Box: Type = (.value: Int32)
+        \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
+        \\main := () -> () {
+        \\    box :: Box = (.value = 42)
+        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
+        \\}
+    }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = try pipeline.semantizeGlobalFiles(&files);
+    for (graph.functions.items, 0..) |function, raw| {
+        if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
+        var compiler = try lower.Lower.init(a, graph);
+        const program = try compiler.compile(@enumFromInt(raw));
+        try b.verify(a, program);
+        for (program.functions[raw].?.code) |instruction| if (instruction.op == .virtualize) {
+            const method = &@constCast(instruction.op.virtualize.table.methods)[0];
+            try std.testing.expectEqual(.read_only, method.receiver_permission);
+            method.receiver_permission = .read_write;
+            try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+            method.receiver_permission = .read_only;
+            try b.verify(a, program);
+            return;
+        };
+        return error.MissingVirtualTable;
+    }
+    return error.MissingEntry;
+}
