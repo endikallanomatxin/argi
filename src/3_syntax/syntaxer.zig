@@ -1523,7 +1523,7 @@ pub const Syntaxer = struct {
             const location = self.currentLocation();
             self.advanceOne();
             if (self.currentContent() != .identifier or !std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "run")) {
-                try self.diags.add(location, .syntax, "expected '#run' before a compile-time call", .{});
+                try self.diags.add(location, .syntax, "expected '#run' before a compile-time entry", .{});
                 return error.ExpectedIdentifier;
             }
             self.advanceOne();
@@ -1539,15 +1539,8 @@ pub const Syntaxer = struct {
                 entry.body = try self.parseCodeBlock();
                 return self.addNode(.comptime_entry, prefix, .{ .extra = try self.addExtra(entry) });
             }
-            const value = try self.parsePrimary();
-            if (self.file.tag(value) != .function_call) {
-                try self.diags.add(location, .syntax, "#run requires a function call", .{});
-                return error.ExpectedLeftParen;
-            }
-            var extra = self.file.extraData(syn.CallExtra, self.file.data(value).extra);
-            extra.comptime_token = syn.OptionalTokenIndex.init(prefix);
-            self.file.nodes.items(.data)[@intFromEnum(value)] = .{ .extra = try self.addExtra(extra) };
-            return value;
+            try self.diags.add(location, .syntax, "#run requires an anonymous function block; call existing functions inside '#run {{ ... }}'", .{});
+            return error.ExpectedLeftBrace;
         }
 
         if (content == .binary_operator and content.binary_operator == .subtraction) {

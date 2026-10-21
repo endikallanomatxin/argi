@@ -58,6 +58,11 @@ test "compact syntaxing represents anonymous compile-time entries independently 
     }
 }
 
+test "compact syntaxing rejects superseded compile-time call prefixes" {
+    try std.testing.expectError(error.ExpectedLeftBrace, parseTestSource("entry.rg", "#run calculate()"));
+    try std.testing.expectError(error.ExpectedLeftBrace, parseTestSource("entry.rg", "#run calculate#(.n = 42)()"));
+}
+
 test "compact syntaxing requires a complete compile-time entry signature" {
     try std.testing.expectError(error.ExpectedArrow, parseTestSource("entry.rg", "#run () {}"));
     try std.testing.expectError(error.ExpectedLeftBrace, parseTestSource("entry.rg", "#run () -> () calculate()"));

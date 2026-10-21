@@ -389,7 +389,7 @@ test "REPL checked core allocations use virtual regions and explicit release" {
     try session.submitStatements("aligned_free(.address = address)");
     try std.testing.expectError(error.ExecutionReleasedAcquisition, session.runtime.context.storage.acquisitions.range(&session.runtime.context.storage, range.handle, 0, 0, 1));
     const revision = session.compiler.revision;
-    try std.testing.expectError(error.Reported, session.submitInput("#run aligned_alloc(.alignment = 8, .size = 16)"));
+    try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.address: UIntNative) { address = aligned_alloc(.alignment = 8, .size = 16).address }"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectError(error.ExecutionReleasedAcquisition, session.submitStatements("aligned_free(.address = address)"));
     try std.testing.expectEqual(.poisoned, session.runtime.context.state);

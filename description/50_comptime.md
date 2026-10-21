@@ -97,8 +97,10 @@ external inputs must be tracked as build dependencies before enabling them.
 > are rejected, rather than reconstructed from their initializers as a snapshot.
 > Interactive selection retains successful results across commands and rejects
 > invalid selected branches without changing the accepted session revision.
-> The current implementation still accepts the superseded `#run function(...)`
-> form; migration replaces it rather than preserving both forms.
+> Captured lexical values travel through ordinary checked call inputs. Their
+> types can be inferred, including for constants retained by the REPL.
+> The superseded `#run function(...)` form is rejected; invoke the function
+> inside an anonymous entry instead.
 > This implementation accepts resolved function calls with constant scalar or
 > aggregate arguments and representable results. Closed calls and selected
 > integer arithmetic/comparisons and aggregate field/index projections can compute

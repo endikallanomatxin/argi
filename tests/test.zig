@@ -5783,7 +5783,7 @@ test "argi repl retains values and shares compile-time execution" {
         ":begin\n" ++
         "choose := () -> (.result: Int32) {\n" ++
         "    #if enabled() { result = 12 } else { result = missing() }\n" ++
-        "}\n:end\n#run choose()\n:reset\ntrue\n\"hello\"\n_1\n");
+        "}\n:end\n#run () -> (.answer: Int32) { answer = choose() }\n:reset\ntrue\n\"hello\"\n_1\n");
     child.stdin.?.close(std.testing.io);
     child.stdin = null;
     var buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
@@ -14211,7 +14211,7 @@ test "feature_tests/execution/137_comptime_transient_defaults" {
 test "argi repl retains transient default recipes across commands" {
     try expectReplFixture(
         "tests/feature_tests/execution/137_comptime_transient_defaults/main.rg",
-        "with_default(.value = 7)\n#run with_default(.value = 9)\nwith_default(.value = true)\n",
+        "with_default(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default(.value = 9) }\nwith_default(.value = true)\n",
         "_0 = 42\n_1 = 42\n_2 = 42\n",
     );
 }
@@ -14225,7 +14225,7 @@ test "feature_tests/execution/138_comptime_transient_expression_defaults" {
 test "argi repl distinguishes transient expression default specializations" {
     try expectReplFixture(
         "tests/feature_tests/execution/138_comptime_transient_expression_defaults/main.rg",
-        "with_default#(.T: Int32, .n = 40)(.value = 7)\n#run with_default#(.T: Int32, .n = 39)(.value = 9)\nwith_default#(.T: Bool, .n = 40)(.value = true)\n",
+        "with_default#(.T: Int32, .n = 40)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Int32, .n = 39)(.value = 9) }\nwith_default#(.T: Bool, .n = 40)(.value = true)\n",
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );
 }
@@ -14279,7 +14279,7 @@ fn expectReplFixture(fixture_path: []const u8, commands: []const u8, expected: [
 test "argi repl preserves record defaults across specializations" {
     try expectReplFixture(
         "tests/feature_tests/execution/149_comptime_record_defaults/main.rg",
-        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run with_default#(.T: Bool, .n = 16)(.value = true)\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
+        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 16)(.value = true) }\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );
 }
@@ -14287,7 +14287,7 @@ test "argi repl preserves record defaults across specializations" {
 test "argi repl preserves array defaults across specializations" {
     try expectReplFixture(
         "tests/feature_tests/execution/150_comptime_array_defaults/main.rg",
-        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run with_default#(.T: Bool, .n = 16)(.value = true)\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
+        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 16)(.value = true) }\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );
 }
