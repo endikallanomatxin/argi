@@ -88,8 +88,11 @@ pub const Storage = struct {
     pub fn acquiredReference(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability) !v.Reference {
         if (layout.alignment == 0 or !std.math.isPowerOfTwo(layout.alignment)) return error.ExecutionInvalidReference;
         _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
+        // Reserve the descriptor before publishing its storage identity. Once
+        // enter succeeds, publication cannot fail or leave an orphaned frame.
+        try self.acquired_views.ensureUnusedCapacity(self.allocator, 1);
         const frame = try self.enter(1);
-        try self.acquired_views.put(self.allocator, frame, .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian });
+        self.acquired_views.putAssumeCapacityNoClobber(frame, .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian });
         self.frames.items[@intFromEnum(frame)].duration = .acquired;
         return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
     }
@@ -344,12 +347,19 @@ pub const Storage = struct {
         return result;
     }
 
+    // Projection copies publish their quota only with the owned buffer. Keep
+    // this rule shared by borrow, address, offset and captured destinations.
+    fn retainPath(self: *Storage, path: []const v.Projection) ![]const v.Projection {
+        try self.charge(path.len);
+        errdefer self.cells -= path.len;
+        return self.allocator.dupe(v.Projection, path);
+    }
+
     pub fn offsetReference(self: *Storage, reference: v.Reference, elements: i128) !v.Reference {
         var path: [64]v.Projection = undefined;
         var result = try self.offsetInto(reference, elements, &path);
         if (elements == 0 or result.byte_view != null) return result;
-        try self.charge(result.path.len);
-        result.path = try self.allocator.dupe(v.Projection, result.path);
+        result.path = try self.retainPath(result.path);
         return result;
     }
 
@@ -438,10 +448,9 @@ pub const Storage = struct {
         _ = try self.read(reference);
         if (layout.size == 0) return error.ExecutionIndexOutOfBounds;
         var result = reference;
-        try self.charge(reference.path.len);
-        result.path = try self.allocator.dupe(v.Projection, reference.path);
         result.byte_view = .{ .layout = layout, .offset = 0, .endian = endian };
         _ = try self.read(result);
+        result.path = try self.retainPath(reference.path);
         return result;
     }
 
@@ -584,18 +593,16 @@ pub const Storage = struct {
     pub fn address(self: *Storage, reference: v.Reference, mutability: p.PointerMutability) !b.Value {
         try self.validateStorageAddress(reference);
         if (mutability == .read_write and (reference.mutability != .read_write or self.frames.items[@intFromEnum(reference.frame)].duration == .static)) return error.ExecutionReadonlyReference;
-        try self.charge(reference.path.len);
         var result = reference;
-        result.path = try self.allocator.dupe(v.Projection, reference.path);
+        result.path = try self.retainPath(reference.path);
         result.mutability = mutability;
         return .{ .reference = result };
     }
     pub fn borrow(self: *Storage, reference: v.Reference, mutability: p.PointerMutability) !b.Value {
         _ = try self.read(reference);
         if (mutability == .read_write and (reference.mutability != .read_write or self.frames.items[@intFromEnum(reference.frame)].duration == .static)) return error.ExecutionReadonlyReference;
-        try self.charge(reference.path.len);
         var result = reference;
-        result.path = try self.allocator.dupe(v.Projection, reference.path);
+        result.path = try self.retainPath(reference.path);
         result.mutability = mutability;
         return .{ .reference = result };
     }
@@ -681,9 +688,8 @@ pub const Storage = struct {
         try self.validateWritable(reference);
         try self.validateStorageAddress(reference);
         const cleanup_entry = if (activate_cleanup) try self.cleanupEntry(reference) else null;
-        try self.charge(reference.path.len);
         var captured = reference;
-        captured.path = try self.allocator.dupe(v.Projection, reference.path);
+        captured.path = try self.retainPath(reference.path);
         return .{ .reference = captured, .cleanup_entry = cleanup_entry };
     }
 
@@ -1344,5 +1350,73 @@ test "call buffers reuse cells without reviving retired frame identities" {
         const next = try storage.enter(3);
         try std.testing.expect(storage.frames.items[@intFromEnum(next)].values.ptr == backing);
         storage.leave(next);
+    }
+}
+
+test "acquired view publication preserves frames quota and earlier views on allocation failure" {
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = false } } };
+    var fail_index: usize = 0;
+    while (fail_index < 20) : (fail_index += 1) {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var storage = try Storage.init(arena.allocator(), 10000);
+        const handle = try storage.acquisitions.acquire(&storage, 8, 4);
+        const first = try storage.acquiredReference(handle, 0, &layout, .little, .read_write);
+        try storage.store(first, .{ .integer = 42 });
+        // Fill the table so the next publication must reserve metadata. Wrap
+        // its allocator calls, rather than arena growth, to exercise every step.
+        while (storage.acquired_views.count() < storage.acquired_views.capacity() * 80 / 100)
+            _ = try storage.acquiredReference(handle, 0, &layout, .little, .read_write);
+        const frames = storage.frames.items.len;
+        const views = storage.acquired_views.count();
+        const cells = storage.cells;
+        var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = fail_index });
+        storage.allocator = failure.allocator();
+        if (storage.acquiredReference(handle, 0, &layout, .little, .read_only)) |reference| {
+            try std.testing.expect(!failure.has_induced_failure);
+            try std.testing.expectEqual(@as(u64, 42), (try storage.read(reference)).integer);
+            try std.testing.expectEqual(@as(u64, 42), (try storage.read(first)).integer);
+            return;
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            try std.testing.expectEqual(frames, storage.frames.items.len);
+            try std.testing.expectEqual(views, storage.acquired_views.count());
+            try std.testing.expectEqual(cells, storage.cells);
+            try std.testing.expectEqual(@as(u64, 42), (try storage.read(first)).integer);
+        }
+    }
+    return error.MissingSuccessfulAcquiredViewPublication;
+}
+
+test "reference factories roll back unpublished projection quota on allocation failure" {
+    const Factory = struct {
+        const Kind = enum { address, borrow, offset, bytes, write };
+        fn run(storage: *Storage, reference: v.Reference, kind: Kind) !void {
+            const word: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = false } } };
+            switch (kind) {
+                .address => _ = try storage.address(reference, .read_only),
+                .borrow => _ = try storage.borrow(reference, .read_only),
+                .offset => _ = try storage.offsetReference(reference, 1),
+                .bytes => _ = try storage.numericBytes(reference, &word, .little),
+                .write => _ = try storage.captureResolvedWrite(reference, false),
+            }
+        }
+    };
+    for (std.meta.tags(Factory.Kind)) |kind| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var storage = try Storage.init(arena.allocator(), 1000);
+        const frame = try storage.enter(2);
+        const slots_ = try storage.slots(frame);
+        try slots_.put(0, .{ .record = &.{.{ .integer = 42 }} });
+        try slots_.put(1, .{ .array = &.{ .{ .integer = 42 }, .{ .integer = 7 } } });
+        const reference: v.Reference = .{ .context = storage.context, .frame = frame, .root = if (kind == .offset) 1 else 0, .path = if (kind == .offset) &.{.{ .element = 0 }} else &.{.{ .field = 0 }}, .mutability = .read_write };
+        const cells = storage.cells;
+        var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+        storage.allocator = failure.allocator();
+        try std.testing.expectError(error.OutOfMemory, Factory.run(&storage, reference, kind));
+        try std.testing.expectEqual(cells, storage.cells);
+        try std.testing.expectEqual(@as(u64, 42), (try storage.read(reference)).integer);
+        try std.testing.expectEqual(@as(usize, 1), storage.frames.items.len);
     }
 }
