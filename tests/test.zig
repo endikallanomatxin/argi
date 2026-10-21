@@ -14178,6 +14178,12 @@ test "feature_tests/execution/153_anonymous_comptime_cleanup" {
     try vmExpect("tests/feature_tests/execution/153_anonymous_comptime_cleanup", 42, null);
 }
 
+test "feature_tests/execution/154_generic_anonymous_comptime_entry" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/154_generic_anonymous_comptime_entry");
+    try runExpect("tests/feature_tests/execution/154_generic_anonymous_comptime_entry", 42);
+    try vmExpect("tests/feature_tests/execution/154_generic_anonymous_comptime_entry", 42, null);
+}
+
 test "feature_tests/execution/121_type_queries" {
     try expectSuccessfulBuild("tests/feature_tests/execution/121_type_queries");
     try runExpect("tests/feature_tests/execution/121_type_queries", 42);

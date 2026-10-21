@@ -1252,6 +1252,21 @@ test "bytecode anonymous compile-time blocks support local storage and no output
     , .{}));
 }
 
+test "bytecode generic anonymous entries capture compile-time parameters" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\calculate#(.T: Type, .n: Int32) := () -> (.result: T) {
+        \\    result = #run () -> (.value: T) {
+        \\        value = n
+        \\    }
+        \\}
+        \\main() -> (.status_code: Int32) := {
+        \\    narrow ::= calculate#(.T: Int8, .n = 41)()
+        \\    if calculate#(.T: Int32, .n = 41)() != 41 { abort }
+        \\    status_code = calculate#(.T: Int32, .n = 42)()
+        \\}
+    , .{}));
+}
+
 test "bytecode anonymous compile-time entries consume known module values" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\base := 41

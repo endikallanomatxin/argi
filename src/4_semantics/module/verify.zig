@@ -151,9 +151,16 @@ fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (graph.declarations.items[declaration_cursor..], declaration_cursor..) |declaration, index| {
         try require(declaration.kind == .function);
         try require(declaration.module_file_index < graph.file_offsets.items.len);
-        const function = declaration.function_id orelse return error.InvalidModuleSemanticGraph;
-        try require(verify.idFits(function, graph.functions.items.len));
-        try require(@intFromEnum(graph.functions.items[@intFromEnum(function)].declaration) == index);
+        if (declaration.function_id) |function| {
+            try require(verify.idFits(function, graph.functions.items.len));
+            try require(@intFromEnum(graph.functions.items[@intFromEnum(function)].declaration) == index);
+        } else {
+            var templates: usize = 0;
+            for (graph.semantic.parameterized_storage.parameterized_functions.items) |function| {
+                if (@intFromEnum(function.declaration) == index and function.concrete_function == null) templates += 1;
+            }
+            try require(templates == 1);
+        }
         for (graph.symbol_declarations.items) |exported| try require(@intFromEnum(exported) != index);
     }
     try require(type_reference_cursor == graph.type_references.items.len);

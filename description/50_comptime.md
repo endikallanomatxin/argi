@@ -77,8 +77,10 @@ external inputs must be tracked as build dependencies before enabling them.
 > defaults. Multiple outputs retain their names and types in a frozen record,
 > including when retained between interactive submissions.
 > No-output blocks and local reference operations execute within the
-> entry; temporary references cannot escape as outputs. Generic entries,
-> compile-time captures and host `System` execution
+> entry; temporary references cannot escape as outputs. Entries in generic
+> bodies can receive enclosing type and integer compile-time parameters through
+> a generated parameterized function, without capturing runtime bindings.
+> Capturing other local compile-time-known values and host `System` execution
 > remain incomplete.
 > Persistent sessions retain successful entry results. Rejected runtime captures
 > and aborted compile-time entries publish no session revision and do not poison

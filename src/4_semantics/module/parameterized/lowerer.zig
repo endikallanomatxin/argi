@@ -186,7 +186,9 @@ pub const Context = struct {
 
     fn lowerDeclarations(self: *Context) !Stats {
         var stats: Stats = .{};
-        for (self.graph.declarations.items, 0..) |declaration, raw_decl| {
+        var raw_decl: usize = 0;
+        while (raw_decl < self.graph.declarations.items.len) : (raw_decl += 1) {
+            const declaration = self.graph.declarations.items[raw_decl];
             self.file_index = declaration.module_file_index;
             const file = self.files[@intCast(self.file_index)];
             self.tree = file.tree;
@@ -1044,6 +1046,76 @@ pub const Context = struct {
         return self.addInt(.{ .literal = value });
     }
 
+    fn lowerAnonymousEntry(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
+        const entry = self.tree.comptimeEntry(node).?;
+        if (entry.input) |syntax| if (self.tree.structTypeLiteral(syntax).?.fields.len != 0)
+            return error.UnsupportedParameterizedEntryInput;
+        const name_text = try std.fmt.allocPrint(self.allocator, "_comptime_entry_{d}_{d}", .{ self.file_index, self.sourceRef(node).offset });
+        defer self.allocator.free(name_text);
+        const name = try self.writer.addString(name_text);
+        const declaration: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
+        try self.graph.declarations.append(self.allocator, .{
+            .kind = .function,
+            .name = name,
+            .source_offset = self.sourceRef(node).offset,
+            .module_file_index = self.file_index,
+            .generic_parameter_count = @intCast(self.parameters.items.len),
+        });
+        self.graph.generated_declaration_count += 1;
+        var child = Context{
+            .allocator = self.allocator,
+            .graph = self.graph,
+            .files = self.files,
+            .writer = self.writer,
+            .parameters = std.array_list.Managed(ParameterBinding).init(self.allocator),
+            .bindings = std.array_list.Managed(BindingName).init(self.allocator),
+            .file_index = self.file_index,
+            .tree = self.tree,
+            .source = self.source,
+            .diagnostics = self.diagnostics,
+        };
+        defer child.parameters.deinit();
+        defer child.bindings.deinit();
+        try child.parameters.appendSlice(self.parameters.items);
+        const empty = try child.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
+        const output = if (entry.output) |syntax| try child.lowerType(syntax, false) else empty;
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+        if (entry.output) |syntax| try child.seedFunctionBindings(syntax, .variable);
+        const end: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+        const body = try child.lowerBlock(entry.body);
+        const parameters: primitives.Range(ir.ComptimeParameterId) = .{
+            .start = if (self.parameters.items.len == 0) 0 else @intFromEnum(self.parameters.items[0].id),
+            .len = @intCast(self.parameters.items.len),
+        };
+        try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
+            .declaration = declaration,
+            .parameters = parameters,
+            .input = empty,
+            .output = output,
+            .body = body,
+            .output_bindings = .{ .start = start, .len = end - start },
+        });
+        var arguments: std.ArrayList(ir.GenericArgument) = .empty;
+        defer arguments.deinit(self.allocator);
+        for (self.parameters.items) |parameter_binding| {
+            try arguments.append(self.allocator, .{
+                .name = try self.writer.addString(parameter_binding.name),
+                .value = switch (parameter_binding.kind) {
+                    .type => .{ .type = try self.addType(.{ .parameter = parameter_binding.id }) },
+                    .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = parameter_binding.id }) },
+                },
+            });
+        }
+        const argument_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
+        try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
+        const input = try self.addResolvedNode(node, empty, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        const result = try self.addPending(node, .generic_call, &.{input}, name, null, .none);
+        const pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.comptime_run = true;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.generic_arguments = .{ .start = argument_start, .len = @intCast(arguments.items.len) };
+        return result;
+    }
+
     pub fn lowerIntExpression(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedIntExprId {
         if (self.tree.functionCall(node)) |call| if (call.comptime_token != null)
             return self.addInt(.{ .execution = try self.lowerBodyNode(node) });
@@ -1205,6 +1277,7 @@ pub const Context = struct {
         defer self.defer_loop_depth = previous_loop_depth;
 
         for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
+        if (self.tree.tag(node) == .comptime_entry) return self.lowerAnonymousEntry(node);
         if (self.tree.tag(node) == .pipe_placeholder) return self.pipe_value orelse error.PipePlaceholderOutsidePipe;
         if (self.tree.tag(node) == .pipe_expression) return self.lowerPipe(node);
         if (self.tree.tag(node) == .handle_expression or self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block) return self.lowerHandle(node);
