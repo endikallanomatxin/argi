@@ -19,13 +19,13 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   two), even without replacement. Represent one repeated element cleanup plan,
   with its length/stride and evaluated index identity; avoid expanding metadata
   for every element. Integrate whole-array exit, partial moves and initialization.
-  This needs coordinated changes to frontend cleanup plans, shared flag layouts,
-  native ancestor refresh and bytecode cleanup emission. Runtime flags occupy
-  separate compact buffers rather than typed value slots. Bytecode owners now
-  reference shared immutable field/variant layouts instead of concrete paths;
-  element repetition still needs frontend plans and indexed emission. An indexed
-  view must select its flag range by logical element identity, including zero-sized
-  elements. Do not enable array destruction while partial initialization or
+  Shared layouts now represent repetition with one element descriptor and
+  checked length/stride arithmetic. VM projection and native ancestor refresh
+  preserve indexed flag ranges; LLVM refresh uses bounded loops instead of
+  expanding element instructions. Runtime flags occupy separate compact buffers,
+  and bytecode owners retain shared immutable layouts rather than concrete paths.
+  Complete frontend repeated cleanup plans and indexed destructor emission,
+  including logical identities for zero-sized elements. Do not enable array destruction while partial initialization or
   projected flag transport is missing.
 - Complete indexed cleanup identities in both backends. Whole indirect pointer
   and record-field replacements use checked plans, including the three-drop

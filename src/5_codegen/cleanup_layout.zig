@@ -21,16 +21,26 @@ pub fn requiredBindings(allocator: std.mem.Allocator, graph: *const g.GlobalSema
 // payload descendant revokes completeness without erasing the active variant.
 pub const Layout = struct {
     pub const Span = struct { offset: usize, ty: g.GlobalTypeId, layout: *const Layout };
+    pub const Repetition = struct { ty: g.GlobalTypeId, element: *const Layout, length: usize };
     count: usize = 1,
+    repetition: ?Repetition = null,
     children: []const ?Span = &.{},
     is_record: bool = false,
     is_choice: bool = false,
+
+    pub fn repeated(ty: g.GlobalTypeId, element: *const Layout, length: usize) error{Overflow}!Layout {
+        return .{ .count = try std.math.add(usize, 1, try std.math.mul(usize, element.count, length)), .repetition = .{ .ty = ty, .element = element, .length = length } };
+    }
 
     pub fn project(self: *const Layout, projection: @import("bytecode/value.zig").Projection) ?Span {
         const index: usize = switch (projection) {
             .field => |index| if (self.is_record) index else return null,
             .variant => |index| if (self.is_choice) index else return null,
-            .element => return null,
+            .element => |index| {
+                const array = self.repetition orelse return null;
+                if (index >= array.length) return null;
+                return .{ .offset = 1 + index * array.element.count, .ty = array.ty, .layout = array.element };
+            },
         };
         if (index >= self.children.len) return null;
         return self.children[index];
@@ -48,8 +58,13 @@ pub const Layout = struct {
         pub fn compare(self: *Equal, left: *const Layout, right: *const Layout, depth: usize) error{OutOfMemory}!bool {
             if (depth > 64) return false;
             if (left.count != right.count or left.is_record != right.is_record or left.is_choice != right.is_choice or left.children.len != right.children.len) return false;
+            if ((left.repetition == null) != (right.repetition == null)) return false;
             const key: Pair = .{ .left = left, .right = right };
             if (self.seen.contains(key)) return true;
+            if (left.repetition) |array| {
+                const other = right.repetition.?;
+                if (array.ty != other.ty or array.length != other.length or !try self.compare(array.element, other.element, depth + 1)) return false;
+            }
             for (left.children, right.children) |a, b| {
                 if ((a == null) != (b == null)) return false;
                 if (a) |span| if (span.offset != b.?.offset or span.ty != b.?.ty or !try self.compare(span.layout, b.?.layout, depth + 1)) return false;
@@ -76,6 +91,7 @@ pub const Layout = struct {
             if (entry.found_existing) return;
             entry.value_ptr.* = .{};
             self.cells = try std.math.add(usize, self.cells, try std.math.add(usize, 1, source.children.len));
+            if (source.repetition) |array| try self.measure(array.element, depth + 1);
             for (source.children) |child| if (child) |span| try self.measure(span.layout, depth + 1);
         }
 
@@ -90,6 +106,7 @@ pub const Layout = struct {
             }
             result.* = source.*;
             result.children = children;
+            if (source.repetition) |array| result.repetition = .{ .ty = array.ty, .length = array.length, .element = try self.retain(array.element, depth + 1) };
             self.memo.getPtr(source).?.retained = result;
             return result;
         }
@@ -114,6 +131,15 @@ pub const Counts = struct {
     // view. Descriptions contain ranges, never copies of runtime flag state.
     pub fn count(self: *Counts, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) error{ OutOfMemory, Overflow }!usize {
         if (self.values.get(ty)) |value| return value.count;
+        if (types.arrayElement(graph, ty)) |element| {
+            _ = try self.count(allocator, graph, element);
+            const length = std.math.cast(usize, types.arrayLength(graph, ty).?) orelse return error.Overflow;
+            const result = try allocator.create(Layout);
+            errdefer allocator.destroy(result);
+            result.* = try Layout.repeated(element, self.retained(element), length);
+            try self.values.put(allocator, ty, result);
+            return result.count;
+        }
         const shape = Shape.of(graph, ty);
         const children = try allocator.alloc(?Span, shape.len());
         errdefer allocator.free(children);
@@ -146,8 +172,8 @@ pub const Counts = struct {
 // backends attach their concrete flags to the same field/variant identities.
 // Physical addresses are insufficient: zero-sized siblings can share one.
 // Reference leaves never include the state of their referents, and variants
-// without payloads have no child storage. Arrays retain the current whole-value
-// state until indexed ownership transitions are represented by the frontend.
+// without payloads have no child storage. Array flag geometry is represented
+// by Layout.repetition; Shape only enumerates declared fields and variants.
 pub const Shape = union(enum) {
     leaf,
     fields: p.Range(g.GlobalFieldId),
@@ -343,4 +369,62 @@ test "cleanup layout comparisons do not cache rejected shapes as valid" {
     try std.testing.expect(!try equal.compare(&expected, &forged, 0));
     try std.testing.expect(!try equal.compare(&expected, &forged, 0));
     try std.testing.expect(try equal.compare(&expected, &expected, 0));
+}
+
+test "repeated cleanup layouts project logical elements without expanding metadata" {
+    const leaf: Layout = .{};
+    const element: Layout = .{ .count = 2, .is_record = true, .children = &.{.{ .offset = 1, .ty = @enumFromInt(0), .layout = &leaf }} };
+    const array = try Layout.repeated(@enumFromInt(1), &element, 1_000_000);
+    try std.testing.expectEqual(@as(usize, 2_000_001), array.count);
+    try std.testing.expectEqual(@as(usize, 0), array.children.len);
+    const last = array.project(.{ .element = 999_999 }).?;
+    try std.testing.expectEqual(@as(usize, 1_999_999), last.offset);
+    try std.testing.expect(last.layout == &element);
+    try std.testing.expect(array.project(.{ .element = 1_000_000 }) == null);
+    try std.testing.expect(array.project(.{ .field = 0 }) == null);
+    const empty = try Layout.repeated(@enumFromInt(1), &element, 0);
+    try std.testing.expectEqual(@as(usize, 1), empty.count);
+    try std.testing.expect(empty.project(.{ .element = 0 }) == null);
+    try std.testing.expectError(error.Overflow, Layout.repeated(@enumFromInt(1), &element, std.math.maxInt(usize)));
+}
+
+test "repeated cleanup retention shares nested elements and validates dimensions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const leaf: Layout = .{};
+    const inner = try Layout.repeated(@enumFromInt(0), &leaf, 1_000_000);
+    const outer = try Layout.repeated(@enumFromInt(1), &inner, 2);
+    var copy: Layout.Copy = .{ .allocator = arena.allocator() };
+    defer copy.deinit();
+    try copy.measure(&outer, 0);
+    try std.testing.expectEqual(@as(usize, 3), copy.cells);
+    const retained = try copy.retain(&outer, 0);
+    try std.testing.expect(retained.repetition.?.element != &inner);
+    var equal: Layout.Equal = .{ .allocator = arena.allocator() };
+    defer equal.deinit();
+    try std.testing.expect(try equal.compare(&outer, retained, 0));
+    const wrong_length = try Layout.repeated(@enumFromInt(1), &inner, 3);
+    try std.testing.expect(!try equal.compare(&outer, &wrong_length, 0));
+    try std.testing.expectEqual(@as(usize, 1_000_002), retained.project(.{ .element = 1 }).?.offset);
+}
+
+test "cleanup counts cache repeated array elements without per-element descriptors" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 1_000_000 } },
+        .{ .array = .{ .element = @enumFromInt(1), .length = 2 } },
+        .{ .array = .{ .element = @enumFromInt(0), .length = std.math.maxInt(u64) } },
+    });
+    var counts: Counts = .{};
+    defer counts.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2_000_003), try counts.count(a, &graph, @enumFromInt(2)));
+    try std.testing.expectEqual(@as(usize, 3), counts.values.count());
+    const array = counts.retained(@enumFromInt(2));
+    try std.testing.expectEqual(@as(usize, 0), array.children.len);
+    try std.testing.expect(array.repetition.?.element == counts.retained(@enumFromInt(1)));
+    try std.testing.expectError(error.Overflow, counts.count(a, &graph, @enumFromInt(3)));
+    try std.testing.expectEqual(@as(usize, 3), counts.values.count());
 }

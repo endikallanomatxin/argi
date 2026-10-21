@@ -712,6 +712,17 @@ pub const Storage = struct {
             depth -= 1;
             const ancestor = parents[depth];
             updated += 1;
+            if (ancestor.layout.repetition) |array| {
+                if (array.length == 0) continue;
+                var complete = true;
+                for (0..array.length) |index| {
+                    complete = complete and flags[ancestor.offset + 1 + index * array.element.count];
+                    updated += 1;
+                }
+                flags[ancestor.offset] = complete;
+                updated += 1;
+                continue;
+            }
             if (!ancestor.layout.is_record and !ancestor.layout.is_choice) continue;
             if (ancestor.layout.is_record and ancestor.layout.children.len == 0) continue;
             var complete = if (ancestor.layout.is_choice) flags[ancestor.offset + 1] else true;
@@ -1519,4 +1530,33 @@ test "cleanup flags cannot be read or overwritten as language values" {
     try std.testing.expectError(error.ExecutionInvalidReference, slots_.get(1));
     _ = try storage.cleanupSet(reference, false);
     try std.testing.expect(!(try slots_.get(0)).boolean);
+}
+
+test "repeated cleanup uses indexed identities and refreshes nested array ancestors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1000);
+    const leaf: cleanup_layout.Layout = .{};
+    const inner = try cleanup_layout.Layout.repeated(@enumFromInt(0), &leaf, 3);
+    const outer = try cleanup_layout.Layout.repeated(@enumFromInt(1), &inner, 2);
+    const frame = try storage.enterCleanup(1, &.{.{ .root = 0, .layout = &outer }});
+    const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    var first = root;
+    first.path = &.{ .{ .element = 0 }, .{ .element = 1 } };
+    var sibling = root;
+    sibling.path = &.{ .{ .element = 1 }, .{ .element = 1 } };
+    _ = try storage.cleanupSet(root, true);
+    _ = try storage.cleanupSet(first, false);
+    try std.testing.expect(!try storage.cleanupTest(first));
+    try std.testing.expect(try storage.cleanupTest(sibling));
+    try std.testing.expect(!try storage.cleanupTest(root));
+    _ = try storage.cleanupSet(first, true);
+    try std.testing.expect(try storage.cleanupTest(root));
+    // No initialized value or physical address is needed to identify flags.
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(root));
+    var outside = root;
+    outside.path = &.{.{ .element = 2 }};
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupSet(outside, false));
+    try std.testing.expect(try storage.cleanupTest(root));
+    _ = try storage.cleanupSet(root, false);
 }
