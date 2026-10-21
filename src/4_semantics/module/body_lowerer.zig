@@ -116,7 +116,11 @@ const Context = struct {
 
     fn lowerFunctions(self: *Context) !Stats {
         var stats: Stats = .{};
-        for (self.graph.functions.items, 0..) |interface, raw_index| {
+        var raw_index: usize = 0;
+        // Lowering may enqueue additional function bodies. Fetch a fresh value
+        // on every iteration: appending interfaces can relocate their table.
+        while (raw_index < self.graph.functions.items.len) : (raw_index += 1) {
+            const interface = self.graph.functions.items[raw_index];
             const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(raw_index)));
             if (hasFunctionSemantic(self.graph, function_id)) continue;
             self.current_function = function_id;
