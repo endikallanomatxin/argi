@@ -64,6 +64,12 @@ host handles and temporary resource ownership cannot escape into generated
 code. These restrictions apply to all captured values and outputs, not only
 to `System`.
 
+A directly nested entry runs within the enclosing compile-time invocation.
+Its enclosing locals are already compile-time storage, and repeated calls use
+the current invocation's values. It does not create an independently frozen
+request detached from those inputs. The outer boundary still checks that no
+reference or temporary resource escapes into generated code.
+
 Dependency readiness remains the semantic scheduler's responsibility; the VM
 executes an entry after its dependencies are available. Specialization and
 `#if` selection retain deferred evaluation rather than executing discarded

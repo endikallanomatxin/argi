@@ -14291,3 +14291,9 @@ test "argi repl preserves array defaults across specializations" {
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );
 }
+
+test "feature_tests/execution/155_nested_comptime_capture_context" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/155_nested_comptime_capture_context");
+    try runExpect("tests/feature_tests/execution/155_nested_comptime_capture_context", 42);
+    try vmExpect("tests/feature_tests/execution/155_nested_comptime_capture_context", 42, null);
+}

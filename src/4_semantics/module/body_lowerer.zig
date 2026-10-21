@@ -884,7 +884,11 @@ const Context = struct {
             try self.writer.addResolvedType(.{ .structural = .{ .fields = .{ .start = output.start, .len = output.len } } });
         const arguments = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = captured_values_start, .len = @intCast(body.entry_captures.items.len) } } });
         const result = try self.resolved(node, result_type, .{ .function_call = .{ .callee = function_id, .input = arguments.node } });
-        try self.graph.semantic.comptime_requests.append(self.allocator, result.node);
+        // A directly nested entry executes inside the enclosing compile-time
+        // invocation. Its captured inputs belong to that VM frame, not to a
+        // separately freezable request with no argument environment.
+        if (self.entry_parent == null)
+            try self.graph.semantic.comptime_requests.append(self.allocator, result.node);
         return result;
     }
 
