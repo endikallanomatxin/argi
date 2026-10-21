@@ -74,7 +74,9 @@ external inputs must be tracked as build dependencies before enabling them.
 > [!IMPLEMENTATION]
 > Concrete anonymous entries without inputs execute through ordinary semantic
 > functions and compile-time requests, including nested entries and output
-> defaults. No-output blocks and local reference operations execute within the
+> defaults. Multiple outputs retain their names and types in a frozen record,
+> including when retained between interactive submissions.
+> No-output blocks and local reference operations execute within the
 > entry; temporary references cannot escape as outputs. Generic entries,
 > compile-time captures and host `System` execution
 > remain incomplete.

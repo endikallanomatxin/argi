@@ -1250,6 +1250,18 @@ test "bytecode anonymous compile-time blocks support local storage and no output
     , .{}));
 }
 
+test "bytecode anonymous compile-time entries preserve named multiple outputs" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\main() -> (.status_code: Int32) := {
+        \\    pair ::= #run () -> (.left: Int32, .right: Int32) {
+        \\        left = 20
+        \\        right = 22
+        \\    }
+        \\    status_code = pair.left + pair.right
+        \\}
+    , .{}));
+}
+
 test "anonymous compile-time entries cannot export temporary references" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

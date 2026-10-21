@@ -436,6 +436,9 @@ test "interactive anonymous compile-time entries preserve accepted state across 
     try session.submit("calculate := () -> (.result: Int32) { result = 42 }");
     try session.submitStatements("saved ::= #run () -> (.result: Int32) { result = calculate() }");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("saved")).?.value.runtime.integer);
+    try session.submitStatements("pair ::= #run () -> (.left: Int32 = 20, .right: Int32 = 22) {}");
+    try std.testing.expectEqual(@as(i128, 20), (try session.submitInput("pair.left")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 22), (try session.submitInput("pair.right")).?.value.runtime.integer);
     try session.submitStatements("runtime_value :: Int32 = 7");
     const revision = session.compiler.revision;
     try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.result: Int32) { result = runtime_value }"));
