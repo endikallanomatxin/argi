@@ -1224,7 +1224,7 @@ test "bytecode expression entries share validation and retained execution" {
     try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool } });
     const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
     var code = [_]b.Instruction{
-        .{ .source = source, .op = .{ .binary = .{ .dst = 2, .left = 0, .right = 1, .operator = .addition } } },
+        .{ .source = source, .op = .{ .binary = .{ .dst = 2, .left = 0, .right = 1, .operator = .addition, .kind = .i32 } } },
         .{ .source = source, .op = .{ .ret = &.{2} } },
     };
     const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &.{

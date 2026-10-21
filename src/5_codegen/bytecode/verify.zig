@@ -190,8 +190,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const to = program.graph.semanticType(f.slots[x.dst]);
                     if (from != .pointer or to != .pointer or from.pointer.mutability != .read_write or to.pointer.mutability != .read_only or !types.equal(program.graph, from.pointer.child, to.pointer.child)) return error.InvalidBytecode;
                 },
-                .binary => |x| if ((integerBounds(program.graph, f.slots[x.dst]) == null and !b.floatType(program.graph, f.slots[x.dst])) or !types.equal(program.graph, f.slots[x.dst], f.slots[x.left]) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode,
+                .binary => |x| {
+                    if (x.kind != b.scalarKind(program.graph, f.slots[x.dst]) or (x.kind.bounds() == null and !x.kind.floating()) or !types.equal(program.graph, f.slots[x.dst], f.slots[x.left]) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode;
+                },
                 .compare => |x| {
+                    if (x.kind != b.scalarKind(program.graph, f.slots[x.left])) return error.InvalidBytecode;
                     if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false }) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode;
                     const numeric = integerBounds(program.graph, f.slots[x.left]) != null or b.floatType(program.graph, f.slots[x.left]);
                     const equality_only = valueFits(program.graph, f.slots[x.left], .{ .boolean = false }) or types.variants(program.graph, f.slots[x.left]) != null;
@@ -616,6 +619,36 @@ fn sessionBinding(program: Program, index: u32) !b.SessionBinding {
     const session = program.session orelse return error.InvalidBytecode;
     if (index >= session.bindings.len) return error.InvalidBytecode;
     return session.bindings[index];
+}
+
+test "bytecode scalar descriptors preserve integer width sign and floating precision" {
+    const a = std.testing.allocator;
+    const p = @import("../../4_semantics/primitives/schema.zig");
+    for ([_]p.BuiltinType{ .Int8, .UInt8, .Int16, .UInt16, .Int32, .UInt32, .Int64, .UInt64, .Float16, .Float32, .Float64 }) |builtin| {
+        var graph: g.GlobalSemanticGraph = .{};
+        defer graph.deinit(a);
+        try graph.types.appendSlice(a, &.{ .{ .builtin = builtin }, .{ .builtin = .Bool } });
+        const kind = b.scalarKind(&graph, @enumFromInt(0));
+        try std.testing.expect(kind != .unresolved);
+        const source = p.SourceRef{ .file_index = 0, .offset = 0 };
+        var slots = [_]Type{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0) };
+        var code = [_]Instruction{
+            .{ .source = source, .op = .{ .binary = .{ .dst = 2, .left = 0, .right = 1, .operator = .addition, .kind = kind } } },
+            .{ .source = source, .op = .{ .ret = &.{2} } },
+        };
+        const function = b.Function{ .slots = &slots, .inputs = &.{ 0, 1 }, .outputs = &.{2}, .code = &code };
+        const program = Program{ .graph = &graph, .functions = &.{}, .expression = &function };
+        try verify(a, program);
+        code[0].op.binary.kind = .unresolved;
+        try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+        code[0].op.binary.kind = if (kind == .u8) .i8 else .u8;
+        try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+        slots[2] = @enumFromInt(1);
+        code[0].op = .{ .compare = .{ .dst = 2, .left = 0, .right = 1, .operator = .less_than, .kind = kind } };
+        try verify(a, program);
+        code[0].op.compare.kind = if (kind == .f32) .f64 else .f32;
+        try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+    }
 }
 
 test "bytecode borrow descriptors cannot change the selected access permission" {

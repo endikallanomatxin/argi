@@ -8,6 +8,57 @@ pub const Slot = u32;
 // as a safe reference. A function captures it before evaluating a store's RHS.
 pub const Destination = u32;
 pub const Type = g.GlobalTypeId;
+// Checked operation interpretation, independent of semantic graph identities.
+// One byte avoids retaining full integer bounds in every instruction.
+pub const ScalarKind = enum(u8) {
+    unresolved,
+    i8,
+    u8,
+    i16,
+    u16,
+    i32,
+    u32,
+    i64,
+    u64,
+    f16,
+    f32,
+    f64,
+    boolean,
+    choice,
+
+    pub fn bounds(self: ScalarKind) ?p.IntegerRange {
+        return switch (self) {
+            .i8 => p.integerRangeForWidth(8, true),
+            .u8 => p.integerRangeForWidth(8, false),
+            .i16 => p.integerRangeForWidth(16, true),
+            .u16 => p.integerRangeForWidth(16, false),
+            .i32 => p.integerRangeForWidth(32, true),
+            .u32 => p.integerRangeForWidth(32, false),
+            .i64 => p.integerRangeForWidth(64, true),
+            .u64 => p.integerRangeForWidth(64, false),
+            else => null,
+        };
+    }
+
+    pub fn floating(self: ScalarKind) bool {
+        return self == .f16 or self == .f32 or self == .f64;
+    }
+};
+
+pub fn scalarKind(graph: *const g.GlobalSemanticGraph, ty: Type) ScalarKind {
+    if (integerBounds(graph, ty)) |range| {
+        inline for ([_]ScalarKind{ .i8, .u8, .i16, .u16, .i32, .u32, .i64, .u64 }) |kind| {
+            const candidate = kind.bounds().?;
+            if (candidate.minimum == range.minimum and candidate.maximum == range.maximum) return kind;
+        }
+    }
+    if (types.isBuiltin(graph, ty, .Float16)) return .f16;
+    if (types.isBuiltin(graph, ty, .Float32)) return .f32;
+    if (types.isBuiltin(graph, ty, .Float64)) return .f64;
+    if (types.isBuiltin(graph, ty, .Bool)) return .boolean;
+    if (types.variants(graph, ty) != null) return .choice;
+    return .unresolved;
+}
 pub const SessionNamespace = enum(u64) { _ };
 // Runtime storage is keyed by durable graph bindings inside one compilation
 // namespace. Each binding has a value slot followed only by cleanup flag slots.
@@ -111,8 +162,8 @@ pub const Instruction = struct {
         session_declare: struct { binding: u32, layout: ?@import("storage_layout.zig").Layout = null },
         session_initialize: struct { binding: u32, value: Slot, reinitialize: bool = false },
         readonly: struct { dst: Slot, src: Slot },
-        binary: struct { dst: Slot, left: Slot, right: Slot, operator: p.BinaryOperator },
-        compare: struct { dst: Slot, left: Slot, right: Slot, operator: p.ComparisonOperator },
+        binary: struct { dst: Slot, left: Slot, right: Slot, operator: p.BinaryOperator, kind: ScalarKind = .unresolved },
+        compare: struct { dst: Slot, left: Slot, right: Slot, operator: p.ComparisonOperator, kind: ScalarKind = .unresolved },
         record: struct { dst: Slot, fields: []const Slot },
         field: struct { dst: Slot, base: Slot, index: u32 },
         array: struct { dst: Slot, elements: []const Slot },

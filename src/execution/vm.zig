@@ -603,31 +603,31 @@ pub const Vm = struct {
                 .binary => |x| {
                     const left_value = try slots.get(x.left);
                     const right_value = try slots.get(x.right);
-                    if (b.floatType(unit.graph, f.slots[x.dst])) {
+                    if (x.kind.floating()) {
                         const result = try floatValue(left_value).binary(x.operator, floatValue(right_value));
                         try slots.put(x.dst, fromFloatValue(result));
                         continue;
                     }
                     const left = (try slots.get(x.left)).integer;
                     const right = (try slots.get(x.right)).integer;
-                    const range = b.integerBounds(unit.graph, f.slots[x.dst]).?;
+                    const range = x.kind.bounds().?;
                     const n = integer.evaluateBits(x.operator, left, right, range) catch return error.ExecutionDivisionByZero;
                     try slots.put(x.dst, .{ .integer = n });
                 },
                 .compare => |x| {
                     const left = try slots.get(x.left);
                     const right = try slots.get(x.right);
-                    const yes = if (b.floatType(unit.graph, f.slots[x.left]))
+                    const yes = if (x.kind.floating())
                         try floatValue(left).compare(x.operator, floatValue(right))
-                    else if (left == .choice) switch (x.operator) {
+                    else if (x.kind == .choice) switch (x.operator) {
                         .equal => left.choice.variant == right.choice.variant,
                         .not_equal => left.choice.variant != right.choice.variant,
                         else => unreachable,
-                    } else if (left == .boolean) switch (x.operator) {
+                    } else if (x.kind == .boolean) switch (x.operator) {
                         .equal => left.boolean == right.boolean,
                         .not_equal => left.boolean != right.boolean,
                         else => unreachable,
-                    } else integer.compareBits(x.operator, left.integer, right.integer, b.integerBounds(unit.graph, f.slots[x.left]).?);
+                    } else integer.compareBits(x.operator, left.integer, right.integer, x.kind.bounds().?);
                     try slots.put(x.dst, .{ .boolean = yes });
                 },
                 .call => |x| {

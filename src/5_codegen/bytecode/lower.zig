@@ -473,6 +473,7 @@ const FunctionLower = struct {
         // Finalize representation tags once, after semantic variant selection.
         // The verifier rejects unresolved or contradictory descriptors.
         switch (resolved) {
+            inline .binary, .compare => |*numeric| numeric.kind = b.scalarKind(self.parent.graph, self.slots.items[numeric.left]),
             .choice => |*choice| choice.ordinal = try b.variantOrdinal(self.parent.graph, self.slots.items[choice.dst], choice.variant),
             inline .payload, .is_variant, .branch_variant => |*choice| choice.ordinal = try b.variantOrdinal(self.parent.graph, self.slots.items[choice.src], choice.variant),
             else => {},
