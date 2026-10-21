@@ -403,6 +403,15 @@ functions and ten live acquisitions. These are requested storage counts across
 different optimization modes, not a timing comparison; a controlled ReleaseSafe
 rerun remains pending after benchmark rebuilds exceeded local process limits.
 
+Cleanup owners now retain shared immutable layouts instead of a concrete-path
+entry for every field and variant. LLVM and bytecode use the same preorder
+geometry; the VM follows verified layout projections without semantic-graph
+queries. In matched Debug ten-resource samples with a 1,024 MiB tracked limit,
+code arenas fell from 15.13 to 11.70 MiB and total retained memory from 226.66 to
+223.23 MiB. Runtime capacity, flag bytes, live resources and compiled instruction
+counts were unchanged; both runs closed normally with no tracked allocation
+retained. These single samples establish storage changes, not a speedup.
+
 Definition submissions now release their checked validation snapshots on
 publication; executable submissions retain the graph borrowed by their bytecode.
 Both paths use the same checks and atomic semantic publication. A Debug comparison

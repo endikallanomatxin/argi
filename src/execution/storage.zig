@@ -5,6 +5,7 @@ const p = @import("../4_semantics/primitives/schema.zig");
 const acquired = @import("acquisitions.zig");
 const numeric = @import("../5_codegen/bytecode/numeric_layout.zig");
 const partial = @import("partial_storage.zig");
+const cleanup_layout = @import("../5_codegen/cleanup_layout.zig");
 
 const Frame = struct {
     values: []?b.Value,
@@ -58,9 +59,11 @@ pub const WriteDestination = struct {
     reference: v.Reference,
     // Index in this target frame's immutable compiler-selected layout. This
     // belongs to the referent, never to the local slot holding a reference.
-    cleanup_entry: ?usize,
+    cleanup_entry: ?CleanupSelection,
     require_cleanup: bool = true,
 };
+
+const CleanupSelection = struct { owner: usize, offset: usize, layout: *const cleanup_layout.Layout };
 
 // Context-local storage. Its allocator is an execution arena; references can neither
 // name another execution nor expose a native address. Dead frame IDs stay dead.
@@ -162,8 +165,7 @@ pub const Storage = struct {
         const slots_ = try self.slots(frame);
         const values = try slots_.cells();
         if (root >= values.len) return error.ExecutionInvalidReference;
-        for (self.frames.items[@intFromEnum(frame)].cleanup) |entry|
-            if (entry.root == root and (self.frames.items[@intFromEnum(frame)].cleanup_flags[entry.flag] or (if (entry.presence) |flag| self.frames.items[@intFromEnum(frame)].cleanup_flags[flag] else false))) return error.ExecutionPendingCleanup;
+        if (try self.cleanupRootActive(frame, root)) return error.ExecutionPendingCleanup;
         if (self.frames.items[@intFromEnum(frame)].partial_storage.getPtr(root)) |record| {
             if (record.layout.nodes.len != layout.nodes.len) return error.ExecutionInvalidReference;
             for (record.layout.nodes, layout.nodes) |old, new| if (!std.meta.eql(old, new)) return error.ExecutionInvalidReference;
@@ -261,28 +263,27 @@ pub const Storage = struct {
     /// bytecode unit may be released before this storage is retired.
     pub fn enterSession(self: *Storage, count: usize, cleanup: []const b.Cleanup) !Slots {
         const flag_count = b.cleanupFlagCount(cleanup) catch return error.ExecutionInvalidReference;
-        var metadata_cells = cleanup.len;
-        for (cleanup) |entry| {
-            if (entry.root >= count) return error.ExecutionInvalidReference;
-            metadata_cells = std.math.add(usize, metadata_cells, entry.path.len) catch return error.ExecutionMemoryLimit;
-        }
+        for (cleanup) |entry| if (entry.root >= count) return error.ExecutionInvalidReference;
         const frame_cells = std.math.add(usize, std.math.add(usize, count, flag_count) catch return error.ExecutionMemoryLimit, 1) catch return error.ExecutionMemoryLimit;
+        if (frame_cells > self.limit -| self.cells) return error.ExecutionMemoryLimit;
+        var staging = std.heap.ArenaAllocator.init(self.allocator);
+        errdefer staging.deinit();
+        const a = staging.allocator();
+        var copy: cleanup_layout.Layout.Copy = .{ .allocator = a };
+        defer copy.deinit();
+        for (cleanup) |entry| try copy.measure(entry.layout, 0);
+        const metadata_cells = std.math.add(usize, cleanup.len, copy.cells) catch return error.ExecutionMemoryLimit;
         const total_cells = std.math.add(usize, metadata_cells, frame_cells) catch return error.ExecutionMemoryLimit;
         if (total_cells > self.limit -| self.cells) return error.ExecutionMemoryLimit;
-        try self.charge(metadata_cells);
-        errdefer self.cells -= metadata_cells;
-        const retained = try self.allocator.alloc(b.Cleanup, cleanup.len);
-        var copied: usize = 0;
-        errdefer {
-            for (retained[0..copied]) |entry| self.allocator.free(entry.path);
-            self.allocator.free(retained);
-        }
+        const retained = try a.alloc(b.Cleanup, cleanup.len);
         for (retained, cleanup) |*out, entry| {
             out.* = entry;
-            out.path = try self.allocator.dupe(v.Projection, entry.path);
-            copied += 1;
+            out.layout = try copy.retain(entry.layout, 0);
         }
+        try self.charge(metadata_cells);
+        errdefer self.cells -= metadata_cells;
         const frame = try self.enterCleanup(count, retained);
+        // The execution arena owns the staged immutable metadata's backing.
         self.frames.items[@intFromEnum(frame)].duration = .session;
         return .{ .storage = self, .context = self.context, .frame = frame };
     }
@@ -308,9 +309,7 @@ pub const Storage = struct {
         if (self.frames.items[@intFromEnum(target.frame)].duration != .session) return error.ExecutionInvalidReference;
         if (index >= values.len) return error.ExecutionInvalidReference;
         if (values[index] != null and !reinitialize) return error.ExecutionInitializedStorage;
-        for (self.frames.items[@intFromEnum(target.frame)].cleanup) |entry| {
-            if (entry.root == index and (self.frames.items[@intFromEnum(target.frame)].cleanup_flags[entry.flag] or (if (entry.presence) |flag| self.frames.items[@intFromEnum(target.frame)].cleanup_flags[flag] else false))) return error.ExecutionPendingCleanup;
-        }
+        if (try self.cleanupRootActive(target.frame, index)) return error.ExecutionPendingCleanup;
         try self.validateSessionValues((&value)[0..1], 0);
         const retained = try self.cloneValues((&value)[0..1]);
         values[index] = retained[0];
@@ -415,8 +414,7 @@ pub const Storage = struct {
         _ = try target.cells();
         const frame = &self.frames.items[@intFromEnum(target.frame)];
         if (frame.duration != .session) return error.ExecutionInvalidReference;
-        for (frame.cleanup) |entry|
-            if (frame.cleanup_flags[entry.flag] or (if (entry.presence) |flag| frame.cleanup_flags[flag] else false)) return error.ExecutionActiveCleanup;
+        if (std.mem.indexOfScalar(bool, frame.cleanup_flags, true) != null) return error.ExecutionActiveCleanup;
         frame.alive = false;
     }
 
@@ -642,75 +640,87 @@ pub const Storage = struct {
         return .{ .reference = result };
     }
 
-    fn cleanupEntry(self: *Storage, reference: v.Reference) !usize {
+    fn cleanupRootActive(self: *Storage, frame: v.FrameId, root: b.Slot) !bool {
+        _ = try self.slots(frame);
+        const record = self.frames.items[@intFromEnum(frame)];
+        for (record.cleanup) |owner| if (owner.root == root) {
+            const end = std.math.add(usize, owner.offset, owner.layout.count) catch return error.ExecutionInvalidReference;
+            if (end > record.cleanup_flags.len) return error.ExecutionInvalidReference;
+            return std.mem.indexOfScalar(bool, record.cleanup_flags[owner.offset..end], true) != null;
+        };
+        return false;
+    }
+
+    fn cleanupEntry(self: *Storage, reference: v.Reference) !CleanupSelection {
         if (reference.byte_view != null) return error.ExecutionInvalidReference;
         try self.validateContext(reference);
         if (try self.acquiredView(reference) != null) return error.ExecutionMissingCleanup;
         _ = try self.slots(reference.frame);
-        const layout = self.frames.items[@intFromEnum(reference.frame)].cleanup;
-        const key = b.Cleanup{ .root = reference.root, .path = reference.path, .flag = 0 };
+        const record = self.frames.items[@intFromEnum(reference.frame)];
         var start: usize = 0;
-        var end = layout.len;
+        var end = record.cleanup.len;
         while (start < end) {
             const middle = start + (end - start) / 2;
-            switch (b.cleanupOrder(layout[middle], key)) {
+            switch (std.math.order(record.cleanup[middle].root, reference.root)) {
                 .lt => start = middle + 1,
                 .gt => end = middle,
-                .eq => return middle,
+                .eq => {
+                    const owner = record.cleanup[middle];
+                    var selected: CleanupSelection = .{ .owner = middle, .offset = owner.offset, .layout = owner.layout };
+                    for (reference.path) |projection| {
+                        const span = selected.layout.project(projection) orelse return error.ExecutionMissingCleanup;
+                        selected.offset = std.math.add(usize, selected.offset, span.offset) catch return error.ExecutionInvalidReference;
+                        selected.layout = span.layout;
+                    }
+                    if (selected.offset >= record.cleanup_flags.len or selected.layout.count > record.cleanup_flags.len - selected.offset) return error.ExecutionInvalidReference;
+                    return selected;
+                },
             }
         }
         return error.ExecutionMissingCleanup;
     }
     pub fn cleanupPresent(self: *Storage, reference: v.Reference) !bool {
-        const index = try self.cleanupEntry(reference);
-        const entry = self.frames.items[@intFromEnum(reference.frame)].cleanup[index];
-        return self.frames.items[@intFromEnum(reference.frame)].cleanup_flags[entry.presence orelse entry.flag];
+        const selected = try self.cleanupEntry(reference);
+        return self.frames.items[@intFromEnum(reference.frame)].cleanup_flags[selected.offset + @intFromBool(selected.layout.is_choice)];
     }
     pub fn cleanupTest(self: *Storage, reference: v.Reference) !bool {
-        const index = try self.cleanupEntry(reference);
-        const flag = self.frames.items[@intFromEnum(reference.frame)].cleanup[index].flag;
-        return self.frames.items[@intFromEnum(reference.frame)].cleanup_flags[flag];
+        const selected = try self.cleanupEntry(reference);
+        return self.frames.items[@intFromEnum(reference.frame)].cleanup_flags[selected.offset];
     }
-    // Returns work units for execution metering, including ancestor inspection.
     pub fn cleanupSet(self: *Storage, reference: v.Reference, enabled: bool) !usize {
         try self.validateWritable(reference);
         return self.cleanupSetAt(reference, try self.cleanupEntry(reference), enabled);
     }
-    fn cleanupSetAt(self: *Storage, reference: v.Reference, index: usize, enabled: bool) !usize {
+    fn cleanupSetAt(self: *Storage, reference: v.Reference, selected: CleanupSelection, enabled: bool) !usize {
         _ = try self.slots(reference.frame);
-        const flags = self.frames.items[@intFromEnum(reference.frame)].cleanup_flags;
-        const layout = self.frames.items[@intFromEnum(reference.frame)].cleanup;
-        var updated: usize = 0;
-        for (layout[index..]) |entry| {
-            if (!b.cleanupContains(layout[index], entry)) break;
-            flags[entry.flag] = enabled;
-            if (entry.presence) |flag| flags[flag] = enabled;
-            updated += 1;
+        const record = self.frames.items[@intFromEnum(reference.frame)];
+        const flags = record.cleanup_flags;
+        var updated = selected.layout.count;
+        const Ancestor = struct { offset: usize, layout: *const cleanup_layout.Layout };
+        var parents: [64]Ancestor = undefined;
+        const owner = record.cleanup[selected.owner];
+        var parent: Ancestor = .{ .offset = owner.offset, .layout = owner.layout };
+        if (reference.path.len > parents.len) return error.ExecutionInvalidReference;
+        for (reference.path, 0..) |projection, index| {
+            parents[index] = parent;
+            const span = parent.layout.project(projection) orelse return error.ExecutionMissingCleanup;
+            parent = .{ .offset = parent.offset + span.offset, .layout = span.layout };
         }
-        var ancestor = index;
-        while (ancestor != 0) {
-            ancestor -= 1;
+        @memset(flags[selected.offset..][0..selected.layout.count], enabled);
+        var depth = reference.path.len;
+        while (depth != 0) {
+            depth -= 1;
+            const ancestor = parents[depth];
             updated += 1;
-            const parent = layout[ancestor];
-            if (parent.root != layout[index].root) break;
-            if (!b.cleanupContains(parent, layout[index]) or parent.path.len >= layout[index].path.len) continue;
-            var has_fields = parent.presence != null;
-            var complete = if (parent.presence) |flag| flags[flag] else true;
-            for (layout[ancestor + 1 ..]) |entry| {
+            if (!ancestor.layout.is_record and !ancestor.layout.is_choice) continue;
+            if (ancestor.layout.is_record and ancestor.layout.children.len == 0) continue;
+            var complete = if (ancestor.layout.is_choice) flags[ancestor.offset + 1] else true;
+            for (ancestor.layout.children) |maybe_child| if (maybe_child) |span| {
+                complete = complete and flags[ancestor.offset + span.offset];
                 updated += 1;
-                if (!b.cleanupContains(parent, entry)) break;
-                if (entry.path.len != parent.path.len + 1) continue;
-                if (entry.path[entry.path.len - 1] != .field and parent.presence == null) {
-                    complete = false;
-                    break;
-                }
-                has_fields = true;
-                if (!flags[entry.flag]) complete = false;
-            }
-            if (has_fields) {
-                flags[parent.flag] = complete;
-                updated += 1;
-            }
+            };
+            flags[ancestor.offset] = complete;
+            updated += 1;
         }
         return updated;
     }
@@ -733,22 +743,14 @@ pub const Storage = struct {
     // The executor orders this check, the write and subsequent activation.
     pub fn checkWriteCleanup(self: *Storage, destination: WriteDestination) !usize {
         if (!destination.require_cleanup) return 0;
-        var checked: usize = 0;
-        if (destination.cleanup_entry) |index| {
+        if (destination.cleanup_entry) |selected| {
             try self.validateContext(destination.reference);
             _ = try self.slots(destination.reference.frame);
             const flags = self.frames.items[@intFromEnum(destination.reference.frame)].cleanup_flags;
-            const layout = self.frames.items[@intFromEnum(destination.reference.frame)].cleanup;
-            // A replacement may start with an active or partially moved value,
-            // but its selected cleanup must finish before committing the new one.
-            // Root occupancy alone cannot prove that every child was discharged.
-            for (layout[index..]) |entry| {
-                if (!b.cleanupContains(layout[index], entry)) break;
-                if (flags[entry.flag] or (if (entry.presence) |flag| flags[flag] else false)) return error.ExecutionPendingCleanup;
-                checked += 1;
-            }
+            if (std.mem.indexOfScalar(bool, flags[selected.offset..][0..selected.layout.count], true) != null) return error.ExecutionPendingCleanup;
+            return selected.layout.count;
         }
-        return checked;
+        return 0;
     }
 
     // A write changes only the value. It never manufactures or reactivates a
@@ -874,7 +876,7 @@ test "deferred session initialization requires discharged cleanup" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 4096);
-    const slots_ = try storage.enterSession(2, &.{.{ .root = 0, .path = &.{}, .flag = 0 }});
+    const slots_ = try storage.enterSession(2, &.{.{ .root = 0, .offset = 0 }});
     try std.testing.expectError(error.ExecutionUninitializedStorage, slots_.get(0));
     try storage.initializeSession(slots_, 0, .{ .integer = 41 });
     try std.testing.expectError(error.ExecutionInitializedStorage, storage.initializeSession(slots_, 0, .{ .integer = 42 }));
@@ -918,7 +920,7 @@ test "lexical record reset clears values only after cleanup is discharged" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 4096);
-    const frame = try storage.enterCleanup(2, &.{.{ .root = 0, .path = &.{}, .flag = 0 }});
+    const frame = try storage.enterCleanup(2, &.{.{ .root = 0, .offset = 0 }});
     const layout: partial.Layout = .{ .nodes = &.{ .{ .kind = .record, .first = 1, .count = 1, .span = 2 }, .{ .offset = 1 } } };
     _ = try storage.resetStorage(frame, 0, layout);
     const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
@@ -943,11 +945,8 @@ test "field cleanup activation completes record ancestors but not choices" {
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 4096);
     const frame = try storage.enterCleanup(8, &.{
-        .{ .root = 0, .path = &.{}, .flag = 0 },
-        .{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 1 },
-        .{ .root = 0, .path = &.{.{ .field = 1 }}, .flag = 2 },
-        .{ .root = 4, .path = &.{}, .flag = 3, .presence = 5 },
-        .{ .root = 4, .path = &.{.{ .variant = 0 }}, .flag = 4 },
+        .{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.pair },
+        .{ .root = 4, .offset = 3, .layout = &@import("../test_support.zig").cleanup_layouts.choice },
     });
     const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
     var field = root;
@@ -987,10 +986,7 @@ test "consuming nested storage revokes ancestor cleanup and reinitialization res
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 4096);
     const frame = try storage.enterCleanup(5, &.{
-        .{ .root = 0, .path = &.{}, .flag = 0 },
-        .{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 1 },
-        .{ .root = 0, .path = &.{ .{ .field = 0 }, .{ .field = 0 } }, .flag = 2 },
-        .{ .root = 0, .path = &.{.{ .field = 1 }}, .flag = 3 },
+        .{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.nested },
     });
     const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
     var parent = root;
@@ -1080,17 +1076,17 @@ test "literal allocation failures publish neither frames nor quota charges" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, failedLiteralStorage, .{});
 }
 
-test "session creation validates complete quota before retaining cleanup paths" {
+test "session creation validates complete quota before retaining cleanup layouts" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 4);
-    const cleanup = &.{b.Cleanup{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 0 }};
+    const cleanup = &.{b.Cleanup{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.single }};
     try std.testing.expectError(error.ExecutionMemoryLimit, storage.enterSession(2, cleanup));
     try std.testing.expectEqual(@as(usize, 0), storage.cells);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
-    storage.limit = 6;
+    storage.limit = 9;
     const session = try storage.enterSession(2, cleanup);
-    try std.testing.expectEqual(@as(usize, 6), storage.cells);
+    try std.testing.expectEqual(@as(usize, 9), storage.cells);
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(session.frame));
 }
 
@@ -1098,7 +1094,7 @@ fn failedSessionStorage(a: std.mem.Allocator) !void {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 100000);
-    const cleanup = &.{b.Cleanup{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 0 }};
+    const cleanup = &.{b.Cleanup{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.single }};
     _ = storage.enterSession(4096, cleanup) catch |err| {
         try std.testing.expectEqual(@as(usize, 0), storage.cells);
         try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
@@ -1114,7 +1110,7 @@ test "rejected frames preserve quota and frame identities" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 2);
-    try std.testing.expectError(error.ExecutionInvalidReference, storage.enterCleanup(2, &.{.{ .root = 0, .path = &.{}, .flag = 1 }}));
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.enterCleanup(2, &.{.{ .root = 0, .offset = 1 }}));
     try std.testing.expectEqual(@as(usize, 0), storage.cells);
     try std.testing.expectError(error.ExecutionMemoryLimit, storage.enter(2));
     try std.testing.expectEqual(@as(usize, 0), storage.cells);
@@ -1126,7 +1122,7 @@ fn failedFrameStorage(a: std.mem.Allocator) !void {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 100000);
-    _ = storage.enterCleanup(4096, &.{.{ .root = 0, .path = &.{}, .flag = 0 }}) catch |err| {
+    _ = storage.enterCleanup(4096, &.{.{ .root = 0, .offset = 0 }}) catch |err| {
         try std.testing.expectEqual(@as(usize, 0), storage.cells);
         try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
         return err;
@@ -1362,7 +1358,7 @@ test "call buffers reuse cells without reviving retired frame identities" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 10000);
-    const first = try storage.enterCleanup(3, &.{.{ .root = 0, .path = &.{}, .flag = 0 }});
+    const first = try storage.enterCleanup(3, &.{.{ .root = 0, .offset = 0 }});
     const old_slots = try storage.slots(first);
     try old_slots.put(0, .{ .integer = 42 });
     storage.frames.items[@intFromEnum(first)].cleanup_flags[0] = true;
@@ -1374,7 +1370,7 @@ test "call buffers reuse cells without reviving retired frame identities" {
     try std.testing.expect(storage.frames.items[@intFromEnum(without_cleanup)].values.ptr != backing);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(without_cleanup)].cleanup_flags.len);
     storage.leave(without_cleanup);
-    const second = try storage.enterCleanup(3, &.{.{ .root = 0, .path = &.{}, .flag = 0 }});
+    const second = try storage.enterCleanup(3, &.{.{ .root = 0, .offset = 0 }});
     try std.testing.expect(first != second);
     try std.testing.expect(storage.frames.items[@intFromEnum(second)].values.ptr == backing);
     try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(first)].values.len);
@@ -1389,7 +1385,7 @@ test "call buffers reuse cells without reviving retired frame identities" {
     storage.leave(second);
     storage.leave(differently_sized);
     for (0..100) |_| {
-        const next = try storage.enterCleanup(3, &.{.{ .root = 0, .path = &.{}, .flag = 0 }});
+        const next = try storage.enterCleanup(3, &.{.{ .root = 0, .offset = 0 }});
         try std.testing.expect(storage.frames.items[@intFromEnum(next)].values.ptr == backing);
         storage.leave(next);
     }
@@ -1510,7 +1506,7 @@ test "cleanup flags cannot be read or overwritten as language values" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 100);
-    const frame = try storage.enterCleanup(1, &.{.{ .root = 0, .path = &.{}, .flag = 0 }});
+    const frame = try storage.enterCleanup(1, &.{.{ .root = 0, .offset = 0 }});
     const slots_ = try storage.slots(frame);
     const reference: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
     try std.testing.expectEqual(@as(usize, 1), storage.frames.items[@intFromEnum(frame)].values.len);

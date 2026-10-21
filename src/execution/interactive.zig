@@ -407,7 +407,7 @@ test "interactive expression owners retain cleanup until checked exit" {
     const flags = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup_flags;
     const cleanup = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup;
     try std.testing.expect(cleanup.len != 0);
-    try std.testing.expect(flags[cleanup[0].flag]);
+    try std.testing.expect(flags[cleanup[0].offset]);
     try session.close();
     try std.testing.expectEqual(.fresh, session.runtime.context.state);
 }
@@ -917,7 +917,7 @@ test "interactive deferred owners retain their checked cleanup" {
     const flags = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup_flags;
     const cleanup = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup;
     try std.testing.expect(cleanup.len != 0);
-    const flag = cleanup[0].flag;
+    const flag = cleanup[0].offset;
     try std.testing.expect(flags[flag]);
     try session.close();
     try std.testing.expect(!flags[flag]);
@@ -1100,14 +1100,13 @@ test "interactive partial records clean initialized owners at exit" {
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
     const frame = session.runtime.context.bindings.get(binding).?;
     const flags = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup_flags;
-    const cleanup = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup;
     var active: usize = 0;
-    for (cleanup) |entry| if (flags[entry.flag]) {
+    for (flags) |enabled| if (enabled) {
         active += 1;
     };
     try std.testing.expectEqual(@as(usize, 1), active);
     try session.close();
-    for (cleanup) |entry| try std.testing.expect(!flags[entry.flag]);
+    for (flags) |enabled| try std.testing.expect(!enabled);
 }
 
 test "interactive arrays retain initialized elements across commands" {
@@ -1428,18 +1427,13 @@ test "interactive exit cleans the live sibling of an incomplete choice payload" 
     const storage = &session.runtime.context.storage;
     const flags = storage.frames.items[@intFromEnum(frame)].cleanup_flags;
     const cleanup = storage.frames.items[@intFromEnum(frame)].cleanup;
-    try std.testing.expect(!flags[cleanup[0].flag]);
-    try std.testing.expect(flags[cleanup[0].presence.?]);
-    var found_sibling = false;
-    for (cleanup) |entry| {
-        if (entry.path.len != 2 or entry.path[1] != .field) continue;
-        if (entry.path[1].field == 0) try std.testing.expect(!flags[entry.flag]);
-        if (entry.path[1].field == 1) {
-            try std.testing.expect(flags[entry.flag]);
-            found_sibling = true;
-        }
-    }
-    try std.testing.expect(found_sibling);
+    try std.testing.expect(!flags[cleanup[0].offset]);
+    try std.testing.expect(flags[cleanup[0].offset + 1]);
+    const payload = cleanup[0].layout.project(.{ .variant = 0 }).?;
+    const first = payload.layout.project(.{ .field = 0 }).?;
+    const second = payload.layout.project(.{ .field = 1 }).?;
+    try std.testing.expect(!flags[cleanup[0].offset + payload.offset + first.offset]);
+    try std.testing.expect(flags[cleanup[0].offset + payload.offset + second.offset]);
     // Close runs retained fallback rather than the aborting whole destructor.
     try session.close();
     try std.testing.expectEqual(.fresh, session.runtime.context.state);

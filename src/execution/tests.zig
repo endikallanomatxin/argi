@@ -400,9 +400,7 @@ test "bytecode cleanup identity follows storage across frames without reading va
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 100);
     const layout = [_]b.Cleanup{
-        .{ .root = 0, .path = &.{}, .flag = 0 },
-        .{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 1 },
-        .{ .root = 0, .path = &.{.{ .field = 1 }}, .flag = 2 },
+        .{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.pair },
     };
     const caller = try storage.enterCleanup(5, &layout);
     const slots = try storage.slots(caller);
@@ -473,7 +471,7 @@ test "bytecode lifecycle instructions update caller state through an ordinary re
         .{ .source = source, .op = .{ .ret = &.{} } },
     };
     var functions = [_]?b.Function{
-        .{ .slots = &.{ @enumFromInt(0), @enumFromInt(2), @enumFromInt(1), @enumFromInt(1) }, .inputs = &.{}, .outputs = &.{3}, .code = &caller, .cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 0 }} },
+        .{ .slots = &.{ @enumFromInt(0), @enumFromInt(2), @enumFromInt(1), @enumFromInt(1) }, .inputs = &.{}, .outputs = &.{3}, .code = &caller, .cleanup = &.{.{ .root = 0, .offset = 0 }} },
         .{ .slots = &.{@enumFromInt(2)}, .inputs = &.{0}, .outputs = &.{}, .code = &callee },
     };
     const program = b.Program{ .graph = &graph, .functions = &functions };
@@ -484,13 +482,13 @@ test "bytecode lifecycle instructions update caller state through an ordinary re
     defer bounded.deinit();
     try std.testing.expectError(error.ExecutionInstructionLimit, bounded.run(@enumFromInt(0), &.{}));
     // Cleanup metadata must select valid value storage and distinct paths.
-    functions[0].?.cleanup = &.{.{ .root = 99, .path = &.{}, .flag = 0 }};
+    functions[0].?.cleanup = &.{.{ .root = 99, .offset = 0 }};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    functions[0].?.cleanup = &.{ .{ .root = 0, .path = &.{}, .flag = 0 }, .{ .root = 0, .path = &.{}, .flag = 1 } };
+    functions[0].?.cleanup = &.{ .{ .root = 0, .offset = 0 }, .{ .root = 0, .offset = 1 } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    functions[0].?.cleanup = &.{.{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 0 }};
+    functions[0].?.cleanup = &.{.{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.single }};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    functions[0].?.cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 0 }};
+    functions[0].?.cleanup = &.{.{ .root = 0, .offset = 0 }};
     graph.types.items[2].pointer.mutability = .read_only;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
@@ -776,7 +774,7 @@ test "bytecode write destinations capture aliases before later writes" {
     // activation executes, just like an explicit cleanup_set instruction.
     code[5].op.capture_write.activate_cleanup = true;
     try std.testing.expectError(error.ExecutionMissingCleanup, executor.run(@enumFromInt(0), &.{}));
-    functions[0].?.cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 0 }};
+    functions[0].?.cleanup = &.{.{ .root = 0, .offset = 0 }};
     const untracked_initialization = code[2];
     code[2].op = .{ .cleanup_set = .{ .place = .{ .root = 0, .path = &.{} }, .enabled = false } };
     code[11].op = .{ .cleanup_test = .{ .dst = 4, .place = .{ .root = 0, .path = &.{} } } };
@@ -857,9 +855,7 @@ test "bytecode captured writes activate referent cleanup across caller frames" {
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 100);
     const layout = [_]b.Cleanup{
-        .{ .root = 0, .path = &.{}, .flag = 0 },
-        .{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 1 },
-        .{ .root = 0, .path = &.{.{ .field = 1 }}, .flag = 2 },
+        .{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.pair },
     };
     const caller = try storage.enterCleanup(5, &layout);
     const caller_slots = try storage.slots(caller);
@@ -868,7 +864,7 @@ test "bytecode captured writes activate referent cleanup across caller frames" {
     const pair = b.Value{ .record = &.{ empty, empty } };
     try caller_slots.put(0, pair);
     try caller_slots.put(1, pair);
-    const callee = try storage.enterCleanup(2, &.{.{ .root = 0, .path = &.{}, .flag = 0 }});
+    const callee = try storage.enterCleanup(2, &.{.{ .root = 0, .offset = 0 }});
     const callee_slots = try storage.slots(callee);
     var first_path: [64]v.Projection = undefined;
     var second_path: [64]v.Projection = undefined;
@@ -1863,10 +1859,10 @@ test "bytecode session storage retains data and forbids call-frame publication" 
     const a = std.testing.allocator;
     var context = vm.Context.init(a, 1000);
     defer context.deinit();
-    var cleanup = [_]b.Cleanup{.{ .root = 0, .path = &.{}, .flag = 0 }};
+    var cleanup = [_]b.Cleanup{.{ .root = 0, .offset = 0 }};
     const session = try context.sessionSlots(3, &cleanup);
     // Layout ownership belongs to the execution context, not this input array.
-    cleanup[0].flag = 99;
+    cleanup[0].offset = 99;
     var original = [_]b.Value{.{ .integer = 42 }};
     try context.storage.initializeSession(session, 0, .{ .array = &original });
     original[0] = .{ .integer = 7 };
@@ -2036,7 +2032,7 @@ test "bytecode session moves update persistent cleanup rather than frame flags" 
     try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source, .mutability = .constant });
     try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
     try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .move_value = @enumFromInt(0) } });
-    const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .ty = @enumFromInt(0), .cleanup = &.{.{ .root = 0, .flag = 0, .path = &.{} }} }};
+    const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .ty = @enumFromInt(0), .cleanup = &.{.{ .root = 0 }} }};
     const interface = b.Session{ .namespace = @enumFromInt(9), .bindings = &bindings };
     var compiler = try lower.Lower.initSession(a, &graph, interface);
     const program = try compiler.compileExpression(@enumFromInt(1), &.{});
@@ -2085,7 +2081,7 @@ test "bytecode session declarations initialize persistent storage without local 
     try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 1 } });
     try graph.declarations.append(a, .{ .kind = .function, .name = .{ .start = 0, .len = 0 }, .source = source });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(0) });
-    const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .ty = @enumFromInt(0), .cleanup = &.{.{ .root = 0, .flag = 0, .path = &.{} }} }};
+    const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .ty = @enumFromInt(0), .cleanup = &.{.{ .root = 0 }} }};
     const interface = b.Session{ .namespace = @enumFromInt(12), .bindings = &bindings };
     var compiler = try lower.Lower.initSession(a, &graph, interface);
     const program = try compiler.compile(@enumFromInt(0));
@@ -2407,7 +2403,7 @@ test "bytecode cleanup branches refine only the active storage edge" {
         .{ .source = source, .op = .{ .constant = .{ .dst = 2, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .ret = &.{2} } },
     };
-    const expression: b.Function = .{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{2}, .code = &code, .cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 0 }} };
+    const expression: b.Function = .{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{2}, .code = &code, .cleanup = &.{.{ .root = 0, .offset = 0 }} };
     const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &expression };
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
@@ -2768,12 +2764,12 @@ test "bytecode cleanup flags neither require Bool slots nor initialize owner val
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
-    var functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(0)}, .inputs = &.{}, .outputs = &.{0}, .code = &code, .cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 0 }} }};
+    var functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(0)}, .inputs = &.{}, .outputs = &.{0}, .code = &code, .cleanup = &.{.{ .root = 0, .offset = 0 }} }};
     const program = b.Program{ .graph = &graph, .functions = &functions };
     try b.verify(a, program);
     functions[0].?.code = code[1..];
     try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, program));
     functions[0].?.code = &code;
-    functions[0].?.cleanup = &.{.{ .root = 0, .path = &.{}, .flag = std.math.maxInt(u32) }};
+    functions[0].?.cleanup = &.{.{ .root = 0, .offset = std.math.maxInt(usize) }};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }

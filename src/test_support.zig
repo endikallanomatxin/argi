@@ -47,3 +47,12 @@ pub const arithmetic_core_source =
     \\    .greater_than_or_equal = (.left: Value, .right: Value) -> (.ok: Bool) { ok = __scalar_greater_than_or_equal(.left = left, .right = right) }
     \\)
 ;
+
+pub const cleanup_layouts = struct {
+    const Layout = @import("5_codegen/cleanup_layout.zig").Layout;
+    pub const leaf: Layout = .{};
+    pub const single: Layout = .{ .count = 2, .is_record = true, .children = &.{.{ .offset = 1, .ty = @enumFromInt(0), .layout = &leaf }} };
+    pub const pair: Layout = .{ .count = 3, .is_record = true, .children = &.{ .{ .offset = 1, .ty = @enumFromInt(0), .layout = &leaf }, .{ .offset = 2, .ty = @enumFromInt(0), .layout = &leaf } } };
+    pub const nested: Layout = .{ .count = 4, .is_record = true, .children = &.{ .{ .offset = 1, .ty = @enumFromInt(0), .layout = &single }, .{ .offset = 3, .ty = @enumFromInt(0), .layout = &leaf } } };
+    pub const choice: Layout = .{ .count = 3, .is_choice = true, .children = &.{.{ .offset = 2, .ty = @enumFromInt(0), .layout = &leaf }} };
+};

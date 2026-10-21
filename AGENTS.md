@@ -363,8 +363,9 @@ feature first.
   destination and shared cleanup identity. VM lowering rejects owning writes
   through unresolved aliases and indexed storage until those identities are modeled.
   A reference field's cleanup flag describes its slot, never its referent.
-  Bytecode cleanup flags are attached to concrete storage by sorted compiler
-  layouts and start false on frame entry. Their dense namespace and byte buffers
+  Bytecode cleanup flags are attached to sorted owner slots through the shared
+  immutable cleanup layouts and start false on frame entry. Projections select
+  preorder flag ranges; no runtime table enumerates field or variant paths. Their dense namespace and byte buffers
   are separate from typed value slots; they never establish value initialization.
   Reuse call buffers only when both value and flag counts match. Lifecycle
   queries can address vacant storage without reading its value; following pointers and indices still reads

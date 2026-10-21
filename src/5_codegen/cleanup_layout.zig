@@ -19,14 +19,94 @@ pub fn requiredBindings(allocator: std.mem.Allocator, graph: *const g.GlobalSema
 // companion can point at that range without depending on value addresses.
 // Choices reserve one additional flag for discriminant presence: ending a
 // payload descendant revokes completeness without erasing the active variant.
+pub const Layout = struct {
+    pub const Span = struct { offset: usize, ty: g.GlobalTypeId, layout: *const Layout };
+    count: usize = 1,
+    children: []const ?Span = &.{},
+    is_record: bool = false,
+    is_choice: bool = false,
+
+    pub fn project(self: *const Layout, projection: @import("bytecode/value.zig").Projection) ?Span {
+        const index: usize = switch (projection) {
+            .field => |index| if (self.is_record) index else return null,
+            .variant => |index| if (self.is_choice) index else return null,
+            .element => return null,
+        };
+        if (index >= self.children.len) return null;
+        return self.children[index];
+    }
+
+    pub const Equal = struct {
+        const Pair = struct { left: *const Layout, right: *const Layout };
+        allocator: std.mem.Allocator,
+        seen: std.AutoHashMapUnmanaged(Pair, void) = .empty,
+
+        pub fn deinit(self: *Equal) void {
+            self.seen.deinit(self.allocator);
+        }
+
+        pub fn compare(self: *Equal, left: *const Layout, right: *const Layout, depth: usize) error{OutOfMemory}!bool {
+            if (depth > 64) return false;
+            if (left.count != right.count or left.is_record != right.is_record or left.is_choice != right.is_choice or left.children.len != right.children.len) return false;
+            const key: Pair = .{ .left = left, .right = right };
+            if (self.seen.contains(key)) return true;
+            for (left.children, right.children) |a, b| {
+                if ((a == null) != (b == null)) return false;
+                if (a) |span| if (span.offset != b.?.offset or span.ty != b.?.ty or !try self.compare(span.layout, b.?.layout, depth + 1)) return false;
+            }
+            try self.seen.put(self.allocator, key, {});
+            return true;
+        }
+    };
+
+    // Copy immutable shape DAGs once per source identity. Array repetition will
+    // share its element shape rather than create one descriptor per element.
+    pub const Copy = struct {
+        allocator: std.mem.Allocator,
+        memo: std.AutoHashMapUnmanaged(*const Layout, struct { retained: ?*const Layout = null }) = .empty,
+        cells: usize = 0,
+
+        pub fn deinit(self: *Copy) void {
+            self.memo.deinit(self.allocator);
+        }
+
+        pub fn measure(self: *Copy, source: *const Layout, depth: usize) error{ OutOfMemory, InvalidCleanupLayout, Overflow }!void {
+            if (depth > 64) return error.InvalidCleanupLayout;
+            const entry = try self.memo.getOrPut(self.allocator, source);
+            if (entry.found_existing) return;
+            entry.value_ptr.* = .{};
+            self.cells = try std.math.add(usize, self.cells, try std.math.add(usize, 1, source.children.len));
+            for (source.children) |child| if (child) |span| try self.measure(span.layout, depth + 1);
+        }
+
+        pub fn retain(self: *Copy, source: *const Layout, depth: usize) error{ OutOfMemory, InvalidCleanupLayout, Overflow }!*const Layout {
+            if (depth > 64) return error.InvalidCleanupLayout;
+            if (!self.memo.contains(source)) try self.measure(source, depth);
+            if (self.memo.get(source).?.retained) |retained| return retained;
+            const result = try self.allocator.create(Layout);
+            const children = try self.allocator.alloc(?Span, source.children.len);
+            for (children, source.children) |*out, child| {
+                out.* = if (child) |span| .{ .offset = span.offset, .ty = span.ty, .layout = try self.retain(span.layout, depth + 1) } else null;
+            }
+            result.* = source.*;
+            result.children = children;
+            self.memo.getPtr(source).?.retained = result;
+            return result;
+        }
+    };
+};
+
 pub const Counts = struct {
-    pub const Span = struct { offset: usize, ty: g.GlobalTypeId };
-    pub const Description = struct { count: usize, children: []const ?Span, is_record: bool, is_choice: bool };
-    values: std.AutoHashMapUnmanaged(g.GlobalTypeId, Description) = .empty,
+    pub const Span = Layout.Span;
+    pub const Description = Layout;
+    values: std.AutoHashMapUnmanaged(g.GlobalTypeId, *const Layout) = .empty,
 
     pub fn deinit(self: *Counts, allocator: std.mem.Allocator) void {
         var entries = self.values.valueIterator();
-        while (entries.next()) |entry| allocator.free(entry.children);
+        while (entries.next()) |entry| {
+            allocator.free(entry.*.children);
+            allocator.destroy(entry.*);
+        }
         self.values.deinit(allocator);
     }
 
@@ -40,17 +120,25 @@ pub const Counts = struct {
         @memset(children, null);
         var result: usize = if (shape == .variants) 2 else 1;
         for (children, 0..) |*span, index| if (shape.child(graph, index)) |child| {
-            span.* = .{ .offset = result, .ty = child.ty };
-            result = try std.math.add(usize, result, try self.count(allocator, graph, child.ty));
+            const child_count = try self.count(allocator, graph, child.ty);
+            span.* = .{ .offset = result, .ty = child.ty, .layout = self.values.get(child.ty).? };
+            result = try std.math.add(usize, result, child_count);
         };
-        try self.values.put(allocator, ty, .{ .count = result, .children = children, .is_record = shape == .fields, .is_choice = shape == .variants });
+        const retained_layout = try allocator.create(Layout);
+        errdefer allocator.destroy(retained_layout);
+        retained_layout.* = .{ .count = result, .children = children, .is_record = shape == .fields, .is_choice = shape == .variants };
+        try self.values.put(allocator, ty, retained_layout);
         return result;
     }
 
-    // A retained view only refers to a type already materialized by count().
-    // Return by value: map growth must never invalidate an owner's view.
-    pub fn description(self: *const Counts, ty: g.GlobalTypeId) Description {
+    // Nodes are individually allocated: growing the construction index cannot
+    // invalidate a published owner's shape or its child pointers.
+    pub fn retained(self: *const Counts, ty: g.GlobalTypeId) *const Layout {
         return self.values.get(ty).?;
+    }
+
+    pub fn description(self: *const Counts, ty: g.GlobalTypeId) Description {
+        return self.values.get(ty).?.*;
     }
 };
 
@@ -217,4 +305,42 @@ test "indirect cleanup storage never manufactures flags on its reference slot" {
     const projected = try requiredBindings(a, &graph);
     defer a.free(projected);
     try std.testing.expect(projected[0] and !projected[1]);
+}
+
+test "cleanup layout retention preserves shared children independently of source storage" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var source_leaf: Layout = .{};
+    var source_children = [_]?Layout.Span{
+        .{ .offset = 1, .ty = @enumFromInt(0), .layout = &source_leaf },
+        .{ .offset = 2, .ty = @enumFromInt(0), .layout = &source_leaf },
+    };
+    var source: Layout = .{ .count = 3, .is_record = true, .children = &source_children };
+    var copy: Layout.Copy = .{ .allocator = arena.allocator() };
+    defer copy.deinit();
+    try copy.measure(&source, 0);
+    try std.testing.expectEqual(@as(usize, 4), copy.cells);
+    const retained = try copy.retain(&source, 0);
+    try std.testing.expect(retained != &source);
+    try std.testing.expect(retained.children[0].?.layout != &source_leaf);
+    try std.testing.expect(retained.children[0].?.layout == retained.children[1].?.layout);
+    source_leaf.count = 99;
+    source_children[0] = null;
+    source.count = 1;
+    try std.testing.expectEqual(@as(usize, 3), retained.count);
+    try std.testing.expectEqual(@as(usize, 1), retained.project(.{ .field = 0 }).?.layout.count);
+    try std.testing.expect(retained.project(.{ .variant = 0 }) == null);
+}
+
+test "cleanup layout comparisons do not cache rejected shapes as valid" {
+    const a = std.testing.allocator;
+    var equal: Layout.Equal = .{ .allocator = a };
+    defer equal.deinit();
+    const leaf: Layout = .{};
+    const expected: Layout = .{ .count = 2, .is_record = true, .children = &.{.{ .offset = 1, .ty = @enumFromInt(0), .layout = &leaf }} };
+    const forged: Layout = .{ .count = 2, .is_record = true, .children = &.{.{ .offset = 0, .ty = @enumFromInt(0), .layout = &leaf }} };
+    try std.testing.expect(!try equal.compare(&expected, &forged, 0));
+    try std.testing.expect(!try equal.compare(&expected, &forged, 0));
+    try std.testing.expect(try equal.compare(&expected, &expected, 0));
 }

@@ -15,6 +15,11 @@ const choiceVariant = b.choiceVariant;
 // Structural validation precedes dataflow: even unreachable instructions may
 // never address invalid slots, call signatures or branch targets.
 pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
+    const layouts = @import("../cleanup_layout.zig");
+    var cleanup_counts: layouts.Counts = .{};
+    defer cleanup_counts.deinit(allocator);
+    var cleanup_equal: layouts.Layout.Equal = .{ .allocator = allocator };
+    defer cleanup_equal.deinit();
     const owning_types = try @import("../cleanup_layout.zig").owningTypes(allocator, program.graph);
     defer allocator.free(owning_types);
     if (!program.graph.target.isNative()) return error.UnsupportedExecutionTarget;
@@ -26,7 +31,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (session.bindings[0..index]) |previous| if (previous.binding == binding.binding) return error.InvalidBytecode;
             if (!supportedType(program.graph, binding.ty, 0)) return error.InvalidBytecode;
             for (binding.cleanup) |entry| if (entry.root != 0) return error.InvalidBytecode;
-            try verifyCleanup(allocator, program.graph, .{ .slots = &.{binding.ty}, .inputs = &.{}, .outputs = &.{}, .code = &.{}, .cleanup = binding.cleanup });
+            try verifyCleanup(allocator, program.graph, &cleanup_counts, &cleanup_equal, .{ .slots = &.{binding.ty}, .inputs = &.{}, .outputs = &.{}, .code = &.{}, .cleanup = binding.cleanup });
         }
     }
     for (program.host_functions, 0..) |function, index| {
@@ -61,7 +66,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (f.inputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.input.start + i].ty)) return error.InvalidBytecode;
             for (f.outputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.output.start + i].ty)) return error.InvalidBytecode;
         }
-        try verifyCleanup(allocator, program.graph, f);
+        try verifyCleanup(allocator, program.graph, &cleanup_counts, &cleanup_equal, f);
         for (f.code) |inst| {
             var reads: std.ArrayList(Slot) = .empty;
             defer reads.deinit(allocator);
@@ -544,33 +549,12 @@ fn readCleanupPlace(a: std.mem.Allocator, place: Place, out: *std.ArrayList(Slot
     };
 }
 
-fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, f: b.Function) !void {
-    const flag_count = b.cleanupFlagCount(f.cleanup) catch return error.InvalidBytecode;
-    const flags = try a.alloc(bool, flag_count);
-    defer a.free(flags);
-    @memset(flags, false);
+fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, counts: *@import("../cleanup_layout.zig").Counts, equal: *@import("../cleanup_layout.zig").Layout.Equal, f: b.Function) !void {
+    _ = b.cleanupFlagCount(f.cleanup) catch return error.InvalidBytecode;
     for (f.cleanup, 0..) |entry, index| {
-        if (entry.root >= f.slots.len or flags[entry.flag] or entry.path.len > 64) return error.InvalidBytecode;
-        flags[entry.flag] = true;
-        if (entry.presence) |flag| {
-            if (flags[flag]) return error.InvalidBytecode;
-            flags[flag] = true;
-        }
-        var ty = f.slots[entry.root];
-        for (entry.path) |projection| switch (projection) {
-            .field => |field| {
-                const fields = types.fields(graph, ty) orelse return error.InvalidBytecode;
-                if (field >= fields.len) return error.InvalidBytecode;
-                ty = graph.fields.items[fields.start + field].ty;
-            },
-            .variant => |ordinal| ty = (try choiceVariant(graph, ty, try b.variantIdentity(graph, ty, ordinal))).payload_type orelse return error.InvalidBytecode,
-            .element => |element| {
-                if (element >= (types.arrayLength(graph, ty) orelse return error.InvalidBytecode)) return error.InvalidBytecode;
-                ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode;
-            },
-        };
-        if ((entry.presence != null) != (types.variants(graph, ty) != null)) return error.InvalidBytecode;
-        if (index != 0 and b.cleanupOrder(f.cleanup[index - 1], entry) != .lt) return error.InvalidBytecode;
+        if (entry.root >= f.slots.len or (index != 0 and f.cleanup[index - 1].root >= entry.root)) return error.InvalidBytecode;
+        _ = counts.count(a, graph, f.slots[entry.root]) catch return error.InvalidBytecode;
+        if (!try equal.compare(counts.retained(f.slots[entry.root]), entry.layout, 0)) return error.InvalidBytecode;
     }
 }
 

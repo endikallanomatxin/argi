@@ -17,6 +17,7 @@ pub const Lower = struct {
     host_functions: std.ArrayList(g.GlobalFunctionId) = .empty,
     cleanup_bindings: []const bool,
     cleanup_types: []const bool,
+    cleanup_layouts: cleanup_layout.Counts = .{},
     bool_type: ?b.Type,
     pending: std.ArrayList(g.GlobalFunctionId) = .empty,
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
@@ -197,7 +198,7 @@ const DropState = enum(u32) { _ };
 // One preorder table during lowering; handles stay valid when it grows.
 // Each subtree ends at `end`, so projection skips siblings without a second
 // recursively allocated tree or entries for payloadless variants.
-const CleanupEntry = struct { place: b.Place, flag: u32, presence: ?u32, end: u32 };
+const CleanupEntry = struct { place: b.Place, end: u32 };
 const FunctionLower = struct {
     parent: *Lower,
     safety_primitive: p.SafetyPrimitive = .none,
@@ -208,7 +209,6 @@ const FunctionLower = struct {
     default_location_source: ?p.SourceRef = null,
     drops: std.AutoHashMapUnmanaged(g.GlobalBindingId, DropState) = .empty,
     cleanup: std.ArrayList(CleanupEntry) = .empty,
-    cleanup_flags: u32 = 0,
     write_destinations: std.ArrayList(b.Type) = .empty,
     loops: std.ArrayList(Loop) = .empty,
     replacement: ?struct { plan: replacement.Plan, target: ?b.Place = null, ty: ?b.Type = null } = null,
@@ -286,32 +286,17 @@ const FunctionLower = struct {
         for (session.bindings, 0..) |binding, index| {
             if (binding.cleanup.len == 0) continue;
             const drop = try self.buildDrop(binding.ty, .{ .root = @intCast(index), .region = .session, .path = &.{} });
-            const entries = self.cleanup.items[@intFromEnum(drop)..];
-            if (entries.len != binding.cleanup.len) return error.InvalidBytecode;
-            for (entries, binding.cleanup) |entry, supplied| {
-                if (entry.place.path.len != supplied.path.len) return error.InvalidBytecode;
-                const expected_path = try b.runtimeCleanupPath(self.parent.allocator, self.parent.graph, binding.ty, entry.place.path);
-                defer self.parent.allocator.free(expected_path);
-                for (expected_path, supplied.path) |expected, actual| if (!std.meta.eql(expected, actual)) return error.InvalidBytecode;
-            }
             try self.drops.put(self.parent.allocator, binding.binding, drop);
         }
     }
     fn boolType(self: *FunctionLower) !b.Type {
         return self.parent.bool_type orelse error.InvalidBytecode;
     }
-    fn nextCleanupFlag(self: *FunctionLower) !u32 {
-        const flag = self.cleanup_flags;
-        self.cleanup_flags = try std.math.add(u32, flag, 1);
-        return flag;
-    }
     fn buildDrop(self: *FunctionLower, ty: b.Type, target: b.Place) anyerror!DropState {
         const a = self.parent.allocator;
         const id: DropState = @enumFromInt(@as(u32, @intCast(self.cleanup.items.len)));
-        const flag = if (target.region == .local) try self.nextCleanupFlag() else 0;
         const shape = cleanup_layout.Shape.of(self.parent.graph, ty);
-        const presence = if (shape == .variants) (if (target.region == .local) try self.nextCleanupFlag() else 0) else null;
-        try self.cleanup.append(a, .{ .place = target, .flag = flag, .presence = presence, .end = 0 });
+        try self.cleanup.append(a, .{ .place = target, .end = 0 });
         for (0..shape.len()) |index| if (shape.child(self.parent.graph, index)) |child| {
             const projection: b.Projection = switch (child.projection) {
                 .field => |field| .{ .field = field },
@@ -325,17 +310,20 @@ const FunctionLower = struct {
     fn finishCleanup(self: *FunctionLower) ![]const b.Cleanup {
         const a = self.parent.allocator;
         var count: usize = 0;
-        for (self.cleanup.items) |entry| if (entry.place.region == .local) {
+        for (self.cleanup.items) |entry| if (entry.place.region == .local and entry.place.path.len == 0) {
             count += 1;
         };
         const result = try a.alloc(b.Cleanup, count);
         var output_index: usize = 0;
+        var flag_offset: usize = 0;
         for (self.cleanup.items) |entry| {
-            if (entry.place.region != .local) continue;
+            if (entry.place.region != .local or entry.place.path.len != 0) continue;
             const out = &result[output_index];
             output_index += 1;
-            const path = try b.runtimeCleanupPath(a, self.parent.graph, self.slots.items[entry.place.root], entry.place.path);
-            out.* = .{ .root = entry.place.root, .path = path, .flag = entry.flag, .presence = entry.presence };
+            const ty = self.slots.items[entry.place.root];
+            _ = try self.parent.cleanup_layouts.count(a, self.parent.graph, ty);
+            out.* = .{ .root = entry.place.root, .offset = flag_offset, .layout = self.parent.cleanup_layouts.retained(ty) };
+            flag_offset = try std.math.add(usize, flag_offset, out.layout.count);
         }
         return result;
     }

@@ -95,53 +95,22 @@ pub const Place = struct {
     path: []const Projection,
 };
 
-// Compiler-selected cleanup state is attached to storage, not copied values or
-// reference slots. Paths are concrete layout projections, never dereferences.
-// Entries are sorted by root and path; each subtree is contiguous for bounded
-// lookup and updates. Flag cells start false independently of value occupancy.
+// One immutable shape per owner, shared by every projection and value of that
+// type. Flags occupy the layout's preorder range in the frame's byte buffer.
 pub const Cleanup = struct {
     root: Slot,
-    path: []const @import("value.zig").Projection,
-    flag: u32,
-    // A choice can retain its discriminant after losing part of its payload.
-    presence: ?u32 = null,
+    offset: usize = 0,
+    layout: *const @import("../cleanup_layout.zig").Layout = &.{},
 };
-// Flags form their own dense namespace. Bound it by descriptor count before
-// allocating anything; untrusted metadata cannot request arbitrary flag ranges.
-pub fn cleanupFlagCount(cleanup: []const Cleanup) !usize {
-    var count: usize = cleanup.len;
-    for (cleanup) |entry| if (entry.presence != null) {
-        count = try std.math.add(usize, count, 1);
-    };
-    for (cleanup) |entry| {
-        if (entry.flag >= count) return error.InvalidCleanupLayout;
-        if (entry.presence) |flag| if (flag >= count or flag == entry.flag) return error.InvalidCleanupLayout;
-    }
-    return count;
-}
-
 pub const CleanupAccess = @import("../cleanup_plan.zig").Access;
 
-pub fn cleanupOrder(a: Cleanup, c: Cleanup) std.math.Order {
-    const root = std.math.order(a.root, c.root);
-    if (root != .eq) return root;
-    for (a.path[0..@min(a.path.len, c.path.len)], c.path[0..@min(a.path.len, c.path.len)]) |left, right| {
-        const tag = std.math.order(@intFromEnum(left), @intFromEnum(right));
-        if (tag != .eq) return tag;
-        const order = switch (left) {
-            .field => |index| std.math.order(index, right.field),
-            .element => |index| std.math.order(index, right.element),
-            .variant => |index| std.math.order(index, right.variant),
-        };
-        if (order != .eq) return order;
+pub fn cleanupFlagCount(cleanup: []const Cleanup) !usize {
+    var count: usize = 0;
+    for (cleanup) |entry| {
+        if (entry.offset != count or entry.layout.count == 0) return error.InvalidCleanupLayout;
+        count = try std.math.add(usize, count, entry.layout.count);
     }
-    return std.math.order(a.path.len, c.path.len);
-}
-
-pub fn cleanupContains(parent: Cleanup, child: Cleanup) bool {
-    if (parent.root != child.root or parent.path.len > child.path.len) return false;
-    for (parent.path, child.path[0..parent.path.len]) |left, right| if (!std.meta.eql(left, right)) return false;
-    return true;
+    return count;
 }
 
 // Erasure is lowered once into code/ABI data. The executor never consults
@@ -396,18 +365,4 @@ pub fn finalizePath(graph: *const g.GlobalSemanticGraph, root_type: Type, path: 
             },
         }
     }
-}
-
-pub fn runtimeCleanupPath(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: Type, path: []const Projection) ![]const @import("value.zig").Projection {
-    var normalized: [64]Projection = undefined;
-    if (path.len > normalized.len) return error.InvalidBytecode;
-    try finalizePath(graph, ty, path, normalized[0..path.len]);
-    const result = try allocator.alloc(@import("value.zig").Projection, path.len);
-    errdefer allocator.free(result);
-    for (normalized[0..path.len], result) |part, *out| out.* = switch (part) {
-        .field => |index| .{ .field = index },
-        .variant => |ordinal| .{ .variant = ordinal.ordinal },
-        else => return error.InvalidBytecode,
-    };
-    return result;
 }

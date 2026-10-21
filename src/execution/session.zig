@@ -75,11 +75,13 @@ pub const Session = struct {
             self.allocator.destroy(arena);
         };
         const a = arena.allocator();
+        var layouts: @import("../5_codegen/cleanup_layout.zig").Layout.Copy = .{ .allocator = a };
+        defer layouts.deinit();
         const retained = try a.alloc(bytecode.SessionBinding, bindings.len);
         for (retained, bindings) |*out, binding| {
             out.* = binding;
             const cleanup = try a.dupe(bytecode.Cleanup, binding.cleanup);
-            for (cleanup) |*entry| entry.path = try a.dupe(@import("../5_codegen/bytecode/value.zig").Projection, entry.path);
+            for (cleanup) |*entry| entry.layout = try layouts.retain(entry.layout, 0);
             out.cleanup = cleanup;
         }
         var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.initSession(a, checked, .{ .namespace = self.compiler.namespace, .bindings = retained });
@@ -136,10 +138,10 @@ pub const Session = struct {
         while (iterator.next()) |frame| {
             const stored = &self.context.storage.frames.items[@intFromEnum(frame.*)];
             _ = try self.context.storage.slots(frame.*);
-            for (stored.cleanup) |entry| if (stored.cleanup_flags[entry.flag] or (if (entry.presence) |flag| stored.cleanup_flags[flag] else false)) {
+            if (std.mem.indexOfScalar(bool, stored.cleanup_flags, true) != null) {
                 self.context.state = .poisoned;
                 return error.ExecutionActiveCleanup;
-            };
+            }
         }
         self.context.reset();
     }
