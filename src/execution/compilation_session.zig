@@ -266,13 +266,31 @@ pub const CompilationSession = struct {
     /// Reserve first: allocation failure leaves both owners unchanged. Retain
     /// older graphs because published bytecode can still borrow their metadata.
     pub fn accept(self: *CompilationSession, candidate: *Candidate) !void {
+        return self.acceptChecked(candidate, .retain);
+    }
+
+    /// Publish checked semantic definitions without retaining an executable
+    /// snapshot. No bytecode or external reader may borrow candidate.checked
+    /// after this call. Previously retained executable graphs stay unchanged.
+    pub fn acceptDefinitions(self: *CompilationSession, candidate: *Candidate) !void {
+        if (candidate.entry != null or candidate.temporal != null or candidate.is_exit) return error.InvalidDefinitionCandidate;
+        return self.acceptChecked(candidate, .discard);
+    }
+
+    fn acceptChecked(self: *CompilationSession, candidate: *Candidate, snapshot: enum { retain, discard }) !void {
         if (candidate.owner != self or candidate.revision != self.revision or candidate.semantic == null or candidate.checked == null)
             return error.StaleCompilationCandidate;
         if (self.revision == std.math.maxInt(u64)) return error.CompilationRevisionLimit;
-        try self.versions.ensureUnusedCapacity(self.allocator, 1);
+        if (snapshot == .retain) try self.versions.ensureUnusedCapacity(self.allocator, 1);
         const previous = self.semantic;
         self.semantic = candidate.semantic.?;
-        self.versions.appendAssumeCapacity(candidate.checked.?);
+        if (snapshot == .retain) {
+            self.versions.appendAssumeCapacity(candidate.checked.?);
+        } else {
+            const checked = candidate.checked.?;
+            checked.deinit(self.allocator);
+            self.allocator.destroy(checked);
+        }
         self.revision += 1;
         if (candidate.temporal) |proof| {
             if (self.temporal) |previous_proof| previous_proof.release();
@@ -515,6 +533,9 @@ fn prepareContinuationsWithAllocationFailures(allocator: std.mem.Allocator) !voi
     try std.testing.expect(session.temporal == null);
     try std.testing.expect(first.checked.?.graph.functions.items[0].body != null);
     try std.testing.expect(first.checked.?.graph.functions.items[1].body != null);
+    try std.testing.expectError(error.InvalidDefinitionCandidate, session.acceptDefinitions(&first));
+    try std.testing.expectEqual(@as(u64, 0), session.revision);
+    try std.testing.expect(session.temporal == null);
     try session.accept(&first);
     const accepted = session.temporal.?;
     const revision = session.revision;
@@ -678,7 +699,7 @@ test "execution session resolves accepted bindings in later command modules" {
     try std.testing.expectEqual(@as(i128, 7), (try stored.get(0)).integer);
 }
 
-fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator, retain: bool) !void {
     const a = std.testing.allocator;
     const source =
         "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
@@ -699,9 +720,7 @@ fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
     var candidate = try session.prepare(&.{module}, &diagnostics);
     defer candidate.deinit();
     try std.testing.expect(candidate.checked != null);
-    try session.accept(&candidate);
-    try std.testing.expectEqual(@as(usize, 1), session.versions.items.len);
-    const graph = &session.versions.items[0].graph;
+    const graph = &candidate.checked.?.graph;
     var consumed: usize = 0;
     for (graph.nodes.items) |node| if (node.content == .function_call) {
         for (node.content.function_call.consumed_auto_deinits) |cleanup| {
@@ -710,8 +729,16 @@ fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
         }
     };
     try std.testing.expect(consumed != 0);
+    if (retain) try session.accept(&candidate) else try session.acceptDefinitions(&candidate);
+    try std.testing.expectEqual(@as(usize, if (retain) 1 else 0), session.versions.items.len);
+    try std.testing.expectEqual(@as(u64, 1), session.revision);
+    try std.testing.expect(session.semantic.relocation.graph.functions.items.len != 0);
 }
 
 test "definition publication owns checked annotations and releases failure paths" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{true});
+}
+
+test "semantic-only definition publication releases checked graphs and failure paths" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{false});
 }

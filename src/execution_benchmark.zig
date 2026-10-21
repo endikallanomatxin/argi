@@ -50,7 +50,7 @@ const Memory = struct {
     }
 };
 
-const Scenario = enum { update, bindings, calls, resources };
+const Scenario = enum { update, bindings, calls, resources, definitions };
 const Modules = enum { minimal, core, prelude };
 
 fn elapsed(io: std.Io, start: i96) u64 {
@@ -161,18 +161,26 @@ fn run(io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: us
             const source = switch (scenario) {
                 .update => try allocator.dupe(u8, "value = 42"),
                 .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
+                .definitions => try std.fmt.allocPrint(allocator, "function_{d} := () -> (.result: Int32) {{ result = 42 }}", .{index}),
                 .bindings => try std.fmt.allocPrint(allocator, "value_{d} :: Int32 = 42", .{index}),
                 .resources => try std.fmt.allocPrint(allocator, "text_{d} ::= unwrap_or_abort(.value = String(.length = 32))\nvalue_{d} :: Int32 = 42", .{ index, index }),
             };
             defer allocator.free(source);
             const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
-            session.submitStatements(source) catch |err| {
+            const submitted = if (scenario == .definitions) session.submitDefinitions(source) else session.submitStatements(source);
+            submitted catch |err| {
                 std.debug.print("Stopped after {d} commands: {s}; retained {d:.3} MiB, peak {d:.3} MiB\n", .{ index - 1, @errorName(err), mib(memory.live), mib(memory.peak) });
                 try session.diagnostics.dump();
                 return err;
             };
             total_ns += elapsed(io, start);
             if (index == 10 or index == 100 or index == 1000 or index == count) try report(&session, &memory, scenario, modules, index, total_ns);
+        }
+        if (scenario == .definitions) {
+            const call = try std.fmt.allocPrint(allocator, "function_{d}()", .{count});
+            defer allocator.free(call);
+            const result = (try session.submitInput(call)) orelse return error.MissingBenchmarkResult;
+            if (result.value != .runtime or result.value.runtime != .integer or result.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
         }
         // Snapshot before cleanup; include neither reset nor teardown in timings.
         try session.close();
@@ -239,7 +247,7 @@ pub fn main(init: std.process.Init) !void {
     if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources] [memory-limit-MiB=2048]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions] [memory-limit-MiB=2048]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,checked_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes\n", .{});
     try run(init.io, count, modules, scenario, limit);
 }

@@ -186,7 +186,7 @@ pub const Interactive = struct {
         const prefix = try self.sources.appendSnapshot(semantic.modules, module);
         var candidate = try draft.finishDefinitions(prefix, &self.diagnostics);
         defer candidate.deinit();
-        try self.compiler.accept(&candidate);
+        try self.compiler.acceptDefinitions(&candidate);
     }
 
     fn beginSubmission(self: *Interactive) !void {
@@ -584,7 +584,7 @@ test "interactive definition batches keep dependency modules outside the session
     try std.testing.expectEqual(@as(usize, 1), namespace.declarations.items.len);
     try std.testing.expectEqualStrings("answer", resolver.graph.text(resolver.graph.declaration(namespace.declarations.items[0]).name));
     try std.testing.expect(!resolver.sameDeclarationNamespace(0, 1));
-    try session.compiler.accept(&candidate);
+    try session.compiler.acceptDefinitions(&candidate);
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.runtime.integer);
     try session.close();
 }
@@ -601,7 +601,7 @@ test "interactive imported aliases survive subsequent submissions without export
     const prefix = try session.sources.appendSnapshot(dependencies, submitted);
     var candidate = try session.compiler.prepareDefinitions(prefix, &session.diagnostics);
     defer candidate.deinit();
-    try session.compiler.accept(&candidate);
+    try session.compiler.acceptDefinitions(&candidate);
     try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("library.helper()")).?.value.runtime.integer);
     const resolver = &session.compiler.semantic.resolvers.core;
     const namespace = resolver.session_namespace.?;
@@ -1462,5 +1462,25 @@ test "interactive Init wrappers retain assumed capabilities from earlier command
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Box().value")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("missing_capability_command"));
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Box().value")).?.value.runtime.integer);
+    try session.close();
+}
+
+test "interactive definitions preserve semantic identities without retaining executable graphs" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("answer := () -> (.value: Int32) { value = 42 }");
+    try std.testing.expectEqual(@as(usize, 0), session.compiler.versions.items.len);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(usize, 1), session.compiler.versions.items.len);
+    const executable = session.compiler.versions.items[0];
+    try session.submitDefinitions("forward := () -> (.value: Int32) { value = answer() }");
+    try std.testing.expectEqual(@as(usize, 1), session.compiler.versions.items.len);
+    try std.testing.expect(session.compiler.versions.items[0] == executable);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.DuplicateSessionDeclaration, session.submitDefinitions("answer := () -> (.value: Int32) { value = 7 }"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("forward()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(usize, 2), session.compiler.versions.items.len);
     try session.close();
 }

@@ -320,13 +320,15 @@ bindings, and their logical `ffi` input still participates in safety checking.
 Build the developer benchmark with `zig build build-execution-benchmark
 -Doptimize=ReleaseSafe`. From the repository root, run
 `./zig-out/bin/execution-benchmark [commands=1000] [minimal|core|prelude]
-[update|bindings|calls|resources] [memory-limit-MiB=2048]`. It reports checkpoints at 10,
+[update|bindings|calls|resources|definitions] [memory-limit-MiB=2048]`. It reports checkpoints at 10,
 100 and 1,000 commands, plus the final count. Run benchmarks separately from tests.
 
 `minimal` isolates session growth; `core` also retains a prepared bundled-core
 module template. `prelude` also executes the CLI's checked prelude, including
 its persistent allocator. `resources` requires that mode and retains one 32-byte
-`String` plus a scalar marker per command. Other scenarios preserve their existing
+`String` plus a scalar marker per command. `definitions` introduces one new
+function per command, then calls the last function outside the measured section.
+Other scenarios preserve their existing
 behavior. Initial preparation, prelude execution, the first binding and teardown
 are outside command timings; the zero-command row includes their retained memory.
 Frontend/publication time is total command time minus lowering,
@@ -398,6 +400,25 @@ resource run in Debug retained 414,040 bytes of dead-frame slot buffers, versus
 functions and ten live acquisitions. These are requested storage counts across
 different optimization modes, not a timing comparison; a controlled ReleaseSafe
 rerun remains pending after benchmark rebuilds exceeded local process limits.
+
+Definition submissions now release their checked validation snapshots on
+publication; executable submissions retain the graph borrowed by their bytecode.
+Both paths use the same checks and atomic semantic publication. A Debug comparison
+with the `definitions` scenario and a 1,024 MiB tracked limit measured:
+
+| Definitions | Before retained MiB | After retained MiB |
+|---|---:|---:|
+| 10 | 0.42 | 0.29 |
+| 100 | 7.61 | 2.30 |
+| 1,000 | 480.43 | 19.32 |
+
+At 1,000 definitions, retained checked-graph payload fell from 303.28 MiB to
+0.001 MiB. Both runs called the final definition successfully and completed normal
+cleanup with no tracked memory left. Source arenas still retained 13.45 MiB, and
+analysis still repeats accumulated work; this removes unused snapshots rather
+than making definition analysis fully incremental. Single-run timings are not
+performance guarantees.
+
 
 Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
 ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
