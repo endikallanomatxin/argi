@@ -19,25 +19,20 @@ pub const Binding = struct {
     call: *const fn (?*anyopaque, []const i128, []i128) anyerror!void,
 };
 
-fn resolve(graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId, bindings: []const Binding) !*const Binding {
-    try signature.validate(graph, id);
-    const function = graph.function(id);
+fn equalRanges(left: []const Integer, right: []const Integer) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |a, other| if (!std.meta.eql(a, other)) return false;
+    return true;
+}
+
+fn resolve(descriptor: b.HostFunction, bindings: []const Binding) !*const Binding {
     var selected: ?*const Binding = null;
     var found_symbol = false;
     for (bindings) |*binding| {
-        if (!std.mem.eql(u8, binding.symbol, symbol(graph, id))) continue;
+        if (!std.mem.eql(u8, binding.symbol, descriptor.symbol)) continue;
         found_symbol = true;
-        if (binding.inputs.len + 1 != function.input.len or binding.outputs.len != function.output.len) continue;
-        var matches = true;
-        for (binding.inputs, graph.fields.items[function.input.start..][0..binding.inputs.len]) |expected, field|
-            if (!std.meta.eql(expected, b.integerBounds(graph, field.ty).?)) {
-                matches = false;
-            };
-        for (binding.outputs, graph.fields.items[function.output.start..][0..binding.outputs.len]) |expected, field|
-            if (!std.meta.eql(expected, b.integerBounds(graph, field.ty).?)) {
-                matches = false;
-            };
-        if (!matches) continue;
+        if (!equalRanges(binding.inputs, descriptor.inputs) or
+            !equalRanges(binding.outputs, descriptor.outputs)) continue;
         if (selected != null) return error.AmbiguousHostBinding;
         selected = binding;
     }
@@ -48,8 +43,8 @@ pub const Failure = struct { function: g.GlobalFunctionId, source: p.SourceRef, 
 
 pub fn findFailure(program: b.Program, bindings: []const Binding) ?Failure {
     for (program.host_functions, 0..) |function, index| {
-        _ = resolve(program.graph, function, bindings) catch |err| {
-            var source = program.graph.declaration(program.graph.function(function).declaration).source;
+        _ = resolve(function, bindings) catch |err| {
+            var source = function.source;
             const host_index: u32 = @intCast(index);
             const call_source = found: {
                 if (program.expression) |expression| if (findCall(expression.*, host_index)) |location| break :found location;
@@ -58,7 +53,7 @@ pub fn findFailure(program: b.Program, bindings: []const Binding) ?Failure {
                 break :found null;
             };
             if (call_source) |location| source = location;
-            return .{ .function = function, .source = source, .reason = err };
+            return .{ .function = function.function, .source = source, .reason = err };
         };
     }
     return null;
@@ -71,7 +66,7 @@ pub fn findFailure(program: b.Program, bindings: []const Binding) ?Failure {
 pub const LinkedPrograms = struct {
     const Unit = struct {
         graph: *const g.GlobalSemanticGraph,
-        declarations: []const g.GlobalFunctionId,
+        declarations: []const b.HostFunction,
         bindings: []Binding,
     };
     units: std.ArrayList(Unit) = .empty,
@@ -91,7 +86,7 @@ pub const LinkedPrograms = struct {
         const linked = try allocator.alloc(Binding, program.host_functions.len);
         errdefer allocator.free(linked);
         for (program.host_functions, linked) |function, *binding|
-            binding.* = (try resolve(program.graph, function, available)).*;
+            binding.* = (try resolve(function, available)).*;
         try self.units.append(allocator, .{ .graph = program.graph, .declarations = program.host_functions, .bindings = linked });
         return linked;
     }
@@ -134,7 +129,17 @@ fn failedHostLink(allocator: std.mem.Allocator) !void {
     };
     const range = comptime p.integerRangeForWidth(32, true);
     const available = [_]Binding{.{ .symbol = "host_step", .inputs = &.{range}, .outputs = &.{range}, .call = Adapter.call }};
-    const program: b.Program = .{ .graph = &graph, .functions = &.{}, .host_functions = &.{@enumFromInt(0)} };
+    const descriptor = try signature.describe(a, &graph, @enumFromInt(0));
+    defer a.free(descriptor.inputs);
+    defer a.free(descriptor.outputs);
+    try std.testing.expect(signature.matches(&graph, descriptor));
+    var invalid = descriptor;
+    invalid.inputs = &.{comptime p.integerRangeForWidth(8, false)};
+    try std.testing.expect(!signature.matches(&graph, invalid));
+    invalid = descriptor;
+    invalid.symbol = "another_host_step";
+    try std.testing.expect(!signature.matches(&graph, invalid));
+    const program: b.Program = .{ .graph = &graph, .functions = &.{}, .host_functions = &.{descriptor} };
     var linked: LinkedPrograms = .{};
     defer linked.deinit(allocator);
     const table = linked.get(allocator, &program, &available) catch |err| {
@@ -151,4 +156,21 @@ fn failedHostLink(allocator: std.mem.Allocator) !void {
 
 test "host linking publishes complete tables and releases failed allocations" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, failedHostLink, .{});
+}
+
+test "host descriptors resolve without semantic graph access" {
+    const Adapter = struct {
+        fn call(_: ?*anyopaque, _: []const i128, _: []i128) !void {}
+    };
+    const range = comptime p.integerRangeForWidth(32, true);
+    const available = [_]Binding{.{ .symbol = "step", .inputs = &.{range}, .outputs = &.{}, .call = Adapter.call }};
+    var descriptor: b.HostFunction = .{ .function = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 }, .symbol = "step", .inputs = &.{range}, .outputs = &.{} };
+    try std.testing.expect((try resolve(descriptor, &available)) == &available[0]);
+    descriptor.inputs = &.{comptime p.integerRangeForWidth(8, false)};
+    try std.testing.expectError(error.IncompatibleHostBinding, resolve(descriptor, &available));
+    descriptor.symbol = "absent";
+    try std.testing.expectError(error.MissingHostBinding, resolve(descriptor, &available));
+    descriptor.symbol = "step";
+    descriptor.inputs = &.{range};
+    try std.testing.expectError(error.AmbiguousHostBinding, resolve(descriptor, &.{ available[0], available[0] }));
 }

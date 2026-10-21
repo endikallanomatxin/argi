@@ -146,7 +146,10 @@ pub const Lower = struct {
             stored.* = value;
             break :blk stored;
         } else null;
-        const program: b.Program = .{ .host_functions = try self.allocator.dupe(g.GlobalFunctionId, self.host_functions.items), .globals = try self.allocator.dupe(b.Global, self.globals.items), .graph = self.graph, .functions = self.functions, .expression = entry, .session = self.session };
+        const host_functions = try self.allocator.alloc(b.HostFunction, self.host_functions.items.len);
+        for (self.host_functions.items, host_functions) |function, *descriptor|
+            descriptor.* = try @import("host_signature.zig").describe(self.allocator, self.graph, function);
+        const program: b.Program = .{ .host_functions = host_functions, .globals = try self.allocator.dupe(b.Global, self.globals.items), .graph = self.graph, .functions = self.functions, .expression = entry, .session = self.session };
         self.functions_published = true;
         return program;
     }

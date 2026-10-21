@@ -237,8 +237,16 @@ pub const Function = struct {
 // retain those backing tables and graphs until context reset or destruction.
 pub const Global = struct { binding: g.GlobalBindingId, ty: Type, initializer: Function };
 
+pub const HostFunction = struct {
+    function: g.GlobalFunctionId,
+    source: p.SourceRef,
+    symbol: []const u8,
+    inputs: []const p.IntegerRange,
+    outputs: []const p.IntegerRange,
+};
+
 pub const Program = struct {
-    host_functions: []const g.GlobalFunctionId = &.{},
+    host_functions: []const HostFunction = &.{},
     globals: []const Global = &.{},
     graph: *const g.GlobalSemanticGraph,
     functions: []const ?Function,

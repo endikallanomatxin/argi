@@ -31,8 +31,8 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
         }
     }
     for (program.host_functions, 0..) |function, index| {
-        @import("host_signature.zig").validate(program.graph, function) catch return error.InvalidBytecode;
-        for (program.host_functions[0..index]) |previous| if (previous == function) return error.InvalidBytecode;
+        if (!@import("host_signature.zig").matches(program.graph, function)) return error.InvalidBytecode;
+        for (program.host_functions[0..index]) |previous| if (previous.function == function.function) return error.InvalidBytecode;
     }
     const module_bindings = try allocator.alloc(bool, program.graph.bindings.items.len);
     defer allocator.free(module_bindings);
@@ -296,7 +296,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 },
                 .host_call => |x| {
                     if (x.function >= program.host_functions.len) return error.InvalidBytecode;
-                    const callee = program.graph.function(program.host_functions[x.function]);
+                    const callee = program.graph.function(program.host_functions[x.function].function);
                     if (x.args.len != callee.input.len or x.outputs.len != callee.output.len) return error.InvalidBytecode;
                     for (x.args, program.graph.fields.items[callee.input.start..][0..callee.input.len]) |slot, field|
                         if (!types.equal(program.graph, f.slots[slot], field.ty)) return error.InvalidBytecode;

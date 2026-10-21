@@ -2,6 +2,7 @@ const std = @import("std");
 const g = @import("../../4_semantics/global/graph.zig");
 const types = @import("../../4_semantics/global/types.zig");
 const b = @import("bytecode.zig");
+const p = @import("../../4_semantics/primitives/schema.zig");
 
 pub const max_values = 32;
 
@@ -34,4 +35,31 @@ pub fn validate(graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) !vo
 pub fn symbol(graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) []const u8 {
     const function = graph.function(id);
     return graph.text(function.foreign_symbol orelse graph.declaration(function.declaration).name);
+}
+
+// Lower the checked ABI once. Execution links this descriptor without reading
+// semantic fields or interpreting types; verification checks it against them.
+pub fn describe(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) !b.HostFunction {
+    try validate(graph, id);
+    const function = graph.function(id);
+    const inputs = try allocator.alloc(p.IntegerRange, function.input.len - 1);
+    errdefer allocator.free(inputs);
+    const outputs = try allocator.alloc(p.IntegerRange, function.output.len);
+    errdefer allocator.free(outputs);
+    for (inputs, graph.fields.items[function.input.start..][0..inputs.len]) |*range, field| range.* = b.integerBounds(graph, field.ty).?;
+    for (outputs, graph.fields.items[function.output.start..][0..outputs.len]) |*range, field| range.* = b.integerBounds(graph, field.ty).?;
+    return .{ .function = id, .source = graph.declaration(function.declaration).source, .symbol = symbol(graph, id), .inputs = inputs, .outputs = outputs };
+}
+
+pub fn matches(graph: *const g.GlobalSemanticGraph, descriptor: b.HostFunction) bool {
+    validate(graph, descriptor.function) catch return false;
+    const function = graph.function(descriptor.function);
+    if (!std.mem.eql(u8, descriptor.symbol, symbol(graph, descriptor.function)) or
+        !std.meta.eql(descriptor.source, graph.declaration(function.declaration).source) or
+        descriptor.inputs.len + 1 != function.input.len or descriptor.outputs.len != function.output.len) return false;
+    for (descriptor.inputs, graph.fields.items[function.input.start..][0..descriptor.inputs.len]) |range, field|
+        if (!std.meta.eql(range, b.integerBounds(graph, field.ty).?)) return false;
+    for (descriptor.outputs, graph.fields.items[function.output.start..][0..descriptor.outputs.len]) |range, field|
+        if (!std.meta.eql(range, b.integerBounds(graph, field.ty).?)) return false;
+    return true;
 }
