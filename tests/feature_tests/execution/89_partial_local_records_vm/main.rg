@@ -16,9 +16,9 @@ exercise := () -> (.result: Int32 = 0) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    compiled ::= #run exercise()
+    compiled ::= #run () -> (.value: Int32) { value = exercise() }
     if compiled != 42 { abort }
-    if [#run whole_owner()] != 42 { abort }
+    if [#run () -> (.value: Int32) { value = whole_owner() }] != 42 { abort }
     if whole_owner() != 42 { abort }
     status_code = exercise()
 }

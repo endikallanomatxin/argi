@@ -36,6 +36,6 @@ exercise() -> (.result: Int32) := {
 }
 
 main() -> (.status_code: Int32) := {
-    if [#run exercise()] != 42 { abort }
+    if [#run () -> (.value: Int32) { value = exercise() }] != 42 { abort }
     status_code = exercise()
 }

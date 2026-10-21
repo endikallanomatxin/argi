@@ -21,6 +21,6 @@ probe := () -> (.result: Int32 = 0) {
 }
 
 main := () -> (.status_code: Int32) {
-    if #run probe() != 42 { abort }
+    if #run () -> (.value: Int32) { value = probe() } != 42 { abort }
     status_code = probe()
 }

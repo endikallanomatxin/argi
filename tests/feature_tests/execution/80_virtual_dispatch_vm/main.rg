@@ -28,7 +28,7 @@ counted := () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    compiled ::= #run counted()
+    compiled ::= #run () -> (.value: Int32) { value = counted() }
     if compiled != 42 { abort }
     #if counted() == 42 {
         status_code = counted()

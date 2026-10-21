@@ -24,6 +24,6 @@ exercise := () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32) {
-    if [#run exercise()] != 42 { abort }
+    if [#run () -> (.value: Int32) { value = exercise() }] != 42 { abort }
     #if exercise() == 42 { status_code = exercise() } #else { abort }
 }

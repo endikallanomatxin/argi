@@ -25,7 +25,7 @@ exercise := () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    compiled ::= #run exercise()
+    compiled ::= #run () -> (.value: Int32) { value = exercise() }
     if compiled != 42 { abort }
     #if exercise() == 42 {
         status_code = exercise()
