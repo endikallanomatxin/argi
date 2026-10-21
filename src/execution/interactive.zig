@@ -1250,6 +1250,49 @@ test "interactive computed conditions retain reconstructed type bindings across 
     try session.close();
 }
 
+test "interactive virtual methods link host calls against their retained code unit" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "ForeignFunctionInterface: Type = ()\n" ++
+        "host_increment(.value: Int32) -> (.result: Int32): ExternFunction\n" ++
+        "host_identity(.value: Int32) -> (.result: Int32): ExternFunction");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    const State = struct {
+        calls: usize = 0,
+        fn increment(data: ?*anyopaque, inputs: []const i128, outputs: []i128) !void {
+            const self: *@This() = @ptrCast(@alignCast(data.?));
+            self.calls += 1;
+            outputs[0] = inputs[0] + 1;
+        }
+        fn identity(_: ?*anyopaque, inputs: []const i128, outputs: []i128) !void {
+            outputs[0] = inputs[0];
+        }
+    };
+    var state: State = .{};
+    const host = @import("host.zig");
+    const range = @import("../4_semantics/primitives/schema.zig").integerRangeForWidth(32, true);
+    const bindings = [_]host.Binding{
+        .{ .symbol = "host_increment", .inputs = &.{range}, .outputs = &.{range}, .data = &state, .call = State.increment },
+        .{ .symbol = "host_identity", .inputs = &.{range}, .outputs = &.{range}, .call = State.identity },
+    };
+    session.runtime.context.host_bindings = &bindings;
+    try session.submitDefinitions("Readable#(.Source: Type): Contract = (.read: (.source: &Source, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) where {})\nBox: Type = ()\nimplement Readable#(Box) (.read = (.source: &Box, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) { first ::= host_increment(.value = 40, .ffi = ffi)\nresult = host_increment(.value = first, .ffi = ffi) })");
+    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability\nbox :: Box = ()\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
+    try session.submitDefinitions("invoke := (.handle: &Virtual#(.contract: Readable), .ffi: $&ForeignFunctionInterface) -> (.result: Int32) { unused ::= host_identity(.value = 7, .ffi = ffi)\nresult = Readable#().read(handle, .ffi = ffi).result }");
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("invoke(.handle = &erased, .ffi = ffi)")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(usize, 2), state.calls);
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("invoke(.handle = &erased, .ffi = ffi)")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(usize, 4), state.calls);
+    try session.close();
+}
+
 test "interactive cancellation preserves completed effects and stops later host calls" {
     const a = std.testing.allocator;
     var sources = submissions.Sources.init(a);

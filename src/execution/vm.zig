@@ -38,6 +38,7 @@ pub const Limits = struct {
 const Frame = struct {
     program: *const b.Program,
     function: *const b.Function,
+    host_bindings: []const host.Binding,
     storage: runtime_value.FrameId,
     pc: usize = 0,
     return_slots: []const b.Slot,
@@ -194,6 +195,7 @@ pub const Vm = struct {
     program: b.Program,
     limits: Limits,
     steps: usize = 0,
+    linked_hosts: host.LinkedPrograms = .{},
     owned_context: Context,
     shared_context: ?*Context = null,
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
@@ -204,10 +206,12 @@ pub const Vm = struct {
     }
     pub fn initWithHost(a: std.mem.Allocator, program: b.Program, limits: Limits, bindings: []const host.Binding) !Vm {
         try b.verify(a, program);
-        try host.preflight(program, bindings);
+        var linked: host.LinkedPrograms = .{};
+        errdefer linked.deinit(a);
+        _ = try linked.get(a, &program, bindings);
         var context_ = Context.init(a, limits.value_cells);
         context_.host_bindings = bindings;
-        return .{ .owned_context = context_, .allocator = a, .program = program, .limits = limits };
+        return .{ .linked_hosts = linked, .owned_context = context_, .allocator = a, .program = program, .limits = limits };
     }
     /// Borrow session-owned execution storage without transferring it. The
     /// memory quota belongs to that context; instruction/depth limits are local
@@ -215,13 +219,16 @@ pub const Vm = struct {
     pub fn initShared(a: std.mem.Allocator, program: b.Program, limits: Limits, shared: *Context) !Vm {
         if (limits.value_cells != shared.limit) return error.ExecutionContextLimitMismatch;
         try b.verify(a, program);
-        try host.preflight(program, shared.host_bindings);
-        return .{ .owned_context = undefined, .shared_context = shared, .allocator = a, .program = program, .limits = limits };
+        var linked: host.LinkedPrograms = .{};
+        errdefer linked.deinit(a);
+        _ = try linked.get(a, &program, shared.host_bindings);
+        return .{ .linked_hosts = linked, .owned_context = undefined, .shared_context = shared, .allocator = a, .program = program, .limits = limits };
     }
     pub fn context(self: *Vm) *Context {
         return self.shared_context orelse &self.owned_context;
     }
     pub fn deinit(self: *Vm) void {
+        self.linked_hosts.deinit(self.allocator);
         if (self.shared_context == null) self.owned_context.deinit();
     }
     // Session owners must run checked exit cleanup before resetting a healthy
@@ -302,13 +309,14 @@ pub const Vm = struct {
         for (args, function.inputs) |value, slot| if (!b.valueFits(self.program.graph, function.slots[slot], value)) return error.InvalidArguments;
     }
     fn frame(self: *Vm, program: *const b.Program, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
+        const linked = try self.linked_hosts.get(self.allocator, program, self.context().host_bindings);
         const id = try self.context().storage.enterCleanup(function.slots.len, function.cleanup);
         const slots = try self.context().storage.slots(id);
         for (args, function.inputs) |value, slot| try slots.put(slot, value);
         try self.context().storage.charge(function.write_destinations.len);
         const destinations = try self.context().arena.allocator().alloc(?WriteDestination, function.write_destinations.len);
         @memset(destinations, null);
-        return .{ .program = program, .function = function, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
+        return .{ .program = program, .function = function, .host_bindings = linked, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
     }
     fn resolvePlace(self: *Vm, program: *const b.Program, frame_id: runtime_value.FrameId, place: b.Place, path: *[64]runtime_value.Projection, comptime read_value: bool) !runtime_value.Reference {
         if (place.region == .global) {
@@ -456,7 +464,7 @@ pub const Vm = struct {
                     }
                 },
                 .host_call => |x| {
-                    const binding = try host.resolve(unit.graph, unit.host_functions[x.function], self.context().host_bindings);
+                    const binding = current.host_bindings[x.function];
                     var arguments: [host.max_values]i128 = undefined;
                     var results: [host.max_values]i128 = undefined;
                     for (binding.outputs, 0..) |range, index| results[index] = range.minimum - 1;
