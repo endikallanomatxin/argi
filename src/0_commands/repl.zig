@@ -58,7 +58,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     var output = std.Io.File.stdout().writer(io, &output_buffer);
     var error_output = std.Io.File.stderr().writer(io, &.{});
     defer error_output.interface.flush() catch {};
-    var host_output = @import("repl_host.zig").Output{ .writer = &output.interface, .error_writer = &error_output.interface };
+    var host_output = @import("../execution/host_output.zig").Output{ .writer = &output.interface, .error_writer = &error_output.interface };
     const host_bindings = host_output.bindings();
     session.runtime.context.host_bindings = &host_bindings;
     const terminal = try std.Io.File.stdin().isTty(io) and try std.Io.File.stdout().isTty(io);
@@ -316,7 +316,7 @@ test "REPL standard prelude prints ordinary text across reset" {
     defer output.deinit();
     var errors = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer errors.deinit();
-    var host_output = @import("repl_host.zig").Output{ .writer = &output.writer, .error_writer = &errors.writer };
+    var host_output = @import("../execution/host_output.zig").Output{ .writer = &output.writer, .error_writer = &errors.writer };
     const bindings = host_output.bindings();
     session.runtime.context.host_bindings = &bindings;
     session.initializePrelude(prelude) catch |err| {

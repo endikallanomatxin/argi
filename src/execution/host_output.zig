@@ -1,5 +1,5 @@
 const std = @import("std");
-const host = @import("../execution/host.zig");
+const host = @import("host.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 
 // These are context-local endpoint tokens, never native addresses. Only output
@@ -43,7 +43,7 @@ pub const Output = struct {
     }
 };
 
-test "REPL output adapters report failed writes and reject unknown endpoints" {
+test "VM output adapters report failed writes and reject unknown endpoints" {
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
     var failure: std.Io.Writer = .failing;
