@@ -14149,6 +14149,12 @@ test "feature_tests/execution/140_floating_memory" {
     try vmExpect("tests/feature_tests/execution/140_floating_memory", 42, null);
 }
 
+test "feature_tests/execution/149_comptime_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/149_comptime_record_defaults");
+    try runExpect("tests/feature_tests/execution/149_comptime_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/149_comptime_record_defaults", 42, null);
+}
+
 test "feature_tests/execution/121_type_queries" {
     try expectSuccessfulBuild("tests/feature_tests/execution/121_type_queries");
     try runExpect("tests/feature_tests/execution/121_type_queries", 42);
