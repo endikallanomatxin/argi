@@ -381,8 +381,7 @@ pub const Vm = struct {
                 .borrow_storage => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, false);
-                    const permission = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
-                    try slots.put(x.dst, try self.context().storage.address(reference, permission));
+                    try slots.put(x.dst, try self.context().storage.address(reference, x.permission));
                 },
                 .constant => |x| try slots.put(x.dst, x.value),
                 .resolve_location => |x| try slots.put(x.dst, try self.context().resolveTraceLocation((try slots.get(x.id)).integer)),
@@ -538,8 +537,7 @@ pub const Vm = struct {
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, true);
-                    const permission = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
-                    try slots.put(x.dst, try self.context().storage.borrow(reference, permission));
+                    try slots.put(x.dst, try self.context().storage.borrow(reference, x.permission));
                 },
                 .load => |x| {
                     var path: [64]runtime_value.Projection = undefined;

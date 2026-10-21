@@ -96,7 +96,7 @@ pub const Instruction = struct {
     source: p.SourceRef,
     op: union(enum) {
         reserve_storage: struct { dst: Slot, layout: @import("storage_layout.zig").Layout, reset: bool = false },
-        borrow_storage: struct { dst: Slot, place: Place },
+        borrow_storage: struct { dst: Slot, place: Place, permission: p.PointerMutability },
         constant: struct { dst: Slot, value: Value },
         resolve_location: struct { dst: Slot, id: Slot },
         trace_location: struct { dst: Slot, location: *const TraceLocation },
@@ -121,7 +121,7 @@ pub const Instruction = struct {
         payload: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId },
         is_variant: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId, invert: bool },
         branch_variant: struct { src: Slot, variant: g.GlobalVariantId, yes: u32, no: u32 },
-        borrow: struct { dst: Slot, place: Place },
+        borrow: struct { dst: Slot, place: Place, permission: p.PointerMutability },
         load: struct { dst: Slot, place: Place },
         check_place: Place,
         // Initialization activation and old-value destruction are independent:

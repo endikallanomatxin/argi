@@ -238,7 +238,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 inline .borrow, .borrow_storage => |x| {
                     const target = try placeInfo(program, f.slots, x.place);
                     const pointer = program.graph.semanticType(f.slots[x.dst]);
-                    if (pointer != .pointer or !types.equal(program.graph, pointer.pointer.child, target.ty) or (pointer.pointer.mutability == .read_write and !target.writable)) return error.InvalidBytecode;
+                    if (pointer != .pointer or pointer.pointer.mutability != x.permission or !types.equal(program.graph, pointer.pointer.child, target.ty) or (x.permission == .read_write and !target.writable)) return error.InvalidBytecode;
                 },
                 .load => |x| {
                     const target = try placeInfo(program, f.slots, x.place);
@@ -612,6 +612,38 @@ fn sessionBinding(program: Program, index: u32) !b.SessionBinding {
     const session = program.session orelse return error.InvalidBytecode;
     if (index >= session.bindings.len) return error.InvalidBytecode;
     return session.bindings[index];
+}
+
+test "bytecode borrow descriptors cannot change the selected access permission" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    const source = @import("../../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    for ([_]bool{ false, true }) |storage| {
+        var code = [_]Instruction{
+            .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
+            .{ .source = source, .op = .abort_ },
+            .{ .source = source, .op = .{ .ret = &.{1} } },
+        };
+        var slots = [_]Type{ @enumFromInt(0), @enumFromInt(1) };
+        const function = b.Function{ .slots = &slots, .inputs = &.{}, .outputs = &.{1}, .code = &code };
+        const program = Program{ .graph = &graph, .functions = &.{}, .expression = &function };
+        for ([_]@import("../../4_semantics/primitives/schema.zig").PointerMutability{ .read_only, .read_write }) |permission| {
+            code[1].op = if (storage)
+                .{ .borrow_storage = .{ .dst = 1, .place = .{ .root = 0, .path = &.{} }, .permission = permission } }
+            else
+                .{ .borrow = .{ .dst = 1, .place = .{ .root = 0, .path = &.{} }, .permission = permission } };
+            slots[1] = if (permission == .read_only) @enumFromInt(1) else @enumFromInt(2);
+            try verify(a, program);
+            slots[1] = if (permission == .read_only) @enumFromInt(2) else @enumFromInt(1);
+            try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+        }
+    }
 }
 
 test "bytecode numeric byte descriptors preserve selected permissions and endianness" {

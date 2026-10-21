@@ -424,7 +424,7 @@ const FunctionLower = struct {
             for (args, self.lower.parent.graph.fields.items[function.input.start..][0..function.input.len], 0..) |*arg, field, index| {
                 if (index == self_index) {
                     arg.* = try self.lower.newSlot(field.ty);
-                    _ = try self.lower.emit(source, .{ .borrow = .{ .dst = arg.*, .place = target.place } });
+                    _ = try self.lower.emit(source, .{ .borrow = .{ .dst = arg.*, .place = target.place, .permission = self.lower.parent.graph.semanticType(field.ty).pointer.mutability } });
                 } else {
                     const value = try cleanup_plan.argument(self.lower.parent.graph, input, field);
                     arg.* = try self.lower.coerce(source, try self.lower.expression(value), field.ty);
@@ -665,7 +665,7 @@ const FunctionLower = struct {
                 switch (case.payload_mode) {
                     .borrow, .mut_borrow => {
                         const place_ = try self.project(target.?, .{ .variant = case.variant });
-                        _ = try self.emit(source, .{ .borrow = .{ .dst = dst, .place = place_ } });
+                        _ = try self.emit(source, .{ .borrow = .{ .dst = dst, .place = place_, .permission = self.parent.graph.semanticType(self.slots.items[dst]).pointer.mutability } });
                     },
                     .value, .move => _ = try self.emit(source, .{ .payload = .{ .dst = dst, .src = value, .variant = case.variant } }),
                 }
@@ -1170,7 +1170,7 @@ const FunctionLower = struct {
             },
             .address_of => |value| {
                 const target = try self.place(value);
-                _ = try self.emit(node.source, .{ .borrow_storage = .{ .dst = dst, .place = target } });
+                _ = try self.emit(node.source, .{ .borrow_storage = .{ .dst = dst, .place = target, .permission = self.parent.graph.semanticType(self.slots.items[dst]).pointer.mutability } });
             },
             .dereference => |x| {
                 const pointer = try self.expression(x.pointer);

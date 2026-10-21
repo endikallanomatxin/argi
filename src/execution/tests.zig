@@ -459,7 +459,7 @@ test "bytecode lifecycle instructions update caller state through an ordinary re
         .{ .source = source, .op = .{ .cleanup_test = .{ .dst = 3, .place = .{ .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .branch = .{ .condition = 3, .yes = 8, .no = 2 } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
-        .{ .source = source, .op = .{ .borrow = .{ .dst = 1, .place = .{ .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .borrow = .{ .dst = 1, .permission = .read_write, .place = .{ .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .cleanup_set = .{ .place = .{ .root = 0, .path = &.{} }, .enabled = true } } },
         .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(1), .args = &.{1}, .outputs = &.{} } } },
         .{ .source = source, .op = .{ .cleanup_test = .{ .dst = 3, .place = .{ .root = 0, .path = &.{} } } } },
@@ -547,7 +547,7 @@ test "bytecode verifies reference access and traps escaped frame storage" {
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } });
     var code = [_]b.Instruction{
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
-        .{ .source = source, .op = .{ .borrow = .{ .dst = 1, .place = .{ .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .borrow = .{ .dst = 1, .permission = .read_only, .place = .{ .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
@@ -558,7 +558,7 @@ test "bytecode verifies reference access and traps escaped frame storage" {
     try std.testing.expectError(error.ExecutionDeadReference, executor.run(@enumFromInt(0), &.{}));
     code[2].op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[2].op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{.dereference} } } };
+    code[2].op = .{ .borrow = .{ .dst = 2, .permission = .read_write, .place = .{ .root = 1, .path = &.{.dereference} } } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[2].op = .{ .readonly = .{ .dst = 2, .src = 1 } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
@@ -721,10 +721,10 @@ test "bytecode write destinations capture aliases before later writes" {
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 40 } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 1 } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 3, .value = .{ .boolean = true } } } },
-        .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .permission = .read_write, .place = .{ .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .jump = 5 } },
         .{ .source = source, .op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 2, .path = &.{.dereference} } } } },
-        .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .permission = .read_write, .place = .{ .root = 1, .path = &.{} } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .check_write_cleanup = 0 } },
         .{ .source = source, .op = .{ .store = .{ .destination = 0, .value = 1 } } },
@@ -1461,23 +1461,23 @@ test "bytecode typed session bindings persist across verified program revisions"
     const initialize = [_]b.Instruction{
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .session_initialize = .{ .binding = 0, .value = 0 } } },
-        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .permission = .read_write, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .session_initialize = .{ .binding = 1, .value = 1 } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
     const read = [_]b.Instruction{
-        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .permission = .read_write, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
     const read_reference = [_]b.Instruction{
-        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 2, .place = .{ .region = .session, .root = 1, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 2, .permission = .read_write, .place = .{ .region = .session, .root = 1, .path = &.{} } } } },
         .{ .source = source, .op = .{ .load = .{ .dst = 1, .place = .{ .root = 2, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
     const write = [_]b.Instruction{
-        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 1, .permission = .read_write, .place = .{ .region = .session, .root = 0, .path = &.{} } } } },
         .{ .source = source, .op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 0, .region = .session, .path = &.{} } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 7 } } } },
         .{ .source = source, .op = .{ .check_write_cleanup = 0 } },
@@ -1894,11 +1894,11 @@ test "equivalent borrowed choices use representation tags rather than semantic I
         .code = &.{
             .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
             .{ .source = source, .op = .{ .choice = .{ .dst = 1, .variant = @enumFromInt(0), .payload = 0 } } },
-            .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{} } } } },
+            .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .permission = .read_only, .place = .{ .root = 1, .path = &.{} } } } },
             .{ .source = source, .op = .{ .copy = .{ .dst = 3, .src = 2 } } },
             .{ .source = source, .op = .{ .load = .{ .dst = 4, .place = .{ .root = 3, .path = &.{.dereference} } } } },
             .{ .source = source, .op = .{ .payload = .{ .dst = 5, .src = 4, .variant = @enumFromInt(1) } } },
-            .{ .source = source, .op = .{ .borrow = .{ .dst = 6, .place = .{ .root = 3, .path = &.{ .dereference, .{ .variant = @enumFromInt(1) } } } } } },
+            .{ .source = source, .op = .{ .borrow = .{ .dst = 6, .permission = .read_only, .place = .{ .root = 3, .path = &.{ .dereference, .{ .variant = @enumFromInt(1) } } } } } },
             .{ .source = source, .op = .{ .load = .{ .dst = 5, .place = .{ .root = 6, .path = &.{.dereference} } } } },
             .{ .source = source, .op = .{ .ret = &.{5} } },
         },
