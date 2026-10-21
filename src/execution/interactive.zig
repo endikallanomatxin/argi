@@ -964,6 +964,10 @@ test "interactive scalar host calls require explicit bindings before publication
     try std.testing.expectEqual(@as(usize, 1), state.calls);
     try std.testing.expectError(error.Reported, session.submitInput("#run host_increment(.value = 41)"));
     try std.testing.expectEqual(@as(usize, 1), state.calls);
+    const negative = (try session.submitInput("host_increment(.value = -42)")).?.value.runtime.integer;
+    try std.testing.expectEqual(@as(i128, -41), @import("../5_codegen/integer_arithmetic.zig").decode(negative, range));
+    const minimum = (try session.submitInput("host_increment(.value = -2147483648)")).?.value.runtime.integer;
+    try std.testing.expectEqual(range.minimum + 1, @import("../5_codegen/integer_arithmetic.zig").decode(minimum, range));
     state.invalid_result = true;
     try std.testing.expectError(error.ExecutionInvalidHostResult, session.submitInput("host_increment(.value = 41)"));
     try std.testing.expectEqual(.poisoned, session.runtime.context.state);

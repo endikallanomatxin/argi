@@ -483,7 +483,7 @@ pub const Vm = struct {
                     var arguments: [host.max_values]i128 = undefined;
                     var results: [host.max_values]i128 = undefined;
                     for (binding.outputs, 0..) |range, index| results[index] = range.minimum - 1;
-                    for (x.args[0 .. x.args.len - 1], 0..) |slot, index| arguments[index] = integer.decode((try slots.get(slot)).integer, b.integerBounds(unit.graph, f.slots[slot]).?);
+                    for (x.args[0 .. x.args.len - 1], binding.inputs, 0..) |slot, range, index| arguments[index] = integer.decode((try slots.get(slot)).integer, range);
                     // The logical ffi reference has already participated in
                     // checked argument evaluation. It never crosses this bridge.
                     _ = try slots.get(x.args[x.args.len - 1]);
@@ -491,7 +491,7 @@ pub const Vm = struct {
                     for (results[0..binding.outputs.len], binding.outputs) |value, range|
                         if (value < range.minimum or value > range.maximum) return error.ExecutionInvalidHostResult;
                     // Validate every output before changing any destination.
-                    for (x.outputs, results[0..binding.outputs.len]) |slot, value| try slots.put(slot, .{ .integer = integer.encode(value, b.integerBounds(unit.graph, f.slots[slot]).?) });
+                    for (x.outputs, results[0..binding.outputs.len], binding.outputs) |slot, value, range| try slots.put(slot, .{ .integer = integer.encode(value, range) });
                 },
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
                 .session_declare => |x| {
