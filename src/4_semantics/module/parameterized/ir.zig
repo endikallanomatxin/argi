@@ -90,7 +90,6 @@ pub const IntExpression = union(enum) {
 };
 
 pub const Type = union(enum) {
-    binding_type: ParameterizedBindingId,
     concrete: entities.ModuleTypeId,
     parameter: ComptimeParameterId,
     projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
@@ -145,6 +144,7 @@ pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
 
 pub const PendingExpressionKind = enum(u8) {
+    entry_capture,
     unknown_identifier,
     comptime_parameter,
     pipe,

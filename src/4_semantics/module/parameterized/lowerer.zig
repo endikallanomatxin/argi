@@ -186,7 +186,7 @@ pub const Context = struct {
     inside_comptime_entry: bool = false,
     entry_parent: ?*Context = null,
     module_capture_source: ?EntryCaptureSource = null,
-    entry_captures: std.ArrayList(struct { name: []const u8, ty: ir.ParameterizedTypeId, outer_value: ?ir.ParameterizedNodeId, use_node: ir.ParameterizedNodeId }) = .empty,
+    entry_captures: std.ArrayList(struct { name: []const u8, ty: ?ir.ParameterizedTypeId, outer_value: ?ir.ParameterizedNodeId, use_node: ir.ParameterizedNodeId }) = .empty,
     bindings: std.array_list.Managed(BindingName),
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
@@ -1107,15 +1107,11 @@ pub const Context = struct {
             .start = if (captured.len == 0) 0 else @intFromEnum(captured[0].id),
             .len = @intCast(captured.len),
         };
-        const capture_interface = try child.publishEntryCaptures(node);
-        const capture_count = capture_interface.bindings.len;
-        const capture_input = capture_interface.ty;
         try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
             .is_comptime_entry = true,
             .declaration = declaration,
             .parameters = parameters,
-            .input = capture_input,
-            .input_bindings = capture_interface.bindings,
+            .input = empty,
             .output = output,
             .body = body,
             .output_bindings = output_bindings,
@@ -1133,10 +1129,7 @@ pub const Context = struct {
         }
         const argument_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
         try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
-        const capture_value_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.value_fields.items.len);
-        for (child.entry_captures.items) |capture|
-            try self.graph.semantic.parameterized_storage.ir.value_fields.append(self.allocator, .{ .name = try self.writer.addString(capture.name), .value = capture.outer_value.? });
-        const input = try self.addResolvedNode(node, capture_input, .{ .struct_value_literal = .{ .fields = .{ .start = capture_value_start, .len = capture_count } } });
+        const input = try self.addResolvedNode(node, empty, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
         const result = try self.addPending(node, .generic_call, &.{input}, name, null, .none);
         const pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
         self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.comptime_run = !self.inside_comptime_entry;
@@ -1152,8 +1145,8 @@ pub const Context = struct {
         for (self.entry_captures.items, 0..) |capture, offset| {
             const binding: ir.ParameterizedBindingId = @enumFromInt(capture_binding_start + @as(u32, @intCast(offset)));
             const capture_name = try self.writer.addString(capture.name);
-            try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{ .name = capture_name, .source = self.sourceRef(node), .ty = capture.ty, .mutability = .constant });
-            try self.graph.semantic.parameterized_storage.ir.fields.append(self.allocator, .{ .name = capture_name, .source = self.sourceRef(node), .ty = capture.ty });
+            try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{ .name = capture_name, .source = self.sourceRef(node), .ty = capture.ty.?, .mutability = .constant });
+            try self.graph.semantic.parameterized_storage.ir.fields.append(self.allocator, .{ .name = capture_name, .source = self.sourceRef(node), .ty = capture.ty.? });
             self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(capture.use_node)].resolved.content = .{ .binding_use = binding };
         }
         const capture_count: u32 = @intCast(self.entry_captures.items.len);
@@ -1165,21 +1158,25 @@ pub const Context = struct {
         for (self.entry_captures.items) |capture|
             if (std.mem.eql(u8, capture.name, name)) return capture.use_node;
         var outer: ?ir.ParameterizedNodeId = null;
-        const ty = if (self.entry_parent) |parent| blk: {
+        const ty: ?ir.ParameterizedTypeId = if (self.entry_parent) |parent| blk: {
             outer = if (parent.parameterizedBinding(name)) |binding|
                 try parent.addResolvedNode(node, parent.graph.semantic.parameterized_storage.ir.bindingType(binding), .{ .binding_use = binding })
             else
                 (try parent.captureEntryValue(node, name)) orelse return null;
-            if (self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer.?)].resolved.ty) |known| break :blk known;
-            const binding = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer.?)].resolved.content.binding_use;
-            break :blk try self.addType(.{ .binding_type = binding });
+            break :blk switch (self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(outer.?)]) {
+                .resolved => |value| value.ty,
+                .pending => null,
+            };
         } else if (self.module_capture_source) |source| blk: {
             const module_type = (try source.resolve(source.context, node, name)) orelse return null;
             break :blk try self.addType(.{ .concrete = module_type });
         } else return null;
-        // This node is patched to its private input binding before publication;
-        // it is never a value literal in retained or instantiated IR.
-        const use = try self.addResolvedNode(node, ty, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        // Generic captures remain pending until their selected branch is
+        // materialized. Concrete module captures keep their fixed input bridge.
+        const use = if (outer) |value|
+            try self.addPending(node, .entry_capture, &.{value}, try self.writer.addString(name), null, .none)
+        else
+            try self.addResolvedNode(node, ty, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
         try self.entry_captures.append(self.allocator, .{ .name = name, .ty = ty, .outer_value = outer, .use_node = use });
         return use;
     }

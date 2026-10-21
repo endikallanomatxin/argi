@@ -1267,6 +1267,19 @@ test "bytecode generic anonymous entries transport retained lexical capture type
     , .{}));
 }
 
+test "generic compile-time entries ignore runtime captures in discarded branches" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\choose#(.n: Int32)(.runtime_value: Int32) -> (.result: Int32) := {
+        \\    result = #run () -> (.value: Int32) {
+        \\        #if n == 42 { value = n } #else { value = runtime_value }
+        \\    }
+        \\}
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = choose#(.n = 42)(.runtime_value = 7)
+        \\}
+    , .{}));
+}
+
 test "staged compile-time captures resolve types from instantiated outer bindings" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\identity(.value: Int32) -> (.result: Int32 = value) := {}

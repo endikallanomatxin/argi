@@ -106,8 +106,9 @@ external inputs must be tracked as build dependencies before enabling them.
 > invalid selected branches without changing the accepted session revision.
 > Captured lexical values travel through ordinary checked call inputs. Their
 > types can be inferred, including for constants retained by the REPL. Staged
-> capture types resolve from their enclosing specialization's existing bindings,
-> without repeating initializer execution.
+> captures are added as inputs only when the selected branch uses them. Their
+> types come from the enclosing specialization's existing bindings, without
+> repeating initializer execution.
 > The superseded `#run function(...)` form is rejected; invoke the function
 > inside an anonymous entry instead.
 > This implementation accepts resolved function calls with constant scalar or

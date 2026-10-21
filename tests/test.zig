@@ -14301,3 +14301,7 @@ test "feature_tests/execution/155_nested_comptime_capture_context" {
 test "feature_tests/execution/156X_nested_comptime_reference_output" {
     try buildExpectFail("tests/feature_tests/execution/156X_nested_comptime_reference_output", "cannot return references or values requiring cleanup");
 }
+
+test "feature_tests/execution/157X_selected_runtime_comptime_capture" {
+    try buildExpectFail("tests/feature_tests/execution/157X_selected_runtime_comptime_capture", "runtime values cannot be used");
+}

@@ -22,6 +22,12 @@ captured_local#(.n: Int32) := () -> (.result: Int32) {
     }
 }
 
+selected_capture#(.n: Int32) := (.runtime_value: Int32) -> (.result: Int32) {
+    result = #run () -> (.value: Int32) {
+        #if n == 42 { value = n } #else { value = runtime_value }
+    }
+}
+
 nested_specialization#(.n: Int32) := () -> (.result: Int32) {
     result = #run () -> (.value: Int32) {
         value = identity#(.n = #run () -> (.inner: Int32) { inner = n })()
@@ -42,6 +48,7 @@ forward#(.n: Int32) := () -> (.result: Int32) {
 }
 
 main() -> (.status_code: Int32) := {
+    if selected_capture#(.n = 42)(.runtime_value = 7) != 42 { abort }
     if captured_local#(.n = 41)() != 41 { abort }
     if captured_local#(.n = 42)() != 42 { abort }
     if nested_specialization#(.n = 41)() != 41 { abort }

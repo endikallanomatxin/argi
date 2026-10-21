@@ -1958,10 +1958,11 @@ pub const Resolver = struct {
         // They are selected specializations, not eagerly registered families.
         const declaration_file = self.graph.files.items[self.graph.declaration(declaration).source.file_index];
         const scalar_primitive = module.is_bundled_core and std.mem.eql(u8, std.fs.path.basename(self.graph.text(declaration_file.path)), "scalar_arithmetic.rg");
-        if (!self.publishing_signature or scalar_primitive) if (located.parameterized.body) |body| {
+        if (!self.publishing_signature or scalar_primitive or located.parameterized.is_comptime_entry) if (located.parameterized.body) |body| {
             const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             const instantiated_body = try context.instantiateBlock(body);
             if (self.profile_io) |io| self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
+            try context.publishEntryCaptures();
             self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
         };
         self.stats.instances += 1;
@@ -2072,6 +2073,7 @@ pub const Resolver = struct {
             };
             return err;
         };
+        try context.publishEntryCaptures();
         self.graph.functions.items[@intFromEnum(function_id)].body = instantiated;
         for (defaults.items) |entry| self.graph.bindings.items[@intFromEnum(entry.binding)].initialization = entry.value;
         speculation.commit();
@@ -2195,23 +2197,6 @@ pub const Resolver = struct {
         return instance.instantiateNode(node);
     }
 
-    // Read the existing lexical instance; type queries must not materialize a
-    // second owner, run an initializer or publish unrelated speculative nodes.
-    pub fn resolveCapturedBindingType(context: *anyopaque, module_index: usize, binding: ir.ParameterizedBindingId) anyerror!global_sg.GlobalTypeId {
-        const self: *Resolver = @ptrCast(@alignCast(context));
-        var active = self.active_instance;
-        while (active) |instance| : (active = instance.active_parent) {
-            if (instance.module_index != module_index) continue;
-            if (instance.binding_map.get(@intFromEnum(binding)) == null) continue;
-            const global = try instance.lexicalBinding(binding);
-            if (self.graph.isBindingTypeUnresolved(global)) return error.UnresolvedCompileTimeCaptureType;
-            const ty = self.graph.binding(global).ty;
-            if (self.graph.isTypeUnresolved(ty)) return error.UnresolvedCompileTimeCaptureType;
-            return ty;
-        }
-        return error.UnresolvedCompileTimeCaptureType;
-    }
-
     const InstanceContext = struct {
         active_parent: ?*InstanceContext = null,
         resolver: *Resolver,
@@ -2225,6 +2210,7 @@ pub const Resolver = struct {
         callsite_reach: ?ReachInferenceContext = null,
         callsite_temporaries: std.ArrayList(global_sg.GlobalNodeId) = .empty,
         conditional_bindings: std.ArrayList(struct { local: ir.ParameterizedBindingId, global: global_sg.GlobalBindingId }) = .empty,
+        entry_captures: std.ArrayList(struct { field: global_sg.Field, binding: global_sg.GlobalBindingId }) = .empty,
 
         fn init(
             resolver: *Resolver,
@@ -2245,6 +2231,7 @@ pub const Resolver = struct {
         }
 
         fn deinit(self: *InstanceContext) void {
+            self.entry_captures.deinit(self.resolver.allocator);
             self.callsite_temporaries.deinit(self.resolver.allocator);
             self.conditional_bindings.deinit(self.resolver.allocator);
             self.binding_map.deinit(self.resolver.allocator);
@@ -2355,6 +2342,71 @@ pub const Resolver = struct {
             return global;
         }
 
+        fn entryCaptureSource(self: *InstanceContext, local: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
+            var current = self.active_parent;
+            while (current) |parent| : (current = parent.active_parent) {
+                if (parent.module_index != self.module_index) continue;
+                if (parent.node_map.get(@intFromEnum(local))) |existing| return existing;
+                switch (storage.nodes.items[@intFromEnum(local)]) {
+                    .resolved => |node| if (node.content == .binding_use) {
+                        const binding = node.content.binding_use;
+                        if (parent.binding_map.get(@intFromEnum(binding)) == null) continue;
+                        const global = try parent.lexicalBinding(binding);
+                        if (self.resolver.graph.isBindingTypeUnresolved(global)) return error.UnresolvedCompileTimeCaptureType;
+                        return self.resolver.core.appendNode(self.resolver.sourceFor(self.module_index, node.source), self.resolver.graph.binding(global).ty, .{ .binding_use = global });
+                    },
+                    .pending => |pending| {
+                        const expression = storage.pending.items[@intFromEnum(pending)];
+                        if (expression == .resolve_expression and expression.resolve_expression.kind == .entry_capture)
+                            return parent.instantiateEntryCapture(local);
+                    },
+                }
+            }
+            return error.UnresolvedCompileTimeCaptureType;
+        }
+
+        fn instantiateEntryCapture(self: *InstanceContext, id: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
+            if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
+            const module = &self.resolver.modules[self.module_index];
+            const storage = &module.semantic.parameterized_storage.ir;
+            const expression = storage.pending.items[@intFromEnum(storage.nodes.items[@intFromEnum(id)].pending)].resolve_expression;
+            const value = try self.entryCaptureSource(storage.node_refs.items[expression.operands.start]);
+            const ty = self.resolver.graph.node(value).ty orelse return error.UnresolvedCompileTimeCaptureType;
+            if (self.resolver.graph.isTypeUnresolved(ty)) return error.UnresolvedCompileTimeCaptureType;
+            const name = try self.resolver.graph.addString(self.resolver.allocator, module.text(expression.name.?));
+            const source = self.resolver.sourceFor(self.module_index, expression.source);
+            const binding: global_sg.GlobalBindingId = @enumFromInt(self.resolver.graph.bindings.items.len);
+            try self.resolver.graph.bindings.append(self.resolver.allocator, .{ .name = name, .source = source, .ty = ty, .mutability = .constant });
+            try self.entry_captures.append(self.resolver.allocator, .{ .binding = binding, .field = .{ .name = name, .source = source, .ty = ty, .default_value = value } });
+            const node = try self.resolver.core.appendNode(source, ty, .{ .binding_use = binding });
+            try self.node_map.put(self.resolver.allocator, @intFromEnum(id), node);
+            return node;
+        }
+
+        fn publishEntryCaptures(self: *InstanceContext) !void {
+            if (self.entry_captures.items.len == 0) return;
+            const function_id = self.function orelse return error.InvalidParameterizedEntryCapture;
+            const function = self.resolver.graph.function(function_id);
+            if (!function.flags.is_comptime_entry) return error.InvalidParameterizedEntryCapture;
+            var fields: std.ArrayList(global_sg.Field) = .empty;
+            defer fields.deinit(self.resolver.allocator);
+            var bindings: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+            defer bindings.deinit(self.resolver.allocator);
+            try fields.appendSlice(self.resolver.allocator, self.resolver.graph.fields.items[function.input.start..][0..function.input.len]);
+            try bindings.appendSlice(self.resolver.allocator, self.resolver.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]);
+            for (self.entry_captures.items) |capture| {
+                try fields.append(self.resolver.allocator, capture.field);
+                try bindings.append(self.resolver.allocator, capture.binding);
+            }
+            const field_start: u32 = @intCast(self.resolver.graph.fields.items.len);
+            try self.resolver.graph.fields.appendSlice(self.resolver.allocator, fields.items);
+            const binding_start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
+            try self.resolver.graph.binding_refs.appendSlice(self.resolver.allocator, bindings.items);
+            self.resolver.graph.functions.items[@intFromEnum(function_id)].input = .{ .start = field_start, .len = @intCast(fields.items.len) };
+            self.resolver.graph.functions.items[@intFromEnum(function_id)].input_bindings = .{ .start = binding_start, .len = @intCast(bindings.items.len) };
+        }
+
         fn instantiateNode(self: *InstanceContext, id: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
             const previous = self.resolver.active_instance;
             const previous_parent = self.active_parent;
@@ -2369,6 +2421,11 @@ pub const Resolver = struct {
             if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];
+            if (local == .pending) {
+                const pending = storage.pending.items[@intFromEnum(local.pending)];
+                if (pending == .resolve_expression and pending.resolve_expression.kind == .entry_capture)
+                    return self.instantiateEntryCapture(id);
+            }
             const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
             try self.resolver.graph.nodes.append(self.resolver.allocator, .{
                 .source = .{ .file_index = 0, .offset = 0 },
@@ -2802,6 +2859,7 @@ pub const Resolver = struct {
                 try operands.append(try self.instantiateNode(operand));
 
             return switch (value.kind) {
+                .entry_capture => error.InvalidParameterizedEntryCapture,
                 .unknown_identifier => if (value.name) |name| self.resolveName(.{ .name = name, .source = value.source }) else error.UnknownParameterizedName,
                 .comptime_parameter => self.resolveComptimeParameter(value),
                 .generic_call => blk: {
