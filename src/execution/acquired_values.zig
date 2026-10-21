@@ -10,13 +10,24 @@ const Value = @import("../5_codegen/bytecode/value.zig").Value;
 // a value and need not be initialized. References/resources cannot be decoded
 // from bytes; their eventual representation requires explicit evidence storage.
 pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) anyerror!Value {
+    var empty: []Value = &.{};
     switch (layout.shape) {
-        .integer, .floating => return readValidated(storage, handle, offset, layout, endian),
+        .integer, .floating => return readValidated(storage, handle, offset, layout, endian, &empty),
         .fields, .array => {},
     }
     const cells = try readableCells(storage, handle, offset, layout);
     if (cells > storage.limit -| storage.cells) return error.ExecutionMemoryLimit;
-    return readValidated(storage, handle, offset, layout, endian);
+    // One backing allocation owns the entire numeric snapshot. Nested values
+    // contain views into it, so allocation failure cannot leave partial trees.
+    const backing = try storage.allocate(cells);
+    errdefer {
+        storage.allocator.free(backing);
+        storage.cells -= cells;
+    }
+    var remaining = backing;
+    const value = try readValidated(storage, handle, offset, layout, endian, &remaining);
+    std.debug.assert(remaining.len == 0);
+    return value;
 }
 
 // Inspect typed leaves only: record padding is neither a value nor required to
@@ -43,7 +54,7 @@ fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *cons
     };
 }
 
-fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) anyerror!Value {
+fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, remaining: *[]Value) anyerror!Value {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
         .integer => |kind| .{ .integer = integer.encode(try storage.acquisitions.loadInteger(storage, handle, offset, layout, endian), p.integerRangeForWidth(@intCast(layout.size * 8), kind.signed)) },
@@ -54,13 +65,15 @@ fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *cons
             break :blk try @import("../5_codegen/bytecode/numeric_layout.zig").decodeFloat(layout, bytes[0..layout.size], endian);
         },
         .fields => |fields| blk: {
-            const values = try storage.allocate(fields.len);
-            for (fields, values) |field, *value| value.* = try readValidated(storage, handle, offset + field.offset, field.layout, endian);
+            const values = remaining.*[0..fields.len];
+            remaining.* = remaining.*[fields.len..];
+            for (fields, values) |field, *value| value.* = try readValidated(storage, handle, offset + field.offset, field.layout, endian, remaining);
             break :blk .{ .record = values };
         },
         .array => |array| blk: {
-            const values = try storage.allocate(array.length);
-            for (values, 0..) |*value, index| value.* = try readValidated(storage, handle, offset + index * array.stride, array.element, endian);
+            const values = remaining.*[0..array.length];
+            remaining.* = remaining.*[array.length..];
+            for (values, 0..) |*value, index| value.* = try readValidated(storage, handle, offset + index * array.stride, array.element, endian, remaining);
             break :blk .{ .array = values };
         },
     };
@@ -100,4 +113,40 @@ fn walkWrite(storage: *Storage, handle: Handle, offset: usize, layout: *const La
             for (value.array, 0..) |child, index| try walkWrite(storage, handle, offset + index * array.stride, array.element, child, endian, commit);
         },
     }
+}
+
+fn failedAggregateSnapshot(allocator: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1000);
+    const region = try storage.acquisitions.acquire(&storage, 3, 1);
+    try storage.acquisitions.write(&storage, region, 0, &.{ 10, 20, 30 });
+    const byte: Layout = .{ .size = 1, .alignment = 1, .shape = .{ .integer = .{ .signed = false } } };
+    const pair: Layout = .{ .size = 2, .alignment = 1, .shape = .{ .array = .{ .element = &byte, .length = 2, .stride = 1 } } };
+    const record: Layout = .{ .size = 1, .alignment = 1, .shape = .{ .fields = &.{.{ .offset = 0, .layout = &byte }} } };
+    const layout: Layout = .{ .size = 3, .alignment = 1, .shape = .{ .fields = &.{
+        .{ .offset = 0, .layout = &pair },
+        .{ .offset = 2, .layout = &record },
+    } } };
+    const before = storage.cells;
+    storage.allocator = allocator;
+    const value = read(&storage, region, 0, &layout, .little) catch |err| {
+        try std.testing.expectEqual(before, storage.cells);
+        var bytes: [3]u8 = undefined;
+        try storage.acquisitions.read(&storage, region, 0, &bytes);
+        try std.testing.expectEqualSlices(u8, &.{ 10, 20, 30 }, &bytes);
+        return err;
+    };
+    // The two root fields, two array elements and one nested record field
+    // occupy a single allocation, including their descriptor cells.
+    const backing: []const Value = value.record.ptr[0..5];
+    defer allocator.free(backing);
+    try std.testing.expectEqual(before + 5, storage.cells);
+    try std.testing.expectEqual(@as(u64, 10), value.record[0].array[0].integer);
+    try std.testing.expectEqual(@as(u64, 20), value.record[0].array[1].integer);
+    try std.testing.expectEqual(@as(u64, 30), value.record[1].record[0].integer);
+}
+
+test "acquired aggregate snapshots allocate one complete backing or preserve storage" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedAggregateSnapshot, .{});
 }
