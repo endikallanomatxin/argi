@@ -388,6 +388,7 @@ const FunctionLower = struct {
     fn autoDeinit(self: *FunctionLower, id: g.GlobalAutoDeinitId) anyerror!void {
         const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
         if (self.replacement) |captured| if (captured.plan.cleanup == id) {
+            if (captured.plan.initializes(self.parent.graph)) return;
             if (captured.target) |target|
                 return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, target, captured.ty.?);
         };

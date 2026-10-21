@@ -1113,6 +1113,76 @@ test "compile-time evaluation proves its dependency unit before execution" {
     try std.testing.expect(diagnostics.hasErrors());
 }
 
+test "bytecode safety preserves observations through returned reference aliases" {
+    for (0..10) |scenario| {
+        const aliased = scenario % 2 != 0;
+        const operand_effect = scenario >= 2;
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const common =
+            \\Resource: Type = (.value: Int32)
+            \\Holder: Type = (.item: Resource)
+            \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
+            \\keep(.value: &Resource) -> (.result: &Resource) := { result = value }
+            \\observe(.self: $&Holder, .other: &Resource) -> (.result: Int32) := {
+            \\    alias ::= keep(.value = other)
+            \\    deinit(.self = $&self&.item)
+            \\    result = alias&.value
+            \\}
+            \\main() -> (.status_code: Int32) := {
+            \\    if false { abort }
+            \\    holder :: Holder = (.item = (.value = 17))
+            \\    independent :: Resource = (.value = 42)
+        ;
+        var body: []const u8 = common;
+        if (operand_effect) {
+            body = try std.mem.replaceOwned(u8, a, body, "keep(.value: &Resource) -> (.result: &Resource) := { result = value }", "keep(.owner: $&Holder, .value: &Resource) -> (.result: &Resource) := { deinit(.self = $&owner&.item)\nresult = value }");
+            body = try std.mem.replaceOwned(u8, a, body, "    alias ::= keep(.value = other)\n    deinit(.self = $&self&.item)\n    result = alias&.value", "    result = keep(.owner = self, .value = other)&.value");
+        }
+        if ((scenario >= 4 and scenario < 6) or scenario >= 8) body = try std.mem.replaceOwned(u8, a, body, "    result = keep(.owner = self, .value = other)&.value", "    pointer ::= &keep(.owner = self, .value = other)&.value\n    result = pointer&");
+        if (scenario >= 6) {
+            body = try std.mem.replaceOwned(u8, a, body, "Resource: Type = (.value: Int32)", "Resource: Type = (.value: [2]Int32)");
+            body = try std.mem.replaceOwned(u8, a, body, "(.value = 17)", "(.value = (17, 0))");
+            body = try std.mem.replaceOwned(u8, a, body, "(.value = 42)", "(.value = (42, 0))");
+            body = try std.mem.replaceOwned(u8, a, body, "keep(.owner = self, .value = other)&.value", "keep(.owner = self, .value = other)&.value[0]");
+        }
+        const source = try std.mem.concat(a, u8, &.{ body, if (aliased)
+            "\nstatus_code = observe(.self = $&holder, .other = &holder.item)\n}"
+        else
+            "\nstatus_code = observe(.self = $&holder, .other = &independent)\n}" });
+        const files = [_]sf.SourceFile{
+            .{ .path = "app/main.rg", .code = source },
+            .{ .path = "deinit_core/main.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())" },
+        };
+        var diagnostics = diag.Diagnostics.init(&a, &files);
+        defer diagnostics.deinit();
+        var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+        defer pipeline.deinit();
+        if (aliased) {
+            try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+            var found = false;
+            for (diagnostics.list.items) |entry| if (std.mem.indexOf(u8, entry.msg, "observes storage after an aliased participant") != null) {
+                found = true;
+            };
+            try std.testing.expect(found);
+        } else {
+            const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+                for (diagnostics.list.items) |entry| std.debug.print("scenario {d}: {s}\n", .{ scenario, entry.msg });
+                return err;
+            };
+            try std.testing.expect(!diagnostics.hasErrors());
+            const entry = for (graph.functions.items, 0..) |function, index| {
+                if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) break @as(@import("../4_semantics/global/graph.zig").GlobalFunctionId, @enumFromInt(index));
+            } else return error.TestMissingEntry;
+            var compiler = try lower.Lower.init(a, graph);
+            var executor = try vm.Vm.init(a, try compiler.compile(entry), .{});
+            defer executor.deinit();
+            try std.testing.expectEqual(@as(u64, 42), (try executor.run(entry, &.{}))[0].integer);
+        }
+    }
+}
+
 test "compile-time evaluation retains selected cleanup in its dependency unit" {
     const evaluate = @import("evaluate.zig").evaluate;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

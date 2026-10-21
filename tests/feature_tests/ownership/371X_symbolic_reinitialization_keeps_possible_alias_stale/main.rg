@@ -12,6 +12,5 @@ cycle(.target: $&Resource, .other: &Resource) -> () := {
 
 main() -> () := {
     owner :: Resource = Resource(.value = 1)
-    other :: Resource = Resource(.value = 2)
-    cycle(.target = $&owner, .other = &other)
+    cycle(.target = $&owner, .other = &owner)
 }

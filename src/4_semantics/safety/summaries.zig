@@ -158,6 +158,10 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         if (left.origin != right.origin or !left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
     }
     if (!domainsEql(a.invalidated_domains, b.invalidated_domains)) return false;
+    if (a.storage_observations.len != b.storage_observations.len or a.storage_observation_conflicts.len != b.storage_observation_conflicts.len) return false;
+    for (a.storage_observations, b.storage_observations) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.storage_observation_conflicts, b.storage_observation_conflicts) |left, right|
+        if (!inputPathEql(left.consumed, right.consumed) or !inputPathEql(left.observed, right.observed)) return false;
     if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
     for (a.storage_capability_conflicts, b.storage_capability_conflicts) |left, right|
         if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
@@ -269,6 +273,20 @@ fn inputPathEql(a: facts.InputPath, b: facts.InputPath) bool {
     if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
     for (a.projections, b.projections) |left, right| if (!std.meta.eql(left, right)) return false;
     return true;
+}
+
+test "summary equality retains ordered storage observations and caller alias obligations" {
+    const first = facts.InputPath{ .input_index = 0 };
+    const second = facts.InputPath{ .input_index = 1, .projections = &.{.{ .field = 0 }} };
+    const observed = facts.SafetySummary{ .storage_observations = &.{second} };
+    try std.testing.expect(!summaryEql(.{}, observed));
+    var constrained = observed;
+    constrained.storage_observation_conflicts = &.{.{ .consumed = first, .observed = second }};
+    try std.testing.expect(!summaryEql(observed, constrained));
+    var reversed = constrained;
+    reversed.storage_observation_conflicts = &.{.{ .consumed = second, .observed = first }};
+    try std.testing.expect(!summaryEql(constrained, reversed));
+    try std.testing.expect(summaryEql(constrained, constrained));
 }
 
 test "opaque storage summary identity includes its receiver domain" {

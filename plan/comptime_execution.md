@@ -7,6 +7,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 ## Memory and lifecycle
 
 - Complete acquired aggregate/resource storage and partial choice initialization.
+  Choice cleanup now separates discriminant presence from whole-value readiness:
+  partial payload consumption skips nominal destruction and cleans live siblings.
+  Reinitialization restores complete cleanup through shared ancestor flags;
+  native/VM fixture 161 and retained-session exit cover this behavior. Vacant
+  payload construction still needs its own initialization representation.
   Share identity, projections, initialization and validity rules with ordinary
   storage without requiring identical physical representations.
 - Add structural array cleanup before enabling owning indexed writes. A scoped
@@ -14,15 +19,55 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   two), even without replacement. Represent one repeated element cleanup plan,
   with its length/stride and evaluated index identity; avoid expanding metadata
   for every element. Integrate whole-array exit, partial moves and initialization.
+  This needs coordinated changes to frontend cleanup plans, shared flag layouts,
+  native ancestor refresh and bytecode cleanup tables: the latter currently
+  allocate a slot and path per child. An indexed view must select its flag range
+  by logical element identity, including zero-sized elements. Do not enable array
+  destruction while partial initialization or projected flag transport is missing.
 - Complete indexed cleanup identities in both backends. Whole indirect pointer
   and record-field replacements use checked plans, including the three-drop
   retargeting probe and preservation of sibling references in native and VM.
   Nested indirect fields and field reinitialization after destruction have
   differential coverage, including whole-record replacement after consuming a
-  field through a function. Complete structural fallback for partially consumed
-  nominal records with remaining live resource fields, and conditional caller
-  cleanup activation. Incomplete records must never invoke a whole-value destructor.
+  field through a function. The live-sibling structural fallback also passes
+  in native and VM. Finish conditional caller cleanup activation.
+  Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
+- Validate projected symbolic storage identities across aliases, branches, loops
+  and session forks. Constant array indices now use lazily interned element
+  identities in access and summary substitution; bounds and element types are
+  checked without expanding the array length. Dynamic indices still need an
+  evaluated index identity and cannot use the constant-index proof.
+  First initialization after field destruction must preserve
+  old-alias invalidation, run RHS effects before omitting old-value cleanup, and
+  reactivate any existing runtime flags. Complete acquired resource evidence for
+  replacements that still need to destroy a previous value; never infer it from
+  a physical address or disable missing-evidence checks.
+- Finish broad validation of ordered consumption/observation summary obligations.
+  Calls check actual destinations; independent participants remain usable, while
+  aliases retain ended incarnations after reinitialization. Cover branch/loop
+  composition, returned references, reference fields within Args, mapped domains
+  and validity-only erased anchors. Static selections retain inferred alias
+  obligations for concrete call checking while preserving contract guarantees;
+  virtual contracts reject unrepresented alias obligations. Keep the independent, aliased and read-before-consumption cases
+  distinct; do not replace these obligations with group-wide invalidation.
+- Complete single-evaluation access handling in the checker. Field/index reads
+  and field/index/dereference/payload address formation capture pointer-producing calls once;
+  the separate symbolic-address reevaluation walk has been removed. Extend this
+  to remaining projections and syntax-based Place queries; preserve evaluated
+  pointer facts rather than suppressing diagnostics.
+  Field/array stores commit checker facts to the captured referent after RHS
+  evaluation, even when that RHS retargets the reference used to select it.
+  Payload reads and addresses reuse their evaluated choice access and active-tag
+  proof. Regressions distinguish one operand move from an explicitly repeated
+  evaluation for concrete and unknown referents; symbolic field and variant
+  projections retain distinct identities. Typed payload projections preserve
+  their types through lazy branch materialization and joins; payloadless variants
+  do not establish storage identities. Case 151 compares payload borrowing
+  and mutation after an effectful reference-returning call in native and VM.
+  The returned-reference internal test covers independent and aliased operands,
+  including VM execution of accepted field and array projections;
+  case 148 retains the nested-call alias regression.
 
 ## Compile-time integration
 
@@ -41,6 +86,20 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Lower semantic decisions into explicit runtime descriptors for layout,
   references, variants, memory operations and selected dispatch.
+  Numeric byte-view instructions now carry verified permission and endianness
+  alongside their physical layout; execution no longer reads those decisions
+  from slot types or the semantic target. Ordinary value/storage borrows also
+  carry verified access permissions. Choice construction, payload extraction,
+  tests and branches carry verified representation ordinals, retaining semantic
+  IDs only for verification. Arithmetic/comparison instructions carry a compact
+  verified scalar interpretation (width/sign or floating precision). Value-array
+  indices also carry that interpretation; reference offsets have a verified
+  UIntNative input and use its unsigned bits directly. Loads carry their erased
+  anchor or signed/unsigned byte interpretation. Host scalar encoding reuses
+  the selected binding's checked ranges. Storage paths carry verified variant
+  ordinals and scalar index kinds; execution follows them without graph traversal.
+  Host signatures are lowered to verified symbol/range descriptors; execution
+  links them without consulting semantic fields or types.
 - Replace core adapter name/path recognition with explicit primitive identities.
 - Complete native value-evidence production for arrays, choices, error propagation
   and lifecycle wrappers. Ordinary and virtual call inputs/results carry the
@@ -60,8 +119,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   code metadata and completed frames. Check whether time/memory grows quadratically.
   Verifier linear-flow states now transfer ownership between instructions; a
   1,000-slot synthetic function requests 26,421 bytes instead of 2,019,413.
-  Joins retain their incoming states and intersection semantics. Measure
-  branch-heavy functions separately; this does not bound all CFG shapes.
+  Joins retain their incoming states and intersection semantics. The isolated
+  `--verifier` benchmark measures 1,000 diamonds/slots at 3,342,561 requested
+  bytes and 2,077,429 peak bytes, with zero retained bytes; full join vectors
+  still scale with joins times slots. Establish the importance of this cost in
+  real programs before changing representation. These samples do not bound all
+  CFG shapes.
 - Use measurements to guide immutable sharing, stable identities, code reuse and
   temporary storage reclamation. Never reclaim metadata or resources still used
   by live references. JIT remains deferred.
@@ -90,3 +153,11 @@ partial moves, reinitialization without alias revival, owning expression results
 cleanup, rejected submissions, traps and reset. Test `#run` and computed `#if`
 through retained sessions as well as native compilation, including inactive
 branches, cycles, allocation failures and rejected evaluator-resource escapes.
+
+Recheck published CI before treating the branch as validated. Run 39495958440
+at `7b32f154` failed program fixtures 22 and 34 (`DynamicArray<String>`) on
+Linux x86_64 and ARM64; both pass on the current local tree in Debug and
+ReleaseSafe, including fresh frontend builds and repeated execution. The local
+tree still contains pending safety changes, so this does not prove that the
+published commits alone resolve those failures. Fixture exit mismatches now
+include captured output and the actual termination signal for diagnosis.

@@ -442,6 +442,7 @@ pub const Failure = struct {
         missing_empty_storage,
         unsupported_opaque_effect,
         unsupported_capability_effect,
+        unsupported_alias_obligation,
         missing_choice_relation,
     };
     kind: Kind,
@@ -464,15 +465,29 @@ pub const Failure = struct {
             .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
             .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
             .unsupported_capability_effect => "storage capability consumption is not permitted by this contract",
+            .unsupported_alias_obligation => "a caller-side storage alias obligation is not represented by this contract",
         };
     }
 };
+
+// A concrete call retains the implementation's complete inferred summary at
+// its caller. Only alias preconditions can be checked there; output and storage
+// guarantees still have to satisfy the declared contract without weakening it.
+pub fn checkStatic(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    var guarantees = summary;
+    guarantees.storage_observation_conflicts = &.{};
+    return check(contract, guarantees);
+}
 
 /// Check each implementation independently. No result depends on which other
 /// implementations are linked into the program. Local escapes must already
 /// have passed the ordinary function-output check: a contract never authorizes
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    if (summary.storage_observation_conflicts.len != 0) return .{
+        .kind = .unsupported_alias_obligation,
+        .input = summary.storage_observation_conflicts[0].consumed,
+    };
     if (contract.general_conditions) return checkGeneralContract(contract, summary);
     for (contract.relocations) |relocation| {
         if (!provesRelocation(relocation, summary.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination };
@@ -981,6 +996,9 @@ test "safety contracts do not turn invalidation into ownership consumption" {
     };
     for (states) |state| try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{state} }).?.kind);
     try std.testing.expectEqual(.unsupported_capability_effect, check(contract, .{ .storage_capability_uses = &.{.{ .target = path }} }).?.kind);
+    try std.testing.expectEqual(.unsupported_alias_obligation, check(contract, .{
+        .storage_observation_conflicts = &.{.{ .consumed = path, .observed = .{ .input_index = 1 } }},
+    }).?.kind);
 }
 
 test "safety contracts permit fewer dependencies and independent implementations" {
@@ -1536,4 +1554,16 @@ test "selected consumption only permits owned storage empties on that outcome" {
         .{ .output_index = 0, .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{storage} },
     };
     try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, summary).?.kind);
+}
+
+test "static contract checks preserve guarantees while callers retain alias obligations" {
+    const path = facts.InputPath{ .input_index = 0 };
+    const contract: Contract = .{ .outputs = &.{} };
+    const summary: facts.SafetySummary = .{ .outputs = &.{}, .storage_observation_conflicts = &.{.{ .consumed = path, .observed = .{ .input_index = 1 } }} };
+    try std.testing.expect(checkStatic(contract, summary) == null);
+    try std.testing.expectEqual(.unsupported_alias_obligation, check(contract, summary).?.kind);
+    var effectful = summary;
+    effectful.storage_capability_uses = &.{.{ .target = path }};
+    try std.testing.expectEqual(.unsupported_capability_effect, checkStatic(contract, effectful).?.kind);
+    try std.testing.expectEqual(@as(usize, 1), summary.storage_observation_conflicts.len);
 }

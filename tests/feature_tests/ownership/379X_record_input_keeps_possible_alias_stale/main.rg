@@ -16,6 +16,5 @@ cycle(.args: Access) -> () := {
 
 main() -> () := {
     owner :: Resource = Resource(.value = 1)
-    other :: Resource = Resource(.value = 2)
-    cycle(.args = (.target = $&owner, .other = $&other))
+    cycle(.args = (.target = $&owner, .other = $&owner))
 }

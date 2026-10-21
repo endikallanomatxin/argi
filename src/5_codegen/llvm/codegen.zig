@@ -60,11 +60,22 @@ const WriteDestination = struct {
     address: c.LLVMValueRef,
     type_ref: c.LLVMTypeRef,
     cleanup: ?DropState = null,
+    cleanup_optional: bool = false,
     references: ?c.LLVMValueRef = null,
     reference_type: ?c.LLVMTypeRef = null,
 
     fn activate(self: WriteDestination, generator: *CodeGenerator) void {
-        if (self.cleanup) |drop| generator.storeDropState(drop, true);
+        if (self.cleanup) |drop| {
+            if (!self.cleanup_optional) return generator.storeDropState(drop, true);
+            const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(generator.builder));
+            const present = c.LLVMAppendBasicBlock(function, "initialize.cleanup.present");
+            const done = c.LLVMAppendBasicBlock(function, "initialize.cleanup.done");
+            _ = c.LLVMBuildCondBr(generator.builder, c.LLVMBuildIsNull(generator.builder, drop.flag_ref, "initialize.cleanup.absent"), done, present);
+            c.LLVMPositionBuilderAtEnd(generator.builder, present);
+            generator.storeDropState(drop, true);
+            _ = c.LLVMBuildBr(generator.builder, done);
+            c.LLVMPositionBuilderAtEnd(generator.builder, done);
+        }
     }
 
     fn commit(self: WriteDestination, generator: *CodeGenerator, value: TypedValue) !void {
@@ -420,10 +431,10 @@ pub const CodeGenerator = struct {
 
     const ArgiCallResult = struct { value: c.LLVMValueRef, evidence: ?c.LLVMValueRef };
 
-    fn callEvidence(self: *CodeGenerator, signature: argi_abi.Signature, input: ?c.LLVMValueRef) argi_abi.CallEvidence {
+    fn callEvidence(self: *CodeGenerator, signature: argi_abi.Signature, input: ?c.LLVMValueRef) !argi_abi.CallEvidence {
         return .{
             .input = if (signature.evidence.input) |ty| input orelse c.LLVMConstNull(ty) else null,
-            .output_storage = if (signature.evidence.output) |ty| c.LLVMBuildAlloca(self.builder, ty, "call.evidence.storage") else null,
+            .output_storage = if (signature.evidence.output) |ty| try self.stackTemporary(ty, 0, "call.evidence.storage") else null,
         };
     }
 
@@ -433,8 +444,8 @@ pub const CodeGenerator = struct {
 
     fn callArgiWithEvidence(self: *CodeGenerator, symbol: FunctionSymbol, input: c.LLVMValueRef, evidence: ?c.LLVMValueRef, name: [:0]const u8) !ArgiCallResult {
         const signature = symbol.argiSignature() orelse return CodegenError.InvalidType;
-        const supplied = self.callEvidence(signature, evidence);
-        const storage: ?c.LLVMValueRef = if (signature.indirect_output) c.LLVMBuildAlloca(self.builder, signature.output_type, "call.return.storage") else null;
+        const supplied = try self.callEvidence(signature, evidence);
+        const storage: ?c.LLVMValueRef = if (signature.indirect_output) try self.stackTemporary(signature.output_type, 0, "call.return.storage") else null;
         const direct = try signature.callWithEvidence(self.builder, symbol.ref, input, storage, supplied, name);
         return .{
             .value = direct orelse c.LLVMBuildLoad2(self.builder, signature.output_type, storage.?, name.ptr),
@@ -475,8 +486,8 @@ pub const CodeGenerator = struct {
                 const input = (try self.visitNode(call.input)) orelse return CodegenError.ValueNotFound;
                 // Keep result storage separate until the call completes: an
                 // input may borrow the value being replaced at destination.
-                const result_storage = c.LLVMBuildAlloca(self.builder, symbol.outputType(), "call.return.storage");
-                _ = try symbol.argiSignature().?.callWithEvidence(self.builder, symbol.ref, input.value_ref, result_storage, self.callEvidence(symbol.argiSignature().?, input.reference_view), "");
+                const result_storage = try self.stackTemporary(symbol.outputType(), 0, "call.return.storage");
+                _ = try symbol.argiSignature().?.callWithEvidence(self.builder, symbol.ref, input.value_ref, result_storage, try self.callEvidence(symbol.argiSignature().?, input.reference_view), "");
                 const result = if (call.initializes_auto_deinit != null or call.outcome_cleanups.len != 0)
                     c.LLVMBuildLoad2(self.builder, symbol.outputType(), result_storage, "call.status")
                 else
@@ -489,14 +500,14 @@ pub const CodeGenerator = struct {
                 _ = c.LLVMBuildMemMove(self.builder, destination, @intCast(layout.alignment), source.value_ref, @intCast(layout.alignment), c.LLVMConstInt(try self.nativeUIntType(), layout.size, 0));
             },
             .virtual_call => |call_id| {
-                const result_storage = c.LLVMBuildAlloca(self.builder, try self.toLLVMType(ty), "virtual.return.storage");
+                const result_storage = try self.stackTemporary(try self.toLLVMType(ty), 0, "virtual.return.storage");
                 _ = try self.genVirtualCall(call_id, result_storage);
                 _ = c.LLVMBuildMemCpy(self.builder, destination, @intCast(layout.alignment), result_storage, @intCast(layout.alignment), c.LLVMConstInt(try self.nativeUIntType(), layout.size, 0));
             },
             .struct_value_literal => |literal| {
                 const fields = types.fields(self.graph, ty) orelse return false;
                 if (self.isCUnion(ty)) return false;
-                const result_storage = c.LLVMBuildAlloca(self.builder, try self.toLLVMType(ty), "aggregate.storage");
+                const result_storage = try self.stackTemporary(try self.toLLVMType(ty), 0, "aggregate.storage");
                 _ = c.LLVMBuildMemSet(self.builder, result_storage, c.LLVMConstInt(c.LLVMInt8Type(), 0, 0), c.LLVMConstInt(try self.nativeUIntType(), layout.size, 0), @intCast(layout.alignment));
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
                     if (index >= fields.len) return CodegenError.InvalidType;
@@ -678,16 +689,16 @@ pub const CodeGenerator = struct {
         return .{ .fn_type = c.LLVMFunctionType(ret, if (params.len == 0) null else params.ptr, @intCast(params.len), 0), .return_type = ret, .plan = plan };
     }
 
-    fn cTemporary(self: *CodeGenerator, ty: c.LLVMTypeRef, alignment: u32, name: [*:0]const u8) !c.LLVMValueRef {
-        // ABI and union copies use a fixed entry-block stack slot, rather
-        // than executing an alloca on every iteration. Only stores stay local.
+    fn stackTemporary(self: *CodeGenerator, ty: c.LLVMTypeRef, alignment: u32, name: [*:0]const u8) !c.LLVMValueRef {
+        // Fixed-size temporaries belong to the entry block, so calls and
+        // projections inside loops reuse their slots. Stores stay at the use.
         const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
         const entry = c.LLVMGetEntryBasicBlock(function);
         const builder = c.LLVMCreateBuilder() orelse return CodegenError.ModuleCreationFailed;
         defer c.LLVMDisposeBuilder(builder);
         if (c.LLVMGetFirstInstruction(entry)) |first| c.LLVMPositionBuilderBefore(builder, first) else c.LLVMPositionBuilderAtEnd(builder, entry);
         const storage = c.LLVMBuildAlloca(builder, ty, name);
-        c.LLVMSetAlignment(storage, alignment);
+        if (alignment != 0) c.LLVMSetAlignment(storage, alignment);
         return storage;
     }
 
@@ -697,7 +708,7 @@ pub const CodeGenerator = struct {
         // The Windows x64 ABI requires caller-owned indirect argument copies
         // to be 16-byte aligned, even when the record itself has lesser alignment.
         const copy_alignment: u32 = if (self.graph.target.os == .windows and plan.kind == .record_indirect) 16 else 8;
-        const storage = try self.cTemporary(buffer_ty, @max(copy_alignment, plan.alignment), "c.record.storage");
+        const storage = try self.stackTemporary(buffer_ty, @max(copy_alignment, plan.alignment), "c.record.storage");
         _ = c.LLVMBuildStore(self.builder, c.LLVMConstNull(buffer_ty), storage);
         return storage;
     }
@@ -1330,7 +1341,7 @@ pub const CodeGenerator = struct {
         const range = types.fields(self.graph, ty) orelse return CodegenError.InvalidType;
         if (self.isCUnion(ty)) {
             const layout = types.layoutOf(self.graph, ty) catch return CodegenError.InvalidType;
-            const temp = try self.cTemporary(type_ref, @intCast(layout.alignment), "union.literal");
+            const temp = try self.stackTemporary(type_ref, @intCast(layout.alignment), "union.literal");
             _ = c.LLVMBuildStore(self.builder, c.LLVMConstNull(type_ref), temp);
             for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
                 const name = self.graph.text(value_field.name);
@@ -1387,7 +1398,7 @@ pub const CodeGenerator = struct {
         const aggregate_ty = self.graph.node(access.value).ty orelse return CodegenError.InvalidType;
         if (self.isCUnion(aggregate_ty)) {
             const layout = types.layoutOf(self.graph, aggregate_ty) catch return CodegenError.InvalidType;
-            const temp = try self.cTemporary(aggregate.type_ref, @intCast(layout.alignment), "union.result");
+            const temp = try self.stackTemporary(aggregate.type_ref, @intCast(layout.alignment), "union.result");
             _ = c.LLVMBuildStore(self.builder, aggregate.value_ref, temp);
             var lowerer = self.typeLowerer();
             const pointer = try lowerer.buildUnionFieldPointer(self.builder, temp, field_ty, "union.result.field");
@@ -1484,14 +1495,14 @@ pub const CodeGenerator = struct {
                 // the receiver's evaluation before the index and materialize
                 // it once; this storage is not exposed as a mutable place.
                 const type_ref = try self.toLLVMType(access.array_type);
-                const storage = c.LLVMBuildAlloca(self.builder, type_ref, "array.read.temporary");
+                const storage = try self.stackTemporary(type_ref, 0, "array.read.temporary");
                 var evidence_storage: ?c.LLVMValueRef = null;
                 if (!try self.storeLargeNode(access.array_ptr, storage)) {
                     const value = (try self.visitNode(access.array_ptr)) orelse return CodegenError.ValueNotFound;
                     if (value.type_ref != type_ref) return CodegenError.InvalidType;
                     _ = c.LLVMBuildStore(self.builder, value.value_ref, storage);
                     if (value.reference_view) |view| {
-                        evidence_storage = c.LLVMBuildAlloca(self.builder, c.LLVMTypeOf(view), "array.read.evidence");
+                        evidence_storage = try self.stackTemporary(c.LLVMTypeOf(view), 0, "array.read.evidence");
                         _ = c.LLVMBuildStore(self.builder, view, evidence_storage.?);
                     }
                 }
@@ -1551,7 +1562,7 @@ pub const CodeGenerator = struct {
         else
             null;
         const cleanup = if (store.cleanup_target) |target|
-            try self.capturedReferenceCleanup(.{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(try self.toLLVMType(store.field_type), 0), .reference_view = projected_view }, target)
+            try self.capturedReferenceCleanup(.{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(try self.toLLVMType(store.field_type), 0), .reference_view = projected_view }, target, false)
         else if (self.dropStateForNode(store.struct_ptr)) |parent|
             parent.project(self.builder, store.field_index)
         else
@@ -1998,7 +2009,7 @@ pub const CodeGenerator = struct {
 
     fn prepareWriteValue(self: *CodeGenerator, value: graph_mod.GlobalNodeId, destination: WriteDestination) !TypedValue {
         if (self.replacement) |*captured| if (captured.plan.value == value) {
-            if (captured.destination != null or destination.cleanup == null or
+            if (captured.destination != null or (destination.cleanup == null and !captured.plan.initializes(self.graph)) or
                 destination.type_ref != try self.toLLVMType(captured.ty))
                 return error.InvalidReplacementDestination;
             captured.destination = destination;
@@ -2022,20 +2033,22 @@ pub const CodeGenerator = struct {
     // Only a proven lexical referent supplies fallback flags. A reference
     // slot's own flags never establish its pointee's identity. Runtime views
     // retain the complete owner so ancestor activation uses that same identity.
-    fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId) !?DropState {
+    fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId, initializing: bool) !?DropState {
         const lexical = if (@import("../../4_semantics/global/lexical_storage.zig").root(self.graph, target) != null) self.dropStateForNode(target) else null;
         if (lexical == null) {
             if (self.replacement == null) return null;
             const view = pointer.reference_view orelse return null;
             const ty = self.graph.node(target).ty orelse return CodegenError.InvalidType;
             const flags = try reference_evidence.cleanupPointer(self.builder, view);
-            const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
-            const valid = c.LLVMAppendBasicBlock(function, "cleanup.evidence.valid");
-            const invalid = c.LLVMAppendBasicBlock(function, "cleanup.evidence.missing");
-            _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildIsNull(self.builder, flags, "cleanup.evidence.absent"), invalid, valid);
-            c.LLVMPositionBuilderAtEnd(self.builder, invalid);
-            try self.runtimeFailure("owning replacement requires storage cleanup evidence");
-            c.LLVMPositionBuilderAtEnd(self.builder, valid);
+            if (!initializing) {
+                const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+                const valid = c.LLVMAppendBasicBlock(function, "cleanup.evidence.valid");
+                const invalid = c.LLVMAppendBasicBlock(function, "cleanup.evidence.missing");
+                _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildIsNull(self.builder, flags, "cleanup.evidence.absent"), invalid, valid);
+                c.LLVMPositionBuilderAtEnd(self.builder, invalid);
+                try self.runtimeFailure("owning replacement requires storage cleanup evidence");
+                c.LLVMPositionBuilderAtEnd(self.builder, valid);
+            }
             var state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, ty, flags);
             state.runtime_owner = try reference_evidence.runtimeOwner(self.builder, view);
             return state;
@@ -2063,7 +2076,8 @@ pub const CodeGenerator = struct {
         const destination: WriteDestination = .{
             .address = pointer.value_ref,
             .type_ref = try self.toLLVMType(pointer_type.pointer.child),
-            .cleanup = try self.capturedReferenceCleanup(pointer, assignment.cleanup_target orelse assignment.pointer),
+            .cleanup = try self.capturedReferenceCleanup(pointer, assignment.cleanup_target orelse assignment.pointer, assignment.checked_initialization == true),
+            .cleanup_optional = assignment.checked_initialization == true,
             .references = if (pointer.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else if (assignment.cleanup_target) |target| try self.referenceStorageForNode(target) else null,
             .reference_type = try self.optionalReferenceValueType(pointer_type.pointer.child),
         };
@@ -2533,7 +2547,7 @@ pub const CodeGenerator = struct {
         const output_fields = types.fields(self.graph, call.output_type) orelse return CodegenError.InvalidType;
         const signature = argi_abi.Signature.initWithEvidence(input_type, output_type, try self.indirectOutput(output_fields), .{ .input = evidence_type, .output = try self.fieldsEvidenceType(output_fields) });
         if (destination) |storage| {
-            _ = try signature.callWithEvidence(self.builder, method, patched_input, storage, self.callEvidence(signature, input_evidence), "");
+            _ = try signature.callWithEvidence(self.builder, method, patched_input, storage, try self.callEvidence(signature, input_evidence), "");
             for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
             for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
             if (call.outcome_cleanups.len != 0) {
@@ -2896,6 +2910,7 @@ pub const CodeGenerator = struct {
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {
         const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         if (self.replacement) |captured| if (captured.plan.cleanup == auto_id) {
+            if (captured.plan.initializes(self.graph)) return;
             // Use exactly the address and flag range captured before the RHS.
             // Do not resolve the cleanup target again after its effects.
             const destination = captured.destination orelse return error.MissingReplacementDestination;

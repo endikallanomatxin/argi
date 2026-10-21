@@ -56,6 +56,9 @@ pub const Infer = struct {
     selected_forward_applied: bool = false,
 
     post_domain_sink: ?*std.array_list.Managed(facts.InputDomain) = null,
+    observation_sink: ?*std.array_list.Managed(facts.InputPath) = null,
+    observation_conflict_sink: ?*std.array_list.Managed(facts.StorageObservationConflict) = null,
+    suppressed_observation: ?graph_mod.GlobalNodeId = null,
     loop_post_effects: ?*InputPostStateFlow = null,
 
     const ForwardOrigin = struct {
@@ -295,7 +298,7 @@ pub const Infer = struct {
                 .storage = retention.storage,
                 .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) },
             });
-            const result = try summaries.withOutcomeGuards(self.allocator, facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs });
+            const result = try summaries.withOutcomeGuards(self.allocator, facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .storage_observations = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs });
             try self.virtual_summaries.put(registry_id, result);
             return result;
         }
@@ -344,7 +347,8 @@ pub const Infer = struct {
             try states.append(self.allocator, .{ .target = retention.input, .initializedness = .initialized, .opaque_ownership = .conditional, .opaque_storage = retention.storage });
             try retained.append(self.allocator, .{ .storage = retention.storage, .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) } });
         }
-        return .{ .outputs = outputs, .required_live_inputs = try required.toOwnedSlice(self.allocator), .input_post_states = try states.toOwnedSlice(self.allocator), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
+        const required_paths = try required.toOwnedSlice(self.allocator);
+        return .{ .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(self.allocator), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
     }
 
     fn requestContractSelectors(self: *Infer, method: graph_mod.GlobalFunctionId, declared: primitives.MethodSafetyContract) !void {
@@ -695,6 +699,8 @@ pub const Infer = struct {
             .required_opaque_inputs = previous.required_opaque_inputs,
             .storage_capability_uses = previous.storage_capability_uses,
             .storage_capability_conflicts = previous.storage_capability_conflicts,
+            .storage_observations = previous.required_live_inputs,
+            .storage_observation_conflicts = previous.storage_observation_conflicts,
             .input_post_states = previous.input_post_states,
             .outcome_post_states = previous.outcome_post_states,
             .opaque_storage_effects = previous.opaque_storage_effects,
@@ -734,11 +740,21 @@ pub const Infer = struct {
 
         var post_flow = InputPostStateFlow.init(self.allocator);
         defer post_flow.deinit();
+        var observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        defer observations.deinit();
+        var observation_conflicts = std.array_list.Managed(facts.StorageObservationConflict).init(self.allocator);
+        defer observation_conflicts.deinit();
+        self.observation_sink = &observations;
+        self.observation_conflict_sink = &observation_conflicts;
+        defer self.observation_sink = null;
+        defer self.observation_conflict_sink = null;
         var post_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
         defer if (post_exits) |*exits| exits.deinit();
         start = profile.timestamp(self.profile_io);
         try self.inferInputPostStates(function_id, function.body.?, &post_flow, &post_exits);
         if (post_flow.reachable) try self.recordOutcomeExit(&post_exits, &post_flow);
+        self.observation_sink = null;
+        self.observation_conflict_sink = null;
 
         var post_states = if (post_exits) |*exits|
             try self.cloneInputPostStates(exits)
@@ -913,6 +929,8 @@ pub const Infer = struct {
             .outputs = outputs,
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
             .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
+            .storage_observations = try observations.toOwnedSlice(),
+            .storage_observation_conflicts = try observation_conflicts.toOwnedSlice(),
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .required_opaque_inputs = try required_opaque_inputs.toOwnedSlice(),
             .input_post_states = try post_states.toOwnedSlice(),
@@ -2077,6 +2095,11 @@ pub const Infer = struct {
                 try self.joinInputPostStateFallthrough(flow, &then_flow, &else_flow);
             },
             .while_statement => |statement| {
+                var loop_observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                defer loop_observations.deinit();
+                const parent_observations = self.observation_sink;
+                if (parent_observations != null) self.observation_sink = &loop_observations;
+                defer self.observation_sink = parent_observations;
                 try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
                 var transfers = InputPostStateFlow.init(self.allocator);
                 defer transfers.deinit();
@@ -2087,6 +2110,12 @@ pub const Infer = struct {
                 defer body_flow.deinit();
                 try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
                 try self.joinInputPostStates(&body_flow.states, &body_flow.states, &transfers.states);
+                if (parent_observations) |parent| for (loop_observations.items) |path| {
+                    // A later iteration observes generations ended by an
+                    // earlier one, even when its source read precedes the drop.
+                    try self.recordStorageObservation(path, body_flow.states.items);
+                    try appendInputPath(parent, path);
+                };
                 try self.joinInputPostStates(states, states, &body_flow.states);
                 for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
                 for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
@@ -2097,6 +2126,11 @@ pub const Infer = struct {
                 if (statement.init) |initialization|
                     try self.inferInputPostStatesNode(function_id, initialization, flow, exits);
                 if (!flow.reachable) return;
+                var loop_observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                defer loop_observations.deinit();
+                const parent_observations = self.observation_sink;
+                if (parent_observations != null) self.observation_sink = &loop_observations;
+                defer self.observation_sink = parent_observations;
                 try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
                 var transfers = InputPostStateFlow.init(self.allocator);
                 defer transfers.deinit();
@@ -2115,6 +2149,10 @@ pub const Infer = struct {
                     try self.inferInputPostStatesNode(function_id, increment, &body_flow, exits);
                 }
                 try self.joinInputPostStates(&body_flow.states, &body_flow.states, &transfers.states);
+                if (parent_observations) |parent| for (loop_observations.items) |path| {
+                    try self.recordStorageObservation(path, body_flow.states.items);
+                    try appendInputPath(parent, path);
+                };
                 try self.joinInputPostStates(states, states, &body_flow.states);
                 for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
                 for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
@@ -2183,6 +2221,79 @@ pub const Infer = struct {
         }
     }
 
+    fn recordStorageObservationConflict(self: *Infer, conflict: facts.StorageObservationConflict) !void {
+        const sink = self.observation_conflict_sink orelse return;
+        for (sink.items) |previous| {
+            if (self.inputPathEqual(previous.consumed, conflict.consumed) and self.inputPathEqual(previous.observed, conflict.observed)) return;
+        }
+        try sink.append(conflict);
+    }
+
+    fn recordStorageObservation(self: *Infer, path: facts.InputPath, states: []const facts.PlacePostState) !void {
+        const sink = self.observation_sink orelse return;
+        try appendInputPath(sink, path);
+        for (states) |state| {
+            // Projections within one referent retain their own generations.
+            // Distinct reference leaves can alias even inside one Args input.
+            if (sameInputStorageAccess(state.target, path)) continue;
+            if (!state.ends_previous_roots and !state.refreshes_storage_generation and state.initializedness == .initialized) continue;
+            try self.recordStorageObservationConflict(.{ .consumed = state.target, .observed = path });
+        }
+    }
+
+    fn sameInputStorageAccess(left: facts.InputPath, right: facts.InputPath) bool {
+        if (left.input_index != right.input_index or left.storage_domain != right.storage_domain) return false;
+        var left_end: usize = 0;
+        var right_end: usize = 0;
+        for (left.projections, 0..) |projection, index| if (projection == .dereference) {
+            left_end = index + 1;
+        };
+        for (right.projections, 0..) |projection, index| if (projection == .dereference) {
+            right_end = index + 1;
+        };
+        if (left_end != right_end) return false;
+        for (left.projections[0..left_end], right.projections[0..right_end]) |a, b| if (!a.eql(b)) return false;
+        return true;
+    }
+
+    fn recordInputStorageObservation(self: *Infer, function_id: graph_mod.GlobalFunctionId, path: facts.InputPath, states: []const facts.PlacePostState) !void {
+        // Erased anchors expose no value representation. Their ordinary live
+        // dependency remains required, but they do not observe an incarnation
+        // of an arbitrary value that may have occupied the backing storage.
+        if (self.inputPathType(function_id, path)) |observed_type|
+            if (types.isBuiltin(self.graph, observed_type, .Any)) return;
+        const function = self.graph.function(function_id);
+        if (path.input_index >= function.input.len) return;
+        const ty = self.graph.fields.items[function.input.start + path.input_index].ty;
+        // Reading a copied input field does not observe its caller's slot.
+        // Only a pointer boundary (or an opaque domain) reaches shared storage.
+        if (self.graph.semanticType(ty) != .pointer and path.storage_domain == null) {
+            var dereferenced = false;
+            for (path.projections) |projection| if (projection == .dereference) {
+                dereferenced = true;
+                break;
+            };
+            if (!dereferenced) return;
+        }
+        try self.recordStorageObservation(path, states);
+    }
+
+    fn storageObservationPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
+        const direct = try self.inferInputPaths(function_id, node);
+        if (direct.len != 0) return direct;
+        return switch (self.graph.node(node).content) {
+            .struct_field_access => |access| self.projectInputPaths(try self.storageObservationPaths(function_id, access.value), .{ .field = access.field_index }),
+            .choice_payload_access => |access| blk: {
+                const ty = self.graph.node(access.value).ty orelse break :blk &.{};
+                const index = self.variantIndex(ty, access.variant) orelse break :blk &.{};
+                break :blk try self.projectInputPaths(try self.storageObservationPaths(function_id, access.value), .{ .variant = index });
+            },
+            .dereference => |access| self.projectEffectInputPaths(function_id, try self.inferExpression(function_id, access.pointer), &.{.dereference}, .place),
+            .array_index => |access| self.projectInputPaths(try self.projectEffectInputPaths(function_id, try self.inferExpression(function_id, access.array_ptr), &.{.dereference}, .place), if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index),
+            else => &.{},
+        };
+    }
+
     fn inferInputPostStatesExpression(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -2244,8 +2355,18 @@ pub const Infer = struct {
                 };
                 if (literal.payload) |payload| try self.inferInputPostStatesExpression(function_id, payload, states, exits);
             },
-            .struct_field_access => |access| try self.inferInputPostStatesExpression(function_id, access.value, states, exits),
-            .choice_payload_access => |access| try self.inferInputPostStatesExpression(function_id, access.value, states, exits),
+            .struct_field_access => |access| {
+                const previous = self.suppressed_observation;
+                self.suppressed_observation = access.value;
+                defer self.suppressed_observation = previous;
+                try self.inferInputPostStatesExpression(function_id, access.value, states, exits);
+            },
+            .choice_payload_access => |access| {
+                const previous = self.suppressed_observation;
+                self.suppressed_observation = access.value;
+                defer self.suppressed_observation = previous;
+                try self.inferInputPostStatesExpression(function_id, access.value, states, exits);
+            },
             .array_index => |index| {
                 try self.inferInputPostStatesExpression(function_id, index.array_ptr, states, exits);
                 try self.inferInputPostStatesExpression(function_id, index.index, states, exits);
@@ -2336,6 +2457,17 @@ pub const Infer = struct {
 
             else => {},
         }
+        if (self.suppressed_observation != node_id) switch (node.content) {
+            .struct_field_access, .choice_payload_access => {
+                for (try self.storageObservationPaths(function_id, node_id)) |path|
+                    try self.recordInputStorageObservation(function_id, path, states.items);
+            },
+            .dereference, .array_index => {
+                for (try self.storageObservationPaths(function_id, node_id)) |path|
+                    try self.recordInputStorageObservation(function_id, path, states.items);
+            },
+            else => {},
+        };
     }
 
     fn inferConditionalInputPostStatesExpression(
@@ -2475,6 +2607,20 @@ pub const Infer = struct {
         states: *std.array_list.Managed(facts.PlacePostState),
         override: ?SymbolicInputOverride,
     ) !void {
+        if (self.observation_sink != null) {
+            for (summary.storage_observations) |path| {
+                // Automatic cleanup observes its receiver only behind the
+                // selected initialization guard; auxiliary arguments still read.
+                if (override) |receiver| if (path.input_index == receiver.input_index) continue;
+                for (try self.substituteRequiredInputPath(function_id, path, arguments, override)) |observed|
+                    try self.recordInputStorageObservation(function_id, observed, states.items);
+            }
+            for (summary.storage_observation_conflicts) |conflict| {
+                const consumed = try self.substituteRequiredInputPath(function_id, conflict.consumed, arguments, override);
+                const observed = try self.substituteRequiredInputPath(function_id, conflict.observed, arguments, override);
+                for (consumed) |left| for (observed) |right| try self.recordStorageObservationConflict(.{ .consumed = left, .observed = right });
+            }
+        }
         for (summary.invalidated_domains) |domain| {
             var resolved = false;
             if (domain.path.input_index < arguments.len) {
@@ -4089,7 +4235,7 @@ pub const Infer = struct {
             }
         }
         if (binding_effect) |effect|
-            try self.inferAutoDeinitFieldRequiredLiveInputs(function_id, cleanup.fields, effect, required);
+            try self.inferAutoDeinitFieldRequiredLiveInputs(function_id, cleanup.fields, effect, required, cleanup.storage == .indirect);
     }
 
     fn inferAutoDeinitFieldRequiredLiveInputs(
@@ -4098,6 +4244,7 @@ pub const Infer = struct {
         fields_range: primitives.Range(graph_mod.GlobalAutoDeinitFieldId),
         parent_effect: facts.ValueEffect,
         required: *std.array_list.Managed(facts.InputPath),
+        guarded_receiver: bool,
     ) !void {
         for (self.graph.auto_deinit_fields.items[fields_range.start..][0..fields_range.len], 0..) |field, index| {
             if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(fields_range.start + @as(u32, @intCast(index))))) continue;
@@ -4109,19 +4256,25 @@ pub const Infer = struct {
             else
                 .{ .field = field.field_index });
             if (field.input) |input| {
-                try self.inferRequiredLiveInputsNode(function_id, input, required);
+                if (guarded_receiver) {
+                    if (self.structArguments(input)) |arguments| for (arguments, 0..) |argument, input_index| {
+                        if (input_index != field.self_field_index) try self.inferRequiredLiveInputsNode(function_id, argument.value, required);
+                    };
+                } else try self.inferRequiredLiveInputsNode(function_id, input, required);
                 if (field.deinit_fn) |deinit_fn| {
-                    if (self.engine.summaryFor(deinit_fn)) |summary|
+                    if (self.engine.summaryFor(deinit_fn)) |summary| for (self.requiredInputPaths(summary)) |path| {
+                        if (guarded_receiver and path.input_index == field.self_field_index) continue;
                         try self.substituteRequiredLiveInputsWithOverride(
                             function_id,
-                            self.requiredInputPaths(summary),
+                            &.{path},
                             input,
                             required,
                             .{ .input_index = field.self_field_index, .effect = field_effect },
                         );
+                    };
                 }
             }
-            try self.inferAutoDeinitFieldRequiredLiveInputs(function_id, field.fields, field_effect, required);
+            try self.inferAutoDeinitFieldRequiredLiveInputs(function_id, field.fields, field_effect, required, guarded_receiver);
         }
     }
 
@@ -5719,6 +5872,61 @@ test "result substitution observes new binding facts and symbolic overrides" {
     const overridden = try inference.substituteOutputWithOverride(@enumFromInt(0), result, &.{argument}, .{ .input_index = 0, .effect = .{ .fresh_storage_capabilities = &.{19} } });
     for (overridden.fields) |field| try std.testing.expectEqual(@as(usize, 0), field.value.fresh_storage_capabilities.len);
     for (first.fields) |field| try std.testing.expectEqual(@as(usize, 7), field.value.fresh_storage_capabilities[0]);
+}
+
+test "erased anchor validity is not an observation of the stored value representation" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Any }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(1) });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 0 } });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    var observations = std.array_list.Managed(facts.InputPath).init(a);
+    defer observations.deinit();
+    infer.observation_sink = &observations;
+    try infer.recordInputStorageObservation(@enumFromInt(0), .{ .input_index = 0 }, &.{});
+    try std.testing.expectEqual(@as(usize, 0), observations.items.len);
+}
+
+test "storage observation conflicts preserve order and ended generations after reinitialization" {
+    const a = std.testing.allocator;
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, undefined, &engine);
+    defer infer.deinit();
+    var observations = std.array_list.Managed(facts.InputPath).init(a);
+    defer observations.deinit();
+    var conflicts = std.array_list.Managed(facts.StorageObservationConflict).init(a);
+    defer conflicts.deinit();
+    infer.observation_sink = &observations;
+    infer.observation_conflict_sink = &conflicts;
+    const consumed = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 0 }} };
+    const observed = facts.InputPath{ .input_index = 1, .projections = &.{.{ .field = 1 }} };
+    try infer.recordStorageObservation(observed, &.{});
+    try std.testing.expectEqual(@as(usize, 0), conflicts.items.len);
+    var post = facts.PlacePostState{ .target = consumed, .initializedness = .deinitialized, .ends_previous_roots = true };
+    try infer.recordStorageObservation(observed, &.{post});
+    try std.testing.expectEqual(@as(usize, 1), conflicts.items.len);
+    try std.testing.expect(infer.inputPathEqual(consumed, conflicts.items[0].consumed));
+    try std.testing.expect(infer.inputPathEqual(observed, conflicts.items[0].observed));
+    post.initializedness = .initialized;
+    post.initialization = .definite;
+    try infer.recordStorageObservation(observed, &.{post});
+    try std.testing.expectEqual(@as(usize, 1), conflicts.items.len);
+    try std.testing.expectEqual(@as(usize, 1), observations.items.len);
+    const first_leaf = facts.InputPath{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference, .{ .field = 0 } } };
+    const second_leaf = facts.InputPath{ .input_index = 0, .projections = &.{ .{ .field = 1 }, .dereference } };
+    post.target = first_leaf;
+    try infer.recordStorageObservation(second_leaf, &.{post});
+    try std.testing.expectEqual(@as(usize, 2), conflicts.items.len);
+    // A renewed access within the first referent is handled by its concrete
+    // generation; it does not impose disjointness from its own field.
+    try infer.recordStorageObservation(.{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference, .{ .field = 1 } } }, &.{post});
+    try std.testing.expectEqual(@as(usize, 2), conflicts.items.len);
 }
 
 test "fresh storage availability preserves unchanged trees and marks nested consumption" {

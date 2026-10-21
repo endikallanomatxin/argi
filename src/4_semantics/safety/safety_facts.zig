@@ -141,6 +141,13 @@ pub const StorageCapabilityConflict = struct {
     second: InputPath,
 };
 
+/// A later observation must not alias storage whose value was already ended.
+/// Coordinates are caller-relative; distinct inputs do not prove disjointness.
+pub const StorageObservationConflict = struct {
+    consumed: InputPath,
+    observed: InputPath,
+};
+
 pub const FreshStorageCapabilityState = struct {
     source: FreshEffectSource,
     maybe_consumed: bool = false,
@@ -169,6 +176,8 @@ pub const SafetySummary = struct {
     outputs: []const ValueEffect = &.{},
     storage_capability_uses: []const StorageCapabilityUse = &.{},
     storage_capability_conflicts: []const StorageCapabilityConflict = &.{},
+    storage_observations: []const InputPath = &.{},
+    storage_observation_conflicts: []const StorageObservationConflict = &.{},
     required_live_inputs: []const InputPath = &.{},
     /// Using stored elements requires their hidden external dependencies;
     /// merely accessing or freeing allocation metadata does not.

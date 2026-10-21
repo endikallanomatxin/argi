@@ -294,7 +294,7 @@ selected payload.
 Each function has an inferred Safety Summary. It records required live input
 dependencies, value effects, Place post-states, and opaque-storage effects.
 Callers instantiate these symbolic effects at their own Places and roots.
-safety contracts bound the effects allowed through virtual dispatch.
+Safety contracts bound the effects allowed through virtual dispatch.
 Concrete implementations must satisfy their contract independently, and virtual
 calls use that contract. See `134_virtual_types.md` for dependency declarations
 and the remaining implementation gaps during migration from combined summaries.
@@ -302,6 +302,21 @@ and the remaining implementation gaps during migration from combined summaries.
 `$&T` does not imply `noalias`. Calls such as `f($&x, $&x)` and
 `f($&x, &x)` may be temporally safe under the current model. Exclusivity and
 data-race guarantees are separate language concerns.
+
+Summaries preserve ordered storage observations: consuming a value and later
+reading through another input requires those destinations not to overlap.
+The caller checks this requirement using its actual storage identities. Two
+independent inputs remain usable; an alias of the consumed incarnation stays
+invalid even when the destination is reinitialized. Reading before consumption
+is permitted, except when a later loop iteration can observe the ended value.
+References stored in one by-value argument retain separate referent identities
+and the same caller-side checks. Statically selected implementations retain these
+inferred obligations at every concrete call, including forwarding calls. Their
+outputs and storage effects must still satisfy the contract. Virtual safety
+contracts currently reject implementations that require an unrepresented alias
+obligation.
+An erased `Any` anchor retains its storage-validity requirements but exposes no
+stored representation; checking that anchor is not a value observation.
 
 ## Trusted boundary
 

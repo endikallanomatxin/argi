@@ -27,6 +27,7 @@ pub const FreshEffectSource = base.FreshEffectSource;
 pub const ValueEffect = base.ValueEffect;
 pub const OutputVariantEffect = base.OutputVariantEffect;
 pub const PlacePostState = base.PlacePostState;
+pub const StorageObservationConflict = base.StorageObservationConflict;
 pub const OpaqueOwnershipConsumption = base.OpaqueOwnershipConsumption;
 pub const StorageCapabilityUse = base.StorageCapabilityUse;
 pub const StorageCapabilityConflict = base.StorageCapabilityConflict;
@@ -207,12 +208,30 @@ pub const Tracker = struct {
     /// Cloned branch states share identities, never reuse another branch's ID.
     pub const RootNamespace = struct {
         next_id: u32 = 0,
+        next_symbolic_id: u32 = 0,
+        projected_storage: std.ArrayList(struct {
+            parent: SymbolicPointeeId,
+            parent_generation: ValidityRootId,
+            projection: Projection,
+            identity: SymbolicPointeeId,
+            backing: ValidityRootId,
+            generation: ValidityRootId,
+            ty: ?graph.GlobalTypeId = null,
+        }) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
 
         /// Independent session candidates copy allocation state; branches of
         /// one proof still share it. Immutable Place paths retain their arena.
         pub fn clone(self: *const RootNamespace, allocator: std.mem.Allocator) !RootNamespace {
-            return .{ .next_id = self.next_id, .initial_storage = try self.initial_storage.clone(allocator) };
+            var result = self.*;
+            result.initial_storage = try self.initial_storage.clone(allocator);
+            errdefer result.initial_storage.deinit(allocator);
+            result.projected_storage = try self.projected_storage.clone(allocator);
+            return result;
+        }
+        pub fn deinit(self: *RootNamespace, allocator: std.mem.Allocator) void {
+            self.initial_storage.deinit(allocator);
+            self.projected_storage.deinit(allocator);
         }
     };
     namespace: ?*RootNamespace = null,
@@ -346,15 +365,28 @@ test "empty safety values retain explicit scalar and structural facts" {
 fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
     const a = std.testing.allocator;
     var original: Tracker.RootNamespace = .{ .next_id = 2 };
-    defer original.initial_storage.deinit(a);
+    defer original.deinit(a);
     try original.initial_storage.append(a, .{ .storage = .{ .root = @enumFromInt(3) }, .root = @enumFromInt(1) });
+    original.next_symbolic_id = 4;
+    try original.projected_storage.append(a, .{
+        .parent = @enumFromInt(0),
+        .parent_generation = @enumFromInt(1),
+        .projection = .{ .field = 0 },
+        .identity = @enumFromInt(3),
+        .backing = @enumFromInt(0),
+        .generation = @enumFromInt(1),
+    });
     var candidate = try original.clone(allocator);
-    defer candidate.initial_storage.deinit(allocator);
+    defer candidate.deinit(allocator);
     var tracker = Tracker.init(allocator);
     defer tracker.deinit();
     tracker.namespace = &candidate;
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(try tracker.establish(.fresh)));
     candidate.initial_storage.items[0].root = @enumFromInt(2);
+    candidate.projected_storage.items[0].projection = .{ .variant = 2 };
+    candidate.next_symbolic_id = 5;
+    try std.testing.expect(original.projected_storage.items[0].projection.eql(.{ .field = 0 }));
+    try std.testing.expectEqual(@as(u32, 4), original.next_symbolic_id);
     try std.testing.expectEqual(@as(u32, 2), original.next_id);
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(original.initial_storage.items[0].root));
     try std.testing.expectEqual(@as(u32, 3), candidate.next_id);

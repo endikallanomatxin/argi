@@ -3292,12 +3292,7 @@ test "feature_tests/ownership/42X_reference_use_after_root_end" {
 }
 
 test "feature_tests/ownership/53X_pointer_inputs_may_alias" {
-    try buildExpectFailExact("tests/feature_tests/ownership/53X_pointer_inputs_may_alias",
-        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:6:25: error: reference depends on a root that has ended
-        \\      value = read_alias&.size
-        \\                          ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/53X_pointer_inputs_may_alias", "observes storage after an aliased participant");
 }
 
 test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
@@ -3306,9 +3301,9 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:11: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:8: error: reference depends on a root that has ended
         \\      if b&.size == 1 {
-        \\            ^
+        \\         ^
         \\
     );
 }
@@ -13081,11 +13076,11 @@ test "feature_tests/contracts/325_deferred_operation_body" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try expect(result.term == .exited and result.term.exited != 0);
-    try expect(std.mem.indexOf(u8, result.stderr, "cannot materialize body") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot materialize function body") != null);
 }
 
 test "feature_tests/contracts/326X_selected_deferred_operation_body" {
-    try buildExpectFail("tests/feature_tests/contracts/326X_selected_deferred_operation_body", "cannot materialize body");
+    try buildExpectFail("tests/feature_tests/contracts/326X_selected_deferred_operation_body", "cannot materialize function body");
 }
 
 test "feature_tests/contracts/327_ordered_comparison_evidence" {
@@ -13683,7 +13678,7 @@ test "feature_tests/ownership/370X_symbolic_reinitialization_keeps_copy_stale" {
 }
 
 test "feature_tests/ownership/371X_symbolic_reinitialization_keeps_possible_alias_stale" {
-    try buildExpectFail("tests/feature_tests/ownership/371X_symbolic_reinitialization_keeps_possible_alias_stale", "reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/ownership/371X_symbolic_reinitialization_keeps_possible_alias_stale", "observes storage after an aliased participant");
 }
 
 test "feature_tests/ownership/372X_symbolic_reinitialization_rhs_cannot_read_vacant" {
@@ -13741,7 +13736,7 @@ test "feature_tests/ownership/378X_record_input_keeps_copy_stale" {
 }
 
 test "feature_tests/ownership/379X_record_input_keeps_possible_alias_stale" {
-    try buildExpectFail("tests/feature_tests/ownership/379X_record_input_keeps_possible_alias_stale", "reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/ownership/379X_record_input_keeps_possible_alias_stale", "observes storage after an aliased participant");
 }
 
 test "feature_tests/ownership/380X_record_input_repeated_consumption" {
@@ -14175,6 +14170,12 @@ test "feature_tests/execution/150_comptime_array_defaults" {
     try vmExpect("tests/feature_tests/execution/150_comptime_array_defaults", 42, null);
 }
 
+test "feature_tests/execution/151_choice_payload_evaluated_address" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/151_choice_payload_evaluated_address");
+    try runExpect("tests/feature_tests/execution/151_choice_payload_evaluated_address", 42);
+    try vmExpect("tests/feature_tests/execution/151_choice_payload_evaluated_address", 42, null);
+}
+
 test "feature_tests/execution/152_anonymous_comptime_entry" {
     try expectSuccessfulBuild("tests/feature_tests/execution/152_anonymous_comptime_entry");
     try runExpect("tests/feature_tests/execution/152_anonymous_comptime_entry", 42);
@@ -14205,6 +14206,72 @@ test "feature_tests/execution/130_partial_record_indirect_replacement" {
     try vmExpect("tests/feature_tests/execution/130_partial_record_indirect_replacement", 42, null);
 }
 
+test "feature_tests/execution/131_partial_record_live_sibling_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/131_partial_record_live_sibling_cleanup");
+    try runExpect("tests/feature_tests/execution/131_partial_record_live_sibling_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/131_partial_record_live_sibling_cleanup", 42, null);
+}
+
+test "feature_tests/execution/132_projected_symbolic_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/132_projected_symbolic_initialization");
+    try runExpect("tests/feature_tests/execution/132_projected_symbolic_initialization", 42);
+    try vmExpect("tests/feature_tests/execution/132_projected_symbolic_initialization", 42, null);
+}
+
+test "feature_tests/execution/133X_projected_symbolic_historical_alias" {
+    try buildExpectFail("tests/feature_tests/execution/133X_projected_symbolic_historical_alias", "root that has ended");
+}
+
+test "feature_tests/execution/134X_projected_symbolic_participant_alias" {
+    try buildExpectFail("tests/feature_tests/execution/134X_projected_symbolic_participant_alias", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/135_projected_symbolic_read_before_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/135_projected_symbolic_read_before_consumption");
+    try runExpect("tests/feature_tests/execution/135_projected_symbolic_read_before_consumption", 42);
+    try vmExpect("tests/feature_tests/execution/135_projected_symbolic_read_before_consumption", 42, null);
+}
+
+test "feature_tests/execution/141_projected_symbolic_independent_participant" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/141_projected_symbolic_independent_participant");
+    try runExpect("tests/feature_tests/execution/141_projected_symbolic_independent_participant", 42);
+    try vmExpect("tests/feature_tests/execution/141_projected_symbolic_independent_participant", 42, null);
+}
+
+test "feature_tests/execution/142X_projected_observation_loop_alias" {
+    try buildExpectFail("tests/feature_tests/execution/142X_projected_observation_loop_alias", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/143_projected_observation_forwarding" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/143_projected_observation_forwarding");
+    try runExpect("tests/feature_tests/execution/143_projected_observation_forwarding", 42);
+    try vmExpect("tests/feature_tests/execution/143_projected_observation_forwarding", 42, null);
+}
+
+test "feature_tests/execution/144X_projected_observation_args_alias" {
+    try buildExpectFail("tests/feature_tests/execution/144X_projected_observation_args_alias", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/145_projected_observation_args_independent" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/145_projected_observation_args_independent");
+    try runExpect("tests/feature_tests/execution/145_projected_observation_args_independent", 42);
+    try vmExpect("tests/feature_tests/execution/145_projected_observation_args_independent", 42, null);
+}
+
+test "feature_tests/execution/146X_projected_observation_returned_reference" {
+    try buildExpectFail("tests/feature_tests/execution/146X_projected_observation_returned_reference", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/147_symbolic_reinitialization_independent" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/147_symbolic_reinitialization_independent");
+    try runExpect("tests/feature_tests/execution/147_symbolic_reinitialization_independent", 42);
+    try vmExpect("tests/feature_tests/execution/147_symbolic_reinitialization_independent", 42, null);
+}
+
+test "feature_tests/execution/148X_projected_observation_operand_effect" {
+    try buildExpectFail("tests/feature_tests/execution/148X_projected_observation_operand_effect", "observes storage after an aliased participant");
+}
+
 test "feature_tests/execution/136_comptime_lexical_boundaries" {
     try expectSuccessfulBuild("tests/feature_tests/execution/136_comptime_lexical_boundaries");
     try runExpect("tests/feature_tests/execution/136_comptime_lexical_boundaries", 42);
@@ -14224,7 +14291,6 @@ test "argi repl retains transient default recipes across commands" {
         "_0 = 42\n_1 = 42\n_2 = 42\n",
     );
 }
-
 test "feature_tests/execution/138_comptime_transient_expression_defaults" {
     try expectSuccessfulBuild("tests/feature_tests/execution/138_comptime_transient_expression_defaults");
     try runExpect("tests/feature_tests/execution/138_comptime_transient_expression_defaults", 42);
@@ -14284,7 +14350,6 @@ fn expectReplFixture(fixture_path: ?[]const u8, commands: []const u8, expected: 
     try expectEqualStrings("", stderr);
     try expectEqualStrings(expected, stdout);
 }
-
 
 test "argi repl preserves record defaults across specializations" {
     try expectReplFixture(
@@ -14352,4 +14417,18 @@ test "argi repl supplies persistent allocator capabilities across reset" {
         "text ::= unwrap_or_abort(.value = String(.length = 3))\nbyte_length(.self = &text)\nnumbers ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)\nunwrap_or_abort(.value = get(.self = &numbers, .index = 0))\n:reset\ntext ::= unwrap_or_abort(.value = String(.length = 4))\nbyte_length(.self = &text)\n",
         "_0 = 3\n_1 = ()\n_2 = 42\n_0 = 4\n",
     );
+}
+
+test "feature_tests/execution/152_static_contract_alias_obligation" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/152_static_contract_alias_obligation");
+    try runExpect("tests/feature_tests/execution/152_static_contract_alias_obligation", 42);
+    try vmExpect("tests/feature_tests/execution/152_static_contract_alias_obligation", 42, null);
+}
+
+test "feature_tests/execution/153X_static_contract_aliased_observation" {
+    try buildExpectFail("tests/feature_tests/execution/153X_static_contract_aliased_observation", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/154X_virtual_contract_alias_obligation" {
+    try buildExpectFail("tests/feature_tests/execution/154X_virtual_contract_alias_obligation", "a caller-side storage alias obligation is not represented by this contract");
 }

@@ -12,6 +12,13 @@ pub const Plan = struct {
     prepared: g.GlobalBindingId,
     cleanup: g.GlobalAutoDeinitId,
     result: g.GlobalNodeId,
+
+    pub fn initializes(self: Plan, graph: *const g.GlobalSemanticGraph) bool {
+        return switch (graph.node(self.write).content) {
+            .pointer_assignment => |write| write.checked_initialization == true,
+            else => false,
+        };
+    }
 };
 
 pub fn plan(graph: *const g.GlobalSemanticGraph, id: g.GlobalNodeId) !Plan {
