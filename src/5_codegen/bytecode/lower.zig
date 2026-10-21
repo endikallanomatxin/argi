@@ -441,12 +441,16 @@ const FunctionLower = struct {
         }
         pub fn beginVariant(self: @This(), target: Target, _: g.AutoDeinitField, selected: cleanup_plan.Child) !u32 {
             const lower = self.lower;
-            const value = try lower.newSlot(target.ty);
-            _ = try lower.emit(lower.parent.source, .{ .load = .{ .dst = value, .place = target.place } });
-            return lower.emit(lower.parent.source, .{ .branch_variant = .{ .src = value, .variant = selected.variant.?, .yes = lower.position() + 1, .no = 0 } });
+            return lower.emit(lower.parent.source, .{ .branch_storage_variant = .{
+                .place = target.place,
+                .variant = selected.variant.?,
+                .ordinal = try b.variantOrdinal(lower.parent.graph, target.ty, selected.variant.?),
+                .yes = lower.position() + 1,
+                .no = 0,
+            } });
         }
         pub fn endVariant(self: @This(), branch: u32) !void {
-            self.lower.code.items[branch].op.branch_variant.no = self.lower.position();
+            self.lower.code.items[branch].op.branch_storage_variant.no = self.lower.position();
         }
         pub fn project(self: @This(), target: Target, field: g.AutoDeinitField, selected: cleanup_plan.Child) !Target {
             const projection: b.Projection = if (selected.variant) |variant| .{ .variant = .{ .identity = variant } } else .{ .field = field.field_index };
@@ -488,7 +492,7 @@ const FunctionLower = struct {
         }
         switch (resolved) {
             .check_place => |*target| target.* = try self.finalizePlace(target.*),
-            inline .load, .capture_write, .borrow, .borrow_storage, .cleanup_test, .cleanup_set, .branch_cleanup => |*access| access.place = try self.finalizePlace(access.place),
+            inline .load, .capture_write, .borrow, .borrow_storage, .cleanup_test, .cleanup_set, .branch_cleanup, .branch_storage_variant => |*access| access.place = try self.finalizePlace(access.place),
             else => {},
         }
         try self.code.append(self.parent.allocator, .{ .source = source, .op = resolved });

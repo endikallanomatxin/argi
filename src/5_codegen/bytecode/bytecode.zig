@@ -194,6 +194,7 @@ pub const Instruction = struct {
         choice: struct { dst: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32), payload: ?Slot },
         payload: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32) },
         is_variant: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32), invert: bool },
+        branch_storage_variant: struct { place: Place, variant: g.GlobalVariantId, ordinal: u32, yes: u32, no: u32 },
         branch_variant: struct { src: Slot, variant: g.GlobalVariantId, ordinal: u32 = std.math.maxInt(u32), yes: u32, no: u32 },
         borrow: struct { dst: Slot, place: Place, permission: p.PointerMutability },
         load: struct { dst: Slot, place: Place, interpretation: LoadInterpretation = .value },

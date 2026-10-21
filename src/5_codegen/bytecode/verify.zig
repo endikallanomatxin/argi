@@ -237,6 +237,10 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     _ = try choiceVariant(program.graph, f.slots[x.src], x.variant);
                     if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false })) return error.InvalidBytecode;
                 },
+                .branch_storage_variant => |x| {
+                    const info = try placeInfo(program, f.slots, x.place);
+                    if (x.ordinal != try b.variantOrdinal(program.graph, info.ty, x.variant) or x.yes >= f.code.len or x.no >= f.code.len) return error.InvalidBytecode;
+                },
                 .branch_variant => |x| {
                     if (x.ordinal != try b.variantOrdinal(program.graph, f.slots[x.src], x.variant)) return error.InvalidBytecode;
                     _ = try choiceVariant(program.graph, f.slots[x.src], x.variant);
@@ -444,7 +448,7 @@ fn successors(instruction: Instruction, pc: usize, length: usize, edges: *[2]u32
             edges[0] = target;
             break :result 1;
         },
-        inline .branch, .branch_cleanup, .branch_variant => |branch| result: {
+        inline .branch, .branch_cleanup, .branch_variant, .branch_storage_variant => |branch| result: {
             edges.* = .{ branch.yes, branch.no };
             break :result 2;
         },
@@ -526,7 +530,7 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
         .check_place => |place| try readPlace(a, place, out),
         .capture_write => |x| try readPlace(a, x.place, out),
         .store => |x| try out.append(a, x.value),
-        inline .cleanup_test, .branch_cleanup => |x| try readCleanupPlace(a, x.place, out),
+        inline .cleanup_test, .branch_cleanup, .branch_storage_variant => |x| try readCleanupPlace(a, x.place, out),
         .cleanup_set => |x| try readCleanupPlace(a, x.place, out),
         .call => |x| try out.appendSlice(a, x.args),
         .host_call => |x| try out.appendSlice(a, x.args),

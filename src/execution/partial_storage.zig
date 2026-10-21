@@ -56,6 +56,23 @@ pub const Storage = struct {
         self.values[position.cell] = result;
         return result;
     }
+    // Observe an existing value without constructing aggregate snapshots. Tag
+    // queries use this path so unrelated vacant fields are never materialized.
+    pub fn storedValue(self: *const Storage, path: []const Projection) !b.Value {
+        var position: Position = .{};
+        var consumed: usize = 0;
+        while (true) {
+            if (self.values[position.cell]) |value| {
+                var result = value;
+                for (path[consumed..]) |projection| result = try project(result, projection);
+                return result;
+            }
+            if (consumed == path.len) return error.ExecutionUninitializedStorage;
+            position = try self.selectChild(position, path[consumed]);
+            consumed += 1;
+        }
+    }
+
     pub fn materializationCells(self: *const Storage, path: []const Projection) !usize {
         return self.requiredCells(.{}, path, 0);
     }

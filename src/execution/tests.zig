@@ -2611,3 +2611,34 @@ test "negative narrow indices cannot address positive array elements" {
     defer projected.deinit();
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, projected.runExpression(&.{}));
 }
+
+test "bytecode storage variant branches verify representation ordinals before execution" {
+    const a = std.testing.allocator;
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.variants.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .value = 0 });
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .choice = .{ .variant = 0, .payload = null } } } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 42 } } } },
+        .{ .source = source, .op = .{ .branch_storage_variant = .{ .place = .{ .root = 0, .path = &.{} }, .variant = @enumFromInt(0), .ordinal = 0, .yes = 3, .no = 4 } } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+        .{ .source = source, .op = .abort_ },
+    };
+    const expression: b.Function = .{ .slots = &.{ @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{1}, .code = &code };
+    const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &expression };
+    code[2].op.branch_storage_variant.ordinal = 1;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.branch_storage_variant.ordinal = 0;
+    code[2].op.branch_storage_variant.place.root = 1;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.branch_storage_variant.place.root = 0;
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expectEqual(@as(u64, 42), (try executor.runExpression(&.{}))[0].integer);
+}

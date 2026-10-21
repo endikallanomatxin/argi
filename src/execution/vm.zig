@@ -520,6 +520,11 @@ pub const Vm = struct {
                     try slots.put(x.dst, choice.payload.?.*);
                 },
                 .is_variant => |x| try slots.put(x.dst, .{ .boolean = ((try slots.get(x.src)).choice.variant == x.ordinal) != x.invert }),
+                .branch_storage_variant => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, false);
+                    current.pc = if (try self.context().storage.choiceTag(reference) == x.ordinal) x.yes else x.no;
+                },
                 .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == x.ordinal) x.yes else x.no,
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;

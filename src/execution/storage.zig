@@ -427,6 +427,24 @@ pub const Storage = struct {
         return result;
     }
 
+    // Read only the discriminant's existing representation. No payload snapshot
+    // or initialized sibling is needed to select structural cleanup.
+    pub fn choiceTag(self: *Storage, reference: v.Reference) !u32 {
+        try self.validateContext(reference);
+        _ = try self.frameValues(reference.frame);
+        const frame = &self.frames.items[@intFromEnum(reference.frame)];
+        if (reference.byte_view != null or frame.duration == .static or frame.duration == .acquired) return error.ExecutionInvalidReference;
+        const value = if (frame.partial_storage.getPtr(reference.root)) |record|
+            try record.storedValue(reference.path)
+        else value: {
+            if (reference.root >= frame.values.len) return error.ExecutionInvalidReference;
+            var current = frame.values[reference.root] orelse return error.ExecutionUninitializedStorage;
+            for (reference.path) |projection| current = try child(current, projection);
+            break :value current;
+        };
+        return if (value == .choice) value.choice.variant else error.ExecutionInvalidReference;
+    }
+
     pub fn read(self: *Storage, reference: v.Reference) !b.Value {
         try self.validateContext(reference);
         if (reference.byte_view) |view| {
@@ -1207,4 +1225,33 @@ test "acquired floating records preserve precision and validate writes before mu
         try storage.acquisitions.release(&storage, region);
         try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(first));
     }
+}
+
+test "choice tag observation neither materializes vacant siblings nor allocates payloads" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const frame = try storage.enter(1);
+    try storage.prepareStorage(frame, 0, .{ .nodes = &.{
+        .{ .kind = .record, .first = 1, .count = 2, .span = 3 },
+        .{ .offset = 1 },
+        .{ .offset = 2 },
+    } });
+    const reference: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{.{ .field = 0 }}, .mutability = .read_write };
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.choiceTag(reference));
+    const payload: b.Value = .erased;
+    try storage.store(reference, .{ .choice = .{ .variant = 1, .payload = &payload } });
+    const before = storage.cells;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    storage.allocator = failing.allocator();
+    try std.testing.expectEqual(@as(u32, 1), try storage.choiceTag(reference));
+    try std.testing.expectEqual(before, storage.cells);
+    const record = storage.frames.items[@intFromEnum(frame)].partial_storage.getPtr(0).?;
+    try std.testing.expect(record.values[0] == null);
+    try std.testing.expect(record.values[2] == null);
+    var sibling = reference;
+    sibling.path = &.{.{ .field = 1 }};
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.choiceTag(sibling));
+    storage.leave(frame);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.choiceTag(reference));
 }
