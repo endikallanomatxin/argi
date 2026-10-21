@@ -1267,6 +1267,20 @@ test "bytecode generic anonymous entries capture compile-time parameters" {
     , .{}));
 }
 
+test "bytecode anonymous entries supply computed specialization arguments" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\identity#(.n: Int32) := () -> (.result: Int32) { result = n }
+        \\forward#(.n: Int32) := () -> (.result: Int32) {
+        \\    result = identity#(.n = #run () -> (.value: Int32) { value = n })()
+        \\}
+        \\main() -> (.status_code: Int32) := {
+        \\    if forward#(.n = 41)() != 41 { abort }
+        \\    if forward#(.n = 42)() != 42 { abort }
+        \\    status_code = identity#(.n = #run () -> (.value: Int32) { value = 42 })()
+        \\}
+    , .{}));
+}
+
 test "bytecode generic anonymous entries retain nested parameter-dependent selection" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\calculate#(.n: Int32) := () -> (.result: Int32) {

@@ -12,7 +12,15 @@ selected#(.n: Int32) := () -> (.result: Int32) {
     }
 }
 
+identity#(.n: Int32) := () -> (.result: Int32) { result = n }
+
+forward#(.n: Int32) := () -> (.result: Int32) {
+    result = identity#(.n = #run () -> (.value: Int32) { value = n })()
+}
+
 main() -> (.status_code: Int32) := {
+    if forward#(.n = 41)() != 41 { abort }
+    if forward#(.n = 42)() != 42 { abort }
     if calculate#(.T: Int8, .n = 41)() != 41 { abort }
     if calculate#(.T: Int32, .n = 41)() != 41 { abort }
     if selected#(.n = 41)() != 41 { abort }
