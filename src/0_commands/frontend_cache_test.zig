@@ -608,6 +608,48 @@ test "frontend module cache preserves shared unary conformance selection" {
     try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "constraint") != null);
 }
 
+test "frontend module cache preserves generated compile-time entry provenance" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/execution/152_anonymous_comptime_entry/main.rg", std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(source);
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = source },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
+    {
+        var cold = ModuleCache.init(std.testing.allocator, .{});
+        defer cold.deinit();
+        try cold.enablePersistence(std.testing.io, root);
+        const result = try expectCleanEquivalent(&files, &cold);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+        try std.testing.expectEqual(@as(usize, 0), cold.disk_write_failures);
+    }
+    var warm = ModuleCache.init(std.testing.allocator, .{});
+    defer warm.deinit();
+    try warm.enablePersistence(std.testing.io, root);
+    const result = try expectCleanEquivalent(&files, &warm);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+    try std.testing.expectEqual(@as(usize, 2), result.hits);
+    try std.testing.expectEqual(@as(usize, 0), result.misses);
+    try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
+    const changed = try std.mem.replaceOwned(u8, std.testing.allocator, source, "local ::= 42", "local ::= missing()");
+    defer std.testing.allocator.free(changed);
+    try std.testing.expect(!std.mem.eql(u8, source, changed));
+    var invalid = files;
+    invalid[0].code = changed;
+    const rejected = try expectCleanEquivalent(&invalid, &warm);
+    defer rejected.deinit();
+    try std.testing.expect(rejected.failure != null);
+    const restored = try expectCleanEquivalent(&files, &warm);
+    defer restored.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), restored.failure);
+}
+
 test "frontend module cache preserves scoped implementation bodies" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
