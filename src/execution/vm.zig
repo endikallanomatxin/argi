@@ -572,7 +572,7 @@ pub const Vm = struct {
                 .branch_cleanup => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, &path, false);
-                    current.pc = if (try self.context().storage.cleanupTest(reference)) x.yes else x.no;
+                    current.pc = if (if (x.access == .present) try self.context().storage.cleanupPresent(reference) else try self.context().storage.cleanupTest(reference)) x.yes else x.no;
                 },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;

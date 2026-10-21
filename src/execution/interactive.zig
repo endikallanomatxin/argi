@@ -1401,3 +1401,40 @@ test "interactive introspection retains compiler type constants without runtime 
     try session.reset();
     try session.close();
 }
+
+test "interactive exit cleans the live sibling of an incomplete choice payload" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Resource: Type = (.right: Bool)\nChoice: Type = (..pair(.left: Resource, .right: Resource), ..empty)\nimplement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\nimplement Deinit#(Choice) (.deinit = (.self: $&Choice) -> () { abort })");
+    try session.submitStatements("choice :: Choice = ..pair(.left = (.right = false), .right = (.right = true))");
+    try session.submitStatements("match choice { ..pair $&payload { deinit(.self = $&payload&.left) } ..empty {} }");
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const frame = session.runtime.context.bindings.get(binding).?;
+    const storage = &session.runtime.context.storage;
+    const slots = try storage.slots(frame);
+    const cleanup = storage.frames.items[@intFromEnum(frame)].cleanup;
+    try std.testing.expect(!(try slots.get(cleanup[0].flag)).boolean);
+    try std.testing.expect((try slots.get(cleanup[0].presence.?)).boolean);
+    var found_sibling = false;
+    for (cleanup) |entry| {
+        if (entry.path.len != 2 or entry.path[1] != .field) continue;
+        if (entry.path[1].field == 0) try std.testing.expect(!(try slots.get(entry.flag)).boolean);
+        if (entry.path[1].field == 1) {
+            try std.testing.expect((try slots.get(entry.flag)).boolean);
+            found_sibling = true;
+        }
+    }
+    try std.testing.expect(found_sibling);
+    // Close runs retained fallback rather than the aborting whole destructor.
+    try session.close();
+    try std.testing.expectEqual(.fresh, session.runtime.context.state);
+}

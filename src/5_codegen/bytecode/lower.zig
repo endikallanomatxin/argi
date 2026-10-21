@@ -194,7 +194,7 @@ const DropState = enum(u32) { _ };
 // One preorder table during lowering; handles stay valid when it grows.
 // Each subtree ends at `end`, so projection skips siblings without a second
 // recursively allocated tree or entries for payloadless variants.
-const CleanupEntry = struct { place: b.Place, flag: b.Slot, end: u32 };
+const CleanupEntry = struct { place: b.Place, flag: b.Slot, presence: ?b.Slot, end: u32 };
 const FunctionLower = struct {
     parent: *Lower,
     safety_primitive: p.SafetyPrimitive = .none,
@@ -300,8 +300,9 @@ const FunctionLower = struct {
         const a = self.parent.allocator;
         const id: DropState = @enumFromInt(@as(u32, @intCast(self.cleanup.items.len)));
         const flag = if (target.region == .local) try self.newSlot(try self.boolType()) else 0;
-        try self.cleanup.append(a, .{ .place = target, .flag = flag, .end = 0 });
         const shape = cleanup_layout.Shape.of(self.parent.graph, ty);
+        const presence = if (shape == .variants) (if (target.region == .local) try self.newSlot(try self.boolType()) else 0) else null;
+        try self.cleanup.append(a, .{ .place = target, .flag = flag, .presence = presence, .end = 0 });
         for (0..shape.len()) |index| if (shape.child(self.parent.graph, index)) |child| {
             const projection: b.Projection = switch (child.projection) {
                 .field => |field| .{ .field = field },
@@ -325,7 +326,7 @@ const FunctionLower = struct {
             const out = &result[output_index];
             output_index += 1;
             const path = try b.runtimeCleanupPath(a, self.parent.graph, self.slots.items[entry.place.root], entry.place.path);
-            out.* = .{ .root = entry.place.root, .path = path, .flag = entry.flag };
+            out.* = .{ .root = entry.place.root, .path = path, .flag = entry.flag, .presence = entry.presence };
         }
         return result;
     }
@@ -412,10 +413,11 @@ const FunctionLower = struct {
         lower: *FunctionLower,
         const Target = struct { place: b.Place, ty: b.Type };
 
-        pub fn begin(self: @This(), target: Target) !u32 {
+        pub fn begin(self: @This(), target: Target, access: b.CleanupAccess) !u32 {
             const lower = self.lower;
             return lower.emit(lower.parent.source, .{ .branch_cleanup = .{
                 .place = target.place,
+                .access = access,
                 .yes = lower.position() + 1,
                 .no = 0,
             } });

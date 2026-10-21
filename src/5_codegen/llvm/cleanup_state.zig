@@ -55,7 +55,7 @@ pub const RefreshFunctions = struct {
             _ = c.LLVMBuildBr(builder, next);
             c.LLVMPositionBuilderAtEnd(builder, next);
         };
-        promoteRecord(builder, flags, description, 0);
+        promoteAggregate(builder, flags, description, 0);
         _ = c.LLVMBuildBr(builder, done);
         c.LLVMPositionBuilderAtEnd(builder, done);
         _ = c.LLVMBuildRetVoid(builder);
@@ -92,6 +92,12 @@ pub const View = struct {
             return error.InvalidCleanupEvidence;
         _ = try counts.count(allocator, graph, ty);
         return .{ .flag_ref = flags, .layouts = counts, .ty = ty, .owner_flags = flags, .owner_type = ty };
+    }
+
+    pub fn presence(self: View, builder: c.LLVMBuilderRef) c.LLVMValueRef {
+        if (!self.layouts.description(self.ty).is_choice) return self.flag_ref;
+        var offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), 1, 0)};
+        return c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), self.flag_ref, &offset, 1, "cleanup.discriminant.flag");
     }
 
     pub fn count(self: View) usize {
@@ -141,28 +147,34 @@ pub const View = struct {
             _ = c.LLVMBuildCall2(builder, RefreshFunctions.functionType(), owner.refresh, &arguments, arguments.len, "");
             _ = c.LLVMBuildBr(builder, done);
             c.LLVMPositionBuilderAtEnd(builder, done);
-        } else if (self.offset != 0) self.promoteRecords(builder, self.owner_type.?, 0);
+        } else if (self.offset != 0) self.refreshAncestors(builder, self.owner_type.?, 0);
     }
 
-    fn promoteRecords(self: View, builder: c.LLVMBuilderRef, ty: g.GlobalTypeId, base: usize) void {
+    fn refreshAncestors(self: View, builder: c.LLVMBuilderRef, ty: g.GlobalTypeId, base: usize) void {
         if (base == self.offset) return;
         const description = self.layouts.description(ty);
         for (description.children) |maybe_child| if (maybe_child) |child| {
             const start = base + child.offset;
             if (self.offset >= start and self.offset < start + self.layouts.description(child.ty).count) {
-                self.promoteRecords(builder, child.ty, start);
+                self.refreshAncestors(builder, child.ty, start);
                 break;
             }
         };
-        promoteRecord(builder, self.owner_flags, description, base);
+        promoteAggregate(builder, self.owner_flags, description, base);
     }
 };
 
-fn promoteRecord(builder: c.LLVMBuilderRef, flags: c.LLVMValueRef, description: layout.Counts.Description, base: usize) void {
-    if (!description.is_record or description.children.len == 0) return;
+fn promoteAggregate(builder: c.LLVMBuilderRef, flags: c.LLVMValueRef, description: layout.Counts.Description, base: usize) void {
+    if (!description.is_record and !description.is_choice) return;
+    if (description.is_record and description.children.len == 0) return;
     var complete = c.LLVMConstInt(c.LLVMInt1Type(), 1, 0);
+    if (description.is_choice) {
+        var tag_offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), base + 1, 0)};
+        const tag = c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), flags, &tag_offset, 1, "cleanup.discriminant.flag");
+        complete = c.LLVMBuildLoad2(builder, c.LLVMInt1Type(), tag, "cleanup.discriminant.ready");
+    }
     for (description.children) |maybe_child| {
-        const child = maybe_child orelse return;
+        const child = maybe_child orelse if (description.is_choice) continue else return;
         var offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), base + child.offset, 0)};
         const pointer = c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), flags, &offset, 1, "cleanup.field.flag");
         const ready = c.LLVMBuildLoad2(builder, c.LLVMInt1Type(), pointer, "cleanup.field.ready");
@@ -170,9 +182,10 @@ fn promoteRecord(builder: c.LLVMBuilderRef, flags: c.LLVMValueRef, description: 
     }
     var offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), base, 0)};
     const pointer = c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), flags, &offset, 1, "cleanup.owner.flag");
-    // A consumed descendant makes the record incomplete as well. Keeping an
-    // earlier whole-value flag would call its nominal destructor on vacant
-    // storage; reinitialization recomputes completeness from the same children.
+    // A consumed descendant makes its aggregate incomplete. Choices keep
+    // their independent discriminant flag so structural fallback can still
+    // select the live payload. Reinitialization restores whole-value cleanup
+    // only after all represented descendants are complete again.
     _ = c.LLVMBuildStore(builder, complete, pointer);
 }
 

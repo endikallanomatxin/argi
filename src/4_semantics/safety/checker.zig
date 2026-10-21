@@ -5015,7 +5015,15 @@ pub const SafetyChecker = struct {
     // writes. Empty vacant aggregates do not become initialized vacuously.
     fn storageReadiness(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) anyerror!StorageReadiness {
         const initializedness = self.initializednessAtPlace(state, storage);
-        if (initializedness == .initialized) return .complete;
+        if (initializedness == .initialized) {
+            var readiness: StorageReadiness = .complete;
+            for (state.places.items) |descendant| {
+                if (storage.eql(descendant.storage) or !storage.isPrefixOf(descendant.storage)) continue;
+                if (descendant.initializedness == .deinitialized or descendant.initializedness == .moved) return .unavailable;
+                if (descendant.initializedness == .maybe_initialized) readiness = .possible;
+            }
+            return readiness;
+        }
         const ty = self.domainStorageType(storage) orelse return .unavailable;
         if (types.arrayLength(self.graph, ty)) |length| {
             // Every available element needs at least one authoritative fact.
@@ -5124,7 +5132,7 @@ pub const SafetyChecker = struct {
         // choice and reactivate the resources already transferred out of it.
         if (ready == .unavailable) {
             const ty = self.domainStorageType(storage) orelse return;
-            if (types.variants(self.graph, ty) != null) return;
+            if (types.variants(self.graph, ty) != null and self.initializednessAtPlace(state, storage) != .initialized) return;
         }
         const diagnostic_count = self.diagnostics.list.items.len;
         try self.evaluateStructuralAutoDeinit(function, fields, storage, state);

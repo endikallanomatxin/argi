@@ -339,7 +339,10 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
         states[0] = try allocator.alloc(u8, std.math.add(usize, f.slots.len, f.write_destinations.len) catch return error.InvalidBytecode);
         @memset(states[0].?, 0);
         for (f.inputs) |slot| states[0].?[slot] = 1;
-        for (f.cleanup) |entry| states[0].?[entry.flag] = 1;
+        for (f.cleanup) |entry| {
+            states[0].?[entry.flag] = 1;
+            if (entry.presence) |flag| states[0].?[flag] = 1;
+        }
         var pending: std.ArrayList(u32) = .empty;
         defer pending.deinit(allocator);
         try pending.append(allocator, 0);
@@ -550,6 +553,10 @@ fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, f: b
         if (entry.root >= f.slots.len or entry.flag >= f.slots.len or flags[entry.flag] or
             entry.path.len > 64 or !valueFits(graph, f.slots[entry.flag], .{ .boolean = false })) return error.InvalidBytecode;
         flags[entry.flag] = true;
+        if (entry.presence) |flag| {
+            if (flag >= f.slots.len or flags[flag] or !valueFits(graph, f.slots[flag], .{ .boolean = false })) return error.InvalidBytecode;
+            flags[flag] = true;
+        }
         var ty = f.slots[entry.root];
         for (entry.path) |projection| switch (projection) {
             .field => |field| {
@@ -563,6 +570,7 @@ fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, f: b
                 ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode;
             },
         };
+        if ((entry.presence != null) != (types.variants(graph, ty) != null)) return error.InvalidBytecode;
         if (index != 0 and b.cleanupOrder(f.cleanup[index - 1], entry) != .lt) return error.InvalidBytecode;
     }
     for (f.cleanup) |entry| if (flags[entry.root]) return error.InvalidBytecode;

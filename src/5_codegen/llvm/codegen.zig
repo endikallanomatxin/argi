@@ -2935,13 +2935,14 @@ pub const CodeGenerator = struct {
         generator: *CodeGenerator,
         const Target = struct { storage: c.LLVMValueRef, ty: graph_mod.GlobalTypeId, drop: DropState, references: ?c.LLVMValueRef };
 
-        pub fn begin(self: @This(), target: Target) !c.LLVMBasicBlockRef {
+        pub fn begin(self: @This(), target: Target, access: cleanup_plan.Access) !c.LLVMBasicBlockRef {
             const generator = self.generator;
             const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(generator.builder));
             const run = c.LLVMAppendBasicBlock(function, "deinit.run");
             const done = c.LLVMAppendBasicBlock(function, "deinit.done");
             if (target.drop.flag_ref == null) return CodegenError.InvalidType;
-            const enabled = c.LLVMBuildLoad2(generator.builder, c.LLVMInt1Type(), target.drop.flag_ref, "needs.deinit");
+            const flag = if (access == .present) target.drop.presence(generator.builder) else target.drop.flag_ref;
+            const enabled = c.LLVMBuildLoad2(generator.builder, c.LLVMInt1Type(), flag, "needs.deinit");
             _ = c.LLVMBuildCondBr(generator.builder, enabled, run, done);
             c.LLVMPositionBuilderAtEnd(generator.builder, run);
             return done;

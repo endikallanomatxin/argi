@@ -17,9 +17,11 @@ pub fn requiredBindings(allocator: std.mem.Allocator, graph: *const g.GlobalSema
 
 // Preorder storage gives every present subtree a contiguous flag range. A
 // companion can point at that range without depending on value addresses.
+// Choices reserve one additional flag for discriminant presence: ending a
+// payload descendant revokes completeness without erasing the active variant.
 pub const Counts = struct {
     pub const Span = struct { offset: usize, ty: g.GlobalTypeId };
-    pub const Description = struct { count: usize, children: []const ?Span, is_record: bool };
+    pub const Description = struct { count: usize, children: []const ?Span, is_record: bool, is_choice: bool };
     values: std.AutoHashMapUnmanaged(g.GlobalTypeId, Description) = .empty,
 
     pub fn deinit(self: *Counts, allocator: std.mem.Allocator) void {
@@ -36,12 +38,12 @@ pub const Counts = struct {
         const children = try allocator.alloc(?Span, shape.len());
         errdefer allocator.free(children);
         @memset(children, null);
-        var result: usize = 1;
+        var result: usize = if (shape == .variants) 2 else 1;
         for (children, 0..) |*span, index| if (shape.child(graph, index)) |child| {
             span.* = .{ .offset = result, .ty = child.ty };
             result = try std.math.add(usize, result, try self.count(allocator, graph, child.ty));
         };
-        try self.values.put(allocator, ty, .{ .count = result, .children = children, .is_record = shape == .fields });
+        try self.values.put(allocator, ty, .{ .count = result, .children = children, .is_record = shape == .fields, .is_choice = shape == .variants });
         return result;
     }
 
@@ -118,7 +120,7 @@ test "cleanup counts exclude payloadless variants and stop at reference leaves" 
     try std.testing.expectEqual(@as(usize, 1), try counts.count(a, &graph, @enumFromInt(0)));
     try std.testing.expectEqual(@as(usize, 3), try counts.count(a, &graph, @enumFromInt(1)));
     try std.testing.expectEqual(@as(usize, 1), try counts.count(a, &graph, @enumFromInt(2)));
-    try std.testing.expectEqual(@as(usize, 4), try counts.count(a, &graph, @enumFromInt(3)));
+    try std.testing.expectEqual(@as(usize, 5), try counts.count(a, &graph, @enumFromInt(3)));
 }
 
 test "cleanup counts reject overflowing repeated aggregate layouts" {

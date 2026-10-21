@@ -14338,3 +14338,9 @@ test "argi repl preserves choice defaults across specializations" {
         "_0 = 42\n_1 = 41\n_2 = 0\n_3 = 42\n",
     );
 }
+
+test "feature_tests/execution/161_partial_choice_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/161_partial_choice_cleanup");
+    try runExpect("tests/feature_tests/execution/161_partial_choice_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/161_partial_choice_cleanup", 42, null);
+}

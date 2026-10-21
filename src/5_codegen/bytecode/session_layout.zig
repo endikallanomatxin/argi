@@ -31,19 +31,27 @@ pub fn build(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, 
         if (flags != 0) @memset(slots[1..], boolean orelse return error.MissingSessionCleanupType);
         const cleanup = try allocator.alloc(b.Cleanup, flags);
         var cursor: usize = 0;
-        if (flags != 0) try fill(allocator, graph, ty, &.{}, cleanup, &cursor, 0);
-        std.debug.assert(cursor == flags);
-        try result.append(allocator, .{ .binding = binding, .slots = slots, .cleanup = cleanup });
+        var flag_cursor: usize = 1;
+        if (flags != 0) try fill(allocator, graph, ty, &.{}, cleanup, &cursor, &flag_cursor, 0);
+        std.debug.assert(flag_cursor == slot_count);
+        try result.append(allocator, .{ .binding = binding, .slots = slots, .cleanup = cleanup[0..cursor] });
     }
     return result.toOwnedSlice(allocator);
 }
 
-fn fill(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, path: []const value.Projection, cleanup: []b.Cleanup, cursor: *usize, depth: usize) anyerror!void {
+fn fill(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, path: []const value.Projection, cleanup: []b.Cleanup, cursor: *usize, flag_cursor: *usize, depth: usize) anyerror!void {
     if (depth > 64 or cursor.* >= cleanup.len) return error.InvalidSessionBinding;
     const index = cursor.*;
-    cleanup[index] = .{ .root = 0, .flag = @intCast(index + 1), .path = path };
-    cursor.* += 1;
     const children = shape.Shape.of(graph, ty);
+    const flag = flag_cursor.*;
+    flag_cursor.* += 1;
+    const presence: ?b.Slot = if (children == .variants) blk: {
+        const slot = flag_cursor.*;
+        flag_cursor.* += 1;
+        break :blk @intCast(slot);
+    } else null;
+    cleanup[index] = .{ .root = 0, .flag = @intCast(flag), .presence = presence, .path = path };
+    cursor.* += 1;
     for (0..children.len()) |position| if (children.child(graph, position)) |child| {
         const projected = try allocator.alloc(value.Projection, path.len + 1);
         @memcpy(projected[0..path.len], path);
@@ -51,6 +59,6 @@ fn fill(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g
             .field => |field| .{ .field = field },
             .variant => |variant| .{ .variant = try b.variantOrdinal(graph, ty, variant) },
         };
-        try fill(allocator, graph, child.ty, projected, cleanup, cursor, depth + 1);
+        try fill(allocator, graph, child.ty, projected, cleanup, cursor, flag_cursor, depth + 1);
     };
 }

@@ -99,7 +99,14 @@ pub const Place = struct {
 // reference slots. Paths are concrete layout projections, never dereferences.
 // Entries are sorted by root and path; each subtree is contiguous for bounded
 // lookup and updates. Flag cells start false independently of value occupancy.
-pub const Cleanup = struct { root: Slot, path: []const @import("value.zig").Projection, flag: Slot };
+pub const Cleanup = struct {
+    root: Slot,
+    path: []const @import("value.zig").Projection,
+    flag: Slot,
+    // A choice can retain its discriminant after losing part of its payload.
+    presence: ?Slot = null,
+};
+pub const CleanupAccess = @import("../cleanup_plan.zig").Access;
 
 pub fn cleanupOrder(a: Cleanup, c: Cleanup) std.math.Order {
     const root = std.math.order(a.root, c.root);
@@ -200,7 +207,7 @@ pub const Instruction = struct {
         store: struct { destination: Destination, value: Slot },
         activate_write_cleanup: Destination,
         cleanup_test: struct { dst: Slot, place: Place },
-        branch_cleanup: struct { place: Place, yes: u32, no: u32 },
+        branch_cleanup: struct { place: Place, yes: u32, no: u32, access: CleanupAccess = .complete },
         cleanup_set: struct { place: Place, enabled: bool },
         memory_call: struct { outputs: []const Slot, function: g.GlobalFunctionId, operation: @import("memory_boundary.zig").Operation, args: []const Slot },
         host_call: struct { outputs: []const Slot, function: u32, args: []const Slot },

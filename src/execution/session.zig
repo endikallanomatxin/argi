@@ -137,7 +137,7 @@ pub const Session = struct {
         while (iterator.next()) |frame| {
             const stored = &self.context.storage.frames.items[@intFromEnum(frame.*)];
             const slots = try self.context.storage.slots(frame.*);
-            for (stored.cleanup) |entry| if ((try slots.get(entry.flag)).boolean) {
+            for (stored.cleanup) |entry| if ((try slots.get(entry.flag)).boolean or (if (entry.presence) |flag| (try slots.get(flag)).boolean else false)) {
                 self.context.state = .poisoned;
                 return error.ExecutionActiveCleanup;
             };

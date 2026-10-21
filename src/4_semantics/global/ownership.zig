@@ -641,14 +641,12 @@ pub const Resolver = struct {
         const context = reach_context.Context.fromGlobal(visible, owner_function);
         try self.prepareAutoDeinit(binding, context, module_index);
         const ty = self.graph.node(target).ty orelse return value;
-        const record = self.graph.binding(binding);
         const plan = try self.buildAutoDeinit(
             .{ .projected = .{ .binding = binding, .target = target } },
             target,
             ty,
             context,
             module_index,
-            record.initialization == null and !record.deferred_initialization,
         ) orelse return value;
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
         try self.graph.auto_deinits.append(self.allocator, plan);
@@ -661,7 +659,7 @@ pub const Resolver = struct {
         const write = self.graph.node(node_id).content;
         if (write == .pointer_assignment and write.pointer_assignment.checked_initialization == true) return value;
         const ty = self.graph.node(target).ty orelse return value;
-        const plan = try self.buildAutoDeinit(.{ .indirect = target }, target, ty, reach_context.Context.fromGlobal(visible, owner_function), module_index, false) orelse return value;
+        const plan = try self.buildAutoDeinit(.{ .indirect = target }, target, ty, reach_context.Context.fromGlobal(visible, owner_function), module_index) orelse return value;
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);
         try self.graph.auto_deinits.append(self.allocator, plan);
         const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
@@ -951,7 +949,6 @@ pub const Resolver = struct {
             record.ty,
             cleanup_context,
             module_index,
-            record.initialization == null and !record.deferred_initialization,
         );
         var cleanup_node: ?global_sg.GlobalNodeId = null;
         if (descriptor) |resolved| {
@@ -972,27 +969,26 @@ pub const Resolver = struct {
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
-        partial: bool,
     ) !?global_sg.AutoDeinit {
         // References never own their pointee.
         if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
-            // Vacant records can acquire fields before a whole value exists.
-            // Retain their selected structural alternative, but do not expand
-            // it for ordinary complete initializers or deferred temporaries.
+            // A complete aggregate can later lose fields or payload members
+            // through a borrow. Keep its structural alternative from the start:
+            // incomplete storage cannot run the nominal whole-value destructor.
             return .{
                 .storage = storage,
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
-                .fields = if (partial and global_types.fields(self.graph, ty) != null)
-                    try self.buildAutoChildren(target, ty, context, module_index, true)
+                .fields = if (global_types.fields(self.graph, ty) != null or global_types.variants(self.graph, ty) != null)
+                    try self.buildAutoChildren(target, ty, context, module_index)
                 else
                     .{ .start = 0, .len = 0 },
             };
         }
 
-        const children = try self.buildAutoChildren(target, ty, context, module_index, partial);
+        const children = try self.buildAutoChildren(target, ty, context, module_index);
         if (children.len == 0) return null;
         return .{ .storage = storage, .deinit_fn = null, .fields = children };
     }
@@ -1004,7 +1000,6 @@ pub const Resolver = struct {
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
-        partial: bool,
     ) anyerror!?global_sg.AutoDeinitField {
         if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
@@ -1013,13 +1008,13 @@ pub const Resolver = struct {
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
-                .fields = if (partial and global_types.fields(self.graph, ty) != null)
-                    try self.buildAutoChildren(target, ty, context, module_index, true)
+                .fields = if (global_types.fields(self.graph, ty) != null or global_types.variants(self.graph, ty) != null)
+                    try self.buildAutoChildren(target, ty, context, module_index)
                 else
                     .{ .start = 0, .len = 0 },
             };
         }
-        const children = try self.buildAutoChildren(target, ty, context, module_index, partial);
+        const children = try self.buildAutoChildren(target, ty, context, module_index);
         if (children.len == 0) return null;
         return .{ .field_index = field_index, .deinit_fn = null, .fields = children };
     }
@@ -1030,7 +1025,6 @@ pub const Resolver = struct {
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
-        partial: bool,
     ) anyerror!primitives.Range(global_sg.GlobalAutoDeinitFieldId) {
         var children: std.ArrayList(global_sg.AutoDeinitField) = .empty;
         defer children.deinit(self.allocator);
@@ -1047,7 +1041,7 @@ pub const Resolver = struct {
                     .variant = id,
                     .payload_type = payload,
                 } });
-                if (try self.buildAutoField(@intCast(index), projected, payload, context, module_index, false)) |resolved| {
+                if (try self.buildAutoField(@intCast(index), projected, payload, context, module_index)) |resolved| {
                     var child = resolved;
                     child.is_variant = true;
                     try children.append(self.allocator, child);
@@ -1061,7 +1055,7 @@ pub const Resolver = struct {
                     .field_name = field.name,
                     .field_index = @intCast(index),
                 } });
-                if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index, partial)) |child|
+                if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |child|
                     try children.append(self.allocator, child);
             }
         }

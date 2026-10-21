@@ -258,7 +258,7 @@ test "native reference evidence projects distinct sibling ranges through the pri
     try std.testing.expectEqual(@as(c_uint, c.LLVMAdd), c.LLVMGetInstructionOpcode(offset));
     const increment = c.LLVMGetOperand(offset, 1);
     try std.testing.expect(c.LLVMIsAConstantInt(increment) != null);
-    try std.testing.expectEqual(@as(u64, 2), c.LLVMConstIntGetZExtValue(increment));
+    try std.testing.expectEqual(@as(u64, 3), c.LLVMConstIntGetZExtValue(increment));
     try std.testing.expectError(error.InvalidReferenceProjection, projectView(builder, a, &graph, &layout, &cleanup_counts, @enumFromInt(3), choice_root, .{ .variant = @enumFromInt(2) }));
     const root_view = try storageView(builder, .{ .references = input_storage });
     const child_view = try projectView(builder, a, &graph, &layout, &cleanup_counts, @enumFromInt(2), root_view, .{ .field = 1 });

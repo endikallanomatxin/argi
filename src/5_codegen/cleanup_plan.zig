@@ -4,6 +4,8 @@ const types = @import("../4_semantics/global/types.zig");
 
 // Views of finalized cleanup plans. They neither select destructors nor copy
 // the plan into another IR; backends retain their own addresses and emission.
+pub const Access = enum { complete, present };
+
 pub const Child = struct {
     ty: g.GlobalTypeId,
     variant: ?g.GlobalVariantId = null,
@@ -131,16 +133,19 @@ pub const Operation = struct {
 
 pub fn emit(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operation, target: anytype) anyerror!void {
     if (plan.deinit_fn) |callee| {
-        const active = try backend.begin(target);
+        const active = try backend.begin(target, .complete);
         try backend.call(target, callee, plan.input, plan.self_field_index);
         // Successful whole-value destruction clears its complete subtree.
-        // The same field walk therefore runs only for incomplete values.
+        // The fallback walk therefore runs only for incomplete values.
         try backend.finish(target, active);
-        try emitFields(backend, graph, plan, target);
-        // The guarded whole destructor may have been skipped for an incomplete
-        // record. After its remaining children, retire the entire destination,
-        // including initialized non-owning fields with no destructor operation.
-        try backend.clear(target);
+        if (types.variants(graph, target.ty) != null) {
+            const present = try backend.begin(target, .present);
+            try emitFields(backend, graph, plan, target);
+            try backend.finish(target, present);
+        } else {
+            try emitFields(backend, graph, plan, target);
+            try backend.clear(target);
+        }
     } else if (types.fields(graph, target.ty) != null) {
         // An incomplete record can still contain live owning fields. Its root
         // flag must not suppress their individually guarded cleanup.
@@ -148,7 +153,7 @@ pub fn emit(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operati
         try backend.clear(target);
     } else {
         // Choices need a live discriminant before selecting a payload.
-        const active = try backend.begin(target);
+        const active = try backend.begin(target, .present);
         try emitFields(backend, graph, plan, target);
         try backend.finish(target, active);
     }
