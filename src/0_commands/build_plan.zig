@@ -197,7 +197,7 @@ fn hasManifest(io: std.Io, allocator: std.mem.Allocator, module_root: []const u8
     return true;
 }
 
-fn enclosingPackageRoot(allocator: std.mem.Allocator, io: std.Io, module_dir: []const u8) !?[]u8 {
+fn enclosingConfiguredModuleRoot(allocator: std.mem.Allocator, io: std.Io, module_dir: []const u8) !?[]u8 {
     var current = std.fs.path.dirname(module_dir) orelse return null;
     while (true) {
         if (try hasManifest(io, allocator, current)) return try allocator.dupe(u8, current);
@@ -406,14 +406,14 @@ fn printAvailableExecutables(executables: []const ManifestExecutable) void {
 
 fn printNoExecutablesError() void {
     std.debug.print(
-        \\Error: package has no executables to build.
+        \\Error: module has no executables to build.
         \\
         \\Add one to argi.toml:
         \\
         \\  [executables.app]
         \\  path = "source/app"
         \\
-        \\Or create a library package with:
+        \\Or create a library module with:
         \\  argi init --lib [name]
         \\
     , .{});
@@ -425,7 +425,7 @@ fn printUnknownExecutableError(name: []const u8, executables: []const ManifestEx
 }
 
 fn printAmbiguousRunDefaultError(executables: []const ManifestExecutable) void {
-    std.debug.print("Error: package has multiple executables and no default run target.\n\n", .{});
+    std.debug.print("Error: module has multiple executables and no default run target.\n\n", .{});
     printAvailableExecutables(executables);
     std.debug.print("\nUse:\n  argi run {s}\n\n", .{executables[0].name});
     std.debug.print("Or set in argi.toml:\n  [run]\n  default = \"{s}\"\n", .{executables[0].name});
@@ -503,27 +503,27 @@ pub fn resolveBuildPlans(allocator: std.mem.Allocator, io: std.Io, target_path: 
         return plans;
     }
 
-    // An explicitly selected entry module still belongs to its package. Use
+    // An explicitly selected entry module can use its enclosing configuration. Use
     // the declared executable's output rather than creating a second build
     // directory under source/. The nearest manifest defines this boundary;
     // unrelated modules keep the standalone-module behavior.
-    if (try enclosingPackageRoot(allocator, io, target_dir)) |package_root| {
-        errdefer allocator.free(package_root);
-        const manifest = try readManifest(allocator, io, package_root);
+    if (try enclosingConfiguredModuleRoot(allocator, io, target_dir)) |configured_root| {
+        errdefer allocator.free(configured_root);
+        const manifest = try readManifest(allocator, io, configured_root);
         for (manifest.executables.items) |*executable| {
             if (flags.executable_name) |name|
                 if (!std.mem.eql(u8, name, executable.name)) continue;
-            const executable_dir = try std.fs.path.resolve(allocator, &.{ package_root, executable.path orelse executable.name });
+            const executable_dir = try std.fs.path.resolve(allocator, &.{ configured_root, executable.path orelse executable.name });
             defer allocator.free(executable_dir);
             if (!std.mem.eql(u8, executable_dir, target_dir)) continue;
-            try appendExecutablePlan(allocator, io, &plans, target_path, package_root, executable, manifest.native_inputs.items);
+            try appendExecutablePlan(allocator, io, &plans, target_path, configured_root, executable, manifest.native_inputs.items);
         }
         if (plans.items.len != 0) return plans;
-        allocator.free(package_root);
+        allocator.free(configured_root);
     }
 
     if (flags.executable_name != null) {
-        std.debug.print("Error: --exec requires argi.toml in the selected package root.\n", .{});
+        std.debug.print("Error: --exec requires argi.toml in the selected module root.\n", .{});
         return error.CompilationFailed;
     }
 
@@ -584,11 +584,11 @@ test "build planning validates and preserves native link input order" {
     try std.testing.expectError(error.InvalidNativeLinkInput, parseBuildArgs(allocator, &.{ "--link-file", "-Wl,bad" }));
 }
 
-test "native manifest inputs preserve order and resolve package paths" {
+test "native manifest inputs preserve order and resolve module paths" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const root = try std.fs.path.resolve(allocator, &.{"native package"});
+    const root = try std.fs.path.resolve(allocator, &.{"native module"});
     const manifest = try parseManifest(allocator, root,
         \\[[native]]
         \\search_path = "native # libs" # comment

@@ -33,7 +33,8 @@ These are not supported:
 Tests are discoverable by the compiler and tooling as explicit top-level declarations.
 
 - `argi build` ignores test declarations
-- `argi test <module-dir>` discovers and runs tests
+- `argi test <module-dir>` discovers and runs tests without requiring a manifest
+- `argi test` runs the current manifest's `[test].modules` list; it does not recursively scan the project
 
 Tests are not semantically merged into one synthetic `main`.
 Each test is treated as its own root / entrypoint.

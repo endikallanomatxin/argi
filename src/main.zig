@@ -33,12 +33,12 @@ fn exitRunError(err: anyerror) noreturn {
 fn printHelp() void {
     std.debug.print("Usage: argi <command> [arguments] [options]\n", .{});
     std.debug.print("\nCommands:\n", .{});
-    std.debug.print("  build [path] [flags]                   Build the current package, package path, or module path\n", .{});
+    std.debug.print("  build [path] [flags]                   Build the current module or a selected module path\n", .{});
     std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
     std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
     std.debug.print("  test [directory] [flags]               Build and run native Argi tests\n", .{});
-    std.debug.print("  init [name]                            Create an executable package\n", .{});
-    std.debug.print("  init --lib [name]                      Create a library package\n", .{});
+    std.debug.print("  init [name]                            Create an executable module\n", .{});
+    std.debug.print("  init --lib [name]                      Create a library module\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
     std.debug.print("  format [paths...] [--check]              Format .rg files or directories recursively\n", .{});
     std.debug.print("  format <file.rg> --stdout                Print formatted source without writing\n", .{});

@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 | Command | Purpose |
 | --- | --- |
-| `argi build [dir]` | Compile the current package or a selected module. |
+| `argi build [dir]` | Compile the current module or a selected module. |
 | `argi run` | Compile and run the default executable. |
 | `argi check [dir]` | Check all function bodies, including unreachable ones. |
 | `argi test [dir]` | Run language-level tests. |
@@ -42,15 +42,23 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 Use `--release` with `build` or `run` for optimized executables. See `argi help`
 for target selection, output paths, and LLVM/object emission options.
 
-## Packages and build outputs
+## Module configuration and build outputs
 
-Packages declare executables in `argi.toml`; outputs go to
+Modules declare executables in `argi.toml`; outputs go to
 `build/debug/<name>`, including when selecting a declared entry module directly.
 Standalone modules use `build/output`; test artifacts and reusable compiler
 snapshots use `.argi-cache/`. Use `--no-cache` for a fresh frontend build and
 `--stats` to inspect module reuse.
-See [package configuration](../description/02_modules.md) and
+See [module configuration](../description/02_modules.md) and
 [language-level testing](../description/72_testing.md).
+
+`argi.toml` is optional and does not make a module distributable. Only an
+explicit `[distribution]` declares distribution identity; it does not publish
+anything. Submodules share their distribution's version and dependencies.
+Exact dependency resolutions belong in an automatically managed `[lock]` section
+of `argi.toml`, marked with a comment; there is no separate lockfile.
+Dependency resolution, managed `[lock]` updates, and programmable `build.rg` automation
+are specified but not implemented yet.
 
 ## Formatting and editor support
 

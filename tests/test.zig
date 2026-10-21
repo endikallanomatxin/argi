@@ -972,7 +972,7 @@ test "argi build package rejects missing executables" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expect(std.mem.indexOf(u8, result.stderr, "package has no executables to build") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "module has no executables to build") != null);
 }
 
 test "argi build package builds all executables" {

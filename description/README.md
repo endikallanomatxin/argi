@@ -51,3 +51,7 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
 - [Runtime](81_runtime.md): an async and concurrency capability proposal.
 - [Parallel computing](82_parallel_computing.md): hardware descriptions and
   parallel execution sketches.
+
+The authoritative [module and distribution model](02_modules.md) uses one language
+abstraction: the directory module. Optional configuration and distribution
+identity do not introduce packages as a separate language concept.

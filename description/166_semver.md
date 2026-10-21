@@ -55,5 +55,5 @@ stream_flush_failed errors; custom destinations can return counts. The version a
 no allocation, flush or newline. As with ordinary string append, the source
 view must not borrow a destination buffer whose growth could invalidate it.
 
-Version range selection, package resolution, and compatibility policies are
+Version range selection, distribution resolution, and compatibility policies are
 separate from this strict version-value module.
