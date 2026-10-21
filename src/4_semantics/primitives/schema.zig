@@ -432,6 +432,8 @@ pub fn AutoDeinitField(comptime Ids: type) type {
         field_index: u32,
         /// A choice payload uses a variant index and requires its active tag.
         is_variant: bool = false,
+        /// One symbolic element operation, repeated over this fixed dimension.
+        repeat_count: ?u64 = null,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,

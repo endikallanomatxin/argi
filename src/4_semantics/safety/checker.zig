@@ -1944,6 +1944,18 @@ pub const SafetyChecker = struct {
                 // transition that must reactivate the caller's cleanup flags.
                 if (initializing and !post.requires_available_destination and
                     self.initializednessAtPlace(state, target) == .initialized) continue;
+                if (!initializing and post.target.projections.len == 0 and post.target.storage_domain == null and post.target.input_index < ids.len) {
+                    const argument = self.graph.value_fields.items[@intFromEnum(ids[post.target.input_index])].value;
+                    if (self.graph.node(argument).ty) |ty| if (isPointer(self.graph, ty)) {
+                        // Transport the evaluated reference identity through
+                        // the call, including an indexed referent. Both backends
+                        // disable its cleanup range from the argument snapshot.
+                        // Initialization still uses the lexical destination:
+                        // native post-call activation does not consume snapshots.
+                        try nodes.append(argument);
+                        continue;
+                    };
+                }
                 try appendPlaceFact(&targets, target);
             } else if (post.target.projections.len == 0 and post.target.storage_domain == null and post.target.input_index < ids.len) {
                 // Keep the evaluated input identity when its referent is
@@ -5310,7 +5322,8 @@ pub const SafetyChecker = struct {
             return;
         }
         for (children) |field| {
-            const field_storage = try self.project(storage, .{ .field = field.field_index });
+            if (field.repeat_count == 0) continue;
+            const field_storage = try self.project(storage, if (field.repeat_count != null) .dynamic_index else .{ .field = field.field_index });
             try self.evaluateAutoDeinitField(function, field, field_storage, state);
         }
     }

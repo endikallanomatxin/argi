@@ -14432,3 +14432,19 @@ test "feature_tests/execution/153X_static_contract_aliased_observation" {
 test "feature_tests/execution/154X_virtual_contract_alias_obligation" {
     try buildExpectFail("tests/feature_tests/execution/154X_virtual_contract_alias_obligation", "a caller-side storage alias obligation is not represented by this contract");
 }
+
+test "feature_tests/execution/162_structural_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/162_structural_array_cleanup");
+    try runExpect("tests/feature_tests/execution/162_structural_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/162_structural_array_cleanup", 42, null);
+}
+
+test "feature_tests/execution/163X_array_cleanup_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/163X_array_cleanup_keeps_alias_stale", "root that has ended");
+}
+
+test "feature_tests/execution/164_zero_sized_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/164_zero_sized_array_cleanup");
+    try runExpect("tests/feature_tests/execution/164_zero_sized_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/164_zero_sized_array_cleanup", 42, null);
+}

@@ -14,13 +14,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   payload construction still needs its own initialization representation.
   Share identity, projections, initialization and validity rules with ordinary
   storage without requiring identical physical representations.
-- Finish structural array cleanup. The pending
-  `execution/162_structural_array_cleanup` regression aborts in native and VM:
-  its scoped `[2]Resource` performs zero drops instead of two. Register it once
-  both backends pass. Connect ownership selection and repeated safety effects to
-  the shared element-loop emitter without expanding a plan per element.
-  Preserve partial initialization, moved elements, indexed replacement and
-  zero-sized element identities before enabling owning indexed writes.
+- Complete partial initialization and indexed replacement for owning arrays.
+  Structural cleanup now uses one repeated element plan in safety and both
+  backends. Differential fixtures cover nested and empty arrays, moved elements,
+  explicit destruction and zero-sized element identities; stale aliases remain
+  rejected. Preserve these guarantees before enabling owning indexed writes.
 - Complete indexed cleanup identities in both backends. Whole indirect pointer
   and record-field replacements use checked plans, including the three-drop
   retargeting probe and preservation of sibling references in native and VM.

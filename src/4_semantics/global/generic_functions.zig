@@ -2529,8 +2529,21 @@ pub const Resolver = struct {
             try self.resolver.graph.nodes.append(self.resolver.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .break_statement });
             try self.node_map.put(self.resolver.allocator, @intFromEnum(id), global);
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
-            const expected_fields = global_types.fields(self.resolver.graph, expected) orelse return error.ParameterizedStructExpectedNonStruct;
             const local_fields = node.content.struct_value_literal.fields;
+            const expected_fields = global_types.fields(self.resolver.graph, expected) orelse {
+                // Empty parentheses can materialize Void or an empty array.
+                // Reuse ordinary contextualization rather than requiring a
+                // record field range merely because this body is specialized.
+                if (local_fields.len != 0) return error.ParameterizedStructExpectedNonStruct;
+                self.resolver.graph.nodes.items[@intFromEnum(global)] = .{
+                    .source = self.resolver.sourceFor(self.module_index, node.source),
+                    .ty = null,
+                    .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } },
+                };
+                if (!self.resolver.core.coerceContextualValue(global, expected)) return error.ParameterizedStructExpectedNonStruct;
+                self.resolver.stats.nodes += 1;
+                return global;
+            };
             var values: std.ArrayList(global_sg.ValueField) = .empty;
             defer values.deinit(self.resolver.allocator);
             for (storage.value_fields.items[local_fields.start..][0..local_fields.len]) |field| {

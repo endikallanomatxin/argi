@@ -1184,6 +1184,15 @@ const FunctionLower = struct {
             return dst;
         }
         if (node.content == .move_value) {
+            const child = self.parent.graph.node(node.content.move_value);
+            if (child.content == .array_index) {
+                const place_ = try self.place(node.content.move_value);
+                const result = try self.newSlot(child.ty orelse return error.InvalidBytecode);
+                _ = try self.emit(node.source, .{ .load = .{ .dst = result, .place = place_ } });
+                if (self.parent.cleanup_types[@intFromEnum(child.ty.?)])
+                    _ = try self.emit(node.source, .{ .cleanup_set = .{ .place = place_, .enabled = false } });
+                return result;
+            }
             const value = try self.expression(node.content.move_value);
             if (self.nodeDrop(node.content.move_value)) |drop| try self.setDrop(drop, false);
             return value;

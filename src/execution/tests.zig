@@ -2791,7 +2791,7 @@ test "bytecode repeated cleanup plans traverse indexed flags with bounded code" 
     });
     const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
     try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(3), .source = source, .mutability = .variable });
-    try graph.auto_deinit_fields.append(a, .{ .field_index = 0, .deinit_fn = null });
+    try graph.auto_deinit_fields.append(a, .{ .field_index = 0, .repeat_count = 1000, .deinit_fn = null });
     try graph.auto_deinits.append(a, .{ .storage = .{ .binding = @enumFromInt(0) }, .deinit_fn = null, .fields = .{ .start = 0, .len = 1 } });
     try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .auto_deinit_binding = @enumFromInt(0) } });
     var counts: shapes.Counts = .{};

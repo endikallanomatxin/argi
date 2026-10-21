@@ -1162,6 +1162,16 @@ pub const CodeGenerator = struct {
                 break :blk value;
             },
             .move_value => |value| blk: {
+                const child = self.graph.node(value);
+                if (child.content == .array_index) {
+                    const storage = try self.addressablePointer(value);
+                    const ty = child.ty orelse return CodegenError.InvalidType;
+                    const type_ref = try self.toLLVMType(ty);
+                    const companion: ?c.LLVMValueRef = if (storage.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else null;
+                    const result: TypedValue = .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, storage.value_ref, "move.element"), .type_ref = type_ref, .ty = ty, .reference_view = try self.loadReferenceView(ty, companion) };
+                    if (storage.reference_view) |view| try self.setReferentCleanup(view, ty, false);
+                    break :blk result;
+                }
                 const result = (try self.visitNode(value)) orelse return CodegenError.ValueNotFound;
                 if (self.dropStateForNode(value)) |drop| self.storeDropState(drop, false);
                 break :blk result;
@@ -2833,6 +2843,20 @@ pub const CodeGenerator = struct {
             },
             else => null,
         };
+    }
+
+    fn setReferentCleanup(self: *CodeGenerator, view: c.LLVMValueRef, ty: graph_mod.GlobalTypeId, enabled: bool) !void {
+        const flags = try reference_evidence.cleanupPointer(self.builder, view);
+        const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+        const present = c.LLVMAppendBasicBlock(function, "referent.cleanup.present");
+        const done = c.LLVMAppendBasicBlock(function, "referent.cleanup.done");
+        _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildIsNull(self.builder, flags, "referent.cleanup.absent"), done, present);
+        c.LLVMPositionBuilderAtEnd(self.builder, present);
+        var state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, ty, flags);
+        state.runtime_owner = try reference_evidence.runtimeOwner(self.builder, view);
+        self.storeDropState(state, enabled);
+        _ = c.LLVMBuildBr(self.builder, done);
+        c.LLVMPositionBuilderAtEnd(self.builder, done);
     }
 
     // Post-call consumption applies to the captured argument values, never

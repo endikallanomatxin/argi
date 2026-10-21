@@ -135,6 +135,7 @@ pub fn switchPayload(comptime Ids: type, value: primitives.Switch(Ids), bounds: 
 }
 
 pub fn autoDeinitField(comptime Ids: type, value: primitives.AutoDeinitField(Ids), bounds: Bounds) !void {
+    if (value.repeat_count != null) try require(!value.is_variant and value.field_index == 0);
     try require(verify.optionalIdFits(value.deinit_fn, bounds.functions));
     try require(verify.optionalIdFits(value.input, bounds.nodes));
     try require(verify.rangeFits(value.fields, bounds.auto_deinit_fields));

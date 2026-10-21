@@ -1898,7 +1898,10 @@ pub const Infer = struct {
     }
 
     fn infer_cleanup_capability_field(self: *Infer, function: graph_mod.GlobalFunctionId, field: graph_mod.AutoDeinitField, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
-        try self.infer_cleanup_operation_capabilities(function, field.deinit_fn, field.input, field.fields, flow, exits);
+        // Capability counts saturate at repeated use. Two applications retain
+        // the single-use obligation without expanding a fixed array dimension.
+        const repetitions = @min(field.repeat_count orelse 1, 2);
+        for (0..repetitions) |_| try self.infer_cleanup_operation_capabilities(function, field.deinit_fn, field.input, field.fields, flow, exits);
     }
 
     fn infer_cleanup_operation_capabilities(self: *Infer, function: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input: ?graph_mod.GlobalNodeId, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
@@ -2733,7 +2736,10 @@ pub const Infer = struct {
             if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
                 if (active != field.field_index) continue;
             };
-            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+            if (field.repeat_count == 0) continue;
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.repeat_count != null)
+                .dynamic_index
+            else if (field.is_variant)
                 .{ .variant = field.field_index }
             else
                 .{ .field = field.field_index });
@@ -3304,7 +3310,10 @@ pub const Infer = struct {
             if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
                 if (active != field.field_index) continue;
             };
-            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+            if (field.repeat_count == 0) continue;
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.repeat_count != null)
+                .dynamic_index
+            else if (field.is_variant)
                 .{ .variant = field.field_index }
             else
                 .{ .field = field.field_index });
@@ -4251,7 +4260,10 @@ pub const Infer = struct {
             if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
                 if (active != field.field_index) continue;
             };
-            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+            if (field.repeat_count == 0) continue;
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.repeat_count != null)
+                .dynamic_index
+            else if (field.is_variant)
                 .{ .variant = field.field_index }
             else
                 .{ .field = field.field_index });

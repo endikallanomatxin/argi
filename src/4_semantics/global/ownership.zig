@@ -981,7 +981,7 @@ pub const Resolver = struct {
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
-                .fields = if (global_types.fields(self.graph, ty) != null or global_types.variants(self.graph, ty) != null)
+                .fields = if (global_types.fields(self.graph, ty) != null or global_types.variants(self.graph, ty) != null or global_types.arrayElement(self.graph, ty) != null)
                     try self.buildAutoChildren(target, ty, context, module_index)
                 else
                     .{ .start = 0, .len = 0 },
@@ -1008,7 +1008,7 @@ pub const Resolver = struct {
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
-                .fields = if (global_types.fields(self.graph, ty) != null or global_types.variants(self.graph, ty) != null)
+                .fields = if (global_types.fields(self.graph, ty) != null or global_types.variants(self.graph, ty) != null or global_types.arrayElement(self.graph, ty) != null)
                     try self.buildAutoChildren(target, ty, context, module_index)
                 else
                     .{ .start = 0, .len = 0 },
@@ -1031,7 +1031,20 @@ pub const Resolver = struct {
         const source = self.graph.node(target).source;
         // Choices own only their active payload. Preserve the variant projection
         // in cleanup metadata so every consumer observes the same condition.
-        if (global_types.variants(self.graph, ty)) |variants| {
+        if (global_types.arrayElement(self.graph, ty)) |element| {
+            const length = global_types.arrayLength(self.graph, ty).?;
+            if (length != 0) {
+                const pointer_type = try self.core.pointerType(ty, .read_write);
+                const pointer = try self.appendNode(source, pointer_type, .{ .address_of = target });
+                const index = try self.appendNode(source, try self.builtin(.UIntNative), .{ .int_literal = 0 });
+                const projected = try self.appendNode(source, element, .{ .array_index = .{ .array_ptr = pointer, .index = index, .element_type = element, .array_type = ty } });
+                if (try self.buildAutoField(0, projected, element, context, module_index)) |selected| {
+                    var child = selected;
+                    child.repeat_count = length;
+                    try children.append(self.allocator, child);
+                }
+            }
+        } else if (global_types.variants(self.graph, ty)) |variants| {
             for (0..variants.len) |index| {
                 const id: global_sg.GlobalVariantId = @enumFromInt(variants.start + @as(u32, @intCast(index)));
                 const variant = self.graph.variants.items[@intFromEnum(id)];

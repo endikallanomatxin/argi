@@ -226,7 +226,8 @@ const Scanner = struct {
 
     fn cleanupFields(self: *Scanner, range: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), parent: facts.Place, flow: *const Flow) anyerror!void {
         for (self.graph.auto_deinit_fields.items[range.start..][0..range.len], 0..) |field, index| {
-            const target = try self.project(parent, if (field.is_variant) .{ .variant = field.field_index } else .{ .field = field.field_index });
+            if (field.repeat_count == 0) continue;
+            const target = try self.project(parent, if (field.repeat_count != null) .dynamic_index else if (field.is_variant) .{ .variant = field.field_index } else .{ .field = field.field_index });
             if (flow.skips(target)) continue;
             try self.activation.fields.put(@enumFromInt(range.start + @as(u32, @intCast(index))), {});
             try self.cleanupFields(field.fields, target, flow);

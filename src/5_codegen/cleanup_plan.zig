@@ -25,9 +25,10 @@ pub fn child(graph: *const g.GlobalSemanticGraph, parent: g.GlobalTypeId, field:
     if (types.arrayElement(graph, parent)) |element| {
         // One selected operation describes every element; the index belongs
         // to the emitter's evaluated storage projection, not this template.
-        if (field.field_index != 0) return error.InvalidCleanupPlan;
+        if (field.field_index != 0 or field.repeat_count != types.arrayLength(graph, parent)) return error.InvalidCleanupPlan;
         return .{ .ty = element, .repetition = types.arrayLength(graph, parent).? };
     }
+    if (field.repeat_count != null) return error.InvalidCleanupPlan;
     const fields = types.fields(graph, parent) orelse return error.InvalidCleanupPlan;
     if (field.field_index >= fields.len) return error.InvalidCleanupPlan;
     return .{ .ty = graph.fields.items[fields.start + field.field_index].ty };
@@ -194,12 +195,14 @@ test "repeated cleanup child selection retains one element operation and its dim
         .{ .array = .{ .element = @enumFromInt(0), .length = 1_000_000 } },
         .{ .array = .{ .element = @enumFromInt(0), .length = 0 } },
     });
-    var template: g.AutoDeinitField = .{ .field_index = 0, .deinit_fn = null };
+    var template: g.AutoDeinitField = .{ .field_index = 0, .repeat_count = 1_000_000, .deinit_fn = null };
     const selected = try child(&graph, @enumFromInt(1), template);
     try std.testing.expectEqual(@as(g.GlobalTypeId, @enumFromInt(0)), selected.ty);
     try std.testing.expectEqual(@as(u64, 1_000_000), selected.repetition.?);
     try std.testing.expect(selected.variant == null);
+    template.repeat_count = 0;
     try std.testing.expectEqual(@as(u64, 0), (try child(&graph, @enumFromInt(2), template)).repetition.?);
+    template.repeat_count = 1_000_000;
     template.field_index = 1;
     try std.testing.expectError(error.InvalidCleanupPlan, child(&graph, @enumFromInt(1), template));
     template.field_index = 0;
