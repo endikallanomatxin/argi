@@ -2730,7 +2730,24 @@ pub const CodeGenerator = struct {
             return CodegenError.InvalidType;
         const destination = c.LLVMBuildExtractValue(self.builder, input.value_ref, destination_index, "opaque.destination");
         const source = c.LLVMBuildExtractValue(self.builder, input.value_ref, source_index, "opaque.source");
-        _ = c.LLVMBuildStore(self.builder, source, destination);
+        const input_type = input.ty orelse return CodegenError.InvalidType;
+        const fields = types.fields(self.graph, input_type) orelse return CodegenError.InvalidType;
+        const ty = self.graph.fields.items[fields.start + source_index].ty;
+        const view = if (input.reference_view) |evidence|
+            try reference_evidence.projectValue(self.builder, &self.reference_layouts, self.allocator, self.graph, input_type, evidence, .{ .field = destination_index })
+        else
+            null;
+        const source_evidence = if (input.reference_view) |evidence|
+            try reference_evidence.projectValue(self.builder, &self.reference_layouts, self.allocator, self.graph, input_type, evidence, .{ .field = source_index })
+        else
+            null;
+        const target: WriteDestination = .{
+            .address = destination,
+            .type_ref = try self.toLLVMType(ty),
+            .references = if (view) |evidence| try reference_evidence.referencesPointer(self.builder, evidence) else null,
+            .reference_type = try self.optionalReferenceValueType(ty),
+        };
+        try target.commit(self, .{ .value_ref = source, .type_ref = target.type_ref, .ty = ty, .reference_view = source_evidence });
         return null;
     }
 
@@ -2749,7 +2766,8 @@ pub const CodeGenerator = struct {
             else => return CodegenError.InvalidType,
         };
         const type_ref = try self.toLLVMType(child);
-        return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, slot.value_ref, "opaque.take"), .type_ref = type_ref, .ty = child };
+        const references: ?c.LLVMValueRef = if (slot.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else null;
+        return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, slot.value_ref, "opaque.take"), .type_ref = type_ref, .ty = child, .reference_view = try self.loadReferenceView(child, references) };
     }
 
     fn opaqueRelocate(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) !?TypedValue {
