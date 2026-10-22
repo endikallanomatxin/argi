@@ -5314,13 +5314,59 @@ pub const SafetyChecker = struct {
             if (stored.identity == identity) break stored;
         } else return false;
         if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return true;
+        if (entry.initializedness == .maybe_initialized) {
+            var live = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            defer live.deinit();
+            var vacant = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            defer vacant.deinit();
+            if (!self.refineSymbolicCleanupLive(&live, identity, false)) return false;
+            for (vacant.symbolic_pointees.items) |*stored| if (stored.identity == identity) {
+                stored.initializedness = .deinitialized;
+                if (stored.generation) |generation| vacant.tracker.end(generation);
+            };
+            if (!try self.evaluateSymbolicCleanupOperation(function, callee, input, self_index, fields, pointer, &live)) return false;
+            try self.joinState(state, &live, &vacant);
+            return true;
+        }
         if (entry.initializedness != .initialized) return false;
-        if (self.symbolicStorageComplete(state, identity)) if (callee) |selected| {
+        const readiness = self.symbolicStorageReadiness(state, identity);
+        if (readiness == .complete) if (callee) |selected| {
             try self.evaluateResolvedDeinitReference(function, selected, input orelse return false, self_index, .{ .value = pointer }, state);
             return true;
         };
         const children = self.graph.auto_deinit_fields.items[fields.start..][0..fields.len];
         const active_variant = self.symbolicVariant(state, identity);
+        if (active_variant == null and children.len != 0 and children[0].is_variant) {
+            const variants = types.variants(self.graph, entry.ty orelse return false) orelse return false;
+            var joined: ?FunctionState = null;
+            defer if (joined) |*branch| branch.deinit();
+            for (0..variants.len) |variant| {
+                var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                defer branch.deinit();
+                try self.setSymbolicVariant(&branch, pointer, @intCast(variant));
+                if (!try self.evaluateSymbolicCleanupOperation(function, callee, input, self_index, fields, pointer, &branch)) return false;
+                if (joined) |*previous| {
+                    var combined = try previous.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                    errdefer combined.deinit();
+                    try self.joinState(&combined, previous, &branch);
+                    self.commitState(previous, &combined);
+                    combined.deinit();
+                } else joined = try branch.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            }
+            if (joined) |*branch| self.commitState(state, branch);
+            return joined != null;
+        }
+        if (readiness == .possible) if (callee) |selected| {
+            var complete = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            defer complete.deinit();
+            var partial = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            defer partial.deinit();
+            if (!self.refineSymbolicCleanupLive(&complete, identity, true)) return false;
+            try self.evaluateResolvedDeinitReference(function, selected, input orelse return false, self_index, .{ .value = pointer }, &complete);
+            if (!try self.evaluateSymbolicCleanupOperation(function, null, input, self_index, fields, pointer, &partial)) return false;
+            try self.joinState(state, &complete, &partial);
+            return true;
+        };
         for (children) |child| {
             if (child.is_variant) {
                 const active = active_variant orelse return false;
@@ -5351,21 +5397,68 @@ pub const SafetyChecker = struct {
     // disjointness. A whole nominal cleanup needs every observed descendant
     // in the current incarnation to remain complete.
     fn symbolicStorageComplete(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) bool {
+        return self.symbolicStorageReadiness(state, identity) == .complete;
+    }
+
+    fn symbolicStorageReadiness(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) StorageReadiness {
         const parent = for (state.symbolic_pointees.items) |entry| {
             if (entry.identity == identity) break entry;
-        } else return false;
-        if (parent.initializedness != .initialized) return false;
-        const generation = parent.generation orelse return false;
-        if (!state.tracker.isAlive(generation)) return false;
-        const namespace = state.tracker.namespace orelse return true;
+        } else return .unavailable;
+        if (parent.initializedness == .deinitialized or parent.initializedness == .moved) return .unavailable;
+        var readiness: StorageReadiness = if (parent.initializedness == .maybe_initialized) .possible else .complete;
+        if (parent.generation) |generation| {
+            if (!state.tracker.isAlive(generation)) readiness = .possible;
+        } else readiness = .possible;
+        const namespace = state.tracker.namespace orelse return readiness;
         for (namespace.projected_storage.items) |projected| {
-            if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != generation) continue;
+            if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != parent.generation) continue;
             if (projected.projection == .variant) if (self.symbolicVariant(state, identity)) |active| {
                 if (projected.projection.variant != active) continue;
             };
-            for (state.symbolic_pointees.items) |child| {
-                if (child.identity == projected.identity and !self.symbolicStorageComplete(state, child.identity)) return false;
-            }
+            for (state.symbolic_pointees.items) |child| if (child.identity == projected.identity) {
+                switch (self.symbolicStorageReadiness(state, child.identity)) {
+                    .unavailable => return .unavailable,
+                    .possible => readiness = .possible,
+                    .complete => {},
+                }
+            };
+        }
+        return readiness;
+    }
+
+    // A runtime cleanup flag establishes availability only for this storage's
+    // current, common incarnation. Divergent or dead generations cannot be
+    // revived by assuming a value exists. Historical aliases remain unchanged.
+    fn refineSymbolicCleanupLive(self: *SafetyChecker, state: *FunctionState, identity: facts.SymbolicPointeeId, descendants: bool) bool {
+        var generation: ?facts.ValidityRootId = null;
+        for (state.symbolic_pointees.items) |*entry| {
+            if (entry.identity != identity) continue;
+            if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return false;
+            const backing = entry.backing orelse return false;
+            const current = entry.generation orelse return false;
+            if (!state.tracker.isAlive(backing)) return false;
+            const root = &state.tracker.roots.items[@intFromEnum(current)];
+            if (root.state != .alive and root.state != .maybe_alive) return false;
+            root.state = .alive;
+            root.outcome_guard = 0;
+            entry.initializedness = .initialized;
+            generation = current;
+            break;
+        }
+        const current = generation orelse return false;
+        if (!descendants) return true;
+        const namespace = state.tracker.namespace orelse return true;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != current) continue;
+            if (projected.projection == .variant) if (self.symbolicVariant(state, identity)) |active| {
+                if (projected.projection.variant != active) continue;
+            };
+            var observed = false;
+            for (state.symbolic_pointees.items) |entry| if (entry.identity == projected.identity) {
+                observed = true;
+                break;
+            };
+            if (observed and !self.refineSymbolicCleanupLive(state, projected.identity, true)) return false;
         }
         return true;
     }
@@ -10413,4 +10506,43 @@ test "symbolic choice tag refinement preserves children and drops incompatible b
     try std.testing.expectEqual(@as(?u32, 7), checker.symbolicVariant(&joined, child.symbolic_pointees[0]));
     try checker.storeSymbolicValue(&joined, slot, .{ .known_choice_variant = 2 }, true);
     try std.testing.expectEqual(@as(?u32, 2), checker.symbolicVariant(&joined, slot.symbolic_pointees[0]));
+}
+
+test "symbolic cleanup availability refines only a live common incarnation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .initializedness = .maybe_initialized, .backing = backing, .generation = generation });
+    const historical: facts.ValueFacts = .{ .dependencies = &.{.{ .root = generation }} };
+    var live = try state.clone(a, null);
+    defer live.deinit();
+    try std.testing.expect(checker.refineSymbolicCleanupLive(&live, @enumFromInt(0), false));
+    try std.testing.expect(live.tracker.dependenciesAreAlive(historical));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(historical));
+    live.tracker.end(generation);
+    live.symbolic_pointees.items[0].initializedness = .deinitialized;
+    state.tracker.end(generation);
+    state.symbolic_pointees.items[0].initializedness = .deinitialized;
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &live, &state);
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(historical));
+    joined.symbolic_pointees.items[0].initializedness = .maybe_initialized;
+    try std.testing.expect(!checker.refineSymbolicCleanupLive(&joined, @enumFromInt(0), false));
+    joined.symbolic_pointees.items[0].generation = null;
+    try std.testing.expect(!checker.refineSymbolicCleanupLive(&joined, @enumFromInt(0), false));
 }

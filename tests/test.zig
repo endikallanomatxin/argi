@@ -14716,3 +14716,14 @@ test "feature_tests/execution/212_selected_symbolic_choice_cleanup" {
     try runExpect("tests/feature_tests/execution/212_selected_symbolic_choice_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/212_selected_symbolic_choice_cleanup", 42, null);
 }
+
+test "feature_tests/execution/213_joined_symbolic_choice_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/213_joined_symbolic_choice_cleanup");
+    try runExpect("tests/feature_tests/execution/213_joined_symbolic_choice_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/213_joined_symbolic_choice_cleanup", 42, null);
+}
+
+test "feature_tests/execution/214X_joined_symbolic_choice_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/214X_joined_symbolic_choice_keeps_alias_stale", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/214X_joined_symbolic_choice_keeps_alias_stale", 1, "root that has ended");
+}

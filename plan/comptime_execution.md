@@ -64,8 +64,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   (209X/210), including effectful selectors (211). Selected symbolic choice tags
   also belong to storage; cleanup inside a selected branch follows the active
   payload and its live children (212), preserving descendants during refinement.
-  Incompatible joins remove that tag proof. Finish choice cleanup after joins
-  and conditionally initialized referents.
+  Incompatible joins remove that tag proof. Cleanup after joins now branches
+  over possible variants and availability, using nominal cleanup only on its
+  complete-value alternative (213). Availability refinement requires one live
+  common incarnation; dead or divergent generations cannot be revived, and
+  historical aliases remain stale after replacement (214X). Finish divergent
+  generation identities and partially initialized choice construction.
   Symbolic slots now retain sparse stored-value facts separately from pointee
   identity/initializedness. Direct/call writes, branch/loop joins and returned
   field references preserve target dependencies (196X/198X/199X/200X); copied
