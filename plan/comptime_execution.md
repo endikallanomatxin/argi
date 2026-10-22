@@ -72,6 +72,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   possibly active even without a lexical Place. Replacement summaries capture
   caller-relative destinations before RHS inference and retain retirement of
   their old incarnation; by-value envelopes cannot stand in for reference leaves.
+  Field/index writes and replacement plans now share target inference and reuse
+  captured paths for commit, including references inside by-value Args (220/221X).
   Incompatible joins remove that tag proof. Cleanup after joins now branches
   over possible variants and availability, using nominal cleanup only on its
   complete-value alternative (213). Availability refinement requires one live

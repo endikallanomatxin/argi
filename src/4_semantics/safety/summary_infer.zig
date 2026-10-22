@@ -60,7 +60,7 @@ pub const Infer = struct {
     observation_conflict_sink: ?*std.array_list.Managed(facts.StorageObservationConflict) = null,
     suppressed_observation: ?graph_mod.GlobalNodeId = null,
     loop_post_effects: ?*InputPostStateFlow = null,
-    replacement_storage: ?struct { cleanup: graph_mod.GlobalAutoDeinitId, targets: []const facts.InputPath } = null,
+    replacement_storage: ?struct { cleanup: graph_mod.GlobalAutoDeinitId, write: graph_mod.GlobalNodeId, targets: []const facts.InputPath } = null,
 
     const ForwardOrigin = struct {
         call: graph_mod.GlobalNodeId,
@@ -2111,7 +2111,7 @@ pub const Infer = struct {
             .function_call, .virtual_call => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
             .pointer_assignment => |assignment| {
                 try self.inferInputPostStatesExpression(function_id, assignment.pointer, states, exits);
-                const targets = try self.inferWritePointeePaths(function_id, assignment.pointer);
+                const targets = try self.inferWriteTargets(function_id, node_id);
                 try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
                 try self.recordInputPostState(
                     states,
@@ -2127,11 +2127,8 @@ pub const Infer = struct {
             },
             .struct_field_store => |store| {
                 try self.inferInputPostStatesExpression(function_id, store.struct_ptr, states, exits);
+                const targets = try self.inferWriteTargets(function_id, node_id);
                 try self.inferInputPostStatesExpression(function_id, store.value, states, exits);
-                const targets = try self.projectInputPaths(
-                    try self.inferInputPaths(function_id, store.struct_ptr),
-                    .{ .field = store.field_index },
-                );
                 try self.recordInputPostState(
                     states,
                     targets,
@@ -2147,15 +2144,8 @@ pub const Infer = struct {
             .array_store => |store| {
                 try self.inferInputPostStatesExpression(function_id, store.array_ptr, states, exits);
                 try self.inferInputPostStatesExpression(function_id, store.index, states, exits);
+                const targets = try self.inferWriteTargets(function_id, node_id);
                 try self.inferInputPostStatesExpression(function_id, store.value, states, exits);
-                const projection: facts.Projection = if (self.staticIndex(store.index)) |index|
-                    .{ .static_index = index }
-                else
-                    .dynamic_index;
-                const targets = try self.projectInputPaths(
-                    try self.inferInputPaths(function_id, store.array_ptr),
-                    projection,
-                );
                 try self.recordInputPostState(
                     states,
                     targets,
@@ -2278,15 +2268,10 @@ pub const Infer = struct {
             },
             .replacement => |child| {
                 const plan = try @import("../global/replacement.zig").plan(self.graph, node_id);
-                const targets = switch (self.graph.node(plan.write).content) {
-                    .pointer_assignment => |write| try self.inferWritePointeePaths(function_id, write.pointer),
-                    .struct_field_store => |write| try self.projectInputPaths(try self.inferPointeePaths(function_id, write.struct_ptr), .{ .field = write.field_index }),
-                    .array_store => |write| try self.projectInputPaths(try self.inferPointeePaths(function_id, write.array_ptr), if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index),
-                    else => &.{},
-                };
+                const targets = try self.inferWriteTargets(function_id, plan.write);
                 const previous = self.replacement_storage;
                 defer self.replacement_storage = previous;
-                self.replacement_storage = .{ .cleanup = plan.cleanup, .targets = targets };
+                self.replacement_storage = .{ .cleanup = plan.cleanup, .write = plan.write, .targets = targets };
                 try self.inferInputPostStates(function_id, child, flow, exits);
             },
             .code_block, .value_sequence => |child| try self.inferInputPostStates(function_id, child, flow, exits),
@@ -4829,6 +4814,18 @@ pub const Infer = struct {
 
     fn inferPointeePaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId) ![]const facts.InputPath {
         return self.normalizePointeePaths(function_id, pointer, try self.inferInputPaths(function_id, pointer));
+    }
+
+    // Capture caller-relative destinations before RHS inference. A checked
+    // replacement reuses that same capture for old cleanup and final commit.
+    fn inferWriteTargets(self: *Infer, function_id: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
+        if (self.replacement_storage) |captured| if (captured.write == node) return captured.targets;
+        return switch (self.graph.node(node).content) {
+            .pointer_assignment => |write| self.inferWritePointeePaths(function_id, write.pointer),
+            .struct_field_store => |write| self.projectInputPaths(try self.inferWritePointeePaths(function_id, write.struct_ptr), .{ .field = write.field_index }),
+            .array_store => |write| self.projectInputPaths(try self.inferWritePointeePaths(function_id, write.array_ptr), if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index),
+            else => &.{},
+        };
     }
 
     // Writes through a returned reference need exact identity, not the may-

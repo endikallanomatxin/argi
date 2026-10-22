@@ -14755,3 +14755,14 @@ test "feature_tests/execution/219X_returned_reference_list_keeps_alias_stale" {
     try buildExpectFail("tests/feature_tests/execution/219X_returned_reference_list_keeps_alias_stale", "root that has ended");
     try vmExpect("tests/feature_tests/execution/219X_returned_reference_list_keeps_alias_stale", 1, "root that has ended");
 }
+
+test "feature_tests/execution/220_projected_replacement_through_args" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/220_projected_replacement_through_args");
+    try runExpect("tests/feature_tests/execution/220_projected_replacement_through_args", 42);
+    try vmExpect("tests/feature_tests/execution/220_projected_replacement_through_args", 42, null);
+}
+
+test "feature_tests/execution/221X_projected_replacement_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/221X_projected_replacement_keeps_alias_stale", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/221X_projected_replacement_keeps_alias_stale", 1, "root that has ended");
+}
