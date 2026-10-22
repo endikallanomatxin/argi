@@ -5781,7 +5781,7 @@ test "argi repl retains values and shares compile-time execution" {
         .stderr = .pipe,
     });
     defer child.kill(std.testing.io);
-    try child.stdin.?.writeStreamingAll(std.testing.io, "value ::= 40 + 2\nvalue\n" ++
+    try child.stdin.?.writeStreamingAll(std.testing.io, "value ::= 40 + 2\nunfinished := () -> () {\n:cancel\nvalue\n" ++
         "answer := () -> (.result: Int32) { result = 7 }\nanswer()\n_0 + _1\n" ++
         "enabled := () -> (.result: Bool) { result = true }\n" ++
         "choose := () -> (.result: Int32) {\n" ++

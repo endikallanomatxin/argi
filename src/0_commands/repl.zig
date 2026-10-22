@@ -13,6 +13,7 @@ const help =
     \\Expression results remain available as _0, _1, ... until reset or exit.
     \\Up / Down      Recall previous input lines (terminal only)
     \\:begin / :end  Submit a multiline definition or statement block
+    \\:cancel        Discard the pending submission
     \\:reset         Clean up and start a fresh session
     \\:quit          Clean up and exit
     \\:help          Show these commands
@@ -100,6 +101,13 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
         else
             try input.takeDelimiter('\n')) orelse break;
         const text = std.mem.trim(u8, line, " \t\r");
+        if ((terminal and editor.cancelled) or std.mem.eql(u8, text, ":cancel")) {
+            block.clearRetainingCapacity();
+            multiline = false;
+            automatic = false;
+            completion = .{};
+            continue;
+        }
         if (multiline) {
             if (std.mem.eql(u8, text, ":end")) {
                 multiline = false;
@@ -463,5 +471,21 @@ test "REPL automatically completes open function and call delimiters" {
     defer output.deinit();
     try interact(&session, &input, &output.writer, false);
     try std.testing.expectEqualStrings("_0 = 42\n", output.written());
+    try std.testing.expect(session.closed);
+}
+
+test "REPL cancels pending input without publishing or resetting accepted state" {
+    var session: interactive.Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    var input = std.Io.Reader.fixed(
+        "value :: Int32 = 42\n" ++
+            "unfinished := () -> () {\n:cancel\nvalue\n" ++
+            ":begin\nvalue = 9\n:cancel\nvalue\n:quit\n",
+    );
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try interact(&session, &input, &output.writer, false);
+    try std.testing.expectEqualStrings("_0 = 42\n_1 = 42\n", output.written());
     try std.testing.expect(session.closed);
 }

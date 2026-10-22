@@ -286,7 +286,10 @@ _2 = 49
 Open parentheses, brackets, braces and quoted literals continue a submission
 on the following line. Terminal prompts change to `...` until the input closes;
 comments and quoted delimiters do not change the nesting. Use `:begin` and `:end`
-for an explicit batch, including multiple complete statements. Submit definitions
+for an explicit batch, including multiple complete statements. `:cancel` discards
+a pending automatic or explicit batch; Ctrl-C does the same while editing in a
+terminal. Accepted values remain live, and unsubmitted statements never execute.
+Submit definitions
 separately from executable statements.
 Functions, types and contracts remain available to subsequent submissions;
 redefining accepted names is rejected. Functions use their defining module scope;

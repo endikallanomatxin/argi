@@ -51,6 +51,7 @@ pub const Editor = struct {
     allocator: std.mem.Allocator,
     history: std.ArrayList([]const u8) = .empty,
     line: std.ArrayList(u8) = .empty,
+    cancelled: bool = false,
     draft: std.ArrayList(u8) = .empty,
     const max_history = 256;
     const max_line = 64 * 1024;
@@ -98,6 +99,7 @@ pub const Editor = struct {
 
     pub fn read(self: *Editor, input: *std.Io.Reader, output: *std.Io.Writer, prompt: []const u8) !?[]const u8 {
         self.line.clearRetainingCapacity();
+        self.cancelled = false;
         self.draft.clearRetainingCapacity();
         var selected = self.history.items.len;
         var cursor: usize = 0;
@@ -115,6 +117,7 @@ pub const Editor = struct {
                     return self.line.items;
                 },
                 3 => {
+                    self.cancelled = true;
                     self.line.clearRetainingCapacity();
                     try output.writeAll("^C\n");
                     return self.line.items;
@@ -208,7 +211,9 @@ test "REPL editing preserves UTF-8 and cancels without recording a line" {
     defer output.deinit();
     try std.testing.expectEqualStrings("a€", (try editor.read(&input, &output.writer, "")).?);
     try std.testing.expectEqualStrings("", (try editor.read(&input, &output.writer, "")).?);
+    try std.testing.expect(editor.cancelled);
     try std.testing.expectEqualStrings("a€", (try editor.read(&input, &output.writer, "")).?);
+    try std.testing.expect(!editor.cancelled);
     try std.testing.expectEqual(@as(usize, 1), editor.history.items.len);
 }
 
