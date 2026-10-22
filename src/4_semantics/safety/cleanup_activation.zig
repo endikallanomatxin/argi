@@ -384,7 +384,14 @@ const Scanner = struct {
             .break_statement, .continue_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| {
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-                const target = if (cleanup.targetNode()) |node_id| try self.resolvePlace(node_id) orelse return else facts.Place{ .root = cleanup.ownerBinding().? };
+                const target = if (cleanup.targetNode()) |node_id| try self.resolvePlace(node_id) orelse {
+                    // Unknown referents have runtime cleanup evidence, but no
+                    // lexical Place for this may-activation analysis. Retain
+                    // their possible effects rather than proving cleanup absent.
+                    try self.activation.roots.put(auto_id, {});
+                    try self.activateUnknownCleanupFields(cleanup.fields);
+                    return;
+                } else facts.Place{ .root = cleanup.ownerBinding().? };
                 if (!flow.skips(target)) {
                     try self.activation.roots.put(auto_id, {});
                     try self.cleanupFields(cleanup.fields, target, flow);
@@ -506,6 +513,14 @@ const Scanner = struct {
                 if (expect.test_fail_input) |input| try self.conditional(input, flow);
             },
             else => {},
+        }
+    }
+
+    fn activateUnknownCleanupFields(self: *Scanner, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId)) anyerror!void {
+        for (self.graph.auto_deinit_fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+            if (field.repeat_count == 0) continue;
+            try self.activation.fields.put(@enumFromInt(fields.start + @as(u32, @intCast(index))), {});
+            try self.activateUnknownCleanupFields(field.fields);
         }
     }
 };

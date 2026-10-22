@@ -2908,3 +2908,84 @@ fn functionPointers(functions: anytype) [@typeInfo(@typeInfo(@TypeOf(functions))
     for (functions, &result) |*body, *pointer| pointer.* = if (body.*) |*value| value else null;
     return result;
 }
+
+test "replacement summaries preserve historical references in returned arrays" {
+    for (0..6) |scenario| {
+        const historical = scenario % 2 == 1;
+        const conditional = scenario >= 2;
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var source = try std.mem.concat(a, u8, &.{
+            \\Resource: Type = (.value: Int32)
+            \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
+            \\references(.target: $&Resource) -> (.result: [1] $&Resource) := { result = (target,) }
+            \\replace(.targets: [1] $&Resource) -> () := { targets[0]&= (.value = 9) }
+            \\main() -> (.status_code: Int32) := {
+            \\    owner :: Resource = (.value = 1)
+            \\    targets ::= references(.target = $&owner)
+            \\    previous ::= targets
+            \\    replace(.targets = targets)
+            \\
+            ,
+            if (historical) "status_code = previous[0]&.value\n}" else "status_code = targets[0]&.value\n}",
+        });
+        if (conditional) {
+            source = try std.mem.replaceOwned(u8, a, source, "replace(.targets: [1] $&Resource) -> () := { targets[0]&= (.value = 9) }", "replace(.targets: [1] $&Resource, .enabled: Bool) -> (.result: (..changed, ..preserved)) := { if enabled { targets[0]&= (.value = 9)\nresult = ..changed } else { result = ..preserved } }");
+            source = try std.mem.replaceOwned(u8, a, source, "replace(.targets = targets)", "outcome ::= replace(.targets = targets, .enabled = true)\nmatch outcome { ..changed {} ..preserved {} }");
+        }
+        if (scenario >= 4) source = try std.mem.replaceOwned(u8, a, source, "else { result = ..preserved }", "else { deinit(.self = targets[0])\nresult = ..preserved }");
+        const files = [_]sf.SourceFile{
+            .{ .path = "app/main.rg", .code = source },
+            .{ .path = "deinit_core/main.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())" },
+        };
+        var diagnostics = diag.Diagnostics.init(&a, &files);
+        defer diagnostics.deinit();
+        var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+        defer pipeline.deinit();
+        if (historical or scenario >= 4) {
+            try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+            var found = false;
+            for (diagnostics.list.items) |entry| if (std.mem.indexOf(u8, entry.msg, "root that has ended") != null) {
+                found = true;
+            };
+            try std.testing.expect(found);
+        } else _ = try pipeline.semantizeGlobalFiles(&files);
+    }
+}
+
+test "conditional replacement renews selected symbolic input without renewing copies" {
+    for ([_]bool{ false, true }) |historical| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const source = try std.mem.concat(a, u8, &.{
+            \\Resource: Type = (.value: Int32)
+            \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
+            \\replace(.target: $&Resource, .enabled: Bool) -> (.result: (..changed, ..preserved)) := {
+            \\    if enabled { target&= (.value = 9)
+            \\        result = ..changed
+            \\    } else { result = ..preserved }
+            \\}
+            \\observe(.owner: $&Resource) -> (.result: Int32) := {
+            \\    previous ::= owner
+            \\    outcome ::= replace(.target = owner, .enabled = true)
+            \\    match outcome { ..changed {} ..preserved {} }
+            \\
+            ,
+            if (historical) "result = previous&.value\n}" else "result = owner&.value\n}",
+            "\nmain() -> (.status_code: Int32) := { owner :: Resource = (.value = 1)\nstatus_code = observe(.owner = $&owner) }",
+        });
+        const files = [_]sf.SourceFile{
+            .{ .path = "app/main.rg", .code = source },
+            .{ .path = "deinit_core/main.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())" },
+        };
+        var diagnostics = diag.Diagnostics.init(&a, &files);
+        defer diagnostics.deinit();
+        var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+        defer pipeline.deinit();
+        if (historical) {
+            try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+        } else _ = try pipeline.semantizeGlobalFiles(&files);
+    }
+}

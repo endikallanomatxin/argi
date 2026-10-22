@@ -3313,6 +3313,12 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index: usize = @intCast(post_state.target.input_index);
+            const symbolic_was_initialized = blk: {
+                if (post_state.initializedness != .initialized or post_state.initialization == .preserved or post_state.requires_available_destination) break :blk false;
+                const access = try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state) orelse break :blk false;
+                if (access.symbolic_pointees.len != 1) break :blk false;
+                break :blk self.symbolicStorageReadiness(state, access.symbolic_pointees[0]) == .complete;
+            };
             if (cleanupTransition(summary, post_state)) {
                 for (try self.symbolicConsumptionInputs(post_state.target, argument_ids, arguments, state)) |identity| {
                     for (state.symbolic_pointees.items) |*pointee| if (pointee.identity == identity) {
@@ -3372,19 +3378,20 @@ pub const SafetyChecker = struct {
                 if (post_state.ends_previous_roots) {
                     const symbolic = try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state);
                     const handled = if (symbolic) |value| try self.endSymbolicGenerations(source, value, state) else false;
-                    if (!handled and post_state.target.projections.len == 0) {
+                    // Opaque receipts retain backing and borrowed roots, not
+                    // an exposed value generation that this fallback may end.
+                    if (!handled and post_state.target.projections.len == 0 and arguments[index].opaque_provenance.len == 0) {
                         for (arguments[index].dependencies) |dependency| _ = try self.endRoot(source, state, dependency.root);
                     }
                 }
-                if (post_state.initializedness == .initialized and post_state.initialization == .definite and
-                    !post_state.requires_available_destination and post_state.target.projections.len != 0)
+                // The selected argument observes the current value after a
+                // definite write, or a possible replacement of live storage.
+                // Copied references retain the retired generation.
+                if (post_state.initializedness == .initialized and !post_state.requires_available_destination and
+                    (post_state.initialization == .definite or (post_state.initialization == .possible and symbolic_was_initialized)))
                 {
                     if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access| {
-                        var projected = false;
-                        if (state.tracker.namespace) |namespace| for (namespace.projected_storage.items) |entry| {
-                            if (access.symbolic_pointees.len == 1 and entry.identity == access.symbolic_pointees[0]) projected = true;
-                        };
-                        if (projected) {
+                        if (access.symbolic_pointees.len == 1) {
                             for (state.symbolic_pointees.items) |*entry| if (entry.identity == access.symbolic_pointees[0]) {
                                 if (post_state.ends_previous_roots) entry.initializedness = .deinitialized;
                             };
@@ -3392,23 +3399,8 @@ pub const SafetyChecker = struct {
                                 for (state.symbolic_pointees.items) |*entry| if (entry.identity == renewed.symbolic_pointees[0]) {
                                     entry.initializedness = .initialized;
                                 };
-                            }
-                        }
-                    }
-                }
-                // Renew the argument's reference slot, including a projected
-                // field in Args. Its referent has no concrete Place; the record
-                // slot and other copies remain distinct from that referent.
-                if (post_state.initializedness == .initialized and post_state.initialization == .definite and
-                    !post_state.requires_available_destination)
-                {
-                    if (try self.summaryInputReferenceSlot(post_state.target, argument_ids, arguments, state)) |slot| {
-                        if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access| {
-                            if (try self.renewSymbolicAccess(access, state)) |renewed| {
-                                try self.setPlace(state, slot, .initialized, renewed);
-                                for (state.symbolic_pointees.items) |*entry| {
-                                    if (entry.identity == renewed.symbolic_pointees[0]) entry.initializedness = .initialized;
-                                }
+                                if (try self.summaryInputReferenceSlot(post_state.target, argument_ids, arguments, state)) |slot|
+                                    try self.setPlace(state, slot, .initialized, renewed);
                             }
                         }
                     }
@@ -3448,7 +3440,13 @@ pub const SafetyChecker = struct {
             {
                 const old_generation = try self.storageGeneration(state, target);
                 try self.refreshStorageGenerationChecked(source, state, target);
-                if (reinitializes_dead_place) {
+                // A possible replacement of a live value still leaves the
+                // selected reference observing initialized storage. Vacant
+                // entry storage needs a definite write before it can renew.
+                if (reinitializes_dead_place or
+                    (post_state.refreshes_storage_generation and initializedness == .initialized and post_state.initialization != .preserved and
+                        (post_state.initialization == .definite or entry_initializedness == .initialized) and !post_state.requires_available_destination))
+                {
                     if (try self.summaryInputReferenceSlot(post_state.target, argument_ids, arguments, state)) |pointer_storage| {
                         if (self.valueAtPlace(state, pointer_storage)) |pointer| {
                             if (!pointer_storage.eql(target) and pointer.referenced_place != null and pointer.referenced_place.?.eql(target)) {
@@ -3504,11 +3502,18 @@ pub const SafetyChecker = struct {
         if (path_value.input_index >= arguments.len) return null;
         const index: usize = @intCast(path_value.input_index);
         var projections = path_value.projections;
-        var target = arguments[index].referenced_place orelse blk: {
+        // By-value aggregate facts can retain their elements' provenance.
+        // That does not make the aggregate envelope a reference to one element;
+        // follow its reference leaves only at explicit dereference projections.
+        const by_value = if (index < argument_ids.len) blk: {
+            const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+            break :blk if (self.graph.node(argument).ty) |ty| !isPointer(self.graph, ty) else false;
+        } else false;
+        var target = (if (by_value) null else arguments[index].referenced_place) orelse blk: {
             // An evaluated symbolic reference names unknown referent storage.
             // Its source syntax cannot recover a concrete Place and may have
             // already consumed inputs. Apply its symbolic post-state instead.
-            if (arguments[index].symbolic_pointees.len != 0) return null;
+            if (!by_value and arguments[index].symbolic_pointees.len != 0) return null;
             if (index < argument_ids.len) {
                 const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
                 const argument_type = self.graph.nodes.items[@intFromEnum(argument)].ty orelse return null;

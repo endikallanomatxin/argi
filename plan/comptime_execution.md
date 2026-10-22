@@ -67,6 +67,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   (209X/210), including effectful selectors (211). Selected symbolic choice tags
   also belong to storage; cleanup inside a selected branch follows the active
   payload and its live children (212), preserving descendants during refinement.
+  Returned reference arrays now have differential replacement coverage (218)
+  and a historical-copy rejection (219X). Unknown indirect cleanup remains
+  possibly active even without a lexical Place. Replacement summaries capture
+  caller-relative destinations before RHS inference and retain retirement of
+  their old incarnation; by-value envelopes cannot stand in for reference leaves.
   Incompatible joins remove that tag proof. Cleanup after joins now branches
   over possible variants and availability, using nominal cleanup only on its
   complete-value alternative (213). Availability refinement requires one live
@@ -230,6 +235,6 @@ through retained sessions as well as native compilation, including inactive
 branches, cycles, allocation failures and rejected evaluator-resource escapes.
 
 Recheck published CI after the latest execution changes. Run
-[39782892337](https://github.com/endikallanomatxin/argi/actions/runs/39782892337)
-passed at `8d45c7f1` on Linux and macOS, both x86_64 and ARM64. Loop observation
-canonicalization requires its own completed run.
+[39800207941](https://github.com/endikallanomatxin/argi/actions/runs/39800207941)
+passed at `ec2201a3` on Linux and macOS, both x86_64 and ARM64. Replacement-summary
+changes require their own completed run.

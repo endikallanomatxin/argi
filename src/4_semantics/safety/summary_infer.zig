@@ -60,6 +60,7 @@ pub const Infer = struct {
     observation_conflict_sink: ?*std.array_list.Managed(facts.StorageObservationConflict) = null,
     suppressed_observation: ?graph_mod.GlobalNodeId = null,
     loop_post_effects: ?*InputPostStateFlow = null,
+    replacement_storage: ?struct { cleanup: graph_mod.GlobalAutoDeinitId, targets: []const facts.InputPath } = null,
 
     const ForwardOrigin = struct {
         call: graph_mod.GlobalNodeId,
@@ -2275,7 +2276,20 @@ pub const Infer = struct {
                 if (flow.reachable) try self.recordOutcomeExit(exits, flow);
                 flow.reachable = false;
             },
-            .code_block, .value_sequence, .replacement => |child| try self.inferInputPostStates(function_id, child, flow, exits),
+            .replacement => |child| {
+                const plan = try @import("../global/replacement.zig").plan(self.graph, node_id);
+                const targets = switch (self.graph.node(plan.write).content) {
+                    .pointer_assignment => |write| try self.inferWritePointeePaths(function_id, write.pointer),
+                    .struct_field_store => |write| try self.projectInputPaths(try self.inferPointeePaths(function_id, write.struct_ptr), .{ .field = write.field_index }),
+                    .array_store => |write| try self.projectInputPaths(try self.inferPointeePaths(function_id, write.array_ptr), if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index),
+                    else => &.{},
+                };
+                const previous = self.replacement_storage;
+                defer self.replacement_storage = previous;
+                self.replacement_storage = .{ .cleanup = plan.cleanup, .targets = targets };
+                try self.inferInputPostStates(function_id, child, flow, exits);
+            },
+            .code_block, .value_sequence => |child| try self.inferInputPostStates(function_id, child, flow, exits),
             .break_statement, .continue_statement => {
                 if (self.loop_post_effects) |transfers| {
                     try self.joinInputPostStates(&transfers.states, &transfers.states, states);
@@ -2387,26 +2401,17 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
-            .value_sequence, .replacement => |block| {
+            .value_sequence, .replacement, .pointer_assignment, .struct_field_store, .array_store => {
+                // Statements used as expressions retain the same captured
+                // destinations, post-states and domain effects as block nodes.
                 var flow = InputPostStateFlow.init(self.allocator);
                 flow.states.deinit();
                 flow.states = states.*;
                 defer states.* = flow.states;
                 defer flow.domains.deinit();
                 if (self.post_domain_sink) |sink| try flow.domains.appendSlice(sink.items);
-                try self.inferInputPostStates(function_id, block, &flow, exits);
-                if (self.post_domain_sink) |sink| for (flow.domains.items) |domain| try appendDomain(sink, domain);
-            },
-            .pointer_assignment, .struct_field_store, .array_store => {
-                // A replacement can return its commit write directly rather
-                // than listing it among the block's statements. Its post-state
-                // must be recorded in either position, exactly once.
-                var flow = InputPostStateFlow.init(self.allocator);
-                flow.states.deinit();
-                flow.states = states.*;
-                defer states.* = flow.states;
-                defer flow.domains.deinit();
                 try self.inferInputPostStatesNode(function_id, node_id, &flow, exits);
+                if (self.post_domain_sink) |sink| for (flow.domains.items) |domain| try appendDomain(sink, domain);
             },
             .move_value, .denied_implicit_copy => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
             .address_of => |value| {
@@ -2779,6 +2784,13 @@ pub const Infer = struct {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
         try self.applyCleanupInputPostStates(function_id, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, binding_effect, states);
+        // A replacement retires the captured destination's old incarnation.
+        // Receiver overrides deliberately omit whole-value consumption for
+        // lexical cleanup, so preserve this storage effect explicitly. Capture
+        // its identity before RHS inference, just like both executable backends.
+        if (self.replacement_storage) |replacement| if (replacement.cleanup == auto_id) {
+            try self.recordInputPostState(states, replacement.targets, .deinitialized, .{}, true, false, false, false, .preserved);
+        };
     }
 
     fn applyCleanupInputPostStates(self: *Infer, function_id: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input_node: ?graph_mod.GlobalNodeId, self_index: u32, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), receiver: ?facts.ValueEffect, states: *std.array_list.Managed(facts.PlacePostState)) anyerror!void {
