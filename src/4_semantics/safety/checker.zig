@@ -922,8 +922,8 @@ pub const SafetyChecker = struct {
                         self.initializednessAtPlace(state, target) == .deinitialized
                     else
                         false;
-                    const symbolic_renewal = if (pointer.referenced_place == null)
-                        try self.renewSymbolicDestination(assignment.pointer, pointer, state)
+                    const symbolic_renewal = if (pointer.referenced_place == null and operand.renewable)
+                        try self.renewSymbolicAccess(pointer, state)
                     else
                         null;
                     const initializes = was_deinitialized or symbolic_renewal != null;
@@ -3190,11 +3190,6 @@ pub const SafetyChecker = struct {
             };
         }
         return handled;
-    }
-
-    fn renewSymbolicDestination(self: *SafetyChecker, node: graph_mod.GlobalNodeId, pointer: facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
-        if (try self.resolvePlace(node, state) == null and self.graph.node(node).content != .address_of) return null;
-        return self.renewSymbolicAccess(pointer, state);
     }
 
     fn renewSymbolicAccess(self: *SafetyChecker, pointer: facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
@@ -5567,7 +5562,13 @@ pub const SafetyChecker = struct {
         return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{identity.?}) };
     }
 
-    const WritePointer = struct { value: facts.ValueFacts, slot: ?facts.Place = null };
+    const WritePointer = struct {
+        value: facts.ValueFacts,
+        slot: ?facts.Place = null,
+        // Address formation and a captured reference slot can establish one
+        // destination. An arbitrary returned temporary cannot renew aliases.
+        renewable: bool = false,
+    };
 
     fn renewWriteReferenceSlot(self: *SafetyChecker, state: *FunctionState, operand: WritePointer, renewed: facts.ValueFacts) !void {
         const slot = operand.slot orelse return;
@@ -5584,9 +5585,9 @@ pub const SafetyChecker = struct {
         // Address formation produces a reference value, not a reference slot.
         // Publishing it into the referent would invent initialization before RHS.
         if (node.content == .address_of)
-            return .{ .value = try self.evaluateAddress(function, node.source, node.content.address_of, state, true) };
+            return .{ .value = try self.evaluateAddress(function, node.source, node.content.address_of, state, true), .renewable = true };
         const access: EvaluatedAccess = switch (node.content) {
-            .binding_use => |binding| return .{ .value = try self.evaluate(function, node_id, state), .slot = .{ .root = binding } },
+            .binding_use => |binding| return .{ .value = try self.evaluate(function, node_id, state), .slot = .{ .root = binding }, .renewable = true },
             .struct_field_access, .array_index, .dereference, .choice_payload_access => try self.evaluateAccess(function, node_id, state),
             else => return .{ .value = try self.evaluate(function, node_id, state) },
         };
@@ -5596,7 +5597,7 @@ pub const SafetyChecker = struct {
         if (!isPointer(self.graph, ty)) return .{ .value = value };
         // An unknown index does not identify one stable reference-valued slot.
         for (slot.projections) |projection| if (projection == .dynamic_index) return .{ .value = value };
-        return .{ .value = value, .slot = slot };
+        return .{ .value = value, .slot = slot, .renewable = true };
     }
 
     const EvaluatedAccess = struct {
@@ -9322,16 +9323,16 @@ test "symbolic destination renewal preserves backing validity and historical ali
     // A possible-alias group is not an equality proof. Callers check ordered
     // consumption/observation obligations against their actual destinations.
     try std.testing.expect(state.tracker.isAlive(other_generation));
-    const renewed = (try checker.renewSymbolicDestination(@enumFromInt(0), access, &state)).?;
+    const renewed = (try checker.renewSymbolicAccess(access, &state)).?;
     try std.testing.expect(state.tracker.dependenciesAreAlive(renewed));
     try std.testing.expect(!state.tracker.dependenciesAreAlive(access));
     // Preparing an initialization neither publishes its reference nor marks
     // the vacant referent initialized before the RHS has completed.
     try std.testing.expect(!state.tracker.dependenciesAreAlive(checker.valueAtPlace(&state, .{ .root = @enumFromInt(0) }).?));
     try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.symbolic_pointees.items[0].initializedness);
-    try std.testing.expect(try checker.renewSymbolicDestination(@enumFromInt(0), access, &state) == null);
+    try std.testing.expect(try checker.renewSymbolicAccess(access, &state) == null);
     state.tracker.end(backing);
-    try std.testing.expect(try checker.renewSymbolicDestination(@enumFromInt(0), renewed, &state) == null);
+    try std.testing.expect(try checker.renewSymbolicAccess(renewed, &state) == null);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(renewed));
 }
 
@@ -9758,4 +9759,40 @@ test "by-value input reference arrays seed only observed elements with independe
     try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &state));
     try std.testing.expect(state.tracker.dependenciesAreAlive(last));
     try std.testing.expect(!state.tracker.dependenciesAreAlive(first));
+}
+
+test "write pointer capture distinguishes symbolic slots from temporary reference values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .move_value = @enumFromInt(0) } },
+    });
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    const value: facts.ValueFacts = .{ .dependencies = &.{ .{ .root = backing }, .{ .root = generation } }, .symbolic_pointees = &.{@enumFromInt(0)} };
+    try checker.setPlace(&state, .{ .root = @enumFromInt(0) }, .initialized, value);
+    const slot = try checker.evaluateWritePointer(@enumFromInt(0), @enumFromInt(0), &state);
+    try std.testing.expect(slot.renewable);
+    try std.testing.expectEqual(@as(graph_mod.GlobalBindingId, @enumFromInt(0)), slot.slot.?.root);
+    const temporary = try checker.evaluateWritePointer(@enumFromInt(0), @enumFromInt(1), &state);
+    try std.testing.expect(!temporary.renewable);
+    try std.testing.expectEqual(null, temporary.slot);
+    try std.testing.expectEqual(value_state.Initializedness.moved, checker.initializednessAtPlace(&state, slot.slot.?));
+    try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
 }
