@@ -126,8 +126,8 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     if ((try slots.get(0)).integer != 42) return error.InvalidBenchmarkResult;
 }
 
-fn run(io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize) !void {
-    var memory: Memory = .{ .limit = limit };
+fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize) !void {
+    var memory: Memory = .{ .child = backing_allocator, .limit = limit };
     const allocator = memory.allocator();
     {
         var initial_arena = std.heap.ArenaAllocator.init(allocator);
@@ -255,5 +255,5 @@ pub fn main(init: std.process.Init) !void {
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
     std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions] [memory-limit-MiB=2048]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,checked_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes\n", .{});
-    try run(init.io, count, modules, scenario, limit);
+    try run(init.gpa, init.io, count, modules, scenario, limit);
 }

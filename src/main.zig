@@ -126,7 +126,7 @@ pub fn main(init: std.process.Init) !void {
             exitCommandError("LSP error", err);
         };
     } else if (std.mem.eql(u8, command, "repl")) {
-        repl_cmd.run(io, init.environ_map, args[2..]) catch |err| {
+        repl_cmd.run(init.gpa, io, init.environ_map, args[2..]) catch |err| {
             exitCommandError("REPL error", err);
         };
     } else if (std.mem.eql(u8, command, "run")) {

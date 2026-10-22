@@ -559,3 +559,29 @@ count. This synthetic sample identifies that remaining scaling cost; it does
 not establish its contribution to ordinary REPL workloads or justify changing
 the representation by itself. Observed verification time at 1,000 slots was
 0.86 ms for linear code and 27.52 ms for diamonds, without a timing threshold.
+
+The REPL and retained-session benchmark now use the process general-purpose
+allocator for backing storage, including small session tables, instead of
+sending each allocation directly to the page allocator. With the same
+`c42bc995` sources plus this allocator change, ReleaseSafe, Linux x86-64, and a
+2 GiB process virtual-memory limit, the 100-resource workload completed:
+
+| Backing allocator | Completed commands | Peak RSS MiB | Result |
+|---|---:|---:|---|
+| Page allocator | 95 | 1,922.6 | Out of memory |
+| Process allocator | 100 | 1,043.6 | Success |
+
+The successful run retained 908.55 MiB of requested backing, including 418.24 MiB
+of checked-graph payload, and released all tracked allocations at teardown.
+Its 100 live acquisitions held 4,000 bytes. This fixes excessive page allocation
+for small tables; it does not remove duplicated semantic snapshots. RSS includes
+allocator overhead and differs from requested-byte accounting. These are single
+bounded observations, not a general timing comparison. Both measurements used
+the exact benchmark binaries produced by `zig build benchmark-execution`;
+that run step does not update a previously installed `zig-out/bin` benchmark.
+
+The minimal 1,000-update workload still retained 436.28 MiB (267.96 MiB of
+checked-graph payload). Its peak RSS was 686.0 MiB with process allocation,
+compared with 528.3 MiB in the earlier page-allocator sample. General-purpose
+allocation therefore does not uniformly lower RSS; its benefit here is the
+resource workload's many small allocations. Snapshot retention remains unresolved.

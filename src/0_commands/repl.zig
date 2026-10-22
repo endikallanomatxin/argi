@@ -19,7 +19,7 @@ const help =
     \\
 ;
 
-pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const []const u8) !void {
+pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const std.process.Environ.Map, args: []const []const u8) !void {
     if (args.len == 1 and std.mem.eql(u8, args[0], "--help")) {
         std.debug.print("Usage: argi repl [--sysroot <path>] [execution limits]\nLimits: {s}\n{s}", .{ @import("execution_options.zig").help, help });
         return;
@@ -35,7 +35,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     }
     // The frontend owns initial source/module views for the whole session.
     // The host grants only the explicit output adapters installed below.
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(backing_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     var files = try sf.collectCoreWithOptions(&allocator, io, options);
@@ -49,7 +49,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
         return err;
     };
     var session: interactive.Interactive = undefined;
-    try session.initPrepared(std.heap.page_allocator, diagnostics.source_files, prepared, limits);
+    try session.initPrepared(backing_allocator, diagnostics.source_files, prepared, limits);
     defer session.deinit();
     try session.enableImports(io, ".");
     var input_buffer: [64 * 1024]u8 = undefined;
