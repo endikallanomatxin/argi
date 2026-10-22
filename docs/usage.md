@@ -412,6 +412,14 @@ functions and ten live acquisitions. These are requested storage counts across
 different optimization modes, not a timing comparison; a controlled ReleaseSafe
 rerun remains pending after benchmark rebuilds exceeded local process limits.
 
+Repeated acquired-reference establishment reuses an exact immutable view of the
+same region, byte offset, logical index, layout descriptor and endianness.
+Permissions remain on individual references, and release is checked before a
+view can be reused. A storage regression establishing 1,000 aliases previously
+retained 1,001 frames; it now retains one, with no additional execution cells.
+This does not intern layout descriptors across graph versions or identify
+resource cleanup obligations from byte addresses.
+
 Cleanup owners now retain shared immutable layouts instead of a concrete-path
 entry for every field and variant. LLVM and bytecode use the same preorder
 geometry; the VM follows verified layout projections without semantic-graph

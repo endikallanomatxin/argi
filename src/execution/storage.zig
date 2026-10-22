@@ -78,6 +78,9 @@ pub const Storage = struct {
     reusable_frames: std.AutoHashMapUnmanaged(FrameSize, ?v.FrameId) = .empty,
     acquisitions: acquired.Regions = .{},
     acquired_views: std.AutoHashMapUnmanaged(v.FrameId, AcquiredView) = .empty,
+    // Reuse exact immutable numeric views, never infer typed owner identity
+    // from a physical address. Permissions remain on each returned reference.
+    acquired_frames: std.AutoHashMapUnmanaged(AcquiredView, v.FrameId) = .empty,
 
     const FrameSize = struct { values: usize, flags: usize };
     const FrameBuffers = struct { values: []?b.Value, flags: []bool };
@@ -96,11 +99,16 @@ pub const Storage = struct {
     pub fn acquiredReference(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability, logical_index: ?u64) !v.Reference {
         if (layout.alignment == 0 or !std.math.isPowerOfTwo(layout.alignment)) return error.ExecutionInvalidReference;
         _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
-        // Reserve the descriptor before publishing its storage identity. Once
-        // enter succeeds, publication cannot fail or leave an orphaned frame.
+        const view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index };
+        if (self.acquired_frames.get(view)) |frame|
+            return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
+        // Reserve both indexes before publishing the frame. Metadata remains
+        // arena-owned, and every lookup checks acquisition liveness first.
         try self.acquired_views.ensureUnusedCapacity(self.allocator, 1);
+        try self.acquired_frames.ensureUnusedCapacity(self.allocator, 1);
         const frame = try self.enter(1);
-        self.acquired_views.putAssumeCapacityNoClobber(frame, .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index });
+        self.acquired_views.putAssumeCapacityNoClobber(frame, view);
+        self.acquired_frames.putAssumeCapacityNoClobber(view, frame);
         self.frames.items[@intFromEnum(frame)].duration = .acquired;
         return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
     }
@@ -1450,13 +1458,14 @@ test "acquired view publication preserves frames quota and earlier views on allo
         // Fill the table so the next publication must reserve metadata. Wrap
         // its allocator calls, rather than arena growth, to exercise every step.
         while (storage.acquired_views.count() < storage.acquired_views.capacity() * 80 / 100)
-            _ = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, null);
+            _ = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, @intCast(storage.acquired_views.count()));
         const frames = storage.frames.items.len;
         const views = storage.acquired_views.count();
         const cells = storage.cells;
+        const indexed = storage.acquired_frames.count();
         var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = fail_index });
         storage.allocator = failure.allocator();
-        if (storage.acquiredReference(handle, 0, &layout, .little, .read_only, null)) |reference| {
+        if (storage.acquiredReference(handle, 0, &layout, .little, .read_only, @intCast(views + 1))) |reference| {
             try std.testing.expect(!failure.has_induced_failure);
             try std.testing.expectEqual(@as(u64, 42), (try storage.read(reference)).integer);
             try std.testing.expectEqual(@as(u64, 42), (try storage.read(first)).integer);
@@ -1465,6 +1474,7 @@ test "acquired view publication preserves frames quota and earlier views on allo
             try std.testing.expectEqual(error.OutOfMemory, err);
             try std.testing.expectEqual(frames, storage.frames.items.len);
             try std.testing.expectEqual(views, storage.acquired_views.count());
+            try std.testing.expectEqual(indexed, storage.acquired_frames.count());
             try std.testing.expectEqual(cells, storage.cells);
             try std.testing.expectEqual(@as(u64, 42), (try storage.read(first)).integer);
         }
@@ -1670,4 +1680,34 @@ test "relocation keeps zero-sized sibling cleanup identities distinct" {
     _ = try storage.cleanupSet(source, true);
     _ = try storage.relocate(source, destination);
     try std.testing.expectEqualSlices(bool, &.{ false, false, true }, storage.frames.items[@intFromEnum(slots_.frame)].cleanup_flags);
+}
+
+test "repeated acquired references retain one exact view without widening permissions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100000);
+    const handle = try storage.acquisitions.acquire(&storage, 8, 4);
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const first = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, 0);
+    try storage.store(first, .{ .integer = 42 });
+    const frames = storage.frames.items.len;
+    const cells = storage.cells;
+    for (0..1000) |_| {
+        const alias = try storage.acquiredReference(handle, 0, &layout, .little, .read_only, 0);
+        try std.testing.expectEqual(@as(u64, 42), (try storage.read(alias)).integer);
+        try std.testing.expectError(error.ExecutionReadonlyReference, storage.store(alias, .{ .integer = 7 }));
+    }
+    try std.testing.expectEqual(frames, storage.frames.items.len);
+    try std.testing.expectEqual(cells, storage.cells);
+    const raw = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, null);
+    try std.testing.expect(raw.frame != first.frame);
+    const sibling = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, 1);
+    try std.testing.expect(sibling.frame != first.frame);
+    const swapped = try storage.acquiredReference(handle, 0, &layout, .big, .read_write, 0);
+    try std.testing.expect(swapped.frame != first.frame);
+    const other = try storage.acquiredReference(handle, 4, &layout, .little, .read_write, 1);
+    try std.testing.expect(other.frame != first.frame);
+    try storage.acquisitions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.acquiredReference(handle, 0, &layout, .little, .read_only, 0));
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(first));
 }
