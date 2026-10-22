@@ -1040,6 +1040,8 @@ pub const SafetyChecker = struct {
             defer branch.deinit();
             const wanted = variantIndex(self.graph, source.ty.?, case.variant) orelse 0;
             try self.refineChoiceStorage(&branch, sw.expression, source.ty.?, wanted, true, captured.storage);
+            if (captured.storage == null) if (captured.pointer) |pointer|
+                try self.setSymbolicVariant(&branch, pointer, wanted);
             var payload: facts.ValueFacts = .{};
             for (choice.variants) |variant| if (variant.index == wanted) {
                 payload = variant.value.*;
@@ -5318,13 +5320,22 @@ pub const SafetyChecker = struct {
             return true;
         };
         const children = self.graph.auto_deinit_fields.items[fields.start..][0..fields.len];
+        const active_variant = self.symbolicVariant(state, identity);
         for (children) |child| {
-            if (child.is_variant) return false;
+            if (child.is_variant) {
+                const active = active_variant orelse return false;
+                if (child.field_index != active) continue;
+            }
             if (child.repeat_count == 0) continue;
             // Match concrete structural cleanup: a repeated child describes
             // an arbitrary live element guarded by the runtime cleanup flags.
             // Its abstract identity must overlap observed constant indices.
-            const projection: facts.Projection = if (child.repeat_count != null) .dynamic_index else .{ .field = child.field_index };
+            const projection: facts.Projection = if (child.repeat_count != null)
+                .dynamic_index
+            else if (child.is_variant)
+                .{ .variant = child.field_index }
+            else
+                .{ .field = child.field_index };
             const projected = try self.projectSymbolicStorage(pointer, projection, state) orelse return false;
             if (!try self.evaluateSymbolicCleanupOperation(function, child.deinit_fn, child.input, child.self_field_index, child.fields, projected, state)) return false;
         }
@@ -5349,6 +5360,9 @@ pub const SafetyChecker = struct {
         const namespace = state.tracker.namespace orelse return true;
         for (namespace.projected_storage.items) |projected| {
             if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != generation) continue;
+            if (projected.projection == .variant) if (self.symbolicVariant(state, identity)) |active| {
+                if (projected.projection.variant != active) continue;
+            };
             for (state.symbolic_pointees.items) |child| {
                 if (child.identity == projected.identity and !self.symbolicStorageComplete(state, child.identity)) return false;
             }
@@ -5744,6 +5758,27 @@ pub const SafetyChecker = struct {
         if (stored == null and value_type != null and isPointer(self.graph, value_type.?))
             return (try self.projectSymbolicStorage(pointer, .dereference, state)) orelse .{};
         return self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
+    }
+
+    fn symbolicVariant(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) ?u32 {
+        _ = self;
+        for (state.symbolic_values.items) |stored| if (stored.identity == identity) return stored.value.known_choice_variant;
+        return null;
+    }
+
+    // Tag refinement does not write the payload or discard descendant facts.
+    // Branch clones own these records; joining different tags removes the proof.
+    fn setSymbolicVariant(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, variant: u32) !void {
+        if (pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return;
+        const identity = pointer.symbolic_pointees[0];
+        for (state.symbolic_values.items) |*stored| if (stored.identity == identity) {
+            stored.value.known_choice_variant = variant;
+            return;
+        };
+        const inherited = try self.symbolicValueAt(state, identity);
+        var stored: SymbolicStoredValue = inherited orelse .{ .identity = identity, .value = .{} };
+        stored.value.known_choice_variant = variant;
+        try state.symbolic_values.append(stored);
     }
 
     fn storeSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, value: facts.ValueFacts, definite: bool) !void {
@@ -10345,4 +10380,37 @@ test "choice output materialization preserves existing symbolic storage lifetime
         if (!valueDependsOnRoot(observed, dependency.root))
             try std.testing.expect(state.tracker.roots.items[@intFromEnum(dependency.root)].state == .conditional);
     }
+}
+
+test "symbolic choice tag refinement preserves children and drops incompatible branch proofs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)} };
+    const child: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(1)} };
+    try state.symbolic_values.append(.{ .identity = @enumFromInt(1), .value = .{ .known_choice_variant = 7 } });
+    try checker.setSymbolicVariant(&state, slot, 0);
+    try std.testing.expectEqual(@as(usize, 2), state.symbolic_values.items.len);
+    try std.testing.expectEqual(@as(?u32, 7), checker.symbolicVariant(&state, child.symbolic_pointees[0]));
+    var other = try state.clone(a, null);
+    defer other.deinit();
+    try checker.setSymbolicVariant(&other, slot, 1);
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &state, &other);
+    try std.testing.expectEqual(null, checker.symbolicVariant(&joined, slot.symbolic_pointees[0]));
+    try std.testing.expectEqual(@as(?u32, 7), checker.symbolicVariant(&joined, child.symbolic_pointees[0]));
+    try checker.storeSymbolicValue(&joined, slot, .{ .known_choice_variant = 2 }, true);
+    try std.testing.expectEqual(@as(?u32, 2), checker.symbolicVariant(&joined, slot.symbolic_pointees[0]));
 }

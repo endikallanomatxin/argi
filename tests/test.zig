@@ -14710,3 +14710,9 @@ test "feature_tests/execution/211_symbolic_match_captures_effectful_selector" {
     try runExpect("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector", 42);
     try vmExpect("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector", 42, null);
 }
+
+test "feature_tests/execution/212_selected_symbolic_choice_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/212_selected_symbolic_choice_cleanup");
+    try runExpect("tests/feature_tests/execution/212_selected_symbolic_choice_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/212_selected_symbolic_choice_cleanup", 42, null);
+}
