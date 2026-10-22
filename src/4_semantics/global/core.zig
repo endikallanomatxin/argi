@@ -401,7 +401,21 @@ pub const Resolver = struct {
         return switch (operation) {
             .resolve_type => |value| try self.resolveTypeHole(module_index, module, o, value),
             .resolve_aggregate_literal => |value| blk: {
-                const target = globalizer.globalType(o, value.target);
+                const target = switch (value.target) {
+                    .type => |ty| globalizer.globalType(o, ty),
+                    .pointee => |pointer| target: {
+                        const ty = self.graph.node(globalizer.globalNode(o, pointer)).ty orelse break :blk .deferred;
+                        if (self.graph.isTypeUnresolved(ty)) break :blk .deferred;
+                        const semantic = self.graph.semanticType(ty);
+                        if (semantic != .pointer) break :blk .resolved;
+                        break :target semantic.pointer.child;
+                    },
+                    .element => |array| target: {
+                        const ty = self.graph.node(globalizer.globalNode(o, array)).ty orelse break :blk .deferred;
+                        if (self.graph.isTypeUnresolved(ty)) break :blk .deferred;
+                        break :target types.arrayElement(self.graph, ty) orelse break :blk .resolved;
+                    },
+                };
                 if (self.graph.isTypeUnresolved(target)) break :blk .deferred;
                 const id = globalizer.globalNode(o, value.node);
                 const context = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);

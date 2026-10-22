@@ -181,7 +181,7 @@ pub const PendingOperation = union(enum) {
     },
     resolve_aggregate_literal: struct {
         node: ModuleNodeId,
-        target: ModuleTypeId,
+        target: union(enum) { type: ModuleTypeId, pointee: ModuleNodeId, element: ModuleNodeId },
         visible_bindings: BindingRange,
         owner_function: ?ModuleFunctionId = null,
     },

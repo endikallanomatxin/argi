@@ -208,7 +208,10 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
         },
         .resolve_aggregate_literal => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
-            try require(verify.idFits(value.target, views.typeCount(graph)));
+            switch (value.target) {
+                .type => |ty| try require(verify.idFits(ty, views.typeCount(graph))),
+                .pointee, .element => |node| try require(verify.idFits(node, semantic.nodes.items.len)),
+            }
             try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
             try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
         },

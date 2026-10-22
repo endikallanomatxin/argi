@@ -14899,3 +14899,9 @@ test "feature_tests/execution/244X_array_incomplete_record" {
     try buildExpectFail("tests/feature_tests/execution/244X_array_incomplete_record", "record initializer is missing required field 'right'");
     try vmExpect("tests/feature_tests/execution/244X_array_incomplete_record", 1, "record initializer is missing required field 'right'");
 }
+
+test "feature_tests/execution/245_indirect_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/245_indirect_record_defaults");
+    try runExpect("tests/feature_tests/execution/245_indirect_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/245_indirect_record_defaults", 42, null);
+}

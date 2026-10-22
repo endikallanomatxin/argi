@@ -1058,6 +1058,18 @@ const Context = struct {
     fn trackAggregateLiteral(self: *Context, node: entities.ModuleNodeId, expected: ?entities.ModuleTypeId) !void {
         if (expected) |target| _ = try self.writer.addPendingOperation(.{ .resolve_aggregate_literal = .{
             .node = node,
+            .target = .{ .type = target },
+            .visible_bindings = try self.captureVisibleBindings(),
+            .owner_function = self.current_function,
+        } });
+    }
+
+    fn trackAggregateDestination(self: *Context, node: entities.ModuleNodeId, target: @FieldType(@FieldType(entities.PendingOperation, "resolve_aggregate_literal"), "target")) !void {
+        const content = self.graph.semantic.nodes.items[@intFromEnum(node)];
+        if (content != .resolved) return;
+        if (content.resolved.content != .struct_value_literal and content.resolved.content != .list_literal) return;
+        _ = try self.writer.addPendingOperation(.{ .resolve_aggregate_literal = .{
+            .node = node,
             .target = target,
             .visible_bindings = try self.captureVisibleBindings(),
             .owner_function = self.current_function,
@@ -1204,6 +1216,7 @@ const Context = struct {
         const collection = try self.lowerNode(target.value, null);
         const index = try self.lowerNode(target.index, null);
         const value = try self.lowerNode(assignment.value, expected);
+        if (expected == null) try self.trackAggregateDestination(value.node, .{ .element = collection.node });
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),
             .value = collection.node,
@@ -1621,6 +1634,7 @@ const Context = struct {
         }
         const child_ty = if (pointer.ty) |pointer_ty| try self.pointerChild(pointer_ty) else null;
         const value = try self.lowerNode(assignment.value, child_ty orelse expected);
+        if (child_ty == null and expected == null) try self.trackAggregateDestination(value.node, .{ .pointee = pointer.node });
         const ty: ?entities.ModuleTypeId = expected orelse value.ty;
         return self.resolved(node, ty, .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } });
     }
