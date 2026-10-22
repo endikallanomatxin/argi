@@ -14467,3 +14467,26 @@ test "feature_tests/execution/167_partial_owning_array_cleanup" {
     try runExpect("tests/feature_tests/execution/167_partial_owning_array_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/167_partial_owning_array_cleanup", 42, null);
 }
+
+test "feature_tests/execution/168_acquired_logical_slot" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/168_acquired_logical_slot");
+    try runExpect("tests/feature_tests/execution/168_acquired_logical_slot", 42);
+    try vmExpect("tests/feature_tests/execution/168_acquired_logical_slot", 42, null);
+}
+
+test "feature_tests/execution/169X_acquired_slot_index_mismatch" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/169X_acquired_slot_index_mismatch");
+    try runExpectFailure("tests/feature_tests/execution/169X_acquired_slot_index_mismatch");
+    const result = try runArgiCommand(&.{ "run", "--vm", "tests/feature_tests/execution/169X_acquired_slot_index_mismatch" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectDiagnostic("tests/feature_tests/execution/169X_acquired_slot_index_mismatch", result.stderr, "ExecutionAborted");
+    try expectDiagnostic("tests/feature_tests/execution/169X_acquired_slot_index_mismatch", result.stderr, "allocation_slots.rg:");
+}
+
+test "feature_tests/execution/170_nullable_generic_input" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/170_nullable_generic_input");
+    try runExpect("tests/feature_tests/execution/170_nullable_generic_input", 42);
+    try vmExpect("tests/feature_tests/execution/170_nullable_generic_input", 42, null);
+}

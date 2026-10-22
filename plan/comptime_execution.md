@@ -7,11 +7,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 ## Memory and lifecycle
 
 - Complete acquired aggregate/resource storage and partial choice initialization.
-  Acquired references currently preserve a byte range, not a logical slot.
-  `MaybeUninit` reduces its index to `base + index * size`; zero-sized siblings
-  therefore become indistinguishable before bytecode lowering. Preserve a
-  checked slot receipt through allocation selection and reference establishment
-  before attaching cleanup evidence. Do not key owner identity by byte address
+  `MaybeUninit` now preserves its index alongside the byte address. Core checks
+  their correspondence, and verified bytecode retains the selected index in
+  acquired views. Connect this receipt to shared cleanup identity and native
+  companion evidence before supporting resources. Do not key owner identity by byte address
   or create a fresh cleanup owner for each repeated reference conversion.
   Choice cleanup now separates discriminant presence from whole-value readiness:
   partial payload consumption skips nominal destruction and cleans live siblings.

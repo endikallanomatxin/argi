@@ -193,6 +193,7 @@ const CleanupEntry = struct { place: b.Place, end: u32 };
 const FunctionLower = struct {
     parent: *Lower,
     safety_primitive: p.SafetyPrimitive = .none,
+    allocation_index: ?b.Slot = null,
     slots: std.ArrayList(b.Type) = .empty,
     code: std.ArrayList(b.Instruction) = .empty,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, b.Slot) = .empty,
@@ -256,6 +257,10 @@ const FunctionLower = struct {
         for (inputs, self.parent.graph.binding_refs.items[f.input_bindings.start..][0..f.input_bindings.len]) |*slot, binding| {
             slot.* = try self.bindingSlot(binding);
             if (self.drops.get(binding)) |drop| try self.setDrop(drop, true);
+        }
+        if (f.safety_primitive == .establish_allocation_slot) {
+            if (inputs.len != 4) return error.InvalidBytecode;
+            self.allocation_index = inputs[3];
         }
         const outputs = try a.alloc(b.Slot, f.output_bindings.len);
         self.outputs = outputs;
@@ -1251,7 +1256,15 @@ const FunctionLower = struct {
                     return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
                 if (self.parent.cleanup_types[@intFromEnum(target.pointer.child)]) return self.parent.reject(node.source, "acquired reference requiring cleanup evidence");
                 const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child) catch return self.parent.reject(node.source, "acquired reference to nonnumeric storage");
-                _ = try self.emit(node.source, .{ .acquired_reference = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() } });
+                var instruction: @FieldType(@FieldType(b.Instruction, "op"), "acquired_reference") = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() };
+                if (self.allocation_index) |index| {
+                    const variants = types.variants(self.parent.graph, self.slots.items[index]) orelse return error.InvalidBytecode;
+                    for (self.parent.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, ordinal| {
+                        if (variant.payload_type != null) instruction.logical_index = .{ .value = index, .some_ordinal = @intCast(ordinal) };
+                    }
+                    if (instruction.logical_index == null) return error.InvalidBytecode;
+                }
+                _ = try self.emit(node.source, .{ .acquired_reference = instruction });
             },
             .address_of => |value| {
                 const target = try self.place(value);

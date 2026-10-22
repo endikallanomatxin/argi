@@ -89,8 +89,12 @@ _ring_buffer_occupied_pointer#(.t: Type)(.self: &RingBuffer#(.t: t), .index: UIn
     if index >= self&._length { abort }
     physical ::= _ring_buffer_physical_index(self, .index = index).physical
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = physical)
+    slot_index: ?UIntNative = ..some(.value = slot._index)
     pointer = trusted_establish_allocation_slot#(.t: t)(
-        .allocation = &self&._allocation, .slot = slot._raw, .anchor = self&._allocation.anchor
+        .allocation = &self&._allocation
+        .slot       = slot._raw
+        .anchor     = self&._allocation.anchor
+        .index      = slot_index
     ).reference
 }
 

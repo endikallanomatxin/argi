@@ -179,6 +179,23 @@ pub fn materializeNullable(
     } });
 }
 
+/// Recover nullable's element before or after choice materialization. The
+/// sugar has structural identity, including its variant and payload names.
+pub fn nullableChild(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalTypeId {
+    if (graph.types.items[@intFromEnum(ty)] == .nullable) return graph.types.items[@intFromEnum(ty)].nullable;
+    const choices = variants(graph, ty) orelse return null;
+    if (choices.len != 2) return null;
+    const none = findVariant(graph, ty, "none") orelse return null;
+    if (none.variant.payload_type != null) return null;
+    const some = findVariant(graph, ty, "some") orelse return null;
+    const payload = some.variant.payload_type orelse return null;
+    const members = fields(graph, payload) orelse return null;
+    if (members.len != 1) return null;
+    const field = graph.fields.items[members.start];
+    if (!std.mem.eql(u8, graph.text(field.name), "value")) return null;
+    return field.ty;
+}
+
 /// Destructors receive an address of the owned value. A reference itself is
 /// never the value whose lifetime that destructor closes.
 pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {

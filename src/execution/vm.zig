@@ -429,7 +429,11 @@ pub const Vm = struct {
                     const address = std.math.cast(usize, (try slots.get(x.address)).integer) orelse return error.ExecutionInvalidAcquisition;
                     const storage = &self.context().storage;
                     const range = try storage.acquisitions.resolveAddress(storage, address, x.layout.size, x.layout.alignment);
-                    const reference = try storage.acquiredReference(range.handle, range.offset, x.layout, x.endian, x.permission);
+                    const logical_index: ?u64 = if (x.logical_index) |selection| blk: {
+                        const value = (try slots.get(selection.value)).choice;
+                        break :blk if (value.variant == selection.some_ordinal) value.payload.?.record[0].integer else null;
+                    } else null;
+                    const reference = try storage.acquiredReference(range.handle, range.offset, x.layout, x.endian, x.permission, logical_index);
                     try slots.put(x.dst, .{ .reference = reference });
                 },
                 .erase_reference => |x| {

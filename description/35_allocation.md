@@ -134,6 +134,12 @@ and lifetime validity, not exclusive ownership or permission to initialize.
 Consuming one handle does not revoke the others. Making the handle move-only
 would therefore not, by itself, establish exclusive slot authority.
 
+The handle retains its logical index separately from its byte address. Distinct
+zero-sized elements can share an address while naming different positions.
+Trusted establishment from a handle carries that index and checks that it
+corresponds to the address. This position adds no occupancy or cleanup authority;
+raw establishment without an index cannot recover it from an address.
+
 The storage owner controls occupancy through private state. Ordinary operations
 request a transition from that owner; they cannot assert occupancy by supplying
 a slot address or a boolean. The owner validates the selected range and the

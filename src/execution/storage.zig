@@ -85,6 +85,7 @@ pub const Storage = struct {
     const AcquiredView = struct {
         handle: acquired.Handle,
         offset: usize,
+        logical_index: ?u64 = null,
         layout: *const numeric.Layout,
         endian: std.builtin.Endian,
     };
@@ -92,14 +93,14 @@ pub const Storage = struct {
     /// Execution-side establishment only. Checked bytecode must separately
     /// provide the language authorization; a handle or integer is not that proof.
     /// Layout metadata must outlive this storage, like other compiled layouts.
-    pub fn acquiredReference(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability) !v.Reference {
+    pub fn acquiredReference(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability, logical_index: ?u64) !v.Reference {
         if (layout.alignment == 0 or !std.math.isPowerOfTwo(layout.alignment)) return error.ExecutionInvalidReference;
         _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
         // Reserve the descriptor before publishing its storage identity. Once
         // enter succeeds, publication cannot fail or leave an orphaned frame.
         try self.acquired_views.ensureUnusedCapacity(self.allocator, 1);
         const frame = try self.enter(1);
-        self.acquired_views.putAssumeCapacityNoClobber(frame, .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian });
+        self.acquired_views.putAssumeCapacityNoClobber(frame, .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index });
         self.frames.items[@intFromEnum(frame)].duration = .acquired;
         return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
     }
@@ -1202,7 +1203,7 @@ test "acquired scalar frames use ordinary references and reject release or permi
     var storage = try Storage.init(arena.allocator(), 100);
     const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
     const region = try storage.acquisitions.acquire(&storage, 8, 8);
-    const reference = try storage.acquiredReference(region, 4, &layout, .little, .read_write);
+    const reference = try storage.acquiredReference(region, 4, &layout, .little, .read_write, null);
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(reference));
     // Addressing vacant storage is valid; borrowing a readable value is not.
     _ = try storage.address(reference, .read_write);
@@ -1225,7 +1226,7 @@ test "acquired scalar frames use ordinary references and reject release or permi
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(byte_reference));
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.store(reference, .{ .integer = 7 }));
     const replacement = try storage.acquisitions.acquire(&storage, 8, 8);
-    _ = try storage.acquiredReference(replacement, 4, &layout, .little, .read_write);
+    _ = try storage.acquiredReference(replacement, 4, &layout, .little, .read_write, null);
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(reference));
 }
 
@@ -1237,7 +1238,7 @@ test "acquired aggregates preserve partial initialization and validate writes be
     const word: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
     const layout: numeric.Layout = .{ .size = 8, .alignment = 4, .shape = .{ .fields = &.{ .{ .offset = 0, .layout = &byte }, .{ .offset = 4, .layout = &word } } } };
     const region = try storage.acquisitions.acquire(&storage, 8, 4);
-    const root = try storage.acquiredReference(region, 0, &layout, .little, .read_write);
+    const root = try storage.acquiredReference(region, 0, &layout, .little, .read_write, null);
     var first = root;
     first.path = &.{.{ .field = 0 }};
     var second = root;
@@ -1271,7 +1272,7 @@ test "acquired array indices resolve from layout before elements are initialized
     const element: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
     const layout: numeric.Layout = .{ .size = 8, .alignment = 4, .shape = .{ .array = .{ .element = &element, .length = 2, .stride = 4 } } };
     const region = try storage.acquisitions.acquire(&storage, 8, 4);
-    const reference = try storage.acquiredReference(region, 0, &layout, .little, .read_write);
+    const reference = try storage.acquiredReference(region, 0, &layout, .little, .read_write, null);
     const frame = try storage.enter(2);
     const slots_ = try storage.slots(frame);
     try slots_.put(0, .{ .reference = reference });
@@ -1295,7 +1296,7 @@ test "acquired floating records preserve precision and validate writes before mu
     const layout: numeric.Layout = .{ .size = 16, .alignment = 8, .shape = .{ .fields = &.{ .{ .offset = 0, .layout = &single }, .{ .offset = 8, .layout = &double } } } };
     for ([_]std.builtin.Endian{ .little, .big }) |endian| {
         const region = try storage.acquisitions.acquire(&storage, 16, 8);
-        const root = try storage.acquiredReference(region, 0, &layout, endian, .read_write);
+        const root = try storage.acquiredReference(region, 0, &layout, endian, .read_write, null);
         var first = root;
         first.path = &.{.{ .field = 0 }};
         var second = root;
@@ -1427,18 +1428,18 @@ test "acquired view publication preserves frames quota and earlier views on allo
         defer arena.deinit();
         var storage = try Storage.init(arena.allocator(), 10000);
         const handle = try storage.acquisitions.acquire(&storage, 8, 4);
-        const first = try storage.acquiredReference(handle, 0, &layout, .little, .read_write);
+        const first = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, null);
         try storage.store(first, .{ .integer = 42 });
         // Fill the table so the next publication must reserve metadata. Wrap
         // its allocator calls, rather than arena growth, to exercise every step.
         while (storage.acquired_views.count() < storage.acquired_views.capacity() * 80 / 100)
-            _ = try storage.acquiredReference(handle, 0, &layout, .little, .read_write);
+            _ = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, null);
         const frames = storage.frames.items.len;
         const views = storage.acquired_views.count();
         const cells = storage.cells;
         var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = fail_index });
         storage.allocator = failure.allocator();
-        if (storage.acquiredReference(handle, 0, &layout, .little, .read_only)) |reference| {
+        if (storage.acquiredReference(handle, 0, &layout, .little, .read_only, null)) |reference| {
             try std.testing.expect(!failure.has_induced_failure);
             try std.testing.expectEqual(@as(u64, 42), (try storage.read(reference)).integer);
             try std.testing.expectEqual(@as(u64, 42), (try storage.read(first)).integer);
@@ -1594,4 +1595,18 @@ test "optional write evidence activates represented cleanup without inventing ow
     try std.testing.expect(try storage.cleanupTest(owner));
     ordinary.mutability = .read_only;
     try std.testing.expectError(error.ExecutionReadonlyReference, storage.captureWriteEvidence(ordinary, true, false));
+}
+
+test "zero-sized acquired slots retain logical indices without granting cleanup" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 0, 1);
+    const layout: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{} } };
+    const first = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, 0);
+    const second = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, 1);
+    try std.testing.expectEqual(@as(?u64, 0), storage.acquired_views.get(first.frame).?.logical_index);
+    try std.testing.expectEqual(@as(?u64, 1), storage.acquired_views.get(second.frame).?.logical_index);
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(first));
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(second));
 }

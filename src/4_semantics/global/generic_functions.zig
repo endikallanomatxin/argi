@@ -1557,10 +1557,7 @@ pub const Resolver = struct {
             },
             .resolved => |resolved| switch (resolved) {
                 .nullable => |child| {
-                    const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
-                        .nullable => |value| value,
-                        else => return false,
-                    };
+                    const value = global_types.nullableChild(self.graph, actual) orelse return false;
                     return self.inferInputType(module_index, child, value, bindings);
                 },
                 .inferred_errable => |child| {
@@ -3131,17 +3128,8 @@ pub const Resolver = struct {
                 .nullable => |value| value,
                 else => return false,
             };
-            const variants = global_types.variants(self.resolver.graph, actual) orelse return false;
-            if (variants.len != 2) return false;
-            const none = global_types.findVariant(self.resolver.graph, actual, "none") orelse return false;
-            if (none.variant.payload_type != null) return false;
-            const some = global_types.findVariant(self.resolver.graph, actual, "some") orelse return false;
-            const payload = some.variant.payload_type orelse return false;
-            const fields = global_types.fields(self.resolver.graph, payload) orelse return false;
-            if (fields.len != 1) return false;
-            const field = self.resolver.graph.fields.items[fields.start];
-            return std.mem.eql(u8, self.resolver.graph.text(field.name), "value") and
-                global_types.equal(self.resolver.graph, field.ty, child);
+            const actual_child = global_types.nullableChild(self.resolver.graph, actual) orelse return false;
+            return global_types.equal(self.resolver.graph, actual_child, child);
         }
 
         fn resolveMatch(self: *InstanceContext, value: ir.PendingExpression, expression: global_sg.GlobalNodeId) !global_sg.Node {

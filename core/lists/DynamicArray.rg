@@ -142,9 +142,11 @@ _trusted_dynamic_array_element_reference#(.t: Type)(
 ) -> (.pointer: &t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
+    slot_index: ?UIntNative = ..some(.value = slot._index)
     mutable ::= trusted_establish_allocation_slot#(.t: t)(
         .allocation = &array&._allocation
         .slot       = slot._raw
+        .index      = slot_index
         .anchor     = array&._allocation.anchor
     ).reference
     pointer = read_reference#(.t: t)(.base = mutable).reference
@@ -155,9 +157,11 @@ _trusted_dynamic_array_element_mutable_reference#(.t: Type)(
 ) -> (.pointer: $&t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
+    slot_index: ?UIntNative = ..some(.value = slot._index)
     pointer = trusted_establish_allocation_slot#(.t: t)(
         .allocation = &array&._allocation
         .slot       = slot._raw
+        .index      = slot_index
         .anchor     = array&._allocation.anchor
     ).reference
 }

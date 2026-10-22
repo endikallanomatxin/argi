@@ -115,6 +115,20 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     var arena = std.heap.ArenaAllocator.init(allocator);
                     defer arena.deinit();
                     if (x.permission != target.pointer.mutability or x.endian != program.graph.target.stdTarget().cpu.arch.endian()) return error.InvalidBytecode;
+                    if (x.logical_index) |selection| {
+                        if (primitive != .establish_allocation_slot or f.inputs.len != 4 or selection.value != f.inputs[3]) return error.InvalidBytecode;
+                        if (selection.value >= f.slots.len) return error.InvalidBytecode;
+                        const variants = types.variants(program.graph, f.slots[selection.value]) orelse return error.InvalidBytecode;
+                        if (variants.len != 2 or selection.some_ordinal >= variants.len) return error.InvalidBytecode;
+                        for (program.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, ordinal| {
+                            if (ordinal != selection.some_ordinal) {
+                                if (variant.payload_type != null) return error.InvalidBytecode;
+                                continue;
+                            }
+                            const fields = types.fields(program.graph, variant.payload_type orelse return error.InvalidBytecode) orelse return error.InvalidBytecode;
+                            if (fields.len != 1 or !types.isBuiltin(program.graph, program.graph.fields.items[fields.start].ty, .UIntNative)) return error.InvalidBytecode;
+                        }
+                    } else if (primitive == .establish_allocation_slot) return error.InvalidBytecode;
                     if (owning_types[@intFromEnum(target.pointer.child)]) return error.InvalidBytecode;
                     const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, target.pointer.child) catch return error.InvalidBytecode;
                     if (!@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;
@@ -509,7 +523,10 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
             try out.appendSlice(a, x.args);
         },
         .numeric_bytes => |x| try out.append(a, x.src),
-        .acquired_reference => |x| try out.append(a, x.address),
+        .acquired_reference => |x| {
+            try out.append(a, x.address);
+            if (x.logical_index) |selection| try out.append(a, selection.value);
+        },
         .erase_reference => |x| try out.append(a, x.src),
         .offset_reference => |x| try out.appendSlice(a, &.{ x.src, x.elements }),
         .session_initialize => |x| try out.append(a, x.value),
