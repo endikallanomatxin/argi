@@ -18,8 +18,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.
-  Finish contextual normalization for late-resolved indexed/indirect writes and
-  records inside array literals, preserving default temporaries and effects.
+  Finish contextual normalization for late-resolved indexed/indirect writes.
+  Record defaults inside array literals share ordinary lexical temporary storage.
 - Complete evaluated identities for dynamic indices. Constant-index proofs and
   abstract repeated-element cleanup do not establish dynamic-index identity or
   disjointness. Keep symbolic storage sparse rather than expanding array lengths.

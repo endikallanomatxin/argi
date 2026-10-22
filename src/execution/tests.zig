@@ -3140,3 +3140,16 @@ test "interactive record defaults retain borrowed temporary storage across comma
     try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("next.data&[0]")).?.value.runtime.integer);
     try session.close();
 }
+
+test "interactive array record defaults retain separate backing between commands" {
+    const Interactive = @import("interactive.zig").Interactive;
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("make_array() -> (.result: [2]Int32) := { result = (20, 22) }");
+    try session.submitStatements("values :: [2](.data: $&[2]Int32 = $&make_array()) = ((), ())");
+    try session.submitStatements("values[0].data&[0] = 7");
+    try std.testing.expectEqual(@as(u64, 20), (try session.submitInput("values[1].data&[0]")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("values[0].data&[0]")).?.value.runtime.integer);
+    try session.close();
+}

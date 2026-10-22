@@ -206,7 +206,7 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.value, semantic.nodes.items.len));
             try require(verify.idFits(value.destination, views.typeCount(graph)));
         },
-        .resolve_record_literal => |value| {
+        .resolve_aggregate_literal => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.target, views.typeCount(graph)));
             try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));

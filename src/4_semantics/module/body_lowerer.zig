@@ -1028,7 +1028,7 @@ const Context = struct {
         const result = try self.resolved(node, null, .{ .list_literal = .{
             .elements = try self.writer.appendNodeRefs(nodes.items),
         } });
-        if (list.elements.len == 0) try self.trackRecordLiteral(result.node, expected);
+        try self.trackAggregateLiteral(result.node, expected);
         return result;
     }
 
@@ -1051,12 +1051,12 @@ const Context = struct {
             .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
             .dispatch_prefix_positional_count = literal.positional_prefix_count,
         } });
-        try self.trackRecordLiteral(result.node, expected);
+        try self.trackAggregateLiteral(result.node, expected);
         return result;
     }
 
-    fn trackRecordLiteral(self: *Context, node: entities.ModuleNodeId, expected: ?entities.ModuleTypeId) !void {
-        if (expected) |target| _ = try self.writer.addPendingOperation(.{ .resolve_record_literal = .{
+    fn trackAggregateLiteral(self: *Context, node: entities.ModuleNodeId, expected: ?entities.ModuleTypeId) !void {
+        if (expected) |target| _ = try self.writer.addPendingOperation(.{ .resolve_aggregate_literal = .{
             .node = node,
             .target = target,
             .visible_bindings = try self.captureVisibleBindings(),

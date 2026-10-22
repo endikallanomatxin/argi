@@ -400,10 +400,18 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_type => |value| try self.resolveTypeHole(module_index, module, o, value),
-            .resolve_record_literal => |value| blk: {
+            .resolve_aggregate_literal => |value| blk: {
                 const target = globalizer.globalType(o, value.target);
                 if (self.graph.isTypeUnresolved(target)) break :blk .deferred;
                 const id = globalizer.globalNode(o, value.node);
+                const context = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+                if (types.arrayElement(self.graph, target) != null) {
+                    const completed = self.completeAggregateValue(target, id, context, 0) catch |err| switch (err) {
+                        error.DeferredContractInitializer, error.DeferredGenericFunction, error.ComptimeExecutionPending => break :blk .deferred,
+                        else => return err,
+                    };
+                    break :blk resolution.Result.fromBool(completed);
+                }
                 if (types.fields(self.graph, target) == null) {
                     if (types.isBuiltin(self.graph, target, .Void) or types.arrayLength(self.graph, target) == 0) {
                         _ = self.coerceContextualValue(id, target);
@@ -412,12 +420,14 @@ pub const Resolver = struct {
                     break :blk .deferred;
                 }
                 if (self.graph.node(id).content == .list_literal) {
+                    // Nonempty lists retain tuple/list diagnostics; only empty
+                    // parentheses can supply an omitted record field set.
+                    if (self.graph.node(id).content.list_literal.elements.len != 0) break :blk .resolved;
                     self.graph.nodes.items[@intFromEnum(id)].content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } };
                 }
                 self.graph.nodes.items[@intFromEnum(id)].ty = target;
                 // Leave required-field diagnostics to the shared publication check.
                 if (!@import("record_literals.zig").hasRequiredFields(self.graph, id, target)) break :blk .resolved;
-                const context = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
                 const completed = self.completeRecordValue(target, id, context) catch |err| switch (err) {
                     error.DeferredContractInitializer, error.DeferredGenericFunction, error.ComptimeExecutionPending => break :blk .deferred,
                     else => return err,
@@ -1497,6 +1507,39 @@ pub const Resolver = struct {
     fn instantiateArgumentDefault(self: *Resolver, fallback: global_sg.GlobalNodeId, context: reach_context.Context) !global_sg.GlobalNodeId {
         const defaults = self.argument_defaults orelse return error.DeferredGenericFunction;
         return defaults.instantiate(defaults.context, self.graph.node(fallback).content.argument_default, context);
+    }
+
+    fn completeAggregateValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context, depth: usize) anyerror!bool {
+        if (depth > 64) return false;
+        if (types.arrayElement(self.graph, target)) |element| {
+            const content = self.graph.node(node).content;
+            const elements = switch (content) {
+                .list_literal => |literal| literal.elements,
+                .array_literal => |literal| literal.elements,
+                else => return true,
+            };
+            if (elements.len != types.arrayLength(self.graph, target).?) return true;
+            // Default instantiation can grow the node-reference pool.
+            for (0..elements.len) |index| {
+                const child = self.graph.node_refs.items[elements.start + index];
+                if (!try self.completeAggregateValue(element, child, context, depth + 1)) return false;
+            }
+            self.graph.nodes.items[@intFromEnum(node)].content = .{ .array_literal = .{ .elements = elements, .element_type = element, .length = elements.len } };
+            self.graph.nodes.items[@intFromEnum(node)].ty = target;
+            return true;
+        }
+        const content = self.graph.node(node).content;
+        if (content == .list_literal and content.list_literal.elements.len == 0 and types.fields(self.graph, target) != null)
+            self.graph.nodes.items[@intFromEnum(node)].content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } };
+        if (self.graph.node(node).content == .struct_value_literal) {
+            if (!@import("record_literals.zig").hasRequiredFields(self.graph, node, target)) {
+                self.graph.nodes.items[@intFromEnum(node)].ty = target;
+                return true;
+            }
+            return self.completeRecordValue(target, node, context);
+        }
+        _ = self.coerceContextualValue(node, target);
+        return true;
     }
 
     pub fn completeRecordValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context) anyerror!bool {

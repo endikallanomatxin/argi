@@ -14882,3 +14882,20 @@ test "feature_tests/execution/241_integer_conversions" {
     try runExpect("tests/feature_tests/execution/241_integer_conversions", 42);
     try vmExpect("tests/feature_tests/execution/241_integer_conversions", 42, null);
 }
+
+test "feature_tests/execution/242_array_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/242_array_record_defaults");
+    try runExpect("tests/feature_tests/execution/242_array_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/242_array_record_defaults", 42, null);
+}
+
+test "feature_tests/execution/243_array_default_temporary_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/243_array_default_temporary_storage");
+    try runExpect("tests/feature_tests/execution/243_array_default_temporary_storage", 42);
+    try vmExpect("tests/feature_tests/execution/243_array_default_temporary_storage", 42, null);
+}
+
+test "feature_tests/execution/244X_array_incomplete_record" {
+    try buildExpectFail("tests/feature_tests/execution/244X_array_incomplete_record", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/244X_array_incomplete_record", 1, "record initializer is missing required field 'right'");
+}
