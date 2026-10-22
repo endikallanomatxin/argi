@@ -34,7 +34,11 @@ pub const Quoted = struct {
 pub fn quoted(source: []const u8, start: usize) Quoted {
     const quote = source[start];
     std.debug.assert(quote == '\'' or quote == '"');
-    var offset = start + 1;
+    return quotedTail(source, start + 1, quote);
+}
+
+fn quotedTail(source: []const u8, start: usize, quote: u8) Quoted {
+    var offset = start;
     var invalid: ?usize = null;
     while (offset < source.len) {
         const byte = source[offset];
@@ -57,4 +61,78 @@ test "quoted boundaries retain invalid escapes without accepting them" {
     try std.testing.expectEqual(@as(?u21, '\''), escape('\'', '\''));
     try std.testing.expectEqual(null, escape('"', '\''));
     try std.testing.expect(!quoted("\"trailing\\", 0).closed);
+}
+
+/// Incremental delimiter completion for line-oriented interactive input. This
+/// recognizes boundaries only; tokenization remains responsible for diagnostics.
+pub const Completion = struct {
+    stack: [256]u8 = undefined,
+    depth: usize = 0,
+    quote: ?u8 = null,
+    invalid: bool = false,
+
+    pub fn feedLine(self: *Completion, line: []const u8) void {
+        var offset: usize = 0;
+        while (offset < line.len) : (offset += 1) {
+            const byte = line[offset];
+            if (self.quote) |quote| {
+                const tail = quotedTail(line, offset, quote);
+                if (!tail.closed) return;
+                self.quote = null;
+                offset = tail.end - 1;
+                continue;
+            }
+            if (byte == '-' and offset + 1 < line.len and line[offset + 1] == '-') return;
+            if (byte == '\'' or byte == '"') {
+                self.quote = byte;
+                continue;
+            }
+            switch (byte) {
+                '(', '[', '{' => {
+                    if (self.depth == self.stack.len) {
+                        self.invalid = true;
+                        return;
+                    }
+                    self.stack[self.depth] = byte;
+                    self.depth += 1;
+                },
+                ')', ']', '}' => {
+                    const expected: u8 = switch (byte) {
+                        ')' => '(',
+                        ']' => '[',
+                        else => '{',
+                    };
+                    if (self.depth == 0 or self.stack[self.depth - 1] != expected) {
+                        self.invalid = true;
+                        return;
+                    }
+                    self.depth -= 1;
+                },
+                else => {},
+            }
+        }
+    }
+
+    pub fn complete(self: *const Completion) bool {
+        return self.invalid or (self.depth == 0 and self.quote == null);
+    }
+};
+
+test "interactive completion tracks delimiters without counting quoted or commented braces" {
+    var state: Completion = .{};
+    state.feedLine("answer := () -> () { -- } ignored");
+    try std.testing.expect(!state.complete());
+    state.feedLine("text ::= \"}\" -- { ignored");
+    try std.testing.expect(!state.complete());
+    state.feedLine("}");
+    try std.testing.expect(state.complete());
+    state = .{};
+    state.feedLine("text ::= \"unfinished { ");
+    try std.testing.expect(!state.complete());
+    state.feedLine("continued }\"");
+    try std.testing.expect(state.complete());
+    state = .{};
+    state.feedLine("([)");
+    try std.testing.expect(state.complete());
+    try std.testing.expect(state.invalid);
 }

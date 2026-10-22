@@ -283,8 +283,11 @@ _1 = 7
 _2 = 49
 ```
 
-Each line is one submission. Use `:begin` and `:end` around multiline definitions
-or statement blocks. Submit definitions separately from executable statements.
+Open parentheses, brackets, braces and quoted literals continue a submission
+on the following line. Terminal prompts change to `...` until the input closes;
+comments and quoted delimiters do not change the nesting. Use `:begin` and `:end`
+for an explicit batch, including multiple complete statements. Submit definitions
+separately from executable statements.
 Functions, types and contracts remain available to subsequent submissions;
 redefining accepted names is rejected. Functions use their defining module scope;
 session locals enter through parameters or ordinary capability inputs, without
@@ -618,3 +621,10 @@ and selected choice payloads through those descriptors rather than traversing
 the semantic graph. External references and virtual handles remain rejected.
 Descriptors share repeated types and array element shapes, belong to the VM,
 and are released on its destruction; they are not persisted in session values.
+
+After preparing external-input descriptors, the 100-resource measurement still
+retained 706.91 MiB (peak 724.44 MiB), with unchanged code/resource counts and
+complete teardown. Verification/preparation took 512.3 ms versus 515.4 ms in
+the preceding sample; total command time was 4,326.6 versus 4,371.8 ms. These
+single observations show no material retained-memory change and do not establish
+a speedup. Input-free entries require no descriptor allocations.

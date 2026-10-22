@@ -9,7 +9,7 @@ const value = @import("../5_codegen/bytecode/value.zig");
 const prelude = @embedFile("repl_prelude.rg");
 
 const help =
-    \\Enter definitions, statements or expressions. Each line is one submission.
+    \\Enter definitions, statements or expressions. Open delimiters continue on the next line.
     \\Expression results remain available as _0, _1, ... until reset or exit.
     \\Up / Down      Recall previous input lines (terminal only)
     \\:begin / :end  Submit a multiline definition or statement block
@@ -87,6 +87,8 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
     var editor: repl_input.Editor = .{ .allocator = session.allocator };
     defer editor.deinit();
     var multiline = false;
+    var automatic = false;
+    var completion: @import("../1_base/lexical.zig").Completion = .{};
     if (terminal) {
         try output.writeAll("Argi experimental REPL. :help for commands.\n");
         try showPrelude(session, output);
@@ -107,6 +109,15 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
                 if (block.items.len + line.len > 1024 * 1024) return error.SubmissionTooLarge;
                 try block.appendSlice(session.allocator, line);
                 try block.append(session.allocator, '\n');
+                if (automatic) {
+                    completion.feedLine(line);
+                    if (completion.complete()) {
+                        multiline = false;
+                        automatic = false;
+                        evaluate(session, output, block.items) catch |err| try report(session, output, err);
+                        block.clearRetainingCapacity();
+                    }
+                }
             }
             continue;
         }
@@ -117,6 +128,7 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
             try output.writeAll(help);
         } else if (std.mem.eql(u8, text, ":begin")) {
             multiline = true;
+            automatic = false;
         } else if (std.mem.eql(u8, text, ":reset")) {
             session.reset() catch |err| {
                 try report(session, output, err);
@@ -126,7 +138,14 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
         } else if (text[0] == ':') {
             try output.writeAll("Unknown REPL command; use :help.\n");
         } else {
-            evaluate(session, output, line) catch |err| try report(session, output, err);
+            completion = .{};
+            completion.feedLine(line);
+            if (!completion.complete()) {
+                multiline = true;
+                automatic = true;
+                try block.appendSlice(session.allocator, line);
+                try block.append(session.allocator, '\n');
+            } else evaluate(session, output, line) catch |err| try report(session, output, err);
         }
     }
     if (multiline) try output.writeAll("Incomplete multiline submission discarded.\n");
@@ -424,4 +443,25 @@ test "REPL presents compiler types and reuses them in layout queries" {
     defer output.deinit();
     try interact(&session, &input, &output.writer, false);
     try std.testing.expectEqualStrings("_0 = Int32\n_1 = 4\n_2 = 4\n", output.written());
+}
+
+test "REPL automatically completes open function and call delimiters" {
+    var session: interactive.Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    var input = std.Io.Reader.fixed(
+        "answer := (.value: Int32) -> (.result: Int32) { -- } ignored\n" ++
+            "    if true {\n" ++
+            "        result = value\n" ++
+            "    } else { result = 0 }\n" ++
+            "}\n" ++
+            "answer(\n" ++
+            "    .value = 42\n" ++
+            ")\n:quit\n",
+    );
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try interact(&session, &input, &output.writer, false);
+    try std.testing.expectEqualStrings("_0 = 42\n", output.written());
+    try std.testing.expect(session.closed);
 }

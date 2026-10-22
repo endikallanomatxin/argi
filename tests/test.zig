@@ -5784,10 +5784,9 @@ test "argi repl retains values and shares compile-time execution" {
     try child.stdin.?.writeStreamingAll(std.testing.io, "value ::= 40 + 2\nvalue\n" ++
         "answer := () -> (.result: Int32) { result = 7 }\nanswer()\n_0 + _1\n" ++
         "enabled := () -> (.result: Bool) { result = true }\n" ++
-        ":begin\n" ++
         "choose := () -> (.result: Int32) {\n" ++
         "    #if enabled() { result = 12 } else { result = missing() }\n" ++
-        "}\n:end\n#run () -> (.answer: Int32) { answer = choose() }\n:reset\ntrue\n\"hello\"\n_1\n");
+        "}\n#run () -> (.answer: Int32) { answer = choose() }\n:reset\ntrue\n\"hello\"\n_1\n");
     child.stdin.?.close(std.testing.io);
     child.stdin = null;
     var buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
