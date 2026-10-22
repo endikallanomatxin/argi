@@ -48,7 +48,7 @@ pub fn findFailure(program: b.Program, bindings: []const Binding) ?Failure {
             const host_index: u32 = @intCast(index);
             const call_source = found: {
                 if (program.expression) |expression| if (findCall(expression.*, host_index)) |location| break :found location;
-                for (program.functions) |candidate| if (candidate) |body| if (findCall(body, host_index)) |location| break :found location;
+                for (program.functions) |candidate| if (candidate) |body| if (findCall(body.*, host_index)) |location| break :found location;
                 for (program.globals) |global| if (findCall(global.initializer, host_index)) |location| break :found location;
                 break :found null;
             };

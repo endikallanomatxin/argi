@@ -235,7 +235,9 @@ pub const Program = struct {
     host_functions: []const HostFunction = &.{},
     globals: []const Global = &.{},
     graph: *const g.GlobalSemanticGraph,
-    functions: []const ?Function,
+    // Preserve graph IDs without reserving a complete descriptor for unused bodies.
+    // Published tables and compiled descriptors remain immutable.
+    functions: []const ?*const Function,
     expression: ?*const Function = null,
     session: ?Session = null,
 };

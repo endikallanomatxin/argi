@@ -393,6 +393,29 @@ in 1,754.5 ms and retained only 0.001 MiB of checked-graph payload. Both runs
 verified their final results and complete teardown. Single-run timings are
 observations, not performance guarantees or AOT compilation benchmarks.
 
+Separating lowering work tables from retained code and replacing empty function
+slots with optional immutable descriptor pointers gives the following matched
+ReleaseSafe samples under the same limits:
+
+| Workload | Previous live MiB | Current live MiB | Previous code MiB | Current code MiB |
+|---|---:|---:|---:|---:|
+| Minimal / 1,000 updates | 503.26 | 436.80 | 75.05 | 8.59 |
+| Prelude / 100 resources | 1,320.34 | 938.50 | 481.83 | 99.99 |
+
+Lowering's binding/drop maps, cleanup work list, loop patch lists and pending
+function lists now use temporary storage in sessions. It is released before
+verification and execution; instructions, projections and cleanup layouts retain
+their own backing. Published function tables share immutable descriptors without
+reserving a complete descriptor for every uncompiled graph function. Existing
+units retain their identities and remain immutable when the cache grows.
+
+Both samples preserve their compiled function/instruction counts, checked-graph
+payload and runtime storage, verify the retained results and finish with no tracked
+allocations left. The resource sample retains the same 100 acquisitions and
+4,000 acquired bytes. Command times were 2,270.4 ms for minimal updates and
+6,993.3 ms for resources; these single observations do not establish a speedup.
+The checked semantic snapshots remain a substantial unresolved scaling cost.
+
 Compact continuation proofs and released checker scratch previously reduced
 the ten-resource checkpoint from 319.47 to 229.35 MiB, including a reduction in
 proof arenas from 90.17 to 0.06 MiB. The current sample confirms that proof

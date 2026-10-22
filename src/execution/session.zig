@@ -84,9 +84,12 @@ pub const Session = struct {
             for (cleanup) |*entry| entry.layout = try layouts.retain(entry.layout, 0);
             out.cleanup = cleanup;
         }
+        var lowering_scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer lowering_scratch.deinit();
         var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.initSession(a, checked, .{ .namespace = self.compiler.namespace, .bindings = retained });
         const diagnostics = candidate.semantic.?.options.diagnostics orelse return error.MissingSessionDiagnostics;
         lower.diagnostics = diagnostics;
+        lower.scratch_allocator = lowering_scratch.allocator();
         const program = lower.compile(function) catch |err| {
             if (err == error.UnsupportedExecution) {
                 try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, lower.source), .codegen, "bytecode execution does not support {s}", .{lower.unsupported});
@@ -94,6 +97,7 @@ pub const Session = struct {
             }
             return err;
         };
+        _ = lowering_scratch.reset(.free_all);
         profile.accumulate(self.profile_io, lower_start, &self.stats.lowering_ns);
         if (self.profile_io != null) for (program.functions) |function_| {
             if (function_) |body| {

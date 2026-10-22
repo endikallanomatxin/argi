@@ -54,7 +54,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     }
     const expression_end = program.functions.len + @intFromBool(program.expression != null);
     for (0..expression_end + program.globals.len) |fi| {
-        const f = if (fi >= expression_end) program.globals[fi - expression_end].initializer else if (fi == program.functions.len) program.expression.?.* else program.functions[fi] orelse continue;
+        const f = if (fi >= expression_end) program.globals[fi - expression_end].initializer else if (fi == program.functions.len) program.expression.?.* else (program.functions[fi] orelse continue).*;
         if (f.code.len == 0) return error.InvalidBytecode;
         for (f.slots) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
         for (f.write_destinations) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;

@@ -10,8 +10,9 @@ const replacement = @import("../../4_semantics/global/replacement.zig");
 
 pub const Lower = struct {
     allocator: std.mem.Allocator,
+    scratch_allocator: ?std.mem.Allocator = null,
     graph: *const g.GlobalSemanticGraph,
-    functions: []?b.Function,
+    functions: []?*const b.Function,
     functions_published: bool = false,
     globals: std.ArrayList(b.Global) = .empty,
     host_functions: std.ArrayList(g.GlobalFunctionId) = .empty,
@@ -27,7 +28,7 @@ pub const Lower = struct {
     diagnostics: ?*const @import("../../1_base/diagnostic.zig").Diagnostics = null,
 
     pub fn init(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) !Lower {
-        const functions = try a.alloc(?b.Function, graph.functions.items.len);
+        const functions = try a.alloc(?*const b.Function, graph.functions.items.len);
         @memset(functions, null);
         const cleanup_bindings = try cleanup_layout.requiredBindings(a, graph);
         const cleanup_types = try cleanup_layout.owningTypes(a, graph);
@@ -42,6 +43,11 @@ pub const Lower = struct {
         result.mode = .runtime;
         return result;
     }
+    // Only temporary lookup and patch tables use this allocator. Instructions,
+    // projections and immutable descriptors always belong to allocator.
+    fn scratch(self: *const Lower) std.mem.Allocator {
+        return self.scratch_allocator orelse self.allocator;
+    }
     fn sessionIndex(self: *const Lower, binding: g.GlobalBindingId) ?u32 {
         const session = self.session orelse return null;
         for (session.bindings, 0..) |entry, index| if (entry.binding == binding) return @intCast(index);
@@ -53,7 +59,7 @@ pub const Lower = struct {
         const host_count = self.host_functions.items.len;
         errdefer self.host_functions.items.len = host_count;
         if (@intFromEnum(entry) >= self.functions.len) return error.InvalidEntry;
-        try self.pending.append(self.allocator, entry);
+        try self.pending.append(self.scratch(), entry);
         return self.finish(null);
     }
 
@@ -91,7 +97,7 @@ pub const Lower = struct {
                 return self.reject(value.source, "owning expression entry input");
         }
         errdefer {
-            self.pending.deinit(self.allocator);
+            self.pending.deinit(self.scratch());
             self.pending = .empty;
         }
         var function = FunctionLower{ .parent = self };
@@ -107,11 +113,11 @@ pub const Lower = struct {
 
     fn finish(self: *Lower, expression: ?b.Function) !b.Program {
         defer {
-            self.pending.deinit(self.allocator);
+            self.pending.deinit(self.scratch());
             self.pending = .empty;
         }
         var compiled: std.ArrayList(g.GlobalFunctionId) = .empty;
-        defer compiled.deinit(self.allocator);
+        defer compiled.deinit(self.scratch());
         // A caller can finish lowering before a dependency fails. Roll back
         // every new cache entry so retrying it cannot publish an incomplete
         // dependency closure. Previously published code stays reusable.
@@ -123,12 +129,15 @@ pub const Lower = struct {
             // A published table is immutable. Copy only when extending it;
             // single-entry lowering and cache hits need no second full table.
             if (self.functions_published) {
-                self.functions = try self.allocator.dupe(?b.Function, self.functions);
+                self.functions = try self.allocator.dupe(?*const b.Function, self.functions);
                 self.functions_published = false;
             }
-            try compiled.append(self.allocator, id);
+            try compiled.append(self.scratch(), id);
             var f = FunctionLower{ .parent = self };
-            self.functions[@intFromEnum(id)] = try f.compile(id);
+            const compiled_body = try f.compile(id);
+            const body = try self.allocator.create(b.Function);
+            body.* = compiled_body;
+            self.functions[@intFromEnum(id)] = body;
         }
         // Published programs are immutable snapshots of the retained cache.
         // A later entry may compile more functions, but must not mutate a
@@ -209,10 +218,10 @@ const FunctionLower = struct {
 
     fn compileCleanup(self: *FunctionLower, nodes: []const g.GlobalNodeId) !b.Function {
         const a = self.parent.allocator;
-        defer self.bindings.deinit(a);
-        defer self.drops.deinit(a);
-        defer self.cleanup.deinit(a);
-        defer self.loops.deinit(a);
+        defer self.bindings.deinit(self.parent.scratch());
+        defer self.drops.deinit(self.parent.scratch());
+        defer self.cleanup.deinit(self.parent.scratch());
+        defer self.loops.deinit(self.parent.scratch());
         try self.prepareSessionDrops();
         for (nodes) |node| try self.statement(node);
         _ = try self.emit(self.parent.source, .{ .ret = &.{} });
@@ -222,10 +231,10 @@ const FunctionLower = struct {
 
     fn compileExpression(self: *FunctionLower, root: g.GlobalNodeId, operands: []const g.GlobalNodeId) !b.Function {
         const a = self.parent.allocator;
-        defer self.bindings.deinit(a);
-        defer self.drops.deinit(a);
-        defer self.cleanup.deinit(a);
-        defer self.loops.deinit(a);
+        defer self.bindings.deinit(self.parent.scratch());
+        defer self.drops.deinit(self.parent.scratch());
+        defer self.cleanup.deinit(self.parent.scratch());
+        defer self.loops.deinit(self.parent.scratch());
         try self.prepareSessionDrops();
         const inputs = try a.alloc(b.Slot, operands.len);
         const mapped = try a.alloc(@typeInfo(@TypeOf(self.precomputed)).pointer.child, operands.len);
@@ -243,10 +252,10 @@ const FunctionLower = struct {
 
     fn compile(self: *FunctionLower, id: g.GlobalFunctionId) !b.Function {
         const a = self.parent.allocator;
-        defer self.bindings.deinit(a);
-        defer self.drops.deinit(a);
-        defer self.cleanup.deinit(a);
-        defer self.loops.deinit(a);
+        defer self.bindings.deinit(self.parent.scratch());
+        defer self.drops.deinit(self.parent.scratch());
+        defer self.cleanup.deinit(self.parent.scratch());
+        defer self.loops.deinit(self.parent.scratch());
         const f = self.parent.graph.function(id);
         self.safety_primitive = f.safety_primitive;
         const source = self.parent.graph.declaration(f.declaration).source;
@@ -282,17 +291,16 @@ const FunctionLower = struct {
         for (session.bindings, 0..) |binding, index| {
             if (binding.cleanup.len == 0) continue;
             const drop = try self.buildDrop(binding.ty, .{ .root = @intCast(index), .region = .session, .path = &.{} });
-            try self.drops.put(self.parent.allocator, binding.binding, drop);
+            try self.drops.put(self.parent.scratch(), binding.binding, drop);
         }
     }
     fn boolType(self: *FunctionLower) !b.Type {
         return self.parent.bool_type orelse error.InvalidBytecode;
     }
     fn buildDrop(self: *FunctionLower, ty: b.Type, target: b.Place) anyerror!DropState {
-        const a = self.parent.allocator;
         const id: DropState = @enumFromInt(@as(u32, @intCast(self.cleanup.items.len)));
         const shape = cleanup_layout.Shape.of(self.parent.graph, ty);
-        try self.cleanup.append(a, .{ .place = target, .end = 0 });
+        try self.cleanup.append(self.parent.scratch(), .{ .place = target, .end = 0 });
         for (0..shape.len()) |index| if (shape.child(self.parent.graph, index)) |child| {
             const projection: b.Projection = switch (child.projection) {
                 .field => |field| .{ .field = field },
@@ -430,7 +438,7 @@ const FunctionLower = struct {
                     arg.* = try self.lower.coerce(source, try self.lower.expression(value), field.ty);
                 }
             }
-            try self.lower.parent.pending.append(self.lower.parent.allocator, id);
+            try self.lower.parent.pending.append(self.lower.parent.scratch(), id);
             _ = try self.lower.emit(source, .{ .call = .{ .function = id, .args = args, .outputs = &.{} } });
         }
         const ElementLoop = struct { index: b.Slot, one: b.Slot, start: u32, exit: u32 };
@@ -495,8 +503,8 @@ const FunctionLower = struct {
     fn bindingSlot(self: *FunctionLower, id: g.GlobalBindingId) !b.Slot {
         if (self.bindings.get(id)) |slot_id| return slot_id;
         const slot_id = try self.newSlot(self.parent.graph.binding(id).ty);
-        try self.bindings.put(self.parent.allocator, id, slot_id);
-        if (self.parent.cleanup_bindings[@intFromEnum(id)]) try self.drops.put(self.parent.allocator, id, try self.buildDrop(self.parent.graph.binding(id).ty, .{ .root = slot_id, .path = &.{} }));
+        try self.bindings.put(self.parent.scratch(), id, slot_id);
+        if (self.parent.cleanup_bindings[@intFromEnum(id)]) try self.drops.put(self.parent.scratch(), id, try self.buildDrop(self.parent.graph.binding(id).ty, .{ .root = slot_id, .path = &.{} }));
         return slot_id;
     }
     fn emit(self: *FunctionLower, source: p.SourceRef, op: @FieldType(b.Instruction, "op")) !u32 {
@@ -670,12 +678,12 @@ const FunctionLower = struct {
             .break_statement => {
                 if (self.loops.items.len == 0) return error.InvalidBytecode;
                 const jump = try self.emit(node.source, .{ .jump = 0 });
-                try self.loops.items[self.loops.items.len - 1].breaks.append(self.parent.allocator, jump);
+                try self.loops.items[self.loops.items.len - 1].breaks.append(self.parent.scratch(), jump);
             },
             .continue_statement => {
                 if (self.loops.items.len == 0) return error.InvalidBytecode;
                 const jump = try self.emit(node.source, .{ .jump = 0 });
-                try self.loops.items[self.loops.items.len - 1].continues.append(self.parent.allocator, jump);
+                try self.loops.items[self.loops.items.len - 1].continues.append(self.parent.scratch(), jump);
             },
             .abort_statement => {
                 _ = try self.emit(node.source, .abort_);
@@ -695,12 +703,12 @@ const FunctionLower = struct {
         const start = self.position();
         const condition = try self.expression(condition_node);
         const branch = try self.emit(source, .{ .branch = .{ .condition = condition, .yes = self.position() + 1, .no = 0 } });
-        try self.loops.append(self.parent.allocator, .{});
+        try self.loops.append(self.parent.scratch(), .{});
         // Retain loop patch lists even if nested lowering fails.
         defer {
             var current = self.loops.pop().?;
-            current.breaks.deinit(self.parent.allocator);
-            current.continues.deinit(self.parent.allocator);
+            current.breaks.deinit(self.parent.scratch());
+            current.continues.deinit(self.parent.scratch());
         }
         try self.block(body);
         const next = self.position();
@@ -946,7 +954,7 @@ const FunctionLower = struct {
         const location = try self.traceLocationValue(source, inputs[1].ty);
         const text = context orelse try self.stringValue(source, inputs[2].ty, "");
         const args = try self.parent.allocator.dupe(b.Slot, &.{ try self.coerce(source, tracer, inputs[0].ty), location, try self.coerce(source, text, inputs[2].ty) });
-        try self.parent.pending.append(self.parent.allocator, helper);
+        try self.parent.pending.append(self.parent.scratch(), helper);
         _ = try self.emit(source, .{ .call = .{ .outputs = &.{}, .function = helper, .args = args } });
 
         const converted = try self.errorPayload(source, payload, propagation.propagated_error_payload_type);
@@ -1067,7 +1075,7 @@ const FunctionLower = struct {
             };
             _ = try self.emit(node.source, .{ .host_call = .{ .outputs = outputs, .function = host_index, .args = args } });
         } else {
-            try self.parent.pending.append(self.parent.allocator, x.callee);
+            try self.parent.pending.append(self.parent.scratch(), x.callee);
             _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
         }
         try self.updateCallCleanups(node.source, f.output, fields, args, outputs, x.consumes_auto_deinit, x.consumed_auto_deinits, x.initialized_auto_deinits, x.outcome_cleanups);
@@ -1233,7 +1241,7 @@ const FunctionLower = struct {
                 const table = try self.parent.allocator.create(b.VirtualTable);
                 const methods = try self.parent.allocator.alloc(std.meta.Elem(@TypeOf(table.methods)), selected.methods.len);
                 for (methods, self.parent.graph.function_refs.items[selected.methods.start..][0..selected.methods.len], 0..) |*out, method, index| {
-                    try self.parent.pending.append(self.parent.allocator, method);
+                    try self.parent.pending.append(self.parent.scratch(), method);
                     const registry_id = self.parent.graph.virtual_registry_refs.items[selected.safety_methods.start + index];
                     const receiver_index = self.parent.graph.virtual_registries.items[@intFromEnum(registry_id)].receiver_input_index;
                     const implementation = self.parent.graph.function(method);

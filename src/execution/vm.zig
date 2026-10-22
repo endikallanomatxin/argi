@@ -298,7 +298,7 @@ pub const Vm = struct {
     }
     fn entryFunction(self: *Vm, id: g.GlobalFunctionId, args: []const b.Value) !*const b.Function {
         if (@intFromEnum(id) >= self.program.functions.len) return error.InvalidEntry;
-        const function = if (self.program.functions[@intFromEnum(id)]) |*value| value else return error.InvalidEntry;
+        const function = if (self.program.functions[@intFromEnum(id)]) |value| value else return error.InvalidEntry;
         try self.validateArguments(function, args);
         return function;
     }
@@ -405,7 +405,7 @@ pub const Vm = struct {
                     if (!types.equal(universe, signature.virtual_type, selected.virtual_type) or signature.method_count != selected.methods.len) return error.ExecutionInvalidVirtual;
                     const method = selected.methods[signature.method_index];
                     if (method.receiver_input_index != signature.receiver_input_index) return error.ExecutionInvalidVirtual;
-                    const callee = &virtual.program.functions[@intFromEnum(method.function)].?;
+                    const callee = virtual.program.functions[@intFromEnum(method.function)].?;
                     if (callee.inputs.len != x.args.len or callee.outputs.len != x.outputs.len) return error.ExecutionInvalidVirtual;
                     const values = try self.allocate(x.args.len);
                     for (values, x.args, callee.inputs, 0..) |*value, slot, input, index| {
@@ -635,7 +635,7 @@ pub const Vm = struct {
                     if (frames.items.len >= self.limits.call_depth) return error.ExecutionCallDepthLimit;
                     const values = try self.allocate(x.args.len);
                     for (values, x.args) |*value, slot| value.* = try slots.get(slot);
-                    const callee = &unit.functions[@intFromEnum(x.function)].?;
+                    const callee = unit.functions[@intFromEnum(x.function)].?;
                     try frames.append(self.allocator, try self.frame(unit, callee, values, x.outputs));
                 },
                 .branch => |x| current.pc = if ((try slots.get(x.condition)).boolean) x.yes else x.no,
