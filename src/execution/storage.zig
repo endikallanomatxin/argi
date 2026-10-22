@@ -63,6 +63,9 @@ pub const WriteDestination = struct {
     require_cleanup: bool = true,
 };
 
+// Executor capability, never a language address or a proof of a legal borrow.
+pub const AcquiredCleanup = struct { context: v.ContextId, frame: v.FrameId };
+
 const CleanupSelection = struct { owner: usize, offset: usize, layout: *const cleanup_layout.Layout };
 
 // Context-local storage. Its allocator is an execution arena; references can neither
@@ -121,17 +124,49 @@ pub const Storage = struct {
         if (layout.alignment == 0 or !std.math.isPowerOfTwo(layout.alignment)) return error.ExecutionInvalidReference;
         _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
         const view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index };
-        if (self.acquired_frames.get(view)) |frame|
+        if (self.acquired_frames.get(view)) |frame| {
+            if (self.frames.items[@intFromEnum(frame)].cleanup.len != 0) return error.ExecutionMissingCleanup;
             return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
+        }
+        const frame = try self.publishAcquiredFrame(view, &.{});
+        return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
+    }
+
+    /// Reserve executor cleanup state before publishing any reference to this
+    /// exact logical slot. This neither initializes bytes nor activates cleanup.
+    /// The caller supplies a checked layout which must outlive the reservation.
+    /// A previously published byte view cannot be upgraded into an owning slot.
+    pub fn reserveAcquiredCleanup(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, cleanup: *const cleanup_layout.Layout) !AcquiredCleanup {
+        _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
+        const view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index };
+        if (self.acquired_frames.contains(view)) return error.ExecutionInitializedStorage;
+        try self.charge(1);
+        errdefer self.cells -= 1;
+        const owners = try self.allocator.alloc(b.Cleanup, 1);
+        errdefer self.allocator.free(owners);
+        owners[0] = .{ .root = 0, .offset = 0, .layout = cleanup };
+        return .{ .context = self.context, .frame = try self.publishAcquiredFrame(view, owners) };
+    }
+
+    /// Project a previously reserved identity without allocating. The lowering
+    /// must transport this capability; an address lookup cannot recover it.
+    pub fn borrowAcquiredCleanup(self: *Storage, reservation: AcquiredCleanup, permission: p.PointerMutability) !v.Reference {
+        const reference: v.Reference = .{ .context = reservation.context, .frame = reservation.frame, .root = 0, .path = &.{}, .mutability = permission };
+        try self.validateContext(reference);
+        if (try self.acquiredView(reference) == null or self.frames.items[@intFromEnum(reservation.frame)].cleanup.len == 0) return error.ExecutionMissingCleanup;
+        return reference;
+    }
+
+    fn publishAcquiredFrame(self: *Storage, view: AcquiredView, cleanup: []const b.Cleanup) !v.FrameId {
         // Reserve both indexes before publishing the frame. Metadata remains
         // arena-owned, and every lookup checks acquisition liveness first.
         try self.acquired_views.ensureUnusedCapacity(self.allocator, 1);
         try self.acquired_frames.ensureUnusedCapacity(self.allocator, 1);
-        const frame = try self.enter(1);
+        const frame = try self.enterCleanup(1, cleanup);
         self.acquired_views.putAssumeCapacityNoClobber(frame, view);
         self.acquired_frames.putAssumeCapacityNoClobber(view, frame);
         self.frames.items[@intFromEnum(frame)].duration = .acquired;
-        return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
+        return frame;
     }
 
     fn acquiredView(self: *Storage, reference: v.Reference) !?AcquiredView {
@@ -684,7 +719,7 @@ pub const Storage = struct {
     fn cleanupEntry(self: *Storage, reference: v.Reference) !CleanupSelection {
         if (reference.byte_view != null) return error.ExecutionInvalidReference;
         try self.validateContext(reference);
-        if (try self.acquiredView(reference) != null) return error.ExecutionMissingCleanup;
+        _ = try self.acquiredView(reference);
         _ = try self.slots(reference.frame);
         const record = self.frames.items[@intFromEnum(reference.frame)];
         var start: usize = 0;
@@ -722,6 +757,7 @@ pub const Storage = struct {
         return self.cleanupSetAt(reference, try self.cleanupEntry(reference), enabled);
     }
     fn cleanupSetAt(self: *Storage, reference: v.Reference, selected: CleanupSelection, enabled: bool) !usize {
+        _ = try self.acquiredView(reference);
         _ = try self.slots(reference.frame);
         const record = self.frames.items[@intFromEnum(reference.frame)];
         const flags = record.cleanup_flags;
@@ -820,6 +856,7 @@ pub const Storage = struct {
         if (!destination.require_cleanup) return 0;
         if (destination.cleanup_entry) |selected| {
             try self.validateContext(destination.reference);
+            _ = try self.acquiredView(destination.reference);
             _ = try self.slots(destination.reference.frame);
             const flags = self.frames.items[@intFromEnum(destination.reference.frame)].cleanup_flags;
             if (std.mem.indexOfScalar(bool, flags[selected.offset..][0..selected.layout.count], true) != null) return error.ExecutionPendingCleanup;
@@ -1657,6 +1694,107 @@ test "zero-sized acquired slots retain logical indices without granting cleanup"
     try std.testing.expectEqual(@as(?u64, 1), storage.acquired_views.get(second.frame).?.logical_index);
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(first));
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(second));
+}
+
+test "reserved acquired cleanup keeps zero-sized owners distinct and borrowing allocation free" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 0, 1);
+    const layout: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{} } };
+    const cleanup: cleanup_layout.Layout = .{ .is_record = true };
+    const first = try storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 0, &cleanup);
+    const second = try storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 1, &cleanup);
+    try std.testing.expect(first.frame != second.frame);
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 0, &cleanup));
+    // Knowing the same address, shape and index does not recover a reservation.
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.acquiredReference(handle, 0, &layout, .little, .read_write, 0));
+    const cells = storage.cells;
+    const frames = storage.frames.items.len;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    storage.allocator = failing.allocator();
+    const a = try storage.borrowAcquiredCleanup(first, .read_write);
+    const b_ = try storage.borrowAcquiredCleanup(second, .read_write);
+    try std.testing.expect(!try storage.cleanupTest(a));
+    try std.testing.expect(!try storage.cleanupTest(b_));
+    _ = try storage.cleanupSet(a, true);
+    try std.testing.expect(try storage.cleanupTest(a));
+    try std.testing.expect(!try storage.cleanupTest(b_));
+    const readonly = try storage.borrowAcquiredCleanup(first, .read_only);
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.cleanupSet(readonly, false));
+    try std.testing.expectEqual(cells, storage.cells);
+    try std.testing.expectEqual(frames, storage.frames.items.len);
+    try std.testing.expectEqual(@as(usize, 0), failing.allocations);
+    storage.allocator = arena.allocator();
+    const captured = try storage.captureResolvedWrite(b_, true);
+    try storage.acquisitions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.borrowAcquiredCleanup(first, .read_write));
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.cleanupTest(a));
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.checkWriteCleanup(captured));
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.activateWriteCleanup(captured));
+}
+
+test "acquired cleanup reservation failures publish neither owners nor charges" {
+    var fail_index: usize = 0;
+    while (fail_index < 20) : (fail_index += 1) {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var storage = try Storage.init(arena.allocator(), 4096);
+        const handle = try storage.acquisitions.acquire(&storage, 0, 1);
+        const layout: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{} } };
+        const cleanup: cleanup_layout.Layout = .{ .is_record = true };
+        const cells = storage.cells;
+        var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = fail_index });
+        storage.allocator = failure.allocator();
+        if (storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 0, &cleanup)) |reservation| {
+            try std.testing.expect(!failure.has_induced_failure);
+            const reference = try storage.borrowAcquiredCleanup(reservation, .read_write);
+            try std.testing.expect(!try storage.cleanupTest(reference));
+            return;
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            try std.testing.expectEqual(cells, storage.cells);
+            try std.testing.expectEqual(@as(usize, 0), storage.frames.items.len);
+            try std.testing.expectEqual(@as(u32, 0), storage.acquired_views.count());
+            try std.testing.expectEqual(@as(u32, 0), storage.acquired_frames.count());
+        }
+    }
+    return error.MissingSuccessfulAcquiredCleanupReservation;
+}
+
+test "reserved acquired cleanup projects partial owners independently of byte offsets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 0, 1);
+    const leaf: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{} } };
+    const layout: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{
+        .{ .offset = 0, .layout = &leaf },
+        .{ .offset = 0, .layout = &leaf },
+    } } };
+    const leaf_cleanup: cleanup_layout.Layout = .{ .is_record = true };
+    const cleanup: cleanup_layout.Layout = .{ .count = 3, .is_record = true, .children = &.{
+        .{ .offset = 1, .ty = @enumFromInt(0), .layout = &leaf_cleanup },
+        .{ .offset = 2, .ty = @enumFromInt(0), .layout = &leaf_cleanup },
+    } };
+    const reservation = try storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 0, &cleanup);
+    const root = try storage.borrowAcquiredCleanup(reservation, .read_write);
+    var first = root;
+    first.path = &.{.{ .field = 0 }};
+    var second = root;
+    second.path = &.{.{ .field = 1 }};
+    const destination = try storage.captureResolvedWrite(first, true);
+    _ = try storage.checkWriteCleanup(destination);
+    try storage.write(destination, .{ .record = &.{} });
+    _ = try storage.activateWriteCleanup(destination);
+    try std.testing.expect(!try storage.cleanupTest(root));
+    try std.testing.expect(try storage.cleanupTest(first));
+    try std.testing.expect(!try storage.cleanupTest(second));
+    _ = try storage.cleanupSet(second, true);
+    try std.testing.expect(try storage.cleanupTest(root));
+    _ = try storage.cleanupSet(first, false);
+    try std.testing.expect(!try storage.cleanupTest(root));
+    try std.testing.expect(try storage.cleanupTest(second));
 }
 
 test "acquired views reuse equivalent descriptors across compilation units" {

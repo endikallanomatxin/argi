@@ -18,6 +18,9 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   Carry the receipt into lowering explicitly: the current acquired-reference
   instruction retains only address, layout and optional logical index. Address
   lookup recovers a physical region, not a typed reservation or its obligations.
+  Executor reservations now hold inactive cleanup per logical slot and support
+  allocation-free borrowing by capability. Connect them to lowering, native
+  companions and nonnumeric storage; raw address lookup cannot recover them.
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.
