@@ -2639,11 +2639,7 @@ pub const CodeGenerator = struct {
         }
         const callee = self.graph.functions.items[@intFromEnum(call.callee)];
         if (callee.safety_primitive == .float_math) return try self.floatMath(call.input, callee);
-        if (callee.safety_primitive == .relocate) {
-            const result = try self.opaqueRelocate(call.input);
-            self.markRelocationDropState(call.input);
-            return result;
-        }
+        if (callee.safety_primitive == .relocate) return self.opaqueRelocate(call.input);
         if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input, callee.safety_primitive == .trusted_opaque_move_in);
         if (callee.safety_primitive == .trusted_opaque_move_out) return self.opaqueTake(call.input);
         if (callee.safety_primitive == .trusted_opaque_relocate) return self.opaqueRelocate(call.input);
@@ -2782,19 +2778,13 @@ pub const CodeGenerator = struct {
 
         const type_ref = try self.toLLVMType(source_child);
         const value = c.LLVMBuildLoad2(self.builder, type_ref, source.value_ref, "opaque.relocate");
-        _ = c.LLVMBuildStore(self.builder, value, destination.value_ref);
+        const source_references: ?c.LLVMValueRef = if (source.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else null;
+        const destination_references: ?c.LLVMValueRef = if (destination.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else null;
+        const target: WriteDestination = .{ .address = destination.value_ref, .type_ref = type_ref, .references = destination_references, .reference_type = try self.optionalReferenceValueType(source_child) };
+        try target.commit(self, .{ .value_ref = value, .type_ref = type_ref, .ty = source_child, .reference_view = try self.loadReferenceView(source_child, source_references) });
+        if (source.reference_view) |view| try self.setReferentCleanup(view, source_child, false);
+        if (destination.reference_view) |view| try self.setReferentCleanup(view, destination_child, true);
         return null;
-    }
-
-    fn markRelocationDropState(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) void {
-        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) {
-            .struct_value_literal => |literal| literal,
-            else => return,
-        };
-        const fields = self.graph.value_fields.items[input.fields.start..][0..input.fields.len];
-        if (fields.len != 2) return;
-        if (self.dropStateForNode(fields[0].value)) |source| self.storeDropState(source, false);
-        if (self.dropStateForNode(fields[1].value)) |destination| self.storeDropState(destination, true);
     }
 
     fn opaqueDrop(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId, primitive: graph_mod.Function) !?TypedValue {
@@ -2859,14 +2849,13 @@ pub const CodeGenerator = struct {
     }
 
     fn setReferentCleanup(self: *CodeGenerator, view: c.LLVMValueRef, ty: graph_mod.GlobalTypeId, enabled: bool) !void {
-        const flags = try reference_evidence.cleanupPointer(self.builder, view);
+        const state = (try self.referenceCleanupState(view, ty)) orelse return;
+        const flags = state.flag_ref;
         const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
         const present = c.LLVMAppendBasicBlock(function, "referent.cleanup.present");
         const done = c.LLVMAppendBasicBlock(function, "referent.cleanup.done");
         _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildIsNull(self.builder, flags, "referent.cleanup.absent"), done, present);
         c.LLVMPositionBuilderAtEnd(self.builder, present);
-        var state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, ty, flags);
-        state.runtime_owner = try reference_evidence.runtimeOwner(self.builder, view);
         self.storeDropState(state, enabled);
         _ = c.LLVMBuildBr(self.builder, done);
         c.LLVMPositionBuilderAtEnd(self.builder, done);

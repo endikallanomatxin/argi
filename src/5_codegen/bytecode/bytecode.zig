@@ -185,6 +185,9 @@ pub const Instruction = struct {
         // Initialization activation and old-value destruction are independent:
         // scalar fields can carry initialization flags without owning resources.
         capture_write: struct { dst: Destination, place: Place, activate_cleanup: bool = false, require_cleanup: bool = true },
+        // Selected relocation supplies the source/live and destination/vacant
+        // proof. Runtime flags describe existing obligations, not permission.
+        relocate: struct { source: Slot, destination: Slot, function: g.GlobalFunctionId },
         // Lowering emits these three consecutively after RHS preparation.
         // Activation consumes the captured destination; store changes only data.
         check_write_cleanup: Destination,

@@ -1057,6 +1057,9 @@ const FunctionLower = struct {
                 };
                 _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout, .permission = to.pointer.mutability, .endian = self.parent.graph.target.arch.endian() } });
             }
+        } else if (f.safety_primitive == .relocate or f.safety_primitive == .trusted_opaque_relocate) {
+            if (args.len != 2 or outputs.len != 0) return error.InvalidBytecode;
+            _ = try self.emit(node.source, .{ .relocate = .{ .source = args[0], .destination = args[1], .function = x.callee } });
         } else if (self.parent.mode == .runtime and @import("memory_boundary.zig").classify(self.parent.graph, x.callee) != null) {
             _ = try self.emit(node.source, .{ .memory_call = .{ .outputs = outputs, .function = x.callee, .operation = @import("memory_boundary.zig").classify(self.parent.graph, x.callee).?, .args = args } });
         } else if (f.flags.is_c_abi and self.parent.mode == .runtime) {

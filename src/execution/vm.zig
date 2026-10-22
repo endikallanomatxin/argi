@@ -557,6 +557,11 @@ pub const Vm = struct {
                     var path: [64]runtime_value.Projection = undefined;
                     _ = try self.resolvePlace(unit, current.storage, place, &path, false);
                 },
+                .relocate => |x| {
+                    const source = (try slots.get(x.source)).reference;
+                    const destination = (try slots.get(x.destination)).reference;
+                    try self.chargeCleanup(try self.context().storage.relocate(source, destination));
+                },
                 .capture_write => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, &path, false);

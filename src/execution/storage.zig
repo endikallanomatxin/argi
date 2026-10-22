@@ -768,6 +768,23 @@ pub const Storage = struct {
         return .{ .reference = captured, .cleanup_entry = cleanup_entry, .require_cleanup = require_cleanup };
     }
 
+    // Checked relocation transfers an existing value into vacant storage.
+    // A by-value input or an output need not have automatic local cleanup;
+    // absence of those flags creates no new obligation. Capture both references
+    // and read the complete source before the first write.
+    pub fn relocate(self: *Storage, source: v.Reference, destination: v.Reference) !usize {
+        const from = try self.captureWriteEvidence(source, true, false);
+        var to = try self.captureWriteEvidence(destination, true, false);
+        to.require_cleanup = true;
+        var work = try self.checkWriteCleanup(to);
+        const value = try self.read(from.reference);
+        try self.write(to, value);
+        work = try std.math.add(usize, work, try self.activateWriteCleanup(to));
+        if (from.cleanup_entry) |selected|
+            work = try std.math.add(usize, work, try self.cleanupSetAt(from.reference, selected, false));
+        return work;
+    }
+
     // Validate compiler-selected cleanup state independently of value storage.
     // The executor orders this check, the write and subsequent activation.
     pub fn checkWriteCleanup(self: *Storage, destination: WriteDestination) !usize {
@@ -1609,4 +1626,48 @@ test "zero-sized acquired slots retain logical indices without granting cleanup"
     try std.testing.expectEqual(@as(?u64, 1), storage.acquired_views.get(second.frame).?.logical_index);
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(first));
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(second));
+}
+
+test "relocation transfers represented cleanup and accepts slots without automatic obligations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const slots_ = try storage.enterSession(3, &.{ .{ .root = 0, .offset = 0 }, .{ .root = 1, .offset = 1 } });
+    try storage.prepareStorage(slots_.frame, 1, .{ .nodes = &.{.{}} });
+    try slots_.put(0, .{ .integer = 42 });
+    try slots_.put(2, .{ .integer = 7 });
+    const source: v.Reference = .{ .context = storage.context, .frame = slots_.frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    var destination = source;
+    destination.root = 1;
+    var plain = source;
+    plain.root = 2;
+    _ = try storage.cleanupSet(source, true);
+    _ = try storage.relocate(source, destination);
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read(destination)).integer);
+    try std.testing.expect(!try storage.cleanupTest(source));
+    try std.testing.expect(try storage.cleanupTest(destination));
+    _ = try storage.relocate(plain, source);
+    try std.testing.expectEqual(@as(u64, 7), (try storage.read(source)).integer);
+    try std.testing.expect(try storage.cleanupTest(source));
+    try std.testing.expectError(error.ExecutionPendingCleanup, storage.relocate(source, destination));
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read(destination)).integer);
+    var readonly = source;
+    readonly.mutability = .read_only;
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.relocate(readonly, plain));
+}
+
+test "relocation keeps zero-sized sibling cleanup identities distinct" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const element: cleanup_layout.Layout = .{};
+    const shape = try cleanup_layout.Layout.repeated(@enumFromInt(0), &element, 2);
+    const slots_ = try storage.enterSession(1, &.{.{ .root = 0, .layout = &shape }});
+    try slots_.put(0, .{ .array = &.{ .unit, .unit } });
+    const source: v.Reference = .{ .context = storage.context, .frame = slots_.frame, .root = 0, .path = &.{.{ .element = 0 }}, .mutability = .read_write };
+    var destination = source;
+    destination.path = &.{.{ .element = 1 }};
+    _ = try storage.cleanupSet(source, true);
+    _ = try storage.relocate(source, destination);
+    try std.testing.expectEqualSlices(bool, &.{ false, false, true }, storage.frames.items[@intFromEnum(slots_.frame)].cleanup_flags);
 }

@@ -1227,6 +1227,38 @@ pub const Infer = struct {
         return true;
     }
 
+    // Branches share immutable effect payloads, but retain independent output
+    // vectors. Joining alternatives must not discard an earlier branch's loans.
+    const OutputAlternatives = struct {
+        allocator: std.mem.Allocator,
+        original: ?[]facts.ValueEffect = null,
+        joined: ?[]facts.ValueEffect = null,
+
+        fn init(allocator: std.mem.Allocator, outputs: ?[]facts.ValueEffect) !OutputAlternatives {
+            const values = outputs orelse return .{ .allocator = allocator };
+            const original = try allocator.dupe(facts.ValueEffect, values);
+            errdefer allocator.free(original);
+            const joined = try allocator.alloc(facts.ValueEffect, values.len);
+            @memset(joined, .{});
+            return .{ .allocator = allocator, .original = original, .joined = joined };
+        }
+        fn deinit(self: OutputAlternatives) void {
+            if (self.joined) |values| self.allocator.free(values);
+            if (self.original) |values| self.allocator.free(values);
+        }
+        fn reset(self: OutputAlternatives, outputs: ?[]facts.ValueEffect) void {
+            if (outputs) |values| @memcpy(values, self.original.?);
+        }
+        fn retain(self: OutputAlternatives, infer: *Infer, outputs: ?[]facts.ValueEffect) !void {
+            if (outputs) |values| for (self.joined.?, values) |*joined, value| {
+                joined.* = try infer.mergeValueEffects(joined.*, value);
+            };
+        }
+        fn finish(self: OutputAlternatives, outputs: ?[]facts.ValueEffect) void {
+            if (outputs) |values| @memcpy(values, self.joined.?);
+        }
+    };
+
     fn inferBlock(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -1263,6 +1295,16 @@ pub const Infer = struct {
                         try self.place_bindings.put(assignment.binding, try self.inferInputPaths(function_id, assignment.value));
                     }
                 },
+                .function_call => |call| {
+                    if (primitive_transfer.forPrimitive(self.graph.function(call.callee).safety_primitive).input == .relocate) {
+                        const arguments = self.structArguments(call.input) orelse continue;
+                        if (arguments.len != 2) continue;
+                        const value = (try self.localPointeeEffect(function_id, arguments[0].value)) orelse
+                            try self.inferOpaqueRead(function_id, node_id, arguments[0].value, try self.inferExpression(function_id, arguments[0].value));
+                        for (try self.localAddressTargets(arguments[1].value)) |target|
+                            try self.storeSelectedValueEffect(function_id, target, &.{}, try self.withOwnershipTransfer(value), outputs);
+                    }
+                },
                 .struct_field_store => |store| {
                     const targets = try self.localAddressTargets(store.struct_ptr);
                     if (targets.len != 0) for (targets) |target| {
@@ -1274,15 +1316,30 @@ pub const Infer = struct {
                         try self.storeOutputProjection(function_id, target, &.{}, store.value, outputs);
                 },
                 .if_statement => |statement| {
+                    const alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    defer alternatives.deinit();
                     try self.inferBlock(function_id, statement.then_block, outputs);
+                    try alternatives.retain(self, outputs);
+                    alternatives.reset(outputs);
                     if (statement.else_block) |child| try self.inferBlock(function_id, child, outputs);
+                    try alternatives.retain(self, outputs);
+                    alternatives.finish(outputs);
                 },
-                .while_statement => |statement| try self.inferBlock(function_id, statement.body, outputs),
-                .for_statement => |statement| try self.inferBlock(function_id, statement.body, outputs),
+                inline .while_statement, .for_statement => |statement| {
+                    const alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    defer alternatives.deinit();
+                    try alternatives.retain(self, outputs);
+                    try self.inferBlock(function_id, statement.body, outputs);
+                    try alternatives.retain(self, outputs);
+                    alternatives.finish(outputs);
+                },
                 .switch_statement => |switch_id| {
                     const statement = self.graph.switches.items[@intFromEnum(switch_id)];
                     const choice = try self.inferExpression(function_id, statement.expression);
+                    const alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    defer alternatives.deinit();
                     for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
+                        alternatives.reset(outputs);
                         if (case.payload_binding) |binding| {
                             const ty = self.graph.node(statement.expression).ty orelse continue;
                             const wanted = self.variantIndex(ty, case.variant) orelse continue;
@@ -1290,8 +1347,16 @@ pub const Infer = struct {
                             try self.bindings.put(binding, payload);
                         }
                         try self.inferBlock(function_id, case.body, outputs);
+                        try alternatives.retain(self, outputs);
                     }
-                    if (statement.default_block) |child| try self.inferBlock(function_id, child, outputs);
+                    if (statement.default_block) |child| {
+                        alternatives.reset(outputs);
+                        try self.inferBlock(function_id, child, outputs);
+                        try alternatives.retain(self, outputs);
+                    } else if (statement.cases.len == 0) {
+                        try alternatives.retain(self, outputs);
+                    }
+                    alternatives.finish(outputs);
                 },
                 .code_block, .value_sequence, .replacement => |child| try self.inferBlock(function_id, child, outputs),
                 else => {},
@@ -4472,33 +4537,39 @@ pub const Infer = struct {
     // Field-wise construction is ordinary output construction. Preserve the
     // dependencies of projected writes just as whole-binding assignments do.
     fn storeOutputProjection(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!void {
+        // Ordinary projected writes still need a shared flow for their RHS:
+        // replaying opaque effects here can duplicate them. A relocation below
+        // supplies its already-selected source value without replaying a write.
+        if (standard_contracts.initializedType(self.graph, function) == null) return;
+        try self.storeSelectedValueEffect(function, target, path, try self.inferExpression(function, value), outputs);
+    }
+
+    fn storeSelectedValueEffect(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: facts.ValueEffect, outputs: ?[]facts.ValueEffect) anyerror!void {
         switch (self.graph.node(target).content) {
             .binding_use => |binding| {
-                // Input-pointer writes belong to input post-states. Updating
-                // the pointer binding here would replace its reference effect
-                // with the pointee's fields and lose the caller's root identity.
+                // Effects through inputs have their own caller-relative flow.
+                // This path describes local slots, including output storage.
                 if (self.inputIndex(function, binding) != null) return;
-                const ty = self.graph.resolvedSemanticType(self.graph.binding(binding).ty) orelse return;
-                if (ty == .pointer) return;
                 if (self.outputIndex(function, binding)) |index| {
-                    // TODO: Unify ordinary projected output writes with the
-                    // existing input post-state flow before broadening this
-                    // path. Replaying their RHS can duplicate opaque effects.
-                    if (standard_contracts.initializedType(self.graph, function) == null) return;
-                    if (outputs) |values| values[index] = try self.storeEffectProjection(values[index], path, try self.inferExpression(function, value));
+                    if (outputs) |values| values[index] = try self.storeEffectProjection(values[index], path, value);
+                } else {
+                    const previous: facts.ValueEffect = self.bindings.get(binding) orelse .{};
+                    const updated = try self.storeEffectProjection(previous, path, value);
+                    try self.bindings.put(binding, updated);
+                    if (path.len == 0) try self.place_bindings.put(binding, try self.opaqueGenerationSourcePaths(updated));
                 }
             },
             .struct_field_access => |field| {
                 const nested = try self.allocator.alloc(facts.Projection, path.len + 1);
                 nested[0] = .{ .field = field.field_index };
                 @memcpy(nested[1..], path);
-                try self.storeOutputProjection(function, field.value, nested, value, outputs);
+                try self.storeSelectedValueEffect(function, field.value, nested, value, outputs);
             },
             .dereference => |read| {
                 for (try self.localAddressTargets(read.pointer)) |place|
-                    try self.storeOutputProjection(function, place, path, value, outputs);
+                    try self.storeSelectedValueEffect(function, place, path, value, outputs);
             },
-            .address_of => |place| try self.storeOutputProjection(function, place, path, value, outputs),
+            .address_of => |place| try self.storeSelectedValueEffect(function, place, path, value, outputs),
             else => {},
         }
     }

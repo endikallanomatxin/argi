@@ -14490,3 +14490,31 @@ test "feature_tests/execution/170_nullable_generic_input" {
     try runExpect("tests/feature_tests/execution/170_nullable_generic_input", 42);
     try vmExpect("tests/feature_tests/execution/170_nullable_generic_input", 42, null);
 }
+
+test "feature_tests/execution/171_opaque_relocation" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/171_opaque_relocation");
+    try runExpect("tests/feature_tests/execution/171_opaque_relocation", 42);
+    try vmExpect("tests/feature_tests/execution/171_opaque_relocation", 42, null);
+}
+
+test "feature_tests/execution/172_relocation_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/172_relocation_cleanup");
+    try runExpect("tests/feature_tests/execution/172_relocation_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/172_relocation_cleanup", 42, null);
+}
+
+test "feature_tests/execution/173X_relocated_reference_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/173X_relocated_reference_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/174X_relocated_branch_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/174X_relocated_branch_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/175X_loop_output_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/175X_loop_output_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/176X_match_output_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/176X_match_output_keeps_loan", "root that has ended");
+}

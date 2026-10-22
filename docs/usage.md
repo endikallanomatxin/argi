@@ -153,6 +153,11 @@ arrays clean only their live elements and nested fields. Completing scalar
 fields also updates the enclosing owner's readiness. Scalar and borrowed-only
 writes through references work.
 
+Checked `relocate` and trusted opaque relocation transfer values and their
+reference evidence using evaluated operands. Existing cleanup obligations move
+with the value; inputs and outputs need no automatic local cleanup of their own.
+Returned reference records retain their loans across relocation and control flow.
+
 Unary virtual values retain their concrete receiver and the immutable bytecode
 unit containing the selected operations. Calls use that evidence directly, including
 across REPL submissions; they do not run contract resolution at runtime. Receiver

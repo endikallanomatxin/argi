@@ -2862,3 +2862,34 @@ test "acquired slot indices use verified inputs and survive execution" {
     code[0].op.acquired_reference.logical_index = null;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
+
+test "bytecode relocation requires selected matching mutable evidence" {
+    const a = std.testing.allocator;
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } });
+    const source: @import("../4_semantics/primitives/schema.zig").SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.fields.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source },
+        .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source },
+    });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 2 }, .output = .{ .start = 0, .len = 0 } });
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .relocate = .{ .source = 0, .destination = 1, .function = @enumFromInt(0) } } },
+        .{ .source = source, .op = .{ .ret = &.{} } },
+    };
+    var slot_types = [_]b.Type{ @enumFromInt(1), @enumFromInt(1) };
+    const functions = [_]?b.Function{.{ .slots = &slot_types, .inputs = &.{ 0, 1 }, .outputs = &.{}, .code = &code }};
+    const program: b.Program = .{ .graph = &graph, .functions = &functions };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    graph.functions.items[0].safety_primitive = .relocate;
+    try b.verify(a, program);
+    graph.functions.items[0].safety_primitive = .trusted_opaque_relocate;
+    try b.verify(a, program);
+    slot_types[1] = @enumFromInt(2);
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    slot_types[1] = @enumFromInt(1);
+    code[0].op.relocate.function = @enumFromInt(1);
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}

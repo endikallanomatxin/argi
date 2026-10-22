@@ -2213,7 +2213,7 @@ pub const SafetyChecker = struct {
         if (!try self.requireAvailableRelocationDestination(source, destination_state)) return .{};
         if (destination_state == .deinitialized)
             try self.refreshStorageGenerationChecked(source, state, destination);
-        const value = self.valueAtPlace(state, source_place) orelse return .{};
+        const value = try self.reconstructPlaceValue(state, source_place, self.valueAtPlace(state, source_place) orelse .{});
         try self.setPlace(state, destination, .initialized, value);
         try self.markMoved(state, source_place, .{}, source);
         return .{};

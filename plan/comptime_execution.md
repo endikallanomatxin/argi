@@ -51,6 +51,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   the separate symbolic-address reevaluation walk has been removed. Extend this
   to remaining projections and syntax-based Place queries; preserve evaluated
   pointer facts rather than suppressing diagnostics.
+  Extend ordinary projected output summaries beyond Init without replaying RHS
+  effects. Relocation now supplies selected source effects, and output vectors
+  join branch, loop and match alternatives; general local/alias writes still
+  need the same captured-destination flow.
   Field/array stores commit checker facts to the captured referent after RHS
   evaluation, even when that RHS retargets the reference used to select it.
   Payload reads and addresses reuse their evaluated choice access and active-tag
@@ -149,8 +153,7 @@ cleanup, rejected submissions, traps and reset. Test `#run` and computed `#if`
 through retained sessions as well as native compilation, including inactive
 branches, cycles, allocation failures and rejected evaluator-resource escapes.
 
-Recheck published CI after the latest lifecycle changes. Run
-[39678224716](https://github.com/endikallanomatxin/argi/actions/runs/39678224716)
-passed at `2896cd99` on Linux and macOS, both x86_64 and ARM64. Subsequent
-structural cleanup, indexed replacement and partial owning-array changes have
-local validation but are not covered by that run.
+Recheck published CI after the latest execution changes. Run
+[39725109777](https://github.com/endikallanomatxin/argi/actions/runs/39725109777)
+passed at `83f0d865` on Linux and macOS, both x86_64 and ARM64. Newer logical-slot
+and relocation changes require their own completed runs.

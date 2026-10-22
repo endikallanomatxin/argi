@@ -269,6 +269,15 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const pointer = program.graph.semanticType(f.slots[x.dst]);
                     if (pointer != .pointer or pointer.pointer.mutability != x.permission or !types.equal(program.graph, pointer.pointer.child, target.ty) or (x.permission == .read_write and !target.writable)) return error.InvalidBytecode;
                 },
+                .relocate => |x| {
+                    if (@intFromEnum(x.function) >= program.graph.functions.items.len) return error.InvalidBytecode;
+                    const selected = program.graph.function(x.function);
+                    if ((selected.safety_primitive != .relocate and selected.safety_primitive != .trusted_opaque_relocate) or selected.input.len != 2 or selected.output.len != 0) return error.InvalidBytecode;
+                    const source = program.graph.semanticType(f.slots[x.source]);
+                    const destination = program.graph.semanticType(f.slots[x.destination]);
+                    if (source != .pointer or destination != .pointer or source.pointer.mutability != .read_write or destination.pointer.mutability != .read_write or !types.equal(program.graph, source.pointer.child, destination.pointer.child)) return error.InvalidBytecode;
+                    if (!types.equal(program.graph, f.slots[x.source], program.graph.fields.items[selected.input.start].ty) or !types.equal(program.graph, f.slots[x.destination], program.graph.fields.items[selected.input.start + 1].ty)) return error.InvalidBytecode;
+                },
                 .load => |x| {
                     const target = try placeInfo(program, f.slots, x.place);
                     if (!types.equal(program.graph, f.slots[x.dst], target.ty) or x.interpretation != b.loadInterpretation(program.graph, target.ty)) return error.InvalidBytecode;
@@ -523,6 +532,10 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
             try out.appendSlice(a, x.args);
         },
         .numeric_bytes => |x| try out.append(a, x.src),
+        .relocate => |x| {
+            try out.append(a, x.source);
+            try out.append(a, x.destination);
+        },
         .acquired_reference => |x| {
             try out.append(a, x.address);
             if (x.logical_index) |selection| try out.append(a, selection.value);
