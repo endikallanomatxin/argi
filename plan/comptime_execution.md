@@ -56,8 +56,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   owners, but cannot turn lifetime-only anchors, offsets or alternative referents
   into a definite write. Nested symbolic reference-field replacement now has
   differential coverage for a consumed selector and RHS retargeting (207):
-  cleanup/commit retain the original referent. Finish array/choice structural
-  cleanup and conditionally initialized referents.
+  cleanup/commit retain the original referent. Repeated array cleanup now uses
+  the same abstract element projection as concrete cleanup, without expanding
+  array lengths (208). Unknown elements may overlap observed fixed indices;
+  they never establish disjoint storage. Finish choice structural cleanup and
+  conditionally initialized referents.
   Symbolic slots now retain sparse stored-value facts separately from pointee
   identity/initializedness. Direct/call writes, branch/loop joins and returned
   field references preserve target dependencies (196X/198X/199X/200X); copied

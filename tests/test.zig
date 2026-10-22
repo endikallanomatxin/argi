@@ -14687,3 +14687,9 @@ test "feature_tests/execution/207_nested_symbolic_replacement_captures_target" {
     try runExpect("tests/feature_tests/execution/207_nested_symbolic_replacement_captures_target", 42);
     try vmExpect("tests/feature_tests/execution/207_nested_symbolic_replacement_captures_target", 42, null);
 }
+
+test "feature_tests/execution/208_partial_symbolic_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/208_partial_symbolic_array_cleanup");
+    try runExpect("tests/feature_tests/execution/208_partial_symbolic_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/208_partial_symbolic_array_cleanup", 42, null);
+}

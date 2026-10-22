@@ -1878,7 +1878,7 @@ pub const SafetyChecker = struct {
             const symbolic_observed = try self.symbolicConsumptionValue(conflict.observed, ids, arguments, state);
             if (symbolic_consumed != null and symbolic_observed != null) {
                 for (symbolic_consumed.?.symbolic_pointees) |consumed| for (symbolic_observed.?.symbolic_pointees) |observed| {
-                    if (symbolicStorageContains(state, consumed, observed) or symbolicStorageContains(state, observed, consumed)) {
+                    if (symbolicStorageMayOverlap(state, consumed, observed)) {
                         try self.report(source, "function observes storage after an aliased participant has consumed its value", .{});
                         return false;
                     }
@@ -1975,6 +1975,30 @@ pub const SafetyChecker = struct {
             } else return false;
             if (identity == container) return true;
         }
+    }
+
+    fn symbolicStorageMayOverlap(state: *const FunctionState, left: facts.SymbolicPointeeId, right: facts.SymbolicPointeeId) bool {
+        if (symbolicStorageContains(state, left, right) or symbolicStorageContains(state, right, left)) return true;
+        const namespace = state.tracker.namespace orelse return false;
+        for (namespace.projected_storage.items) |a| {
+            if (a.identity != left or a.projection == .dereference) continue;
+            for (namespace.projected_storage.items) |b| {
+                if (b.identity != right or b.projection == .dereference) continue;
+                if (a.parent == b.parent and a.parent_generation == b.parent_generation) {
+                    if (a.projection == .dynamic_index or b.projection == .dynamic_index) return true;
+                    return a.projection.eql(b.projection);
+                }
+                // Descendants of the same possibly overlapping element retain
+                // that uncertainty; distinct fixed siblings remain separate.
+                return symbolicStorageMayOverlap(state, a.parent, b.parent);
+            }
+            return symbolicStorageMayOverlap(state, a.parent, right);
+        }
+        for (namespace.projected_storage.items) |b| {
+            if (b.identity == right and b.projection != .dereference)
+                return symbolicStorageMayOverlap(state, left, b.parent);
+        }
+        return false;
     }
 
     fn callCleanupNodes(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initializing: bool) ![]const graph_mod.GlobalNodeId {
@@ -5279,8 +5303,13 @@ pub const SafetyChecker = struct {
         };
         const children = self.graph.auto_deinit_fields.items[fields.start..][0..fields.len];
         for (children) |child| {
-            if (child.is_variant or child.repeat_count != null) return false;
-            const projected = try self.projectSymbolicStorage(pointer, .{ .field = child.field_index }, state) orelse return false;
+            if (child.is_variant) return false;
+            if (child.repeat_count == 0) continue;
+            // Match concrete structural cleanup: a repeated child describes
+            // an arbitrary live element guarded by the runtime cleanup flags.
+            // Its abstract identity must overlap observed constant indices.
+            const projection: facts.Projection = if (child.repeat_count != null) .dynamic_index else .{ .field = child.field_index };
+            const projected = try self.projectSymbolicStorage(pointer, projection, state) orelse return false;
             if (!try self.evaluateSymbolicCleanupOperation(function, child.deinit_fn, child.input, child.self_field_index, child.fields, projected, state)) return false;
         }
         const source = if (input) |node| self.graph.node(node).source else self.graph.declaration(self.graph.function(function).declaration).source;
@@ -5607,8 +5636,8 @@ pub const SafetyChecker = struct {
                     if (index >= length) return null;
                     break :element_type types.arrayElement(self.graph, ty) orelse return null;
                 },
+                .dynamic_index => if ((types.arrayLength(self.graph, ty) orelse 0) != 0) types.arrayElement(self.graph, ty) else return null,
                 .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else return null,
-                else => return null,
             };
         } else null;
         const parent_generation = parent.generation orelse return null;
@@ -9947,8 +9976,11 @@ test "projected symbolic array elements retain independent generations without e
     try std.testing.expect(!diags.hasErrors());
     const last = (try checker.projectSymbolicStorage(parent, .{ .static_index = 999_999 }, &left)).?;
     try std.testing.expectEqual(null, try checker.projectSymbolicStorage(parent, .{ .static_index = 1_000_000 }, &left));
-    try std.testing.expectEqual(null, try checker.projectSymbolicStorage(parent, .dynamic_index, &left));
-    try std.testing.expectEqual(@as(usize, 2), namespace.projected_storage.items.len);
+    const unknown = (try checker.projectSymbolicStorage(parent, .dynamic_index, &left)).?;
+    try std.testing.expect(SafetyChecker.symbolicStorageMayOverlap(&left, unknown.symbolic_pointees[0], first.symbolic_pointees[0]));
+    try std.testing.expect(SafetyChecker.symbolicStorageMayOverlap(&left, last.symbolic_pointees[0], unknown.symbolic_pointees[0]));
+    try std.testing.expect(!SafetyChecker.symbolicStorageMayOverlap(&left, first.symbolic_pointees[0], last.symbolic_pointees[0]));
+    try std.testing.expectEqual(@as(usize, 3), namespace.projected_storage.items.len);
     const initial = SafetyChecker.initialProjectedPointee(&right, first.symbolic_pointees[0]).?;
     try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(0)), initial.ty);
     try std.testing.expect(checker.symbolicStorageComplete(&left, parent.symbolic_pointees[0]));
@@ -9960,7 +9992,7 @@ test "projected symbolic array elements retain independent generations without e
     const historical = (try checker.projectSymbolicStorage(parent, .{ .static_index = 0 }, &right)).?;
     try std.testing.expectEqual(first.symbolic_pointees[0], historical.symbolic_pointees[0]);
     try std.testing.expect(!valueDependsOnDeadRootWithOwners(historical, .{}, &right));
-    try std.testing.expectEqual(@as(usize, 2), namespace.projected_storage.items.len);
+    try std.testing.expectEqual(@as(usize, 3), namespace.projected_storage.items.len);
 }
 
 test "replacement initialization proof observes destination after RHS preparation" {
