@@ -25,7 +25,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   Nested indirect fields and field reinitialization after destruction have
   differential coverage, including whole-record replacement after consuming a
   field through a function. The live-sibling structural fallback also passes
-  in native and VM. Finish conditional caller cleanup activation.
+  in native and VM. Conditional reinitialization through direct references and
+  by-value record reference fields uses distinct returned variants (case 182);
+  unrepresented outcomes are rejected (case 183X). Finish indexed/indirect
+  conditional caller cleanup activation: `cleanupNodeForPlace` still excludes
+  indices, while outcome emission relies on lexical drop lookups. Preserve the
+  evaluated argument destination instead of reevaluating its syntax.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops

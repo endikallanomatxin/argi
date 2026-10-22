@@ -14544,3 +14544,14 @@ test "feature_tests/execution/181_array_output_reference_cleanup" {
     try runExpect("tests/feature_tests/execution/181_array_output_reference_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/181_array_output_reference_cleanup", 42, null);
 }
+
+test "feature_tests/execution/182_conditional_initialization_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/182_conditional_initialization_cleanup");
+    try runExpect("tests/feature_tests/execution/182_conditional_initialization_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/182_conditional_initialization_cleanup", 42, null);
+}
+
+test "feature_tests/execution/183X_unrepresented_initialization_cleanup" {
+    try buildExpectFail("tests/feature_tests/execution/183X_unrepresented_initialization_cleanup", "cannot select cleanup for conditional initialization");
+    try vmExpect("tests/feature_tests/execution/183X_unrepresented_initialization_cleanup", 1, "cannot select cleanup for conditional initialization");
+}
