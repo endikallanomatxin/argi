@@ -631,3 +631,9 @@ complete teardown. Verification/preparation took 512.3 ms versus 515.4 ms in
 the preceding sample; total command time was 4,326.6 versus 4,371.8 ms. These
 single observations show no material retained-memory change and do not establish
 a speedup. Input-free entries require no descriptor allocations.
+
+VM runtime failures include up to 64 active source frames, starting at the
+failing instruction and followed by `called from` locations. CLI execution and
+REPL submissions share this presentation. Trace capture is best-effort under
+allocation failure, stores no language values and performs no unwinding. A
+trapped REPL still requires reset; its saved failure trace is not resumable state.

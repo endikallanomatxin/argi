@@ -52,7 +52,10 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   before accepting reference aggregates. Reuse semantic plans, without a universal IR.
 - Keep adapters on registered, signature-checked primitive identities; do not
   recognize user/core operations by incidental function names or paths.
-- Connect cooperative cancellation to CLI controls and complete trace reporting.
+- Connect cooperative cancellation to CLI controls. CLI/REPL VM failures now
+  retain up to 64 caller locations without unwinding; carry this structured
+  failure through the compile-time scheduler and validate cross-version virtual
+  failure locations before considering trace reporting complete.
 
 ## Scalability
 

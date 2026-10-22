@@ -2989,3 +2989,56 @@ test "conditional replacement renews selected symbolic input without renewing co
         } else _ = try pipeline.semantizeGlobalFiles(&files);
     }
 }
+
+test "VM failures retain bounded caller locations and reset clears them" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\fail() -> () := { abort }
+        \\middle() -> () := { fail() }
+        \\main() -> () := { middle() }
+    }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = try pipeline.semantizeGlobalFiles(&files);
+    const entry: @import("../4_semantics/global/graph.zig").GlobalFunctionId = for (graph.functions.items, 0..) |function, index| {
+        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) break @enumFromInt(index);
+    } else return error.MissingEntry;
+    var compiler = try lower.Lower.init(a, graph);
+    compiler.mode = .runtime;
+    const program = try compiler.compile(entry);
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expectError(error.ExecutionAborted, executor.run(entry, &.{}));
+    try std.testing.expectEqual(@as(usize, 3), executor.failure_trace.items.len);
+    for (executor.failure_trace.items, 1..) |frame, line| {
+        const location = @import("../4_semantics/global/source_location.zig").location(frame.graph, &diagnostics, frame.source);
+        try std.testing.expectEqual(@as(u32, @intCast(line)), diagnostics.lineColumn(location).line);
+    }
+    try @import("failure.zig").report(a, &diagnostics, &executor, graph, "VM execution failed", error.ExecutionAborted);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.list.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostics.list.items[0].msg, "called from app/main.rg:2:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostics.list.items[0].msg, "called from app/main.rg:3:") != null);
+    try std.testing.expectEqual(.poisoned, executor.context().state);
+    executor.reset();
+    try std.testing.expectEqual(@as(usize, 0), executor.failure_trace.items.len);
+}
+
+test "retained submissions report failure locations from earlier definitions" {
+    const Interactive = @import("interactive.zig").Interactive;
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("stop() -> () := { abort }");
+    try std.testing.expectError(error.ExecutionAborted, session.submitStatements("stop()"));
+    try std.testing.expectEqual(@as(usize, 1), session.diagnostics.list.items.len);
+    const failure = session.diagnostics.list.items[0];
+    try std.testing.expect(std.mem.indexOf(u8, failure.msg, "called from") != null);
+    const origin = session.diagnostics.presentedLocation(failure.loc);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.source_db.get(origin.file).source, "stop() -> () := { abort }") != null);
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try session.reset();
+}

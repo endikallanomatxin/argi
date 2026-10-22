@@ -95,8 +95,8 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     };
     defer executor.deinit();
     const result = executor.run(id, &.{}) catch |err| {
-        const message = try std.fmt.allocPrint(allocator, "VM execution failed: {s}", .{@errorName(err)});
-        try report(&diagnostics, graph, executor.source, message);
+        try @import("../execution/failure.zig").report(allocator, &diagnostics, &executor, graph, "VM execution failed", err);
+        try diagnostics.dump();
         return error.CompilationFailed;
     };
     if (result.len == 0) return 0;

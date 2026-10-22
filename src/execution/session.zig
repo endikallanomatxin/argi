@@ -129,7 +129,7 @@ pub const Session = struct {
         defer profile.accumulate(self.profile_io, execute_start, &self.stats.execution_ns);
         _ = vm.invoke(function, &.{}) catch |err| {
             if (err == error.OutOfMemory) return err;
-            try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, vm.source), .codegen, "bytecode execution failed: {s}", .{@errorName(err)});
+            try @import("failure.zig").report(self.allocator, diagnostics, &vm, checked, "bytecode execution failed", err);
             return err;
         };
     }

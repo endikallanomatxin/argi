@@ -14765,3 +14765,10 @@ test "feature_tests/execution/221X_projected_replacement_keeps_alias_stale" {
     try buildExpectFail("tests/feature_tests/execution/221X_projected_replacement_keeps_alias_stale", "root that has ended");
     try vmExpect("tests/feature_tests/execution/221X_projected_replacement_keeps_alias_stale", 1, "root that has ended");
 }
+
+test "feature_tests/execution/222_vm_failure_call_trace" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/222_vm_failure_call_trace");
+    try vmExpect("tests/feature_tests/execution/222_vm_failure_call_trace", 1, "ExecutionAborted");
+    try vmExpect("tests/feature_tests/execution/222_vm_failure_call_trace", 1, "called from tests/feature_tests/execution/222_vm_failure_call_trace/main.rg:3:");
+    try vmExpect("tests/feature_tests/execution/222_vm_failure_call_trace", 1, "called from tests/feature_tests/execution/222_vm_failure_call_trace/main.rg:5:");
+}

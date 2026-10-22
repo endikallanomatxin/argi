@@ -190,11 +190,14 @@ pub const Context = struct {
     }
 };
 
+pub const FailureFrame = struct { graph: *const g.GlobalSemanticGraph, source: p.SourceRef };
+
 pub const Vm = struct {
     allocator: std.mem.Allocator,
     program: b.Program,
     limits: Limits,
     steps: usize = 0,
+    failure_trace: std.ArrayList(FailureFrame) = .empty,
     linked_hosts: host.LinkedPrograms = .{},
     input_layouts: @import("input_layout.zig").Inputs,
     owned_context: Context,
@@ -229,6 +232,7 @@ pub const Vm = struct {
         return self.shared_context orelse &self.owned_context;
     }
     pub fn deinit(self: *Vm) void {
+        self.failure_trace.deinit(self.allocator);
         self.input_layouts.deinit();
         self.linked_hosts.deinit(self.allocator);
         if (self.shared_context == null) self.owned_context.deinit();
@@ -237,6 +241,7 @@ pub const Vm = struct {
     // context. A trapped context has no resumable cleanup/unwind guarantee.
     pub fn reset(self: *Vm) void {
         self.context().reset();
+        self.failure_trace.clearRetainingCapacity();
         self.steps = 0;
     }
 
@@ -259,11 +264,13 @@ pub const Vm = struct {
     // and context identity; each invocation receives a fresh instruction budget.
     // Program validation and ordinary safety checking are not repeated here.
     pub fn invoke(self: *Vm, entry: g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
+        self.failure_trace.clearRetainingCapacity();
         if (self.context().state == .poisoned) return error.ExecutionContextPoisoned;
         const function = try self.entryFunction(entry, args);
         return self.invokeFunction(function, args);
     }
     pub fn invokeExpression(self: *Vm, args: []const b.Value) ![]const b.Value {
+        self.failure_trace.clearRetainingCapacity();
         if (self.context().state == .poisoned) return error.ExecutionContextPoisoned;
         const function = self.program.expression orelse return error.InvalidEntry;
         try self.validateArguments(function, args);
@@ -333,6 +340,22 @@ pub const Vm = struct {
         }
         return if (read_value) self.context().storage.resolve(frame_id, place, path) else self.context().storage.resolveCleanup(frame_id, place, path);
     }
+    fn captureFailure(self: *Vm, frames: []const Frame) void {
+        // Diagnostics are best-effort under allocation failure. Retain only
+        // borrowed code metadata, never language values or live frame storage.
+        self.failure_trace.clearRetainingCapacity();
+        var index = frames.len;
+        while (index != 0 and self.failure_trace.items.len < 64) {
+            index -= 1;
+            const active = frames[index];
+            const source = if (index == frames.len - 1) self.source else blk: {
+                if (active.pc == 0 or active.pc > active.function.code.len) break :blk self.source;
+                break :blk active.function.code[active.pc - 1].source;
+            };
+            self.failure_trace.append(self.allocator, .{ .graph = active.program.graph, .source = source }) catch return;
+        }
+    }
+
     fn execute(self: *Vm, program: *const b.Program, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         var frames: std.ArrayList(Frame) = .empty;
         defer frames.deinit(self.allocator);
@@ -340,6 +363,7 @@ pub const Vm = struct {
         // matching the current abort policy. Persistent sessions must not
         // treat this path as a recoverable cleanup/unwind protocol.
         defer for (frames.items) |active| self.context().storage.leave(active.storage);
+        errdefer self.captureFailure(frames.items);
         if (self.limits.call_depth == 0) return error.ExecutionCallDepthLimit;
         try frames.append(self.allocator, try self.frame(program, function, args, &.{}));
         while (true) {
