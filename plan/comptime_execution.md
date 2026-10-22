@@ -27,10 +27,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   field through a function. The live-sibling structural fallback also passes
   in native and VM. Conditional reinitialization through direct references and
   by-value record reference fields uses distinct returned variants (case 182);
-  unrepresented outcomes are rejected (case 183X). Finish indexed/indirect
-  conditional caller cleanup activation: `cleanupNodeForPlace` still excludes
-  indices, while outcome emission relies on lexical drop lookups. Preserve the
-  evaluated argument destination instead of reevaluating its syntax.
+  unrepresented outcomes are rejected (case 183X). Whole pointer inputs now
+  retain evaluated argument identities for conditional cleanup, including
+  indexed destinations, effectful selectors changed by the callee, and
+  zero-sized siblings (case 184). Finish projected input paths through copied
+  records/arrays without reconstructing indexed or indirect destination syntax.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops

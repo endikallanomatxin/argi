@@ -1757,7 +1757,16 @@ pub const SafetyChecker = struct {
                     break;
                 };
                 if (unconditional) continue;
-                const node = try self.cleanupNodeForPlace(target) orelse {
+                // A whole pointer input already captures its exact destination.
+                // Retain that input identity instead of reconstructing an index
+                // or alias expression to execute again after the call.
+                const captured: ?graph_mod.GlobalNodeId = captured: {
+                    if (post.target.storage_domain != null or post.target.projections.len != 0 or post.target.input_index >= ids.len) break :captured null;
+                    const argument = self.graph.value_fields.items[@intFromEnum(ids[post.target.input_index])].value;
+                    const ty = self.graph.node(argument).ty orelse break :captured null;
+                    break :captured if (isPointer(self.graph, ty)) argument else null;
+                };
+                const node = captured orelse try self.cleanupNodeForPlace(target) orelse {
                     for (self.graph.auto_deinits.items) |cleanup| if (cleanup.ownerBinding() == target.root) {
                         try self.report(self.graph.binding(target.root).source, "conditional consumption needs a lexical cleanup place; move the indexed or indirect owner into a local value first", .{});
                         break;

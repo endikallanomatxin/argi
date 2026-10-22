@@ -492,7 +492,7 @@ pub const CodeGenerator = struct {
                     c.LLVMBuildLoad2(self.builder, symbol.outputType(), result_storage, "call.status")
                 else
                     null;
-                try self.markCallDropState(call, result, false);
+                try self.markCallDropState(call, result, false, input.reference_view);
                 _ = c.LLVMBuildMemCpy(self.builder, destination, @intCast(layout.alignment), result_storage, @intCast(layout.alignment), c.LLVMConstInt(try self.nativeUIntType(), layout.size, 0));
             },
             .binding_use => {
@@ -2567,7 +2567,7 @@ pub const CodeGenerator = struct {
             for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
             if (call.outcome_cleanups.len != 0) {
                 const result = c.LLVMBuildLoad2(self.builder, output_type, storage, "virtual.cleanup.result");
-                try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields);
+                try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields, .{ .input = call.input, .fields = semantic_input, .evidence = input_evidence });
             }
             return null;
         }
@@ -2575,7 +2575,7 @@ pub const CodeGenerator = struct {
         const result = returned.value;
         for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
-        try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields);
+        try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields, .{ .input = call.input, .fields = semantic_input, .evidence = input_evidence });
         if (output_fields.len == 0) return null;
         if (output_fields.len == 1) {
             const field = self.graph.fields.items[output_fields.start];
@@ -2657,7 +2657,7 @@ pub const CodeGenerator = struct {
             const returned = try self.callArgiWithEvidence(symbol, input.value_ref, input.reference_view, "call");
             const result = returned.value;
             try self.markConsumedInputEvidence(call, callee, input.reference_view);
-            try self.markCallDropState(call, result, false);
+            try self.markCallDropState(call, result, false, input.reference_view);
             // No-output Argi calls return an empty record. Preserve that unit
             // value when a checked entry binds an otherwise discarded call.
             if (callee.output.len == 0) return .{ .value_ref = result, .type_ref = symbol.outputType(), .ty = null };
@@ -2690,7 +2690,7 @@ pub const CodeGenerator = struct {
         }
         const call_value = c.LLVMBuildCall2(self.builder, symbol.abi.c.fn_type, symbol.ref, if (args.len == 0) null else args.ptr, @intCast(args.len), if (symbol.outputType() == c.LLVMVoidType()) "" else "call");
         try self.addCPlanAttributes(call_value, plan.*, true);
-        try self.markCallDropState(call, call_value, true);
+        try self.markCallDropState(call, call_value, true, input.reference_view);
         const result = plan.result orelse return null;
         if (callee.safety_primitive == .raw_allocated_storage) {
             const address_type = try self.toLLVMType(result.ty);
@@ -2906,13 +2906,13 @@ pub const CodeGenerator = struct {
         }
     }
 
-    fn markCallDropState(self: *CodeGenerator, call: anytype, result: llvm.c.LLVMValueRef, is_extern: bool) !void {
+    fn markCallDropState(self: *CodeGenerator, call: anytype, result: llvm.c.LLVMValueRef, is_extern: bool, input_evidence: ?c.LLVMValueRef) !void {
         if (call.consumes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
         if (call.outcome_cleanups.len != 0) {
             const callee = self.graph.function(call.callee);
-            try self.markOutcomeCleanups(call.outcome_cleanups, result, callee.output);
+            try self.markOutcomeCleanups(call.outcome_cleanups, result, callee.output, .{ .input = call.input, .fields = callee.input, .evidence = input_evidence });
         }
         _ = is_extern;
         if (call.initializes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
@@ -2921,9 +2921,28 @@ pub const CodeGenerator = struct {
     /// Cleanup follows the runtime result even when the result is discarded.
     /// Inspect nested tags only after all enclosing payloads are selected; an
     /// inactive payload is not an initialized value that can be read eagerly.
-    fn markOutcomeCleanups(self: *CodeGenerator, cleanups: []const primitives.OutcomeCleanup(graph_mod.Ids), result: llvm.c.LLVMValueRef, outputs: graph_mod.FieldRange) !void {
+    const CapturedCleanupInputs = struct { input: graph_mod.GlobalNodeId, fields: graph_mod.FieldRange, evidence: ?c.LLVMValueRef };
+
+    fn markOutcomeTarget(self: *CodeGenerator, place: graph_mod.GlobalNodeId, enabled: bool, captured: CapturedCleanupInputs) !void {
+        const input = self.graph.node(captured.input).content;
+        if (input == .struct_value_literal) {
+            const fields = input.struct_value_literal.fields;
+            for (self.graph.value_fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+                if (field.value != place) continue;
+                const ty = self.graph.fields.items[captured.fields.start + index].ty;
+                const semantic = self.graph.semanticType(ty);
+                if (semantic != .pointer) break;
+                const evidence = captured.evidence orelse return error.MissingCleanupEvidence;
+                const view = (try self.fieldEvidence(captured.fields, index, evidence)) orelse return error.MissingCleanupEvidence;
+                try self.setReferentCleanup(view, semantic.pointer.child, enabled);
+                return;
+            }
+        }
+        if (self.dropStateForNode(place)) |drop| self.storeDropState(drop, enabled);
+    }
+
+    fn markOutcomeCleanups(self: *CodeGenerator, cleanups: []const primitives.OutcomeCleanup(graph_mod.Ids), result: llvm.c.LLVMValueRef, outputs: graph_mod.FieldRange, captured: CapturedCleanupInputs) !void {
         for (cleanups) |cleanup| {
-            const drop = self.dropStateForNode(cleanup.place) orelse continue;
             var path = try cleanup_plan.OutcomePath.init(self.graph, outputs, cleanup);
             var choice = c.LLVMBuildExtractValue(self.builder, result, cleanup.output_index, "cleanup.result");
             const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
@@ -2937,7 +2956,7 @@ pub const CodeGenerator = struct {
                 if (step.payload != null)
                     choice = c.LLVMBuildExtractValue(self.builder, choice, step.index + 1, "cleanup.outcome.payload");
             }
-            self.storeDropState(drop, cleanup.enabled);
+            try self.markOutcomeTarget(cleanup.place, cleanup.enabled, captured);
             _ = c.LLVMBuildBr(self.builder, done);
             c.LLVMPositionBuilderAtEnd(self.builder, done);
         }

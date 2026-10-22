@@ -14555,3 +14555,9 @@ test "feature_tests/execution/183X_unrepresented_initialization_cleanup" {
     try buildExpectFail("tests/feature_tests/execution/183X_unrepresented_initialization_cleanup", "cannot select cleanup for conditional initialization");
     try vmExpect("tests/feature_tests/execution/183X_unrepresented_initialization_cleanup", 1, "cannot select cleanup for conditional initialization");
 }
+
+test "feature_tests/execution/184_indexed_outcome_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/184_indexed_outcome_cleanup");
+    try runExpect("tests/feature_tests/execution/184_indexed_outcome_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/184_indexed_outcome_cleanup", 42, null);
+}

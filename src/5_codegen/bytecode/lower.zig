@@ -1102,7 +1102,6 @@ const FunctionLower = struct {
         for (consumed) |value| try self.updateCallCleanup(value, false, fields, args);
         for (initialized) |value| try self.updateCallCleanup(value, true, fields, args);
         for (outcomes) |cleanup| {
-            const drop = self.nodeDrop(cleanup.place) orelse continue;
             var path = try cleanup_plan.OutcomePath.init(self.parent.graph, output_fields, cleanup);
             var value = outputs[cleanup.output_index];
             var branches: std.ArrayList(u32) = .empty;
@@ -1116,7 +1115,7 @@ const FunctionLower = struct {
                     value = child;
                 }
             }
-            try self.setDrop(drop, cleanup.enabled);
+            try self.updateCallCleanup(cleanup.place, cleanup.enabled, fields, args);
             for (branches.items) |branch| self.code.items[branch].op.branch_variant.no = self.position();
         }
     }

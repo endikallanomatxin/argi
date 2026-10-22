@@ -515,6 +515,7 @@ pub fn Virtualize(comptime Ids: type) type {
 }
 
 /// A returned choice selects whether the caller still owns cleanup of a place.
+/// The place can name a lexical owner or an evaluated pointer input snapshot.
 /// Parent variants guard nested payload tags before their values are inspected.
 pub fn OutcomeCleanup(comptime Ids: type) type {
     return struct {
