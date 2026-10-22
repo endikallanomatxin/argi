@@ -682,10 +682,14 @@ pub const Session = struct {
             const binding = content.binding_declaration;
             if (std.mem.indexOfScalar(global_sg.GlobalBindingId, retained.items, binding) != null) continue;
             const name = self.relocation.graph.text(self.relocation.graph.binding(binding).name);
-            for (retained.items) |previous| if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.binding(previous).name), name)) return error.DuplicateSessionBinding;
-            if (self.resolvers.core.session_namespace) |namespace| for (namespace.declarations.items) |declaration| {
-                if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.declaration(declaration).name), name)) return error.DuplicateSessionDeclaration;
-            };
+            // Internal temporaries retain storage by binding identity, not a
+            // source name. Their reserved names may repeat across commands.
+            if (!std.mem.startsWith(u8, name, "#")) {
+                for (retained.items) |previous| if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.binding(previous).name), name)) return error.DuplicateSessionBinding;
+                if (self.resolvers.core.session_namespace) |namespace| for (namespace.declarations.items) |declaration| {
+                    if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.declaration(declaration).name), name)) return error.DuplicateSessionDeclaration;
+                };
+            }
             try retained.append(self.allocator, binding);
         }
         const namespace = try self.resolvers.core.sessionNamespace();
@@ -912,6 +916,8 @@ pub const Session = struct {
             options.diagnostics,
         ))
             return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
+
+        try @import("record_literals.zig").checkRequiredFields(&relocation.graph, reachable, options.diagnostics);
 
         if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
             return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
@@ -2069,6 +2075,7 @@ fn pendingOwnerTag(tag: PendingTag) PendingOwner {
         .resolve_type => .types,
         .resolve_call, .resolve_local_reach => .calls,
         .resolve_index => .indexing,
+        .resolve_record_literal,
         .resolve_entry_call,
         .resolve_value_type,
         .resolve_field,

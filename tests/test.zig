@@ -1496,6 +1496,7 @@ test "feature_tests/basics/07_struct_default_fields" {
     const test_path = "tests/feature_tests/basics/07_struct_default_fields";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
+    try vmExpect("tests/feature_tests/basics/07_struct_default_fields", 0, null);
 }
 
 test "feature_tests/basics/08_struct_field_store" {
@@ -14813,4 +14814,65 @@ test "feature_tests/execution/229_typed_allocation_failure_trace" {
     try expectSuccessfulBuild("tests/feature_tests/execution/229_typed_allocation_failure_trace");
     try runExpect("tests/feature_tests/execution/229_typed_allocation_failure_trace", 42);
     try vmExpect("tests/feature_tests/execution/229_typed_allocation_failure_trace", 42, null);
+}
+
+test "feature_tests/execution/230X_incomplete_record_literal" {
+    try buildExpectFail("tests/feature_tests/execution/230X_incomplete_record_literal", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/230X_incomplete_record_literal", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/231_partial_record_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/231_partial_record_initialization");
+    try runExpect("tests/feature_tests/execution/231_partial_record_initialization", 42);
+    try vmExpect("tests/feature_tests/execution/231_partial_record_initialization", 42, null);
+}
+
+test "feature_tests/execution/232X_nested_incomplete_record_literal" {
+    try buildExpectFail("tests/feature_tests/execution/232X_nested_incomplete_record_literal", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/232X_nested_incomplete_record_literal", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/233X_incomplete_record_result" {
+    try buildExpectFail("tests/feature_tests/execution/233X_incomplete_record_result", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/233X_incomplete_record_result", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/234X_comptime_incomplete_record_literal" {
+    try buildExpectFail("tests/feature_tests/execution/234X_comptime_incomplete_record_literal", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/234X_comptime_incomplete_record_literal", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/235_contextual_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/235_contextual_record_defaults");
+    try runExpect("tests/feature_tests/execution/235_contextual_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/235_contextual_record_defaults", 42, null);
+}
+
+test "feature_tests/execution/236_contextual_default_temporary_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/236_contextual_default_temporary_storage");
+    try runExpect("tests/feature_tests/execution/236_contextual_default_temporary_storage", 42);
+    try vmExpect("tests/feature_tests/execution/236_contextual_default_temporary_storage", 42, null);
+}
+
+test "feature_tests/execution/237_empty_contextual_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/237_empty_contextual_record_defaults");
+    try runExpect("tests/feature_tests/execution/237_empty_contextual_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/237_empty_contextual_record_defaults", 42, null);
+}
+
+test "feature_tests/execution/238X_empty_required_record_literal" {
+    try buildExpectFail("tests/feature_tests/execution/238X_empty_required_record_literal", "record initializer is missing required field 'answer'");
+    try vmExpect("tests/feature_tests/execution/238X_empty_required_record_literal", 1, "record initializer is missing required field 'answer'");
+}
+
+test "feature_tests/execution/239_nested_contextual_record_layout" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/239_nested_contextual_record_layout");
+    try runExpect("tests/feature_tests/execution/239_nested_contextual_record_layout", 42);
+    try vmExpect("tests/feature_tests/execution/239_nested_contextual_record_layout", 42, null);
+}
+
+test "feature_tests/execution/240_contextual_default_resource_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/240_contextual_default_resource_cleanup");
+    try runExpect("tests/feature_tests/execution/240_contextual_default_resource_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/240_contextual_default_resource_cleanup", 42, null);
 }

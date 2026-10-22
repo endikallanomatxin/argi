@@ -1281,6 +1281,7 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .virtualize = .{ .dst = dst, .receiver = try self.expression(selected.value), .table = table } });
             },
             .explicit_cast => |cast| {
+                // TODO: Lower checked integer conversions with shared width/sign semantics.
                 const target = self.parent.graph.semanticType(cast.target_type);
                 const source_slot = try self.expression(cast.value);
                 const from = self.slots.items[source_slot];

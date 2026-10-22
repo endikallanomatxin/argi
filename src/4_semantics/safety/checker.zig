@@ -293,6 +293,7 @@ pub const SafetyChecker = struct {
     pub fn analyzeUnit(self: *SafetyChecker, roots: []const graph_mod.GlobalFunctionId) !void {
         var unit = try @import("../global/reachability.zig").dependencyUnit(self.allocator, self.graph, roots);
         defer unit.deinit();
+        try @import("../global/record_literals.zig").checkRequiredFields(self.graph, &unit, self.diagnostics);
         const previous = self.unit;
         self.unit = &unit;
         defer self.unit = previous;

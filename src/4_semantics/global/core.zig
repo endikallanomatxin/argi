@@ -400,6 +400,31 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_type => |value| try self.resolveTypeHole(module_index, module, o, value),
+            .resolve_record_literal => |value| blk: {
+                const target = globalizer.globalType(o, value.target);
+                if (self.graph.isTypeUnresolved(target)) break :blk .deferred;
+                const id = globalizer.globalNode(o, value.node);
+                if (types.fields(self.graph, target) == null) {
+                    if (types.isBuiltin(self.graph, target, .Void) or types.arrayLength(self.graph, target) == 0) {
+                        _ = self.coerceContextualValue(id, target);
+                        break :blk .resolved;
+                    }
+                    break :blk .deferred;
+                }
+                if (self.graph.node(id).content == .list_literal) {
+                    self.graph.nodes.items[@intFromEnum(id)].content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } };
+                }
+                self.graph.nodes.items[@intFromEnum(id)].ty = target;
+                // Leave required-field diagnostics to the shared publication check.
+                if (!@import("record_literals.zig").hasRequiredFields(self.graph, id, target)) break :blk .resolved;
+                const context = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+                const completed = self.completeRecordValue(target, id, context) catch |err| switch (err) {
+                    error.DeferredContractInitializer, error.DeferredGenericFunction, error.ComptimeExecutionPending => break :blk .deferred,
+                    else => return err,
+                };
+                if (!completed) break :blk .deferred;
+                break :blk .resolved;
+            },
             .resolve_entry_call => |value| blk: {
                 const callee = globalizer.globalFunction(o, value.callee);
                 const function = self.graph.function(callee);
@@ -1444,12 +1469,7 @@ pub const Resolver = struct {
     }
 
     pub fn callArgumentNamed(self: *const Resolver, literal: anytype, expected_offset: usize, expected_name: []const u8) ?global_sg.GlobalNodeId {
-        for (0..literal.fields.len) |supplied_offset| {
-            const supplied = self.graph.value_fields.items[literal.fields.start + @as(u32, @intCast(supplied_offset))];
-            if (supplied_offset < literal.dispatch_prefix_positional_count or self.graph.text(supplied.name).len == 0) {
-                if (supplied_offset == expected_offset) return supplied.value;
-            } else if (std.mem.eql(u8, self.graph.text(supplied.name), expected_name)) return supplied.value;
-        }
+        if (@import("record_literals.zig").suppliedField(self.graph, literal, expected_offset, expected_name)) |value| return value;
         for (self.graph.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |assumed| {
             if (std.mem.eql(u8, self.graph.text(assumed.name), expected_name)) return assumed.value;
         }
@@ -1477,6 +1497,18 @@ pub const Resolver = struct {
     fn instantiateArgumentDefault(self: *Resolver, fallback: global_sg.GlobalNodeId, context: reach_context.Context) !global_sg.GlobalNodeId {
         const defaults = self.argument_defaults orelse return error.DeferredGenericFunction;
         return defaults.instantiate(defaults.context, self.graph.node(fallback).content.argument_default, context);
+    }
+
+    pub fn completeRecordValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context) anyerror!bool {
+        const fields = types.fields(self.graph, target) orelse return false;
+        if (types.isCUnion(self.graph, target)) {
+            _ = self.coerceContextualValue(node, target);
+            return true;
+        }
+        if (!self.callInputNamesMatch(fields, self.graph.node(node).content.struct_value_literal)) return false;
+        if (!try self.completeCallInputFieldsWithReach(fields, node, context)) return false;
+        self.graph.nodes.items[@intFromEnum(node)].ty = target;
+        return true;
     }
 
     pub fn completeCallInputFields(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) !bool {
@@ -1540,10 +1572,8 @@ pub const Resolver = struct {
             const value = node orelse return false;
             _ = self.coerceContextualValue(value, expected.ty);
             if (self.graph.node(value).content == .struct_value_literal) {
-                if (types.fields(self.graph, expected.ty)) |nested| {
-                    if (!try self.completeCallInputFieldsWithReach(nested, value, context)) return false;
-                    self.graph.nodes.items[@intFromEnum(value)].ty = expected.ty;
-                }
+                if (types.fields(self.graph, expected.ty) != null)
+                    if (!try self.completeRecordValue(expected.ty, value, context)) return false;
             }
             try values.append(self.allocator, .{ .name = expected.name, .value = value });
         }
@@ -1891,7 +1921,10 @@ pub const Resolver = struct {
     fn contextualListLiteralFits(self: *const Resolver, literal: anytype, target: global_sg.GlobalTypeId) bool {
         if (literal.elements.len == 0) {
             if (types.isBuiltin(self.graph, target, .Void)) return true;
-            if (types.fields(self.graph, target)) |fields| return fields.len == 0;
+            if (types.fields(self.graph, target)) |fields| {
+                for (self.graph.fields.items[fields.start..][0..fields.len]) |field| if (field.default_value == null) return false;
+                return true;
+            }
         }
         const element = types.arrayElement(self.graph, target) orelse return false;
         const length = types.arrayLength(self.graph, target) orelse return false;

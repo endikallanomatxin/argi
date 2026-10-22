@@ -3141,15 +3141,7 @@ pub const CodeGenerator = struct {
     }
 
     fn isCUnion(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
-        return switch (self.graph.types.items[@intFromEnum(ty)]) {
-            .declared => |decl| self.graph.declarations.items[@intFromEnum(decl)].struct_layout == .c_union,
-            .structural => |shape| shape.layout == .c_union,
-            .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
-                .structure => |shape| shape.layout == .c_union,
-                else => false,
-            } else false,
-            else => false,
-        };
+        return types.isCUnion(self.graph, ty);
     }
 
     fn isPointer(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {

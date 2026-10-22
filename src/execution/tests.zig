@@ -3108,3 +3108,35 @@ test "compile-time expression failures retain source after evaluator teardown" {
     try std.testing.expectEqualStrings("app/main.rg", diagnostics.path(location));
     try std.testing.expectEqual(@as(u32, 1), diagnostics.lineColumn(location).line);
 }
+
+test "incomplete record submissions fail semantically without poisoning retained values" {
+    const Interactive = @import("interactive.zig").Interactive;
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("alive ::= 42");
+    try session.submitDefinitions("Pair: Type = (.left: Int32, .right: Int32)\nmake_pair() -> (.result: Pair) := { result = (.left = 42) }");
+    try std.testing.expectError(error.Reported, session.submitStatements("pair ::= make_pair()"));
+    try std.testing.expectEqual(@as(usize, 1), session.diagnostics.list.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "record initializer is missing required field 'right'") != null);
+    try std.testing.expectEqual(.ready, session.runtime.context.state);
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("alive")).?.value.runtime.integer);
+    try session.close();
+}
+
+test "interactive record defaults retain borrowed temporary storage across commands" {
+    const Interactive = @import("interactive.zig").Interactive;
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("make_array() -> (.result: [2]Int32) := { result = (20, 22) }");
+    try session.submitStatements("holder :: (.data: $&[2]Int32 = $&make_array()) = ()");
+    try session.submitDefinitions("Other: Type = (.value: Int32)");
+    try std.testing.expectEqual(@as(u64, 20), (try session.submitInput("holder.data&[0]")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(u64, 22), (try session.submitInput("holder.data&[1]")).?.value.runtime.integer);
+    try session.submitStatements("next :: (.data: $&[2]Int32 = $&make_array()) = ()");
+    try session.submitStatements("next.data&[0] = 7");
+    try std.testing.expectEqual(@as(u64, 20), (try session.submitInput("holder.data&[0]")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("next.data&[0]")).?.value.runtime.integer);
+    try session.close();
+}

@@ -2572,7 +2572,7 @@ pub const Resolver = struct {
             // cannot manufacture omitted runtime fields.
             const context = try self.operatorContext(null);
             defer self.resolver.allocator.free(context.global.visible_bindings);
-            if (!try self.resolver.core.completeCallInputFieldsWithReach(expected_fields, global, context))
+            if (!try self.resolver.core.completeRecordValue(expected, global, context))
                 return error.MissingParameterizedStructField;
             self.resolver.graph.nodes.items[@intFromEnum(global)].ty = expected;
             self.resolver.stats.nodes += 1;

@@ -114,27 +114,36 @@ pub const Context = struct {
     }
 
     fn lowerStructural(self: *Context, owner: syn.NodeIndex, literal: syn.StructTypeLiteral) anyerror!entities.ModuleTypeId {
-        var first: ?entities.ModuleFieldId = null;
-        var count: u32 = 0;
+        // Preserve executable defaults as ordinary deferred type recipes.
+        for (literal.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
+            if (field.default_value != null) return self.lowerComputedType(owner);
+        }
+        return self.lowerRecordFields(owner, literal);
+    }
+
+    // Entry signatures initialize their output defaults in the function body.
+    // Their field types still retain nested record defaults normally.
+    pub fn lowerRecordFields(self: *Context, owner: syn.NodeIndex, literal: syn.StructTypeLiteral) anyerror!entities.ModuleTypeId {
+        _ = owner;
+        // Child types may append their own fields. Publish siblings together
+        // only after lowering those children, preserving one contiguous range.
+        var fields: std.ArrayList(entities.Field) = .empty;
+        defer fields.deinit(self.writer.allocator);
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
             const ty_node = field.type_node orelse return error.StructFieldTypeRequired;
-            const ty = try self.lower(ty_node);
-            const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
-            const id = try self.writer.addField(.{
-                .name = name,
-                .ty = ty,
+            try fields.append(self.writer.allocator, .{
+                .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)),
+                .ty = try self.lower(ty_node),
                 .source = self.sourceRef(field_node),
-                // Defaults are lowered by the body/default pass; type lowering
-                // deliberately does not retain the syntax node.
                 .default_value = null,
             });
-            if (first == null) first = id;
-            count += 1;
         }
-        _ = owner;
+        const start: u32 = @intCast(views.fieldCount(self.graph));
+        for (fields.items) |field| _ = try self.writer.addField(field);
         return self.writer.addResolvedType(.{ .structural = .{
-            .fields = .{ .start = if (first) |id| @intFromEnum(id) else @intCast(views.fieldCount(self.graph)), .len = count },
+            .fields = .{ .start = start, .len = @intCast(fields.items.len) },
             .layout = .regular,
         } });
     }
@@ -166,31 +175,35 @@ pub const Context = struct {
         } });
     }
 
-    fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
-        if (@import("type_arguments.zig").requiresResolution(self.tree, generic.arguments)) {
-            const external_start = self.graph.semantic.external_refs.items.len;
-            const computed = try @import("parameterized/lowerer.zig").lowerConcreteTypeExpression(self.graph, self.writer, self.file_index, self.tree, self.source, owner);
-            // Preserve lexical import aliases in the anonymous expression.
-            for (self.graph.semantic.external_refs.items[external_start..]) |*external| {
-                const path = external.module_path orelse continue;
-                var alias_index = self.module_aliases.len;
-                while (alias_index != 0) {
-                    alias_index -= 1;
-                    const alias = self.module_aliases[alias_index];
-                    if (std.mem.eql(u8, self.graph.text(path), self.graph.text(alias.name))) {
-                        external.module_path = alias.path;
-                        break;
-                    }
+    fn lowerComputedType(self: *Context, owner: syn.NodeIndex) anyerror!entities.ModuleTypeId {
+        const external_start = self.graph.semantic.external_refs.items.len;
+        const computed = try @import("parameterized/lowerer.zig").lowerConcreteTypeExpression(self.graph, self.writer, self.file_index, self.tree, self.source, owner);
+        // Preserve lexical import aliases in the anonymous expression.
+        for (self.graph.semantic.external_refs.items[external_start..]) |*external| {
+            const path = external.module_path orelse continue;
+            var alias_index = self.module_aliases.len;
+            while (alias_index != 0) {
+                alias_index -= 1;
+                const alias = self.module_aliases[alias_index];
+                if (std.mem.eql(u8, self.graph.text(path), self.graph.text(alias.name))) {
+                    external.module_path = alias.path;
+                    break;
                 }
             }
-            const reference = try self.writer.addExternalRef(.{
-                .kind = .type,
-                .module_path = null,
-                .name = try self.writer.addString("compile-time type"),
-                .computed_type = computed,
-                .source = self.sourceRef(owner),
-            });
-            return self.writer.addExternalType(reference);
+        }
+        const reference = try self.writer.addExternalRef(.{
+            .kind = .type,
+            .module_path = null,
+            .name = try self.writer.addString("compile-time type"),
+            .computed_type = computed,
+            .source = self.sourceRef(owner),
+        });
+        return self.writer.addExternalType(reference);
+    }
+
+    fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
+        if (@import("type_arguments.zig").requiresResolution(self.tree, generic.arguments)) {
+            return self.lowerComputedType(owner);
         }
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;

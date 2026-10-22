@@ -51,6 +51,18 @@ pub fn isErrable(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     };
 }
 
+pub fn isCUnion(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    return switch (graph.semanticType(ty)) {
+        .declared => |decl| graph.declaration(decl).struct_layout == .c_union,
+        .structural => |shape| shape.layout == .c_union,
+        .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .structure => |shape| shape.layout == .c_union,
+            else => false,
+        } else false,
+        else => false,
+    };
+}
+
 pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.FieldRange {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
     return switch (semantic) {

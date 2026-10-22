@@ -442,8 +442,8 @@ const Context = struct {
             .function_call => self.lowerCall(node, expected),
             .comptime_entry => self.lowerComptimeEntry(node),
             .code_block => self.lowerBlockNode(node),
-            .list_literal => self.lowerList(node),
-            .struct_value_literal => self.lowerStructValue(node),
+            .list_literal => self.lowerList(node, expected),
+            .struct_value_literal => self.lowerStructValue(node, expected),
             .choice_literal, .choice_some_literal => self.lowerChoiceLiteral(node, expected),
             .struct_field_access => self.lowerField(node, expected),
             .choice_payload_access => self.lowerChoicePayload(node, expected),
@@ -794,7 +794,9 @@ const Context = struct {
 
     fn entryFields(self: *Context, syntax: ?syn.NodeIndex) !graph_mod.FieldRange {
         const node = syntax orelse return .{ .start = 0, .len = 0 };
-        const ty = try views.typeView(self.graph, try self.lowerType(node));
+        const literal = self.tree.structTypeLiteral(node) orelse return error.InvalidComptimeEntrySignature;
+        var lowerer = self.typeLowerer();
+        const ty = try views.typeView(self.graph, try lowerer.lowerRecordFields(node, literal));
         if (ty != .resolved or ty.resolved != .structural) return error.InvalidComptimeEntrySignature;
         const fields = ty.resolved.structural.fields;
         return .{ .start = fields.start, .len = fields.len };
@@ -1015,7 +1017,7 @@ const Context = struct {
         return self.resolved(node, ty, .{ .code_block = block });
     }
 
-    fn lowerList(self: *Context, node: syn.NodeIndex) !Lowered {
+    fn lowerList(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const list = self.tree.listLiteral(node).?;
         var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
         defer nodes.deinit();
@@ -1023,12 +1025,14 @@ const Context = struct {
             const value = try self.valuePosition(child, try self.lowerNode(child, null));
             try nodes.append(value.node);
         }
-        return self.resolved(node, null, .{ .list_literal = .{
+        const result = try self.resolved(node, null, .{ .list_literal = .{
             .elements = try self.writer.appendNodeRefs(nodes.items),
         } });
+        if (list.elements.len == 0) try self.trackRecordLiteral(result.node, expected);
+        return result;
     }
 
-    fn lowerStructValue(self: *Context, node: syn.NodeIndex) !Lowered {
+    fn lowerStructValue(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const literal = self.tree.structValueLiteral(node).?;
         var values: std.ArrayList(entities.ValueField) = .empty;
         defer values.deinit(self.allocator);
@@ -1043,9 +1047,20 @@ const Context = struct {
         }
         const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
         try self.graph.semantic.value_fields.appendSlice(self.allocator, values.items);
-        return self.resolved(node, null, .{ .struct_value_literal = .{
+        const result = try self.resolved(node, null, .{ .struct_value_literal = .{
             .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
             .dispatch_prefix_positional_count = literal.positional_prefix_count,
+        } });
+        try self.trackRecordLiteral(result.node, expected);
+        return result;
+    }
+
+    fn trackRecordLiteral(self: *Context, node: entities.ModuleNodeId, expected: ?entities.ModuleTypeId) !void {
+        if (expected) |target| _ = try self.writer.addPendingOperation(.{ .resolve_record_literal = .{
+            .node = node,
+            .target = target,
+            .visible_bindings = try self.captureVisibleBindings(),
+            .owner_function = self.current_function,
         } });
     }
 
@@ -1674,8 +1689,8 @@ const Context = struct {
         return self.resolved(node, try self.builtin(.Void), content);
     }
 
-    fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
-        var lowerer = type_lowerer.Context{
+    fn typeLowerer(self: *Context) type_lowerer.Context {
+        return .{
             .graph = self.graph,
             .writer = &self.writer,
             .file_index = self.file_index,
@@ -1683,6 +1698,10 @@ const Context = struct {
             .source = self.source,
             .module_aliases = self.module_aliases.items,
         };
+    }
+
+    fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
+        var lowerer = self.typeLowerer();
         return lowerer.lower(node);
     }
 

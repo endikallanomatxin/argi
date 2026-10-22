@@ -63,13 +63,7 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
     } else blk: {
         // Numeric unions and choices have overlapping or discriminated storage;
         // they need an explicit representation plan before byte access is valid.
-        const semantic = graph.semanticType(ty);
-        if (semantic == .declared and graph.declaration(semantic.declared).struct_layout == .c_union) return error.UnsupportedNumericLayout;
-        if (semantic == .structural and semantic.structural.layout == .c_union) return error.UnsupportedNumericLayout;
-        if (semantic == .generic) {
-            const instance = types.genericInstance(graph, ty) orelse return error.UnsupportedNumericLayout;
-            if (instance.shape == .structure and instance.shape.structure.layout == .c_union) return error.UnsupportedNumericLayout;
-        }
+        if (types.isCUnion(graph, ty)) return error.UnsupportedNumericLayout;
         const fields = types.fields(graph, ty) orelse return error.UnsupportedNumericLayout;
         const result = try allocator.alloc(Layout.Field, fields.len);
         var offset: usize = 0;
