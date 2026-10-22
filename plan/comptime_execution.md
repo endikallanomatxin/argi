@@ -72,8 +72,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   generations of the same storage now receive a joined observation. Only
   references that observed each incoming current value follow it; historical
   aliases retain their stale roots (215/216X), including repeated replacement
-  in a loop (217). Finish loop observation canonicalization and partially
-  initialized choice construction.
+  in a loop (217). Loop contexts canonicalize unretained joined observations:
+  the replacement probe now stabilizes at 10 roots in two iterations rather
+  than growing by four roots until the iteration limit. Historical aliases
+  retaining an observation prevent its reuse. Finish historical-observation
+  widening and partially initialized choice construction.
   Symbolic slots now retain sparse stored-value facts separately from pointee
   identity/initializedness. Direct/call writes, branch/loop joins and returned
   field references preserve target dependencies (196X/198X/199X/200X); copied
@@ -224,6 +227,6 @@ through retained sessions as well as native compilation, including inactive
 branches, cycles, allocation failures and rejected evaluator-resource escapes.
 
 Recheck published CI after the latest execution changes. Run
-[39725109777](https://github.com/endikallanomatxin/argi/actions/runs/39725109777)
-passed at `83f0d865` on Linux and macOS, both x86_64 and ARM64. Newer logical-slot
-and relocation changes require their own completed runs.
+[39782892337](https://github.com/endikallanomatxin/argi/actions/runs/39782892337)
+passed at `8d45c7f1` on Linux and macOS, both x86_64 and ARM64. Loop observation
+canonicalization requires its own completed run.

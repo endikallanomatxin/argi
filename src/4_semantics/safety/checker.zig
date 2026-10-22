@@ -233,13 +233,15 @@ pub const SafetyChecker = struct {
 
     const LoopJoinContext = struct {
         roots: std.array_list.Managed(LoopRootPhi),
+        symbolic: std.array_list.Managed(struct { identity: facts.SymbolicPointeeId, root: facts.ValidityRootId }),
 
         fn init(allocator: std.mem.Allocator) LoopJoinContext {
-            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator) };
+            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator), .symbolic = .init(allocator) };
         }
 
         fn deinit(self: *LoopJoinContext) void {
             self.roots.deinit();
+            self.symbolic.deinit();
         }
     };
 
@@ -6960,6 +6962,7 @@ pub const SafetyChecker = struct {
         left: *const FunctionState,
         right: *const FunctionState,
     ) !void {
+        try self.widenLoopSymbolicObservations(context, joined, left, right);
         for (joined.places.items) |*joined_place| {
             if (self.initializednessAtPlace(@constCast(left), joined_place.storage) != .initialized or
                 self.initializednessAtPlace(@constCast(right), joined_place.storage) != .initialized) continue;
@@ -7145,11 +7148,58 @@ pub const SafetyChecker = struct {
         self.trimUnreferencedLoopRoots(context, joined);
     }
 
+    fn widenLoopSymbolicObservations(self: *SafetyChecker, context: *LoopJoinContext, joined: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
+        for (joined.symbolic_pointees.items) |*pointee| {
+            if (pointee.initializedness != .initialized) continue;
+            const current = pointee.generation orelse continue;
+            if (!joined.tracker.isAlive(current)) continue;
+            const a = for (left.symbolic_pointees.items) |entry| {
+                if (entry.identity == pointee.identity) break entry.generation;
+            } else null;
+            const b = for (right.symbolic_pointees.items) |entry| {
+                if (entry.identity == pointee.identity) break entry.generation;
+            } else null;
+            if (a == null or b == null or a == b or current == a or current == b) continue;
+            var existing: ?facts.ValidityRootId = null;
+            for (context.symbolic.items) |entry| if (entry.identity == pointee.identity) {
+                existing = entry.root;
+                break;
+            };
+            if (existing == null) {
+                try context.symbolic.append(.{ .identity = pointee.identity, .root = current });
+                continue;
+            }
+            const canonical = existing.?;
+            // Reusing an observation is legal only after no historical value
+            // retains it. Never revive a root carried by an earlier alias.
+            var retained = false;
+            for (joined.places.items) |place| if (retainsLoopObservation(place.value, canonical)) {
+                retained = true;
+                break;
+            };
+            for (joined.symbolic_values.items) |stored| if (retainsLoopObservation(stored.value, canonical)) {
+                retained = true;
+                break;
+            };
+            if (retained or rootIsStructurallyReferenced(joined, canonical)) continue;
+            try joined.tracker.materialize(canonical);
+            joined.tracker.roots.items[@intFromEnum(canonical)].state = .alive;
+            for (joined.places.items) |*place| place.value = try self.replaceValueRoots(place.value, &.{current}, canonical);
+            for (joined.symbolic_values.items) |*stored| stored.value = try self.replaceValueRoots(stored.value, &.{current}, canonical);
+            pointee.generation = canonical;
+            joined.tracker.end(current);
+        }
+    }
+
     fn trimUnreferencedLoopRoots(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState) void {
         while (state.tracker.roots.items.len != 0) {
             const root: facts.ValidityRootId = @enumFromInt(state.tracker.roots.items.len - 1);
             var referenced = false;
             for (context.roots.items) |entry| if (entry.root == root) {
+                referenced = true;
+                break;
+            };
+            if (!referenced) for (context.symbolic.items) |entry| if (entry.root == root) {
                 referenced = true;
                 break;
             };
@@ -7923,6 +7973,24 @@ fn valueDependsOnDeadRootWithOwners(
         if (valueDependsOnDeadRootWithOwners(field.value.*, owners, state)) return true;
     for (value.variants) |variant|
         if (valueDependsOnDeadRootWithOwners(variant.value.*, owners, state)) return true;
+    return false;
+}
+
+// Conditional facts can keep an observation even without a direct loan.
+// Guarded fact graphs are opaque here; conservatively retain their roots
+// rather than traverse potentially recursive snapshots during loop widening.
+fn retainsLoopObservation(value: facts.ValueFacts, root: facts.ValidityRootId) bool {
+    // Guarded snapshots can form recursive fact graphs. Conservatively retain
+    // their observations rather than traversing or renewing hidden aliases.
+    if (value.guarded_values.len != 0 or containsRoot(value.owned_roots, root)) return true;
+    for (value.dependencies) |dependency| if (dependency.root == root) return true;
+    for (value.opaque_provenance) |provenance| if (provenance.generation == root) return true;
+    for (value.generation_outcomes) |outcome| {
+        if (outcome.generation == root or containsRoot(outcome.owned_roots, root)) return true;
+        if (outcome.relocation) |relocation| if (relocation.generation == root) return true;
+    }
+    for (value.fields) |field| if (retainsLoopObservation(field.value.*, root)) return true;
+    for (value.variants) |variant| if (retainsLoopObservation(variant.value.*, root)) return true;
     return false;
 }
 
@@ -10652,4 +10720,83 @@ test "symbolic generation joins renew current observations without renewing hist
     try std.testing.expect(valueDependsOnRoot(historical, first));
     joined.tracker.end(generation);
     try std.testing.expect(!joined.tracker.dependenciesAreAlive(current));
+}
+
+test "loop symbolic observations canonicalize only without retained historical aliases" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (0..2) |_| try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var left = SafetyChecker.FunctionState.init(a);
+    defer left.deinit();
+    left.tracker.namespace = &namespace;
+    const backing = try left.tracker.establish(.fresh);
+    const first = try left.tracker.establish(.fresh);
+    try left.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(0), .initializedness = .initialized, .backing = backing, .generation = first });
+    const reference: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .dependencies = &.{ .{ .root = backing }, .{ .root = first } } };
+    try checker.setPlace(&left, .{ .root = @enumFromInt(0) }, .initialized, reference);
+    try checker.setPlace(&left, .{ .root = @enumFromInt(1) }, .initialized, reference);
+    var right = try left.clone(a, null);
+    defer right.deinit();
+    right.tracker.end(first);
+    const second = try right.tracker.establish(.fresh);
+    right.symbolic_pointees.items[0].generation = second;
+    try checker.setPlace(&right, .{ .root = @enumFromInt(0) }, .initialized, try checker.replaceValueRoots(reference, &.{first}, second));
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    var context = SafetyChecker.LoopJoinContext.init(a);
+    defer context.deinit();
+    try checker.widenLoopSymbolicObservations(&context, &joined, &left, &right);
+    const canonical = joined.symbolic_pointees.items[0].generation.?;
+    const stable = try joined.clone(a, null);
+    var stable_state = stable;
+    defer stable_state.deinit();
+    var repeated = try joined.clone(a, null);
+    defer repeated.deinit();
+    repeated.tracker.end(canonical);
+    const fresh = try repeated.tracker.establish(.fresh);
+    repeated.symbolic_pointees.items[0].generation = fresh;
+    const observed = checker.valueAtPlace(&repeated, .{ .root = @enumFromInt(0) }).?;
+    try checker.setPlace(&repeated, .{ .root = @enumFromInt(0) }, .initialized, try checker.replaceValueRoots(observed, &.{canonical}, fresh));
+    var next = SafetyChecker.FunctionState.init(a);
+    defer next.deinit();
+    try checker.joinState(&next, &left, &repeated);
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    checker.trimUnreferencedLoopRoots(&context, &next);
+    try std.testing.expectEqual(canonical, next.symbolic_pointees.items[0].generation.?);
+    try std.testing.expect(statesEqual(&stable_state, &next));
+    // A historical copy deliberately retains the old canonical root.
+    const historical = observed;
+    try checker.setPlace(&repeated, .{ .root = @enumFromInt(1) }, .initialized, historical);
+    try checker.joinState(&next, &left, &repeated);
+    const uncanonicalized = next.symbolic_pointees.items[0].generation.?;
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    try std.testing.expectEqual(uncanonicalized, next.symbolic_pointees.items[0].generation.?);
+    try std.testing.expect(uncanonicalized != canonical);
+    try std.testing.expect(!next.tracker.dependenciesAreAlive(checker.valueAtPlace(&next, .{ .root = @enumFromInt(1) }).?));
+    // Outcome metadata also retains an observation without a direct loan.
+    const outcome_value: facts.ValueFacts = .{
+        .generation_outcomes = &.{.{ .storage = .{ .root = @enumFromInt(0) }, .generation = canonical, .guard = 1, .invalidates = false }},
+    };
+    try checker.setPlace(&left, .{ .root = @enumFromInt(1) }, .initialized, outcome_value);
+    try checker.setPlace(&repeated, .{ .root = @enumFromInt(1) }, .initialized, outcome_value);
+    try checker.joinState(&next, &left, &repeated);
+    const guarded_generation = next.symbolic_pointees.items[0].generation.?;
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    try std.testing.expectEqual(guarded_generation, next.symbolic_pointees.items[0].generation.?);
+    try std.testing.expect(guarded_generation != canonical);
 }
