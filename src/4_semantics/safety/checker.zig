@@ -1968,7 +1968,10 @@ pub const SafetyChecker = struct {
         const namespace = state.tracker.namespace orelse return false;
         while (true) {
             identity = for (namespace.projected_storage.items) |entry| {
-                if (entry.identity == identity) break entry.parent;
+                if (entry.identity == identity) {
+                    if (entry.projection == .dereference) return false;
+                    break entry.parent;
+                }
             } else return false;
             if (identity == container) return true;
         }
@@ -5285,7 +5288,7 @@ pub const SafetyChecker = struct {
         if (!state.tracker.isAlive(generation)) return false;
         const namespace = state.tracker.namespace orelse return true;
         for (namespace.projected_storage.items) |projected| {
-            if (projected.parent != identity or projected.parent_generation != generation) continue;
+            if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != generation) continue;
             for (state.symbolic_pointees.items) |child| {
                 if (child.identity == projected.identity and !self.symbolicStorageComplete(state, child.identity)) return false;
             }
@@ -5589,6 +5592,7 @@ pub const SafetyChecker = struct {
                     if (index >= length) return null;
                     break :element_type types.arrayElement(self.graph, ty) orelse return null;
                 },
+                .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else return null,
                 else => return null,
             };
         } else null;
@@ -5667,6 +5671,21 @@ pub const SafetyChecker = struct {
         return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{identity.?}) };
     }
 
+    // Reading an input reference slot observes the pointer stored in it, not
+    // a pointer to that slot. Intern that initial referent separately so copies
+    // share its incarnation without granting ownership of the slot's parent.
+    fn readSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, ty: ?graph_mod.GlobalTypeId) !facts.ValueFacts {
+        if (pointer.symbolic_pointees.len != 1) return .{};
+        const identity = pointer.symbolic_pointees[0];
+        const stored = try self.symbolicValueAt(state, identity);
+        const value_type = ty orelse for (state.symbolic_pointees.items) |entry| {
+            if (entry.identity == identity) break entry.ty;
+        } else null;
+        if (stored == null and value_type != null and isPointer(self.graph, value_type.?))
+            return (try self.projectSymbolicStorage(pointer, .dereference, state)) orelse .{};
+        return self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
+    }
+
     fn storeSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, value: facts.ValueFacts, definite: bool) !void {
         if (pointer.opaque_provenance.len != 0) return;
         for (pointer.symbolic_pointees) |identity| {
@@ -5706,6 +5725,7 @@ pub const SafetyChecker = struct {
         const namespace = state.tracker.namespace orelse return false;
         for (namespace.projected_storage.items) |entry| {
             if (entry.identity != child) continue;
+            if (entry.projection == .dereference) return false;
             if (entry.parent == parent) return true;
             return self.symbolicStorageDescendsFrom(state, entry.parent, parent);
         }
@@ -5717,6 +5737,7 @@ pub const SafetyChecker = struct {
         const namespace = state.tracker.namespace orelse return null;
         for (namespace.projected_storage.items) |projected| {
             if (projected.identity != identity) continue;
+            if (projected.projection == .dereference) return null;
             for (state.symbolic_pointees.items) |parent| {
                 if (parent.identity != projected.parent or parent.generation != projected.parent_generation) continue;
                 const stored = try self.symbolicValueAt(state, parent.identity) orelse return null;
@@ -5735,7 +5756,7 @@ pub const SafetyChecker = struct {
         var result = original;
         var prepared = false;
         for (namespace.projected_storage.items) |projected| {
-            if (projected.parent != identity or projected.parent_generation != parent.generation) continue;
+            if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != parent.generation) continue;
             var changed = false;
             for (state.symbolic_values.items) |stored| {
                 if (stored.identity == projected.identity or self.symbolicStorageDescendsFrom(state, stored.identity, projected.identity)) {
@@ -5887,8 +5908,9 @@ pub const SafetyChecker = struct {
             value = try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{}), state);
         } else if (access.pointer) |pointer| {
             for (pointer.symbolic_pointees) |identity| {
-                const stored = try self.symbolicValueAt(state, identity);
-                const contents = try self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
+                var selected = pointer;
+                selected.symbolic_pointees = &.{identity};
+                const contents = try self.readSymbolicValue(state, selected, ty);
                 value = try self.mergeValueFacts(value, contents);
                 if (pointer.symbolic_pointees.len == 1) value = contents;
             }
@@ -10185,4 +10207,39 @@ test "symbolic stored references survive snapshots and joins without inventing e
     try std.testing.expect(valueDependsOnRoot(uncertain.value, first));
     try checker.joinState(&joined, &state, &state);
     try std.testing.expect(statesEqual(&joined, &state));
+}
+
+test "initial symbolic reference reads intern referents independently of slot ownership" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = generation });
+    const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .dependencies = &.{ .{ .root = backing }, .{ .root = generation } } };
+    const first = try checker.readSymbolicValue(&state, slot, null);
+    const repeated = try checker.readSymbolicValue(&state, slot, null);
+    try std.testing.expect(valueFactsEqual(first, repeated));
+    try std.testing.expect(first.symbolic_pointees[0] != slot.symbolic_pointees[0]);
+    try std.testing.expect(!checker.symbolicStorageDescendsFrom(&state, first.symbolic_pointees[0], slot.symbolic_pointees[0]));
+    try std.testing.expect(!SafetyChecker.symbolicStorageContains(&state, slot.symbolic_pointees[0], first.symbolic_pointees[0]));
+    try std.testing.expect(try checker.symbolicValueAt(&state, first.symbolic_pointees[0]) == null);
+    try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &state));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(repeated));
+    try std.testing.expect(checker.symbolicStorageComplete(&state, slot.symbolic_pointees[0]));
 }

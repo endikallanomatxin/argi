@@ -14665,3 +14665,14 @@ test "feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_l
     try buildExpectFail("tests/feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_local_reference", "caller storage cannot depend on a local storage generation");
     try vmExpect("tests/feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_local_reference", 1, "caller storage cannot depend on a local storage generation");
 }
+
+test "feature_tests/execution/204X_initial_symbolic_reference_keeps_target" {
+    try buildExpectFail("tests/feature_tests/execution/204X_initial_symbolic_reference_keeps_target", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/204X_initial_symbolic_reference_keeps_target", 1, "root that has ended");
+}
+
+test "feature_tests/execution/205_initial_symbolic_reference_survives_retargeting" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/205_initial_symbolic_reference_survives_retargeting");
+    try runExpect("tests/feature_tests/execution/205_initial_symbolic_reference_survives_retargeting", 42);
+    try vmExpect("tests/feature_tests/execution/205_initial_symbolic_reference_survives_retargeting", 42, null);
+}

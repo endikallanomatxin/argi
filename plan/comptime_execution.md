@@ -63,7 +63,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   retargeting (197). Concrete and symbolic aggregate reconstruction share
   projection/root rebuilding. Function exits also reject local references
   retained in caller storage (201X/203X), while overwritten temporary loans are
-  permitted (202). Finish initial unknown reference-field values, dynamic
+  permitted (202). Initial unknown reference fields now intern a separate
+  referent incarnation: copied references share consumption, while later slot
+  retargeting preserves historical targets (204X/205). Dereference edges do not
+  transfer parent cleanup or inherit stored aggregate contents. Initial references
+  returned through call summaries still need the same identities without making
+  ordinary scalar/view reads depend on expired slot observations. Finish dynamic
   indices and integration with opaque/acquired storage identities.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
