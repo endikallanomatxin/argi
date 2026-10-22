@@ -3066,3 +3066,22 @@ test "compile-time failures preserve nested caller sources after evaluator teard
     try std.testing.expect(std.mem.indexOf(u8, failure.msg, "called from app/main.rg:4:") != null);
     try std.testing.expectEqual(@as(u32, 1), diagnostics.lineColumn(failure.loc).line);
 }
+
+test "retained virtual failures preserve the creation unit source" {
+    const Interactive = @import("interactive.zig").Interactive;
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})\nBox: Type = (.value: Int32)");
+    try session.submitDefinitions("fail_read := (.source: &Box) -> (.result: Int32 = 0) { abort }\nimplement Readable#(Box) (.read = fail_read)");
+    try session.submitStatements("box :: Box = (.value = 42)\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
+    try session.submitDefinitions("invoke := (.handle: &Virtual#(.contract: Readable)) -> (.result: Int32) { result = Readable#().read(handle).result }");
+    try std.testing.expectError(error.ExecutionAborted, session.submitStatements("result ::= invoke(&erased)"));
+    try std.testing.expectEqual(@as(usize, 1), session.diagnostics.list.items.len);
+    const failure = session.diagnostics.list.items[0];
+    const origin = session.diagnostics.presentedLocation(failure.loc);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.source_db.get(origin.file).source, "fail_read :=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, failure.msg, "called from") != null);
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try session.reset();
+}
