@@ -61,8 +61,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   field references preserve target dependencies (196X/198X/199X/200X); copied
   references and aggregate snapshots retain their captured values after
   retargeting (197). Concrete and symbolic aggregate reconstruction share
-  projection/root rebuilding. Finish initial unknown reference-field values,
-  dynamic indices and integration with opaque/acquired storage identities.
+  projection/root rebuilding. Function exits also reject local references
+  retained in caller storage (201X/203X), while overwritten temporary loans are
+  permitted (202). Finish initial unknown reference-field values, dynamic
+  indices and integration with opaque/acquired storage identities.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops

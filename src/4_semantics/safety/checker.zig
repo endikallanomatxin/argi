@@ -6242,16 +6242,28 @@ pub const SafetyChecker = struct {
         value: facts.ValueFacts,
         state: *FunctionState,
     ) !void {
+        return self.rejectEscapingValue(function, source, value, state, .output);
+    }
+
+    fn rejectEscapingValue(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        value: facts.ValueFacts,
+        state: *FunctionState,
+        destination: enum { output, caller_storage },
+    ) !void {
         if (self.escapingLocalRoot(function, value, state)) |root| {
             var name: []const u8 = "local or temporary";
             for (state.storage_generations.items) |entry| if (entry.generation == root) {
                 name = self.graph.text(self.graph.binding(entry.storage.root).name);
                 break;
             };
-            try self.report(source, "function output cannot depend on a local storage generation that ends before return (storage rooted at '{s}'); return an owned value instead, or create the owner in the caller and pass a reference to it", .{name});
+            const subject = if (destination == .output) "function output" else "caller storage";
+            try self.report(source, "{s} cannot depend on a local storage generation that ends before return (storage rooted at '{s}'); return an owned value instead, or create the owner in the caller and pass a reference to it", .{ subject, name });
             return;
         }
-        if (valueDependsOnDeadRoot(value, state)) {
+        if (destination == .output and valueDependsOnDeadRoot(value, state)) {
             try self.report(source, "returned reference depends on a root that has ended", .{});
         }
     }
@@ -6276,6 +6288,29 @@ pub const SafetyChecker = struct {
                 try self.rejectEscapingLocalRoots(function, source, place.value, state);
             }
         }
+        for (state.symbolic_values.items) |stored| {
+            if (!self.symbolicSlotMayBeAvailable(state, stored.identity)) continue;
+            const contents = try self.reconstructSymbolicValue(state, stored.identity, stored.value);
+            try self.rejectEscapingValue(function, self.graph.declaration(record.declaration).source, contents, state, .caller_storage);
+        }
+    }
+
+    fn symbolicSlotMayBeAvailable(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) bool {
+        const entry = for (state.symbolic_pointees.items) |pointee| {
+            if (pointee.identity == identity) break pointee;
+        } else return false;
+        if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return false;
+        const namespace = state.tracker.namespace orelse return true;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.identity != identity) continue;
+            for (state.symbolic_pointees.items) |parent| {
+                if (parent.identity != projected.parent) continue;
+                if (parent.generation != null and parent.generation != projected.parent_generation) return false;
+                return self.symbolicSlotMayBeAvailable(state, parent.identity);
+            }
+            return false;
+        }
+        return true;
     }
 
     fn valueDependsOnLocalStorage(

@@ -14649,3 +14649,19 @@ test "feature_tests/execution/200X_returned_symbolic_reference_keeps_written_tar
     try buildExpectFail("tests/feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target", "root that has ended");
     try vmExpect("tests/feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target", 1, "root that has ended");
 }
+
+test "feature_tests/execution/201X_symbolic_caller_storage_rejects_local_reference" {
+    try buildExpectFail("tests/feature_tests/execution/201X_symbolic_caller_storage_rejects_local_reference", "caller storage cannot depend on a local storage generation");
+    try vmExpect("tests/feature_tests/execution/201X_symbolic_caller_storage_rejects_local_reference", 1, "caller storage cannot depend on a local storage generation");
+}
+
+test "feature_tests/execution/202_symbolic_caller_storage_overwrites_local_reference" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/202_symbolic_caller_storage_overwrites_local_reference");
+    try runExpect("tests/feature_tests/execution/202_symbolic_caller_storage_overwrites_local_reference", 42);
+    try vmExpect("tests/feature_tests/execution/202_symbolic_caller_storage_overwrites_local_reference", 42, null);
+}
+
+test "feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_local_reference" {
+    try buildExpectFail("tests/feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_local_reference", "caller storage cannot depend on a local storage generation");
+    try vmExpect("tests/feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_local_reference", 1, "caller storage cannot depend on a local storage generation");
+}
