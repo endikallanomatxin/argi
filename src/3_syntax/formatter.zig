@@ -1343,6 +1343,10 @@ test "formatter budgets member calls after generic arguments" {
 
 test "formatter separates compile-time execution prefixes from assignments" {
     try expectFormat(
+        "answer:=#run()->(.value:Int32){value=42}\n",
+        "answer := #run () -> (.value: Int32) { value = 42 }\n",
+    );
+    try expectFormat(
         "main()->(.result:Int32=0):={result=#run ()->(.answer:Int32){answer=calculate(.value=40)}}\n",
         "main() -> (.result: Int32 = 0) := {\n    result = #run () -> (.answer: Int32) { answer = calculate(.value = 40) }\n}\n",
     );
