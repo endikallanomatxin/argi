@@ -14623,3 +14623,29 @@ test "feature_tests/execution/195_partial_symbolic_reference_cleanup" {
     try runExpect("tests/feature_tests/execution/195_partial_symbolic_reference_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/195_partial_symbolic_reference_cleanup", 42, null);
 }
+
+test "feature_tests/execution/196X_symbolic_reference_field_keeps_written_target" {
+    try buildExpectFail("tests/feature_tests/execution/196X_symbolic_reference_field_keeps_written_target", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/196X_symbolic_reference_field_keeps_written_target", 1, "root that has ended");
+}
+
+test "feature_tests/execution/197_symbolic_reference_values_survive_retargeting" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/197_symbolic_reference_values_survive_retargeting");
+    try runExpect("tests/feature_tests/execution/197_symbolic_reference_values_survive_retargeting", 42);
+    try vmExpect("tests/feature_tests/execution/197_symbolic_reference_values_survive_retargeting", 42, null);
+}
+
+test "feature_tests/execution/198X_symbolic_reference_values_survive_conditional_calls" {
+    try buildExpectFail("tests/feature_tests/execution/198X_symbolic_reference_values_survive_conditional_calls", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/198X_symbolic_reference_values_survive_conditional_calls", 1, "root that has ended");
+}
+
+test "feature_tests/execution/199X_symbolic_reference_values_survive_loop_exits" {
+    try buildExpectFail("tests/feature_tests/execution/199X_symbolic_reference_values_survive_loop_exits", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/199X_symbolic_reference_values_survive_loop_exits", 1, "root that has ended");
+}
+
+test "feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target" {
+    try buildExpectFail("tests/feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target", 1, "root that has ended");
+}

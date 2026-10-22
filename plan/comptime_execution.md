@@ -56,6 +56,13 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   owners, but cannot turn lifetime-only anchors, offsets or alternative referents
   into a definite write. Finish nested symbolic reference-field destinations,
   array/choice structural cleanup and conditionally initialized referents.
+  Symbolic slots now retain sparse stored-value facts separately from pointee
+  identity/initializedness. Direct/call writes, branch/loop joins and returned
+  field references preserve target dependencies (196X/198X/199X/200X); copied
+  references and aggregate snapshots retain their captured values after
+  retargeting (197). Concrete and symbolic aggregate reconstruction share
+  projection/root rebuilding. Finish initial unknown reference-field values,
+  dynamic indices and integration with opaque/acquired storage identities.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops

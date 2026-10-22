@@ -78,10 +78,19 @@ pub const SafetyChecker = struct {
         generation: ?facts.ValidityRootId = null,
     };
 
+    const SymbolicStoredValue = struct {
+        identity: facts.SymbolicPointeeId,
+        value: facts.ValueFacts,
+        definite: bool = true,
+    };
+
     const FunctionState = struct {
         tracker: facts.Tracker,
         places: std.array_list.Managed(facts.PlaceFacts),
         symbolic_pointees: std.array_list.Managed(SymbolicPointeeState),
+        // Sparse value facts are separate from slot identity and initialization.
+        // Ordinary scalar slots need no entry; immutable aggregates share facts.
+        symbolic_values: std.array_list.Managed(SymbolicStoredValue),
         // TODO: Give branch-created acquisition capabilities distinct shared
         // identities as well; validity roots already use the joint namespace.
         storage_capabilities: std.array_list.Managed(StorageCapabilityState),
@@ -99,6 +108,7 @@ pub const SafetyChecker = struct {
                 .tracker = facts.Tracker.init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .symbolic_pointees = std.array_list.Managed(SymbolicPointeeState).init(allocator),
+                .symbolic_values = std.array_list.Managed(SymbolicStoredValue).init(allocator),
                 .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
@@ -114,6 +124,7 @@ pub const SafetyChecker = struct {
             self.tracker.deinit();
             self.places.deinit();
             self.symbolic_pointees.deinit();
+            self.symbolic_values.deinit();
             self.storage_capabilities.deinit();
             self.ownership_edges.deinit();
             self.storage_generations.deinit();
@@ -134,6 +145,7 @@ pub const SafetyChecker = struct {
             try out.tracker.roots.appendSlice(self.tracker.roots.items);
             try out.places.appendSlice(self.places.items);
             try out.symbolic_pointees.appendSlice(self.symbolic_pointees.items);
+            try out.symbolic_values.appendSlice(self.symbolic_values.items);
             try out.storage_capabilities.appendSlice(self.storage_capabilities.items);
             try out.ownership_edges.appendSlice(self.ownership_edges.items);
             try out.storage_generations.appendSlice(self.storage_generations.items);
@@ -145,7 +157,7 @@ pub const SafetyChecker = struct {
             out.reachable = self.reachable;
             if (stats) |s| {
                 s.state_clones += 1;
-                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.symbolic_pointees.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len + self.choice_temporary_active.items.len);
+                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.symbolic_pointees.items.len + self.symbolic_values.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len + self.choice_temporary_active.items.len);
             }
             return out;
         }
@@ -854,6 +866,7 @@ pub const SafetyChecker = struct {
                 },
                 .struct_field_store => |store| {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.struct_ptr, state) orelse continue;
+                    const symbolic = if (pointer.referenced_place == null) try self.projectSymbolicReference(pointer, store.field_index, state) else null;
                     const value = try self.evaluate(function, store.value, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
@@ -861,17 +874,21 @@ pub const SafetyChecker = struct {
                         if (self.initializednessAtPlace(state, target) == .deinitialized)
                             try self.refreshStorageGenerationChecked(node.source, state, target);
                         try self.setPlace(state, target, .initialized, value);
-                    }
+                    } else if (symbolic) |target| try self.storeSymbolicValue(state, target, value, true);
                 },
                 .array_store => |store| {
                     const pointer = try self.evaluateArrayStorage(function, node.source, store.array_ptr, state) orelse continue;
                     _ = try self.evaluate(function, store.index, state);
+                    const symbolic = if (pointer.referenced_place == null) blk: {
+                        const index = self.staticIndex(store.index) orelse break :blk null;
+                        break :blk try self.projectSymbolicStorage(pointer, .{ .static_index = index }, state);
+                    } else null;
                     const value = try self.evaluate(function, store.value, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
                         const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                         try self.setPlace(state, try self.project(base, projection), .initialized, value);
-                    }
+                    } else if (symbolic) |target| try self.storeSymbolicValue(state, target, value, true);
                 },
                 .pointer_assignment => |assignment| {
                     const operand = try self.evaluateWritePointer(function, assignment.pointer, state);
@@ -922,7 +939,9 @@ pub const SafetyChecker = struct {
                         }
                     }
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
-                    if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
+                    if (pointer.referenced_place) |target| {
+                        try self.setPlace(state, target, .initialized, value);
+                    } else try self.storeSymbolicValue(state, pointer, value, true);
                     if (symbolic_renewal != null) {
                         try self.renewWriteReferenceSlot(state, operand, pointer);
                     }
@@ -2163,6 +2182,7 @@ pub const SafetyChecker = struct {
         if (path.input_index >= arguments.len) return .{};
         var value = arguments[path.input_index];
         var storage: ?facts.Place = null;
+        var symbolic: ?facts.ValueFacts = null;
         if (path.projections.len == 0 or path.projections[0] != .dereference) {
             // A Virtual value retains its concrete receiver Place. Loading
             // through the wrapper must reach that receiver's scalar facts.
@@ -2184,17 +2204,35 @@ pub const SafetyChecker = struct {
                 if (value.fields.len != 0 or value.variants.len != 0) break;
             }
         }
+        if (storage == null and value.symbolic_pointees.len == 1) symbolic = value;
         for (path.projections) |projection| {
             if (projection == .dereference) {
                 if (value.referenced_place) |place| {
                     storage = place;
+                    symbolic = null;
                     value = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
+                } else {
+                    storage = null;
+                    symbolic = if (value.symbolic_pointees.len == 1) value else null;
+                    if (symbolic) |pointer| {
+                        const identity = pointer.symbolic_pointees[0];
+                        if (try self.symbolicValueAt(state, identity)) |stored|
+                            value = try self.reconstructSymbolicValue(state, identity, stored.value);
+                    }
                 }
             } else {
                 const fallback = try self.projectValueFacts(value, &.{projection});
                 if (storage) |place| {
                     storage = try self.project(place, projection);
                     value = try self.reconstructPlaceValue(state, storage.?, self.valueAtPlace(state, storage.?) orelse fallback);
+                } else if (symbolic) |pointer| {
+                    const projected = try self.projectSymbolicStorage(pointer, projection, state);
+                    symbolic = projected;
+                    if (projected) |reference| {
+                        const identity = reference.symbolic_pointees[0];
+                        const stored = try self.symbolicValueAt(state, identity);
+                        value = try self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else fallback);
+                    } else value = fallback;
                 } else value = fallback;
             }
         }
@@ -3269,6 +3307,12 @@ pub const SafetyChecker = struct {
             }
 
             const target = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state) orelse {
+                if (post_state.initializedness == .initialized and post_state.initialization != .preserved) {
+                    if (post_values[post_index]) |value| {
+                        if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access|
+                            try self.storeSymbolicValue(state, access, value, post_state.initialization == .definite);
+                    }
+                }
                 if (post_state.ends_previous_roots) {
                     const symbolic = try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state);
                     const handled = if (symbolic) |value| try self.endSymbolicGenerations(source, value, state) else false;
@@ -3818,12 +3862,7 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
-            var input = try self.projectValueFacts(arguments[path.input_index], path.projections);
-            if (arguments[path.input_index].referenced_place) |base| {
-                var target = base;
-                for (path.projections) |projection| target = try self.project(target, projection);
-                if (self.valueAtPlace(state, target)) |stored| input = stored;
-            }
+            const input = try self.load_summary_input_value(path, arguments, state);
             result = try self.mergeValueFacts(result, input);
         }
 
@@ -4164,7 +4203,6 @@ pub const SafetyChecker = struct {
                 }
             }
             if (already_seen) continue;
-            projections_changed = true;
             const child_storage = facts.Place{
                 .root = storage.root,
                 .projections = entry.storage.projections[0 .. storage.projections.len + 1],
@@ -4172,50 +4210,62 @@ pub const SafetyChecker = struct {
             const inherited = try self.projectValueFacts(original, &.{projection});
             const child_value = if (self.getPlace(state, child_storage)) |exact| exact.value else inherited;
             const child = try self.reconstructPlaceValue(state, child_storage, child_value);
-            switch (projection) {
-                .field, .static_index => |index| {
-                    const field_index: u32 = @intCast(index);
-                    var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator);
-                    var replaced = false;
-                    for (result.fields) |field| {
-                        if (field.index == field_index) {
-                            const stored = try self.allocator.create(facts.ValueFacts);
-                            stored.* = child;
-                            try fields.append(.{ .index = field_index, .value = stored });
-                            replaced = true;
-                        } else try fields.append(field);
-                    }
-                    if (!replaced) {
+            result = try self.replaceProjectedValue(result, projection, child);
+            projections_changed = true;
+        }
+        return if (projections_changed) self.refreshProjectedValueRoots(original, result) else original;
+    }
+
+    // Projection updates share value/ownership reconstruction independently of
+    // whether storage has a lexical Place or a symbolic pointee identity.
+    fn replaceProjectedValue(self: *SafetyChecker, original: facts.ValueFacts, projection: facts.Projection, child: facts.ValueFacts) !facts.ValueFacts {
+        var result = original;
+        switch (projection) {
+            .field, .static_index => |index| {
+                const field_index: u32 = @intCast(index);
+                var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator);
+                var replaced = false;
+                for (result.fields) |field| {
+                    if (field.index == field_index) {
                         const stored = try self.allocator.create(facts.ValueFacts);
                         stored.* = child;
                         try fields.append(.{ .index = field_index, .value = stored });
-                    }
-                    result.fields = try fields.toOwnedSlice();
-                },
-                .variant => |index| {
-                    var variants = std.array_list.Managed(facts.VariantFacts).init(self.allocator);
-                    var replaced = false;
-                    for (result.variants) |variant| {
-                        if (variant.index == index) {
-                            const stored = try self.allocator.create(facts.ValueFacts);
-                            stored.* = child;
-                            try variants.append(.{ .index = index, .value = stored });
-                            replaced = true;
-                        } else try variants.append(variant);
-                    }
-                    if (!replaced) {
+                        replaced = true;
+                    } else try fields.append(field);
+                }
+                if (!replaced) {
+                    const stored = try self.allocator.create(facts.ValueFacts);
+                    stored.* = child;
+                    try fields.append(.{ .index = field_index, .value = stored });
+                }
+                result.fields = try fields.toOwnedSlice();
+            },
+            .variant => |index| {
+                var variants = std.array_list.Managed(facts.VariantFacts).init(self.allocator);
+                var replaced = false;
+                for (result.variants) |variant| {
+                    if (variant.index == index) {
                         const stored = try self.allocator.create(facts.ValueFacts);
                         stored.* = child;
                         try variants.append(.{ .index = index, .value = stored });
-                    }
-                    result.variants = try variants.toOwnedSlice();
-                },
-                .dynamic_index => result = try self.mergeValueFacts(result, child),
-                .dereference => {},
-            }
+                        replaced = true;
+                    } else try variants.append(variant);
+                }
+                if (!replaced) {
+                    const stored = try self.allocator.create(facts.ValueFacts);
+                    stored.* = child;
+                    try variants.append(.{ .index = index, .value = stored });
+                }
+                result.variants = try variants.toOwnedSlice();
+            },
+            .dynamic_index => result = try self.mergeValueFacts(result, child),
+            .dereference => {},
         }
-        if (!projections_changed) return original;
+        return result;
+    }
 
+    fn refreshProjectedValueRoots(self: *SafetyChecker, original: facts.ValueFacts, projected: facts.ValueFacts) !facts.ValueFacts {
+        var result = projected;
         // Flattened aggregate roots must follow the authoritative projections.
         // Preserve intrinsic ownership and explicit dependencies independently
         // of fields, while removing roots carried only by replaced children.
@@ -5617,6 +5667,136 @@ pub const SafetyChecker = struct {
         return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{identity.?}) };
     }
 
+    fn storeSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, value: facts.ValueFacts, definite: bool) !void {
+        if (pointer.opaque_provenance.len != 0) return;
+        for (pointer.symbolic_pointees) |identity| {
+            const strong = definite and pointer.symbolic_pointees.len == 1;
+            const previous = try self.symbolicValueAt(state, identity);
+            const next: SymbolicStoredValue = if (strong)
+                .{ .identity = identity, .value = value }
+            else
+                try self.joinSymbolicStoredValue(.{ .identity = identity, .value = value }, previous);
+            if (strong) {
+                var index: usize = 0;
+                while (index < state.symbolic_values.items.len) {
+                    const child = state.symbolic_values.items[index].identity;
+                    if (child != identity and self.symbolicStorageDescendsFrom(state, child, identity)) {
+                        _ = state.symbolic_values.orderedRemove(index);
+                    } else index += 1;
+                }
+            }
+            var replaced = false;
+            for (state.symbolic_values.items) |*stored| if (stored.identity == identity) {
+                stored.* = next;
+                replaced = true;
+                break;
+            };
+            if (replaced) continue;
+            if (facts.isEmptyValue(next.value)) {
+                const ty = for (state.symbolic_pointees.items) |entry| {
+                    if (entry.identity == identity) break entry.ty;
+                } else null;
+                if (ty == null or !self.typeContainsPointer(ty.?)) continue;
+            }
+            try state.symbolic_values.append(next);
+        }
+    }
+
+    fn symbolicStorageDescendsFrom(self: *SafetyChecker, state: *const FunctionState, child: facts.SymbolicPointeeId, parent: facts.SymbolicPointeeId) bool {
+        const namespace = state.tracker.namespace orelse return false;
+        for (namespace.projected_storage.items) |entry| {
+            if (entry.identity != child) continue;
+            if (entry.parent == parent) return true;
+            return self.symbolicStorageDescendsFrom(state, entry.parent, parent);
+        }
+        return false;
+    }
+
+    fn symbolicValueAt(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) anyerror!?SymbolicStoredValue {
+        for (state.symbolic_values.items) |stored| if (stored.identity == identity) return stored;
+        const namespace = state.tracker.namespace orelse return null;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.identity != identity) continue;
+            for (state.symbolic_pointees.items) |parent| {
+                if (parent.identity != projected.parent or parent.generation != projected.parent_generation) continue;
+                const stored = try self.symbolicValueAt(state, parent.identity) orelse return null;
+                return .{ .identity = identity, .value = try self.projectValueFacts(stored.value, &.{projected.projection}), .definite = stored.definite };
+            }
+        }
+        return null;
+    }
+
+    fn reconstructSymbolicValue(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId, original: facts.ValueFacts) anyerror!facts.ValueFacts {
+        if (state.symbolic_values.items.len == 0) return original;
+        const namespace = state.tracker.namespace orelse return original;
+        const parent = for (state.symbolic_pointees.items) |entry| {
+            if (entry.identity == identity) break entry;
+        } else return original;
+        var result = original;
+        var prepared = false;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.parent != identity or projected.parent_generation != parent.generation) continue;
+            var changed = false;
+            for (state.symbolic_values.items) |stored| {
+                if (stored.identity == projected.identity or self.symbolicStorageDescendsFrom(state, stored.identity, projected.identity)) {
+                    changed = true;
+                    break;
+                }
+            }
+            if (!changed) continue;
+            if (!prepared) {
+                // Empty siblings must not inherit another field's reference
+                // facts from a flattened aggregate envelope.
+                if (parent.ty) |ty| if (types.fields(self.graph, ty)) |range| {
+                    const fields = try self.allocator.alloc(facts.FieldFacts, range.len);
+                    for (fields, 0..) |*field, index| {
+                        field.* = .{ .index = @intCast(index), .value = &facts.empty_value_facts };
+                        for (result.fields) |known| if (known.index == index) {
+                            field.* = known;
+                            break;
+                        };
+                    }
+                    result.fields = fields;
+                };
+                prepared = true;
+            }
+            const stored = try self.symbolicValueAt(state, projected.identity);
+            const inherited = try self.projectValueFacts(original, &.{projected.projection});
+            const child = try self.reconstructSymbolicValue(state, projected.identity, if (stored) |known| known.value else inherited);
+            result = try self.replaceProjectedValue(result, projected.projection, child);
+        }
+        return if (prepared) self.refreshProjectedValueRoots(original, result) else original;
+    }
+
+    fn joinSymbolicStoredValue(self: *SafetyChecker, stored: SymbolicStoredValue, other: ?SymbolicStoredValue) !SymbolicStoredValue {
+        const definite = stored.definite and other != null and other.?.definite;
+        var value = try self.mergeValueFacts(stored.value, if (other) |known| known.value else .{});
+        if (!definite) value = try self.withoutExactSymbolicReferences(value);
+        return .{ .identity = stored.identity, .value = value, .definite = definite };
+    }
+
+    fn withoutExactSymbolicReferences(self: *SafetyChecker, original: facts.ValueFacts) anyerror!facts.ValueFacts {
+        var value = original;
+        value.referenced_place = null;
+        value.symbolic_pointees = &.{};
+        value.domains = &.{};
+        const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
+        for (fields) |*field| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.withoutExactSymbolicReferences(field.value.*);
+            field.value = child;
+        }
+        value.fields = fields;
+        const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
+        for (variants) |*variant| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.withoutExactSymbolicReferences(variant.value.*);
+            variant.value = child;
+        }
+        value.variants = variants;
+        return value;
+    }
+
     const WritePointer = struct {
         value: facts.ValueFacts,
         slot: ?facts.Place = null,
@@ -5705,6 +5885,13 @@ pub const SafetyChecker = struct {
             try self.requirePlaceInitialized(function, source, storage, self.initializednessAtPlace(state, storage), state);
             try self.requireDescendantsInitialized(function, source, storage, state);
             value = try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{}), state);
+        } else if (access.pointer) |pointer| {
+            for (pointer.symbolic_pointees) |identity| {
+                const stored = try self.symbolicValueAt(state, identity);
+                const contents = try self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
+                value = try self.mergeValueFacts(value, contents);
+                if (pointer.symbolic_pointees.len == 1) value = contents;
+            }
         }
         if (access.pointer) |pointer| return self.envelopeOpaqueRead(state, value, ty, pointer);
         // A stored scalar copy does not borrow the opaque allocation whose
@@ -6241,6 +6428,19 @@ pub const SafetyChecker = struct {
                 } else result.initializedness = .maybe_initialized;
                 try joined.symbolic_pointees.append(result);
             }
+        }
+
+        for (left.symbolic_values.items) |stored| {
+            const other = try self.symbolicValueAt(right, stored.identity);
+            try joined.symbolic_values.append(try self.joinSymbolicStoredValue(stored, other));
+        }
+        for (right.symbolic_values.items) |stored| {
+            var found = false;
+            for (left.symbolic_values.items) |other| if (other.identity == stored.identity) {
+                found = true;
+                break;
+            };
+            if (!found) try joined.symbolic_values.append(try self.joinSymbolicStoredValue(stored, try self.symbolicValueAt(left, stored.identity)));
         }
 
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
@@ -7423,6 +7623,8 @@ fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root:
         if (pointee.backing == root or pointee.generation == root) return true;
     for (state.places.items) |stored|
         if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
+    for (state.symbolic_values.items) |stored|
+        if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
     for (state.storage_generations.items) |storage_generation|
         if (storage_generation.generation == root) return true;
     for (state.opaque_storages.items) |opaque_storage|
@@ -7439,6 +7641,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.lexical_storage_generations.items.len != right.lexical_storage_generations.items.len or
         left.places.items.len != right.places.items.len or
         left.symbolic_pointees.items.len != right.symbolic_pointees.items.len or
+        left.symbolic_values.items.len != right.symbolic_values.items.len or
         left.ownership_edges.items.len != right.ownership_edges.items.len or
         left.storage_generations.items.len != right.storage_generations.items.len or
         left.opaque_storages.items.len != right.opaque_storages.items.len or
@@ -7450,6 +7653,15 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         var found = false;
         for (right.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
             if (other.initializedness != pointee.initializedness or other.backing != pointee.backing or other.generation != pointee.generation) return false;
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    for (left.symbolic_values.items) |stored| {
+        var found = false;
+        for (right.symbolic_values.items) |other| if (other.identity == stored.identity) {
+            if (stored.definite != other.definite or !valueFactsEqual(stored.value, other.value)) return false;
             found = true;
             break;
         };
@@ -9889,4 +10101,53 @@ test "symbolic summary destinations never reevaluate their argument syntax" {
     try std.testing.expectEqual(value_state.Initializedness.initialized, checker.initializednessAtPlace(&state, .{ .root = @enumFromInt(0) }));
     try std.testing.expect(state.tracker.dependenciesAreAlive(value));
     try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+}
+
+test "symbolic stored references survive snapshots and joins without inventing exact targets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 3 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const first = try state.tracker.establish(.fresh);
+    const second = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = backing });
+    const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)} };
+    const first_value: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(1)}, .dependencies = &.{.{ .root = first }} };
+    const second_value: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(2)}, .dependencies = &.{.{ .root = second }} };
+    try checker.storeSymbolicValue(&state, slot, first_value, true);
+    var changed = try state.clone(a, null);
+    defer changed.deinit();
+    try checker.storeSymbolicValue(&changed, slot, second_value, true);
+    try std.testing.expect(valueFactsEqual(first_value, (try checker.symbolicValueAt(&state, @enumFromInt(0))).?.value));
+    try std.testing.expect(!statesEqual(&state, &changed));
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &state, &changed);
+    const possible = (try checker.symbolicValueAt(&joined, @enumFromInt(0))).?;
+    try std.testing.expectEqual(@as(usize, 2), possible.value.symbolic_pointees.len);
+    joined.tracker.end(first);
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(possible.value));
+    changed.symbolic_values.clearRetainingCapacity();
+    try checker.joinState(&joined, &state, &changed);
+    const uncertain = (try checker.symbolicValueAt(&joined, @enumFromInt(0))).?;
+    try std.testing.expect(!uncertain.definite);
+    try std.testing.expectEqual(@as(usize, 0), uncertain.value.symbolic_pointees.len);
+    try std.testing.expect(valueDependsOnRoot(uncertain.value, first));
+    try checker.joinState(&joined, &state, &state);
+    try std.testing.expect(statesEqual(&joined, &state));
 }
