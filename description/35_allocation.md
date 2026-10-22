@@ -23,8 +23,10 @@ The low-level alignment must be a nonzero power of two. Implementations check
 this precondition and `abort` if it is violated; an invalid alignment is not
 `..out_of_memory`. The typed `allocate#(.t: T)(.count)` helper computes the
 size and alignment from `T`, checks multiplication overflow, and still returns
-raw `Allocation` storage. A zero-size allocation is valid. Allocation failure
-returns no storage, safe reference, or cleanup obligation.
+raw `Allocation` storage. It privately retains the requested element size and
+count, including a zero count or zero-sized elements; this metadata establishes
+no occupancy or cleanup obligation. A zero-size allocation is valid. Allocation
+failure returns no storage, safe reference, or cleanup obligation.
 
 A zero-size allocation provides no accessible bytes. An allocator may reserve
 internal padding for it, but that padding does not authorize a nonzero-size
@@ -118,9 +120,12 @@ checking `index < length`. Empty slots cannot be exposed as `&T` or `$&T`.
 
 `allocation_slot<T>(allocation, index)` selects a complete, aligned slot inside
 both the declared extent and the allocation's private certified extent. It
-rejects arithmetic wrap and invalid bounds with a runtime trap. The result is
-`MaybeUninit<T>`, not `&T` or `$&T`: selection cannot read, write, or destroy a
-`T`. The handle's address is private, and its validity depends on the allocation
+rejects arithmetic wrap and invalid bounds with a runtime trap. If a typed
+request retained the same element size, selection also checks its logical count.
+Zero-sized selection requires that retained extent: byte bounds alone cannot
+authorize any logical zero-sized position. Nonzero reinterpretations continue
+to check physical byte bounds. The result is `MaybeUninit<T>`, not `&T` or
+`$&T`: selection cannot read, write, or destroy a `T`. The handle's address is private, and its validity depends on the allocation
 and backing anchor. Copies and forwarding retain those dependencies. Ending
 the allocation or resetting its backing region invalidates the handle.
 `uninit_slot_address<T>(slot)` exposes an integer address without certifying
@@ -137,7 +142,8 @@ would therefore not, by itself, establish exclusive slot authority.
 The handle retains its logical index separately from its byte address. Distinct
 zero-sized elements can share an address while naming different positions.
 Trusted establishment from a handle carries that index and checks that it
-corresponds to the address. This position adds no occupancy or cleanup authority;
+corresponds to the address and satisfies the retained logical bound when
+applicable. This position adds no occupancy or cleanup authority;
 raw establishment without an index cannot recover it from an address.
 
 The storage owner controls occupancy through private state. Ordinary operations

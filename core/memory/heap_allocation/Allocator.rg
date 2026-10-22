@@ -28,5 +28,9 @@ allocate#(.t: Type, .SelfType: Type: Allocator#(SelfType)) := (
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    result = Allocator#().allocate(self, .size = bytes, .alignment = alignment_of(.type = t))
+    allocated ::= Allocator#(
+    ).allocate(self, .size = bytes, .alignment = alignment_of(.type = t))
+    result = _typed_allocation_result(
+        .allocated = ~allocated, .element_size = element_size, .count = count
+    )
 }

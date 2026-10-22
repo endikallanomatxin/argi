@@ -9,14 +9,16 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 - Support acquired aggregates containing resources and references. Connect the
   acquisition receipt, logical slot index, shared cleanup identity and native
   reference companions. Byte addresses cannot identify owners or zero-sized slots.
-  Typed `allocate` currently loses its element count: settle explicit evidence
-  reservation before enabling resource borrows, without allocation during borrowing.
+  Typed `allocate` retains element size and count, and zero-sized slot selection
+  checks that logical bound. Connect explicit evidence reservation before enabling
+  resource borrows, without allocation during borrowing.
   Native opaque writes already forward reference companions, but address-based
   establishment supplies none. Reserve companions and cleanup ranges together;
   borrowing must project that reservation rather than create it lazily.
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.
+  Contextual literal typing must not retag an incomplete field list as a complete value.
 - Complete evaluated identities for dynamic indices. Constant-index proofs and
   abstract repeated-element cleanup do not establish dynamic-index identity or
   disjointness. Keep symbolic storage sparse rather than expanding array lengths.

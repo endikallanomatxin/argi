@@ -14,6 +14,7 @@ MaybeUninit#(.t: Type): Type = (
 allocation_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) -> (
     .slot : MaybeUninit#(.t: t)
 ) := {
+    _require_allocation_slot_index#(.t: t)(.allocation = allocation, .index = index)
     address ::= _reference_offset_address(
         .address      = allocation&.data.address
         .elements     = index

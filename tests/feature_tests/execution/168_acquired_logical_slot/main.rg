@@ -1,5 +1,3 @@
-Empty: Type = ()
-
 main() -> (.status_code: Int32) := {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
@@ -18,11 +16,6 @@ main() -> (.status_code: Int32) := {
             ).reference
             reference&= 42
             if reference&!= 42 { abort }
-            first ::= allocation_slot#(.t: Empty)(.allocation = &memory, .index = 0).slot
-            second ::= allocation_slot#(.t: Empty)(.allocation = &memory, .index = 1).slot
-            if uninit_slot_address(.slot = first) != uninit_slot_address(.slot = second) {
-                abort
-            }
         }
     }
     status_code = 42

@@ -3,6 +3,10 @@
 -- allocator object a shared validity root for unrelated allocations.
 allocation_static_anchor :: UInt8 = 0
 
+-- Logical extent retained by typed allocation requests. This describes slots,
+-- never their occupancy, initialization or cleanup obligations.
+_AllocationSlotExtent: Type = (.element_size: UIntNative, .count: UIntNative)
+
 Allocation: Type = (
     --
     -- Contiguous allocated storage together with the deallocator required for
@@ -32,6 +36,7 @@ Allocation: Type = (
     ._storage_alignment : UIntNative
     -- A granted prefix may be smaller than the acquisition being released.
     ._release_size : UIntNative
+    ._slot_extent  : ?_AllocationSlotExtent
 )
 
 -- Compiler-owned temporal boundary used after a physical allocator has
@@ -64,6 +69,7 @@ trusted_establish_allocation(
         ._storage_size      = size
         ._storage_alignment = alignment
         ._release_size      = size
+        ._slot_extent       = ..none
     )
 }
 
@@ -108,3 +114,22 @@ implement Deinit#(Allocation) (
         )
     }
 )
+
+-- Shared across element types. Forward failures intact instead of capturing
+-- another tracer context while attaching metadata to successful receipts.
+_typed_allocation_result(
+    .allocated    : Errable#(Allocation, (..out_of_memory)),
+    .element_size : UIntNative,
+    .count        : UIntNative
+) -> (.result: Errable#(Allocation, (..out_of_memory))) := {
+    match allocated {
+        ..ok ~payload {
+            allocation ::= ~payload
+            allocation._slot_extent = ..some(
+                .value = _AllocationSlotExtent(.element_size = element_size, .count = count)
+            )
+            result = ..ok ~allocation
+        }
+        ..error ~failure { result = ..error ~failure }
+    }
+}

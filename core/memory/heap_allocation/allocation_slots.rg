@@ -59,6 +59,9 @@ trusted_establish_allocation_slot#(.t: Type)(
     )
     match index {
         ..some selection {
+            _require_allocation_slot_index#(.t: t)(
+                .allocation = allocation, .index = selection.value
+            )
             expected ::= _reference_offset_address(
                 .address      = allocation&.data.address
                 .elements     = selection.value
@@ -88,4 +91,21 @@ _require_allocation_slot_range(
     if size > allocation&.size - offset { abort }
     if alignment == 0 { abort }
     if address % alignment != 0 { abort }
+}
+
+-- Byte extents cannot bound zero-sized slots. Typed requests retain their
+-- logical count privately; raw byte allocations have no such logical extent.
+-- Nonzero reinterpretations still use the checked physical byte range.
+_require_allocation_slot_index#(.t: Type)(.allocation: &Allocation, .index: UIntNative) -> () := {
+    element_size ::= size_of(.type = t)
+    match allocation&._slot_extent {
+        ..some extent {
+            if extent.value.element_size == element_size {
+                if index >= extent.value.count { abort }
+            } else {
+                if element_size == 0 { abort }
+            }
+        }
+        ..none { if element_size == 0 { abort } }
+    }
 }

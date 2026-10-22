@@ -14778,3 +14778,39 @@ test "feature_tests/execution/223X_comptime_failure_call_trace" {
     try buildExpectFail("tests/feature_tests/execution/223X_comptime_failure_call_trace", "called from tests/feature_tests/execution/223X_comptime_failure_call_trace/main.rg:3:");
     try vmExpect("tests/feature_tests/execution/223X_comptime_failure_call_trace", 1, "called from");
 }
+
+test "tests/feature_tests/execution/224_zero_sized_allocation_slots" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/224_zero_sized_allocation_slots");
+    try runExpect("tests/feature_tests/execution/224_zero_sized_allocation_slots", 42);
+    try vmExpect("tests/feature_tests/execution/224_zero_sized_allocation_slots", 42, null);
+}
+
+test "tests/feature_tests/execution/225X_zero_sized_allocation_slot_bounds" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/225X_zero_sized_allocation_slot_bounds");
+    try runExpectFailure("tests/feature_tests/execution/225X_zero_sized_allocation_slot_bounds");
+    try vmExpect("tests/feature_tests/execution/225X_zero_sized_allocation_slot_bounds", 1, "ExecutionAborted");
+}
+
+test "tests/feature_tests/execution/226X_empty_typed_allocation_slot" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/226X_empty_typed_allocation_slot");
+    try runExpectFailure("tests/feature_tests/execution/226X_empty_typed_allocation_slot");
+    try vmExpect("tests/feature_tests/execution/226X_empty_typed_allocation_slot", 1, "ExecutionAborted");
+}
+
+test "tests/feature_tests/execution/227X_unreserved_zero_sized_slot" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/227X_unreserved_zero_sized_slot");
+    try runExpectFailure("tests/feature_tests/execution/227X_unreserved_zero_sized_slot");
+    try vmExpect("tests/feature_tests/execution/227X_unreserved_zero_sized_slot", 1, "ExecutionAborted");
+}
+
+test "tests/feature_tests/execution/228X_zero_sized_establishment_bounds" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/228X_zero_sized_establishment_bounds");
+    try runExpectFailure("tests/feature_tests/execution/228X_zero_sized_establishment_bounds");
+    try vmExpect("tests/feature_tests/execution/228X_zero_sized_establishment_bounds", 1, "ExecutionAborted");
+}
+
+test "feature_tests/execution/229_typed_allocation_failure_trace" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/229_typed_allocation_failure_trace");
+    try runExpect("tests/feature_tests/execution/229_typed_allocation_failure_trace", 42);
+    try vmExpect("tests/feature_tests/execution/229_typed_allocation_failure_trace", 42, null);
+}
