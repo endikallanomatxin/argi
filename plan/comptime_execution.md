@@ -15,11 +15,14 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   Native opaque writes already forward reference companions, but address-based
   establishment supplies none. Reserve companions and cleanup ranges together;
   borrowing must project that reservation rather than create it lazily.
+  Carry the receipt into lowering explicitly: the current acquired-reference
+  instruction retains only address, layout and optional logical index. Address
+  lookup recovers a physical region, not a typed reservation or its obligations.
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.
-  Finish contextual normalization for late-resolved indexed/indirect writes.
-  Record defaults inside array literals share ordinary lexical temporary storage.
+  Contextual defaults now resolve for indexed/indirect writes and array elements,
+  retaining ordinary lexical temporary storage and single destination evaluation.
 - Complete evaluated identities for dynamic indices. Constant-index proofs and
   abstract repeated-element cleanup do not establish dynamic-index identity or
   disjointness. Keep symbolic storage sparse rather than expanding array lengths.

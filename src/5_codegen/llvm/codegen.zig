@@ -2119,7 +2119,7 @@ pub const CodeGenerator = struct {
         const target_ref = try self.toLLVMType(target);
         if (types.equal(self.graph, source, target)) {
             if (value.type_ref != target_ref) return CodegenError.InvalidType;
-            return .{ .value_ref = value.value_ref, .type_ref = target_ref, .ty = target };
+            return .{ .value_ref = value.value_ref, .type_ref = target_ref, .ty = target, .reference_view = value.reference_view };
         }
         const source_kind = switch (self.graph.semanticType(source)) {
             .builtin => |kind| kind,
@@ -3514,6 +3514,52 @@ test "native calls preserve nested reference evidence with direct and indirect r
         try std.testing.expectEqual(sidecar, c.LLVMTypeOf(returned.evidence.?));
         try generator.returnArgi(returned.value, returned.evidence);
     }
+    var message: [*c]u8 = null;
+    defer if (message != null) c.LLVMDisposeMessage(message);
+    try std.testing.expectEqual(@as(c_int, 0), c.LLVMVerifyModule(generator.module, c.LLVMReturnStatusAction, &message));
+}
+
+test "native identity casts retain reference storage evidence" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    try graph.nodes.append(allocator, .{
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(1),
+        .content = .{ .binding_use = @enumFromInt(0) },
+    });
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
+    defer generator.deinit();
+    const pointer = c.LLVMPointerType(c.LLVMInt32Type(), 0);
+    const evidence_type = reference_evidence.storageViewType();
+    var parameters = [_]c.LLVMTypeRef{ pointer, evidence_type };
+    const signature = c.LLVMFunctionType(evidence_type, &parameters, parameters.len, 0);
+    const function = c.LLVMAddFunction(generator.module, "identity_reference", signature);
+    c.LLVMPositionBuilderAtEnd(generator.builder, c.LLVMAppendBasicBlock(function, "entry"));
+    const storage = c.LLVMBuildAlloca(generator.builder, pointer, "reference");
+    const companion = c.LLVMBuildAlloca(generator.builder, evidence_type, "evidence");
+    _ = c.LLVMBuildStore(generator.builder, c.LLVMGetParam(function, 0), storage);
+    _ = c.LLVMBuildStore(generator.builder, c.LLVMGetParam(function, 1), companion);
+    try generator.bindings.put(@enumFromInt(0), .{
+        .ref = storage,
+        .type_ref = pointer,
+        .ty = @enumFromInt(1),
+        .initialized = true,
+        .reference_view = companion,
+    });
+    const converted = try generator.explicitCast(.{
+        .value = @as(graph_mod.GlobalNodeId, @enumFromInt(0)),
+        .target_type = @as(graph_mod.GlobalTypeId, @enumFromInt(1)),
+    });
+    try std.testing.expect(converted.reference_view != null);
+    try std.testing.expectEqual(evidence_type, c.LLVMTypeOf(converted.reference_view.?));
+    _ = c.LLVMBuildRet(generator.builder, converted.reference_view.?);
     var message: [*c]u8 = null;
     defer if (message != null) c.LLVMDisposeMessage(message);
     try std.testing.expectEqual(@as(c_int, 0), c.LLVMVerifyModule(generator.module, c.LLVMReturnStatusAction, &message));
