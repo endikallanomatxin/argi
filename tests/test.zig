@@ -14600,3 +14600,9 @@ test "feature_tests/execution/191X_reference_self_initialization" {
     try buildExpectFail("tests/feature_tests/execution/191X_reference_self_initialization", "value was deinitialized");
     try vmExpect("tests/feature_tests/execution/191X_reference_self_initialization", 1, "value was deinitialized");
 }
+
+test "feature_tests/execution/192_captured_reference_field_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/192_captured_reference_field_cleanup");
+    try runExpect("tests/feature_tests/execution/192_captured_reference_field_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/192_captured_reference_field_cleanup", 42, null);
+}

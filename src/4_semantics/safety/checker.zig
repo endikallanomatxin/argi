@@ -5194,6 +5194,13 @@ pub const SafetyChecker = struct {
                 // when captured. Only omit old-value cleanup if it stays empty.
                 const write = &self.graph.nodes.items[@intFromEnum(active.plan.write)].content.pointer_assignment;
                 write.checked_initialization = write.checked_initialization == true and vacant;
+                if (pointer.referenced_place) |storage| {
+                    // Cleanup belongs to the destination captured before RHS
+                    // evaluation. Its source expression may consume resources
+                    // or now select a different referent.
+                    const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                    return self.evaluateCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, storage, state);
+                }
             }
         };
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
@@ -9620,6 +9627,8 @@ test "replacement initialization proof observes destination after RHS preparatio
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
     const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.bindings.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(0), .mutability = .variable });
     try graph.nodes.appendSlice(allocator, &.{
         .{ .source = source, .ty = null, .content = .{ .pointer_assignment = .{ .pointer = @enumFromInt(1), .value = @enumFromInt(1), .checked_initialization = true } } },
         .{ .source = source, .ty = null, .content = .{ .int_literal = 0 } },
@@ -9643,6 +9652,7 @@ test "replacement initialization proof observes destination after RHS preparatio
     try checker.setPlace(&state, target, .initialized, .{});
     try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
     try std.testing.expect(graph.nodes.items[0].content.pointer_assignment.checked_initialization == false);
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, target));
 }
 
 test "projected consumption retains other participant generations for caller alias checks" {

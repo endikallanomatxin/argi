@@ -41,8 +41,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   owner initialization no longer publishes a pointer into the destination
   before RHS cleanup. Read-only calls and conditional cleanup through distinct
   elements share native/VM coverage (189/190); vacant self-initialization is
-  rejected (191X). Finish single-evaluation symbolic renewal and effectful
-  reference-field selectors without syntax-based destination reevaluation.
+  rejected (191X). Concrete replacement cleanup consumes its captured destination,
+  including effectful reference-field selectors retargeted during RHS evaluation
+  (192). Finish symbolic renewal without syntax-based destination reevaluation.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops
