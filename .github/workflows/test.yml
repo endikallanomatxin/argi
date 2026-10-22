@@ -12,6 +12,10 @@ name: Test
   pull_request:
     branches: [develop]
 
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

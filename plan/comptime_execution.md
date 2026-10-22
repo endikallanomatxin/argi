@@ -1,263 +1,92 @@
 # Bytecode execution
 
-Release order: [0.4](0.4.md). Current commands and supported execution subset:
-[usage](../docs/usage.md#experimental-bytecode-execution). Language semantics:
+Release order: [0.4](0.4.md). Supported commands/subset:
+[usage](../docs/usage.md#experimental-bytecode-execution). Semantics:
 [compile-time execution](../description/50_comptime.md).
 
-## Memory and lifecycle
+## Memory and cleanup
 
-- Complete acquired aggregate/resource storage and partial choice initialization.
-  `MaybeUninit` now preserves its index alongside the byte address. Core checks
-  their correspondence, and verified bytecode retains the selected index in
-  acquired views. Connect this receipt to shared cleanup identity and native
-  companion evidence before supporting resources. Do not key owner identity by byte address
-  or create a fresh cleanup owner for each repeated reference conversion.
-  Typed `allocate` currently discards its element count. Byte bounds cannot
-  reserve evidence for zero-sized slots; settle an explicit reservation protocol
-  before enabling resource borrows, without allocating metadata during a borrow.
-  Acquired numeric views compare immutable layouts structurally, so equivalent
-  descriptors from different functions/submissions reuse one view. Permissions
-  remain reference-local; logical indices keep zero-sized positions distinct.
-  Choice cleanup now separates discriminant presence from whole-value readiness:
-  partial payload consumption skips nominal destruction and cleans live siblings.
-  Reinitialization restores complete cleanup through shared ancestor flags;
-  native/VM fixture 161 and retained-session exit cover this behavior. Vacant
-  payload construction still needs its own initialization representation.
-  Share identity, projections, initialization and validity rules with ordinary
-  storage without requiring identical physical representations.
-- Complete indexed cleanup identities in both backends. Whole indirect pointer
-  and record-field replacements use checked plans, including the three-drop
-  retargeting probe and preservation of sibling references in native and VM.
-  Nested indirect fields and field reinitialization after destruction have
-  differential coverage, including whole-record replacement after consuming a
-  field through a function. The live-sibling structural fallback also passes
-  in native and VM. Conditional reinitialization through direct references and
-  by-value record reference fields uses distinct returned variants (case 182);
-  unrepresented outcomes are rejected (case 183X). Whole pointer inputs now
-  retain evaluated argument identities for conditional cleanup, including
-  indexed destinations, effectful selectors changed by the callee, and
-  zero-sized siblings (case 184). Captured projection paths also preserve
-  reference leaves inside nested by-value records (case 185), with shared type
-  validation and relocation. By-value reference arrays now seed only demanded
-  elements from converged summaries, preserving identity through local copies
-  and preventing duplicate destruction (case 186); aliased participants and
-  historical copies remain rejected (cases 187X/188X). A million-element input
-  with two observed indices retains two symbolic leaves. Write operands now
-  distinguish temporary address values from reference-valued slots: array
-  owner initialization no longer publishes a pointer into the destination
-  before RHS cleanup. Read-only calls and conditional cleanup through distinct
-  elements share native/VM coverage (189/190); vacant self-initialization is
-  rejected (191X). Concrete replacement cleanup consumes its captured destination,
-  including effectful reference-field selectors retargeted during RHS evaluation
-  (192). Symbolic renewal now uses evaluated write-operand eligibility instead
-  of executing a Place query. Complete symbolic references now pass captured
-  receivers to nominal cleanup; summary post-states keep their symbolic identity
-  instead of reevaluating source syntax (193). Renew the selected write after its
-  old value is destroyed; earlier aliases remain stale (194X). Partial symbolic
-  records now clean live children through captured projections, skipping their
-  whole destructor. One selected returned-reference identity also feeds caller
-  write summaries, so replacement reactivates the complete new owner's cleanup
-  (195). The shared lexical proof used for `refers_to` establishes that
-  destination independently of may-dependencies. It permits independent moved
-  owners, but cannot turn lifetime-only anchors, offsets or alternative referents
-  into a definite write. Nested symbolic reference-field replacement now has
-  differential coverage for a consumed selector and RHS retargeting (207):
-  cleanup/commit retain the original referent. Repeated array cleanup now uses
-  the same abstract element projection as concrete cleanup, without expanding
-  array lengths (208). Unknown elements may overlap observed fixed indices;
-  they never establish disjoint storage. Match payload borrows now capture
-  symbolic variant storage once, preserving field consumption and live siblings
-  (209X/210), including effectful selectors (211). Selected symbolic choice tags
-  also belong to storage; cleanup inside a selected branch follows the active
-  payload and its live children (212), preserving descendants during refinement.
-  Returned reference arrays now have differential replacement coverage (218)
-  and a historical-copy rejection (219X). Unknown indirect cleanup remains
-  possibly active even without a lexical Place. Replacement summaries capture
-  caller-relative destinations before RHS inference and retain retirement of
-  their old incarnation; by-value envelopes cannot stand in for reference leaves.
-  Field/index writes and replacement plans now share target inference and reuse
-  captured paths for commit, including references inside by-value Args (220/221X).
-  Incompatible joins remove that tag proof. Cleanup after joins now branches
-  over possible variants and availability, using nominal cleanup only on its
-  complete-value alternative (213). Availability refinement requires one live
-  common incarnation; dead or divergent generations cannot be revived, and
-  historical aliases remain stale after replacement (214X). Divergent live
-  generations of the same storage now receive a joined observation. Only
-  references that observed each incoming current value follow it; historical
-  aliases retain their stale roots (215/216X), including repeated replacement
-  in a loop (217). Loop contexts canonicalize unretained joined observations:
-  the replacement probe now stabilizes at 10 roots in two iterations rather
-  than growing by four roots until the iteration limit. Historical aliases
-  retaining an observation prevent its reuse. Finish historical-observation
-  widening and partially initialized choice construction.
-  Symbolic slots now retain sparse stored-value facts separately from pointee
-  identity/initializedness. Direct/call writes, branch/loop joins and returned
-  field references preserve target dependencies (196X/198X/199X/200X); copied
-  references and aggregate snapshots retain their captured values after
-  retargeting (197). Concrete and symbolic aggregate reconstruction share
-  projection/root rebuilding. Function exits also reject local references
-  retained in caller storage (201X/203X), while overwritten temporary loans are
-  permitted (202). Initial unknown reference fields now intern a separate
-  referent incarnation: copied references share consumption, while later slot
-  retargeting preserves historical targets (204X/205). Dereference edges do not
-  transfer parent cleanup or inherit stored aggregate contents. Call summaries
-  now reconstruct initial referents too (206X). Lazy observations of existing
-  symbolic storage remain live while constructing conditional choice outputs;
-  only new branch resources receive conditional lifetimes. Finish dynamic
-  indices and integration with opaque/acquired storage identities.
-  Incomplete records must never invoke a whole-value destructor.
-  Preserve capture, RHS evaluation, old cleanup, commit and activation.
-- Validate projected symbolic storage identities across aliases, branches, loops
-  and session forks. Constant array indices now use lazily interned element
-  identities in access and summary substitution; bounds and element types are
-  checked without expanding the array length. Dynamic indices still need an
-  evaluated index identity and cannot use the constant-index proof.
-  First initialization after field destruction must preserve
-  old-alias invalidation, run RHS effects before omitting old-value cleanup, and
-  reactivate any existing runtime flags. Complete acquired resource evidence for
-  replacements that still need to destroy a previous value; never infer it from
-  a physical address or disable missing-evidence checks.
-- Finish broad validation of ordered consumption/observation summary obligations.
-  Calls check actual destinations; independent participants remain usable, while
-  aliases retain ended incarnations after reinitialization. Cover branch/loop
-  composition, returned references, reference fields within Args, mapped domains
-  and validity-only erased anchors. Static selections retain inferred alias
-  obligations for concrete call checking while preserving contract guarantees;
-  virtual contracts reject unrepresented alias obligations. Keep the independent, aliased and read-before-consumption cases
-  distinct; do not replace these obligations with group-wide invalidation.
-- Complete single-evaluation access handling in the checker. Field/index reads
-  and field/index/dereference/payload address formation capture pointer-producing calls once;
-  the separate symbolic-address reevaluation walk has been removed. Extend this
-  to remaining projections and syntax-based Place queries; preserve evaluated
-  pointer facts rather than suppressing diagnostics.
-  Ordinary projected output writes now preserve selected RHS effects beyond
-  Init, including fields, array elements and lexical reference aliases. Capture
-  their candidate targets before RHS inference and infer the value once.
-  Output vectors join branch, loop and match alternatives. General retargeting
-  through calls still needs the same captured-destination flow in summaries.
-  Field/array stores commit checker facts to the captured referent after RHS
-  evaluation, even when that RHS retargets the reference used to select it.
-  Payload reads and addresses reuse their evaluated choice access and active-tag
-  proof. Regressions distinguish one operand move from an explicitly repeated
-  evaluation for concrete and unknown referents; symbolic field and variant
-  projections retain distinct identities. Typed payload projections preserve
-  their types through lazy branch materialization and joins; payloadless variants
-  do not establish storage identities. Case 151 compares payload borrowing
-  and mutation after an effectful reference-returning call in native and VM.
-  The returned-reference internal test covers independent and aliased operands,
-  including VM execution of accepted field and array projections;
-  case 148 retains the nested-call alias regression.
+- Support acquired aggregates containing resources and references. Connect the
+  acquisition receipt, logical slot index, shared cleanup identity and native
+  reference companions. Byte addresses cannot identify owners or zero-sized slots.
+  Typed `allocate` currently loses its element count: settle explicit evidence
+  reservation before enabling resource borrows, without allocation during borrowing.
+- Represent construction of vacant choice payloads separately from discriminant
+  presence and whole-value readiness. Incomplete records/choices must clean live
+  children without invoking a whole-value destructor or reviving moved payloads.
+- Complete evaluated identities for dynamic indices. Constant-index proofs and
+  abstract repeated-element cleanup do not establish dynamic-index identity or
+  disjointness. Keep symbolic storage sparse rather than expanding array lengths.
+- Finish historical-observation widening in loops and integration of symbolic
+  identities with opaque/acquired storage. Reuse of unretained observations already
+  converges; retained aliases and guarded metadata must never become current again.
+- Finish single-evaluation access handling and general retargeting through calls
+  in summaries. Capture destination, evaluate RHS, clean old value, commit, activate.
+  Preserve that capture across field/index projections and nested replacements.
+- Broaden ordered consumption/observation validation across branches, loops,
+  returned references, reference fields in Args, mapped domains and erased anchors.
+  Independent participants remain usable; historical copies remain invalidated.
+  Static bodies may add inferred obligations checked at concrete calls; virtual
+  calls require the contract to express every obligation they impose.
 
 ## Compile-time integration
 
-- Complete `#run (.system: System)` with checked host-resource initialization
-  and cleanup, sharing the execution host boundary with VM programs and the REPL.
-  Keep capabilities explicit; define host effects and build dependencies before
-  enabling filesystem, stdin, networking, processes or unrestricted FFI.
-- Extend temporary type recipes beyond captured defaults to inferred identities
-  and transient declaration origins; validate branch selection in native and
-  retained sessions.
+- Implement `#run (.system: System)` with checked host initialization and cleanup,
+  sharing the VM/REPL execution host boundary. Keep capabilities explicit. Define
+  host effects and build dependencies before enabling filesystem, stdin, networking,
+  processes or unrestricted FFI.
+- Extend temporary type recipes to inferred identities and transient declaration
+  origins. Preserve nominal identity and defaults across speculative rollback;
+  validate branch selection in native builds and retained sessions.
 - Keep dependency readiness in the scheduler and execution in the VM. Preserve
-  cycle checks, shared execution budgets and rejected-session rollback. Nested
-  entries share the enclosing execution but retain their output restrictions.
+  cycles, shared budgets, nested output restrictions and rejected-command rollback.
 
 ## Execution boundaries
 
-- Lower semantic decisions into explicit runtime descriptors for layout,
-  references, variants, memory operations and selected dispatch.
-  VM preparation now resolves external input shapes once. Invocation validates
-  widths, aggregate lengths and choice payloads through those descriptors,
-  without consulting GlobalSG; external references remain forbidden. Descriptors
-  belong to the VM and neither retain executor values nor duplicate safety rules.
-  Input-free commands/cleanup entries require no descriptor allocations.
-  Virtual compatibility still needs stable identities across semantic refinement;
-  choosing the earliest equal type in each snapshot is insufficient.
-  Numeric byte-view instructions now carry verified permission and endianness
-  alongside their physical layout; execution no longer reads those decisions
-  from slot types or the semantic target. Ordinary value/storage borrows also
-  carry verified access permissions. Choice construction, payload extraction,
-  tests and branches carry verified representation ordinals, retaining semantic
-  IDs only for verification. Arithmetic/comparison instructions carry a compact
-  verified scalar interpretation (width/sign or floating precision). Value-array
-  indices also carry that interpretation; reference offsets have a verified
-  UIntNative input and use its unsigned bits directly. Loads carry their erased
-  anchor or signed/unsigned byte interpretation. Host scalar encoding reuses
-  the selected binding's checked ranges. Storage paths carry verified variant
-  ordinals and scalar index kinds; execution follows them without graph traversal.
-  Host signatures are lowered to verified symbol/range descriptors; execution
-  links them without consulting semantic fields or types.
-- Keep runtime adapters on registered identities. Heap boundaries use checked
-  primitive identities; generated trace calls and their reachability roots now
-  use signature-validated metadata shared by LLVM and bytecode. Do not restore
-  name-based lookup when extending this boundary.
-- Complete native value-evidence production for arrays, choices, error propagation
-  and lifecycle wrappers. Ordinary and virtual call inputs/results carry the
-  private channels; bulk-copy paths must transport destination companions before
-  they can handle reference aggregates.
-- Share semantic plans with native lowering; do not introduce a universal IR.
+- Finish eliminating semantic graph queries from execution. External arguments,
+  scalar operations, storage projections, variants and host signatures already use
+  prepared descriptors. Virtual compatibility still requires stable identities
+  across semantic refinement: choosing the first equal type per snapshot is unsafe.
+- Complete native reference-evidence production for arrays, choices, propagation,
+  lifecycle wrappers and bulk copies. Bulk paths must carry destination companions
+  before accepting reference aggregates. Reuse semantic plans, without a universal IR.
+- Keep adapters on registered, signature-checked primitive identities; do not
+  recognize user/core operations by incidental function names or paths.
 - Connect cooperative cancellation to CLI controls and complete trace reporting.
 
 ## Scalability
 
-- Use `benchmark-execution` to compare 10, 100 and 1,000 submissions.
-  [Measurements](../docs/usage.md#measuring-retained-execution): after releasing
-  lowering work tables and compacting function indexes, 1,000 minimal updates
-  retain 437 MiB versus 19 MiB for definitions. A prelude session with 100 resource
-  commands retains 939 MiB with only 4,000 live acquired bytes. Checked snapshots
-  still account for 418 MiB in that resource sample. Reduce duplicated checked
-  graphs and compiled bodies while preserving identities, branches and
-  rejected-command isolation.
-- The CLI and benchmark use the process allocator for small session tables.
-  Under a 2 GiB process limit, the 100-resource sample now completes at 1,044 MiB
-  peak RSS; direct page backing stopped at 95 commands near 1,923 MiB. Minimal
-  updates do not show the same RSS benefit. Snapshot duplication remains.
-- `--graph-pools` attributes retained flat-column payload/capacity after timing.
-  The 100-resource sample reserves 626 MiB for 418 MiB of payload; nodes alone
-  occupy 276/414 MiB. Finalized retained snapshots now attempt nonmoving
-  capacity reduction: reserved columns fall to 425 MiB and total requested
-  backing to 707 MiB, with identical payload and compiled code counts. Allocators
-  may decline; no fallback copy or pointer movement is permitted. Duplicated
-  prefixes remain the next architectural cost.
-- Account for semantic snapshots/safety proofs, regenerated bytecode, retained
-  code metadata and completed frames. Check whether time/memory grows quadratically.
-  Verifier linear-flow states now transfer ownership between instructions; a
-  1,000-slot synthetic function requests 26,421 bytes instead of 2,019,413.
-  Joins retain their incoming states and intersection semantics. The isolated
-  `--verifier` benchmark measures 1,000 diamonds/slots at 3,342,561 requested
-  bytes and 2,077,429 peak bytes, with zero retained bytes; full join vectors
-  still scale with joins times slots. Establish the importance of this cost in
-  real programs before changing representation. These samples do not bound all
-  CFG shapes.
-- Use measurements to guide immutable sharing, stable identities, code reuse and
-  temporary storage reclamation. Never reclaim metadata or resources still used
-  by live references. JIT remains deferred.
+- Reduce duplicated checked-graph prefixes and regenerated bodies while preserving
+  stable identities, old virtual code units and rejected-command isolation.
+  Recover temporary metadata/frames only after all live dependents release them.
+- Continue measuring 10/100/1,000-command sessions, separating frontend, lowering,
+  verification, execution and retained memory. Use `--graph-pools` for flat columns;
+  account separately for nested metadata, safety proofs, bytecode and runtime storage.
+- Current [measurements](../docs/usage.md#measuring-retained-execution): 100 resource
+  commands retain 707 MiB with only 4,000 acquired bytes; graph payload is 418 MiB.
+  Nonmoving trimming reduced column capacity from 626 to 425 MiB. Duplication
+  remains. Minimal 1,000 updates retain about 436 MiB versus 19 MiB for definitions.
+- Verifier linear-flow allocation has been reduced; joins still retain vectors
+  proportional to joins times slots. Establish their cost in real workloads before
+  changing representation. Do not optimize from synthetic measurements alone.
+
+## Invariants and validation
+
+- AOT, VM, REPL and compile-time share semantic/Safety decisions; the VM does not
+  redo inference, borrowing, ownership or dispatch. JIT remains deferred.
+- Publication is transactional; external execution effects cannot be rolled back.
+  Traps poison execution until reset. Healthy reset/exit runs checked cleanup,
+  including numbered expression results and retained resources.
+- No evaluator reference, storage handle or temporary resource may escape as a
+  compiler constant. Retained metadata must outlive all bytecode/values using it.
+- Compare the same native/VM fixtures for partial initialization, moves, replacements,
+  field/index cleanup, early exits, acquired resources and virtual dispatch. Include
+  cross-command loans, rejected submissions, traps, reset and cancellation.
+- Exercise `#run` and computed `#if` in native and retained sessions: defaults,
+  inactive branches, cycles, allocation failures and rejected resource escapes.
+- Confirm CI on Linux/macOS, x86_64/ARM64 for the latest execution changes; earlier
+  green runs do not validate later commits.
 
 ## Later
 
 - Separate host execution from target semantics for cross-compilation.
-
-## Invariants
-
-- VM execution and compile-time execution consume checked language semantics;
-  neither reimplements dispatch, borrowing or ownership inference.
-- Source/semantic publication is transactional. Executed effects cannot be rolled
-  back; traps poison execution until reset.
-- Session values, including numbered expression results, retain ordinary loans
-  and cleanup. Healthy reset/exit executes checked cleanup before releasing them.
-- Evaluator storage, references and native handles cannot escape as constants.
-  Target widths/layouts must match supported execution semantics.
-- Keep graph identities stable across submissions. Retained metadata must outlive
-  bytecode and values that reference it; rejected candidates publish nothing.
-
-## Validation
-
-Run differential bytecode/AOT fixtures in CI on this branch for each added capability. Exercise cross-command loans,
-partial moves, reinitialization without alias revival, owning expression results,
-cleanup, rejected submissions, traps and reset. Test `#run` and computed `#if`
-through retained sessions as well as native compilation, including inactive
-branches, cycles, allocation failures and rejected evaluator-resource escapes.
-
-Recheck published CI after the latest execution changes. Run
-[39800207941](https://github.com/endikallanomatxin/argi/actions/runs/39800207941)
-passed at `ec2201a3` on Linux and macOS, both x86_64 and ARM64. Replacement-summary
-changes require their own completed run.
