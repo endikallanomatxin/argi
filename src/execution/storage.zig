@@ -80,7 +80,7 @@ pub const Storage = struct {
     acquired_views: std.AutoHashMapUnmanaged(v.FrameId, AcquiredView) = .empty,
     // Reuse exact immutable numeric views, never infer typed owner identity
     // from a physical address. Permissions remain on each returned reference.
-    acquired_frames: std.AutoHashMapUnmanaged(AcquiredView, v.FrameId) = .empty,
+    acquired_frames: std.HashMapUnmanaged(AcquiredView, v.FrameId, AcquiredViewContext, std.hash_map.default_max_load_percentage) = .empty,
 
     const FrameSize = struct { values: usize, flags: usize };
     const FrameBuffers = struct { values: []?b.Value, flags: []bool };
@@ -91,6 +91,27 @@ pub const Storage = struct {
         logical_index: ?u64 = null,
         layout: *const numeric.Layout,
         endian: std.builtin.Endian,
+    };
+
+    const AcquiredViewContext = struct {
+        pub fn hash(_: @This(), view: AcquiredView) u64 {
+            // A cheap extent hash narrows candidates; equality checks the full
+            // immutable shape without allocating or using descriptor addresses.
+            var hasher = std.hash.Wyhash.init(0);
+            std.hash.autoHash(&hasher, view.handle);
+            std.hash.autoHash(&hasher, view.offset);
+            std.hash.autoHash(&hasher, view.logical_index);
+            std.hash.autoHash(&hasher, view.endian);
+            std.hash.autoHash(&hasher, view.layout.size);
+            std.hash.autoHash(&hasher, view.layout.alignment);
+            return hasher.final();
+        }
+
+        pub fn eql(_: @This(), left: AcquiredView, right: AcquiredView) bool {
+            return std.meta.eql(left.handle, right.handle) and left.offset == right.offset and
+                left.logical_index == right.logical_index and left.endian == right.endian and
+                numeric.equal(left.layout, right.layout);
+        }
     };
 
     /// Execution-side establishment only. Checked bytecode must separately
@@ -1636,6 +1657,34 @@ test "zero-sized acquired slots retain logical indices without granting cleanup"
     try std.testing.expectEqual(@as(?u64, 1), storage.acquired_views.get(second.frame).?.logical_index);
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(first));
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(second));
+}
+
+test "acquired views reuse equivalent descriptors across compilation units" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 4, 4);
+    const first_layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const second_layout = first_layout;
+    const first = try storage.acquiredReference(handle, 0, &first_layout, .little, .read_write, 0);
+    const second = try storage.acquiredReference(handle, 0, &second_layout, .little, .read_only, 0);
+    try std.testing.expectEqual(first.frame, second.frame);
+    try std.testing.expectEqual(p.PointerMutability.read_only, second.mutability);
+    try storage.store(first, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read(second)).integer);
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(second));
+    // Matching size/alignment alone cannot equate different interpretations.
+    const unsigned_layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = false } } };
+    const unsigned = try storage.acquiredReference(handle, 0, &unsigned_layout, .little, .read_only, 0);
+    try std.testing.expect(unsigned.frame != first.frame);
+    const first_record: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .fields = &.{.{ .offset = 0, .layout = &first_layout }} } };
+    const second_record: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .fields = &.{.{ .offset = 0, .layout = &second_layout }} } };
+    const record = try storage.acquiredReference(handle, 0, &first_record, .little, .read_write, 0);
+    const record_alias = try storage.acquiredReference(handle, 0, &second_record, .little, .read_only, 0);
+    try std.testing.expectEqual(record.frame, record_alias.frame);
+    try std.testing.expect(record.frame != first.frame);
+    try storage.acquisitions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(second));
 }
 
 test "relocation transfers represented cleanup and accepts slots without automatic obligations" {

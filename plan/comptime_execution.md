@@ -12,6 +12,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   acquired views. Connect this receipt to shared cleanup identity and native
   companion evidence before supporting resources. Do not key owner identity by byte address
   or create a fresh cleanup owner for each repeated reference conversion.
+  Acquired numeric views compare immutable layouts structurally, so equivalent
+  descriptors from different functions/submissions reuse one view. Permissions
+  remain reference-local; logical indices keep zero-sized positions distinct.
   Choice cleanup now separates discriminant presence from whole-value readiness:
   partial payload consumption skips nominal destruction and cleans live siblings.
   Reinitialization restores complete cleanup through shared ancestor flags;
