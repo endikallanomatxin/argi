@@ -1310,14 +1310,22 @@ pub const Infer = struct {
                     // a local alias. One selected value feeds every possible
                     // destination; never replay its opaque effects per target.
                     const targets = try self.localAddressTargets(store.struct_ptr);
-                    if (!self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    if (!try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
                     for (targets) |target|
                         try self.storeSelectedValueEffect(function_id, target, &.{.{ .field = store.field_index }}, value, outputs, .outputs);
                 },
+                .array_store => |store| {
+                    const targets = try self.arrayStorageTargets(store.array_ptr);
+                    if (!try self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
+                    const value = try self.inferExpression(function_id, store.value);
+                    for (targets) |target|
+                        try self.storeSelectedValueEffect(function_id, target, &.{projection}, value, outputs, .outputs);
+                },
                 .pointer_assignment => |store| {
                     const targets = try self.localAddressTargets(store.pointer);
-                    if (!self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    if (!try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
                     for (targets) |target|
                         try self.storeSelectedValueEffect(function_id, target, &.{}, value, outputs, .outputs);
@@ -4541,12 +4549,21 @@ pub const Infer = struct {
         return self.rebaseFreshSources(aggregate, call_node);
     }
 
-    fn hasOutputDestination(self: *Infer, function: graph_mod.GlobalFunctionId, targets: []const graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) bool {
+    fn arrayStorageTargets(self: *Infer, node: graph_mod.GlobalNodeId) ![]const graph_mod.GlobalNodeId {
+        if (self.graph.node(node).ty) |ty| if (types.arrayElement(self.graph, ty) != null)
+            return self.allocator.dupe(graph_mod.GlobalNodeId, &.{node});
+        return self.localAddressTargets(node);
+    }
+
+    fn hasOutputDestination(self: *Infer, function: graph_mod.GlobalFunctionId, targets: []const graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!bool {
         if (outputs == null) return false;
-        for (targets) |target| {
-            const root = @import("../global/lexical_storage.zig").root(self.graph, target) orelse continue;
-            if (self.outputIndex(function, root) != null) return true;
-        }
+        for (targets) |target| switch (self.graph.node(target).content) {
+            .binding_use => |binding| if (self.outputIndex(function, binding) != null) return true,
+            .struct_field_access => |field| if (try self.hasOutputDestination(function, &.{field.value}, outputs)) return true,
+            .array_index => |index| if (try self.hasOutputDestination(function, try self.arrayStorageTargets(index.array_ptr), outputs)) return true,
+            .dereference => |read| if (try self.hasOutputDestination(function, try self.localAddressTargets(read.pointer), outputs)) return true,
+            else => {},
+        };
         return false;
     }
 
@@ -4572,6 +4589,13 @@ pub const Infer = struct {
                 nested[0] = .{ .field = field.field_index };
                 @memcpy(nested[1..], path);
                 try self.storeSelectedValueEffect(function, field.value, nested, value, outputs, scope);
+            },
+            .array_index => |index| {
+                const targets = try self.arrayStorageTargets(index.array_ptr);
+                const nested = try self.allocator.alloc(facts.Projection, path.len + 1);
+                nested[0] = if (self.staticIndex(index.index)) |ordinal| .{ .static_index = ordinal } else .dynamic_index;
+                @memcpy(nested[1..], path);
+                for (targets) |place| try self.storeSelectedValueEffect(function, place, nested, value, outputs, scope);
             },
             .dereference => |read| {
                 for (try self.localAddressTargets(read.pointer)) |place|

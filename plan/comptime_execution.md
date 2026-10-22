@@ -52,7 +52,7 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   to remaining projections and syntax-based Place queries; preserve evaluated
   pointer facts rather than suppressing diagnostics.
   Ordinary projected output writes now preserve selected RHS effects beyond
-  Init, including direct field writes and lexical reference aliases. Capture
+  Init, including fields, array elements and lexical reference aliases. Capture
   their candidate targets before RHS inference and infer the value once.
   Output vectors join branch, loop and match alternatives. General retargeting
   through calls still needs the same captured-destination flow in summaries.
