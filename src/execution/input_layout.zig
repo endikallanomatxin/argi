@@ -63,6 +63,9 @@ pub const Inputs = struct {
     }
 
     fn add(self: *Inputs, compiler: *Compiler, function: *const b.Function) !void {
+        // Commands and cleanup entries normally have no external inputs. Their
+        // arity is already explicit: no descriptor or hash entry is needed.
+        if (function.inputs.len == 0) return;
         if (self.functions.contains(function)) return;
         const shapes = try compiler.allocator.alloc(*const Shape, function.inputs.len);
         for (shapes, function.inputs) |*shape, slot| shape.* = try compiler.compile(function.slots[slot], 0);
@@ -74,6 +77,7 @@ pub const Inputs = struct {
     }
 
     pub fn accepts(self: *const Inputs, function: *const b.Function, values: []const b.Value) bool {
+        if (function.inputs.len == 0) return values.len == 0;
         const shapes = self.functions.get(function) orelse return false;
         if (shapes.len != values.len) return false;
         for (shapes, values) |shape, value| if (!shape.accepts(value)) return false;
@@ -149,4 +153,16 @@ fn prepareInputs(allocator: std.mem.Allocator) !void {
 
 test "prepared input layouts preserve widths and reject external references" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareInputs, .{});
+}
+
+test "input-free execution entries need no descriptor allocations" {
+    var graph: g.GlobalSemanticGraph = .{};
+    const function: b.Function = .{ .slots = &.{}, .inputs = &.{}, .outputs = &.{}, .code = &.{} };
+    var empty: [0]u8 = .{};
+    var backing = std.heap.FixedBufferAllocator.init(&empty);
+    var inputs = try Inputs.init(backing.allocator(), .{ .graph = &graph, .functions = &.{&function}, .expression = &function });
+    defer inputs.deinit();
+    try std.testing.expectEqual(@as(usize, 0), inputs.functions.count());
+    try std.testing.expect(inputs.accepts(&function, &.{}));
+    try std.testing.expect(!inputs.accepts(&function, &.{.{ .integer = 0 }}));
 }

@@ -169,6 +169,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   widths, aggregate lengths and choice payloads through those descriptors,
   without consulting GlobalSG; external references remain forbidden. Descriptors
   belong to the VM and neither retain executor values nor duplicate safety rules.
+  Input-free commands/cleanup entries require no descriptor allocations.
+  Virtual compatibility still needs stable identities across semantic refinement;
+  choosing the earliest equal type in each snapshot is insufficient.
   Numeric byte-view instructions now carry verified permission and endianness
   alongside their physical layout; execution no longer reads those decisions
   from slot types or the semantic target. Ordinary value/storage borrows also
