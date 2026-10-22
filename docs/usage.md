@@ -361,34 +361,43 @@ arena total. The memory limit bounds tracked requested bytes; a run that reaches
 it reports the last completed command and fails. Successful runs verify retained
 results and complete teardown.
 
-With the checked allocator prelude (ReleaseSafe, a 1,024 MiB tracked limit), one
-local run produced the following retained-memory checkpoints:
+Current snapshot (`629b8044`, Zig 0.16, ReleaseSafe, Linux x86-64):
 
 | Session / command | 0 | 10 | 100 | 1,000 |
 |---|---:|---:|---:|---:|
-| Minimal / update | 0.06 MiB | 0.76 MiB | 10.49 MiB | 526.76 MiB |
-| Prelude / update | 155.77 MiB | 213.29 MiB | 733.84 MiB | Limit after 148 |
-| Prelude / resources | 155.77 MiB | 319.47 MiB | Limit after 47 | Not reached |
+| Minimal / update | 0.05 MiB | 0.51 MiB | 8.13 MiB | 503.26 MiB |
+| Minimal / definitions | 0.05 MiB | 0.29 MiB | 2.30 MiB | 19.32 MiB |
+| Prelude / update | 151.53 MiB | 208.88 MiB | 727.92 MiB | Not reached |
+| Prelude / resources | 151.53 MiB | 225.71 MiB | 1,320.34 MiB | Not reached |
 
-At ten resource commands, acquired regions held only 400 live bytes (allocation
-alignment can enlarge the requested String backing). Checked-graph payload was
-43.60 MiB, retained proof arenas 90.17 MiB, code arenas 14.18 MiB and the runtime
-arena about 11.18 MiB. These categories overlap and exclude some indexes and
-spare capacity. The 100-command prelude/update checkpoint retained 361.33 MiB of
-checked-graph payload. The evidence points first to repeated semantic snapshots
-and proof state; resource bytes and finished-frame slots do not explain this
-sample's growth. The limit failures are measured bounds, not completed
-1,000-command runs. These samples are not an AOT compile-time benchmark.
+Minimal sessions used a 2,048 MiB tracked limit; prelude sessions used 1,536 MiB.
+All processes also had a 3 GiB virtual-address limit. Prelude/update stopped
+with OutOfMemory after 170 commands, retaining 1,137.74 MiB after temporary
+allocation cleanup. Prelude/resources stopped after 111, retaining 1,510.21 MiB
+with a tracked peak of 1,535.69 MiB. The two limits and temporary allocations
+mean retained bytes alone do not establish the next command's required memory.
+These are bounded failures, not successful 1,000-command runs.
 
-Publishing independent compact continuation proofs and releasing checker scratch
-reduced the ten-resource checkpoint from 319.47 to 229.35 MiB. Its retained proof
-arenas fell from 90.17 to 0.06 MiB; graph, code and live resource sizes were
-unchanged. Under the same limit, the resource session completed 74 commands
-instead of 47 before reporting OutOfMemory. A separate ten-command run completed
-normal session cleanup without retained tracked allocations. Minimal/update at
-1,000 commands fell from 526.76 to 503.23 MiB; prelude/update still reached its
-limit after 150 commands. Semantic snapshot retention remains the larger scaling
-problem. These single-run comparisons establish memory changes, not a speedup.
+At 100 resource commands, live acquired regions held 4,000 bytes. Checked-graph
+payload was 418.35 MiB, code arenas 481.83 MiB, proof arenas 0.68 MiB and the
+runtime arena 43,566,044 bytes. The run had compiled 3,300 functions and 76,600
+instructions cumulatively. Total command time was 7,099.8 ms: frontend/publication
+5,842.6 ms, lowering 513.5 ms, verification 680.0 ms and execution 63.7 ms.
+A separate 100-command run completed teardown with no tracked allocations left.
+Repeated semantic snapshots and retained code are the main measured costs;
+live resources and execution time do not explain the growth.
+
+Minimal/update completed 1,000 commands in 2,171.4 ms, retaining 267.96 MiB of
+checked-graph payload and 75.05 MiB of code arenas. Minimal/definitions completed
+in 1,754.5 ms and retained only 0.001 MiB of checked-graph payload. Both runs
+verified their final results and complete teardown. Single-run timings are
+observations, not performance guarantees or AOT compilation benchmarks.
+
+Compact continuation proofs and released checker scratch previously reduced
+the ten-resource checkpoint from 319.47 to 229.35 MiB, including a reduction in
+proof arenas from 90.17 to 0.06 MiB. The current sample confirms that proof
+retention is no longer the dominant component. Further work should reduce
+snapshot and code duplication while preserving live identities and resources.
 
 Both definition and continuation publication now discard checker scratch after
 checking. Checked call annotations belong to their graph version; only a
@@ -409,8 +418,8 @@ resource run in Debug retained 414,040 bytes of dead-frame slot buffers, versus
 4,920,696 bytes in the preceding ReleaseSafe sample. Runtime arena capacity was
 7.44 MiB versus 11.18 MiB, with the same 3,148 dead identities, 330 compiled
 functions and ten live acquisitions. These are requested storage counts across
-different optimization modes, not a timing comparison; a controlled ReleaseSafe
-rerun remains pending after benchmark rebuilds exceeded local process limits.
+different optimization modes, not a timing comparison. The current ReleaseSafe
+measurements above include this reuse and the subsequent storage changes.
 
 Repeated acquired-reference establishment reuses an exact immutable view of the
 same region, byte offset, logical index, layout descriptor and endianness.
