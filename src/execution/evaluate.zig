@@ -14,12 +14,13 @@ const Limits = @import("vm.zig").Limits;
 // into compiler-owned constant nodes, never left pointing into executor storage.
 pub fn evaluate(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diagnostics: *@import("../1_base/diagnostic.zig").Diagnostics, entry: g.GlobalFunctionId, args: []const bytecode.Value, source: p.SourceRef, limits: Limits) ![]const g.GlobalNodeId {
     var budget = limits;
-    return evaluateBudgeted(allocator, graph, diagnostics, entry, args, source, &budget);
+    return evaluateBudgeted(allocator, graph, diagnostics, entry, args, source, &budget, null);
 }
 
 // One explicit request can evaluate several closed argument calls. They share
 // fuel and cumulative storage accounting rather than resetting quotas per call.
-pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diagnostics: *@import("../1_base/diagnostic.zig").Diagnostics, entry: g.GlobalFunctionId, args: []const bytecode.Value, source: p.SourceRef, budget: *Limits) ![]const g.GlobalNodeId {
+pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diagnostics: *@import("../1_base/diagnostic.zig").Diagnostics, entry: g.GlobalFunctionId, args: []const bytecode.Value, source: p.SourceRef, budget: *Limits, failure: ?*@import("failure.zig").Trace) ![]const g.GlobalNodeId {
+    if (failure) |trace| trace.count = 0;
     if (@intFromEnum(entry) >= graph.functions.items.len) return error.InvalidEntry;
     var scratch = std.heap.ArenaAllocator.init(allocator);
     defer scratch.deinit();
@@ -61,7 +62,10 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
         budget.instructions -|= executor.steps;
         if (executor.context().state != .fresh) budget.value_cells -|= executor.context().storage.cells;
     }
-    const values = try executor.run(entry, args);
+    const values = executor.run(entry, args) catch |err| {
+        if (failure) |trace| trace.capture(&executor);
+        return err;
+    };
     // Validate the entire result before publishing any compiler nodes.
     for (values, graph.fields.items[function.output.start..][0..function.output.len]) |value, field| {
         if (!bytecode.valueFits(graph, field.ty, value)) return error.UnfreezableEvaluationResult;

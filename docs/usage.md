@@ -634,6 +634,8 @@ a speedup. Input-free entries require no descriptor allocations.
 
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and
-REPL submissions share this presentation. Trace capture is best-effort under
+REPL submissions share this presentation. Compile-time failures retain these
+locations after evaluator teardown and report them through the scheduler.
+Trace capture is best-effort under
 allocation failure, stores no language values and performs no unwinding. A
 trapped REPL still requires reset; its saved failure trace is not resumable state.

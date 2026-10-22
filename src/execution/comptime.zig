@@ -56,6 +56,7 @@ const Context = struct {
     failure_source: ?p.SourceRef = null,
     depth: usize = 0,
     budget: @import("vm.zig").Limits = .{},
+    failure_trace: @import("failure.zig").Trace = .{},
 
     fn process(self: *Context, index: usize) anyerror!void {
         switch (self.states[index]) {
@@ -114,7 +115,7 @@ const Context = struct {
             const argument = self.graph.value_fields.items[fields.start + offset].value;
             value.* = try self.constant(argument, depth + 1);
         }
-        const values = try @import("evaluate.zig").evaluateBudgeted(self.allocator, self.graph, self.diagnostics, call.callee, args, node.source, &self.budget);
+        const values = try @import("evaluate.zig").evaluateBudgeted(self.allocator, self.graph, self.diagnostics, call.callee, args, node.source, &self.budget, &self.failure_trace);
         defer self.allocator.free(values);
         if (values.len == 1) {
             return values[0];
@@ -232,7 +233,8 @@ const Context = struct {
     }
 
     fn report(self: *Context, source: p.SourceRef, err: anyerror) !void {
-        const location = @import("../4_semantics/global/source_location.zig").location(self.graph, self.diagnostics, source);
+        const selected_source = if (self.failure_trace.count != 0) self.failure_trace.sources[0] else source;
+        const location = @import("../4_semantics/global/source_location.zig").location(self.graph, self.diagnostics, selected_source);
         const message: ?[]const u8 = switch (err) {
             error.RuntimeStorageInCompileTime => "#run cannot access mutable runtime global storage; use a compile-time-known constant instead",
             error.NonConstantCompileTimeArgument => "#run arguments must be compile-time constants; runtime values cannot be used",
@@ -250,9 +252,11 @@ const Context = struct {
             error.UnsupportedCompileTimeCall => "#run entry could not be resolved to an executable function",
             else => null,
         };
-        if (message) |text|
-            try self.diagnostics.add(location, .semantic, "{s}", .{text})
-        else
-            try self.diagnostics.add(location, .semantic, "#run failed: {s}", .{@errorName(err)});
+        var rendered = std.array_list.Managed(u8).init(self.temporary);
+        defer rendered.deinit();
+        if (message) |text| try rendered.appendSlice(text) else try rendered.print("#run failed: {s}", .{@errorName(err)});
+        if (self.failure_trace.count > 1) for (self.failure_trace.sources[1..self.failure_trace.count]) |caller|
+            try @import("failure.zig").appendCaller(&rendered, self.diagnostics, self.graph, caller);
+        try self.diagnostics.add(location, .semantic, "{s}", .{rendered.items});
     }
 };

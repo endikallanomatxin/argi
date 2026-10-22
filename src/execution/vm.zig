@@ -190,6 +190,7 @@ pub const Context = struct {
     }
 };
 
+pub const max_failure_frames = 64;
 pub const FailureFrame = struct { graph: *const g.GlobalSemanticGraph, source: p.SourceRef };
 
 pub const Vm = struct {
@@ -345,7 +346,7 @@ pub const Vm = struct {
         // borrowed code metadata, never language values or live frame storage.
         self.failure_trace.clearRetainingCapacity();
         var index = frames.len;
-        while (index != 0 and self.failure_trace.items.len < 64) {
+        while (index != 0 and self.failure_trace.items.len < max_failure_frames) {
             index -= 1;
             const active = frames[index];
             const source = if (index == frames.len - 1) self.source else blk: {

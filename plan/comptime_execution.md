@@ -53,9 +53,9 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 - Keep adapters on registered, signature-checked primitive identities; do not
   recognize user/core operations by incidental function names or paths.
 - Connect cooperative cancellation to CLI controls. CLI/REPL VM failures now
-  retain up to 64 caller locations without unwinding; carry this structured
-  failure through the compile-time scheduler and validate cross-version virtual
-  failure locations before considering trace reporting complete.
+  retain up to 64 caller locations without unwinding; the compile-time scheduler
+  preserves source identities after evaluator teardown. Validate cross-version
+  virtual failure locations before considering trace reporting complete.
 
 ## Scalability
 

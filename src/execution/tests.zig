@@ -960,16 +960,16 @@ test "compile-time evaluation exports aggregate constants and rejects escaping r
             try std.testing.expectEqual(@as(i128, 40), graph.node(graph.node_refs.items[array.start]).content.int_literal);
             try std.testing.expectEqual(@as(i128, 42), graph.node(graph.node_refs.items[array.start + 1]).content.int_literal);
             var budget: vm.Limits = .{ .instructions = 1000, .value_cells = 1000 };
-            _ = try @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget);
+            _ = try @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget, null);
             const spent_instructions = 1000 - budget.instructions;
             const spent_cells = 1000 - budget.value_cells;
             try std.testing.expect(spent_instructions != 0 and spent_cells != 0);
-            _ = try @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget);
+            _ = try @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget, null);
             try std.testing.expectEqual(2 * spent_instructions, 1000 - budget.instructions);
             try std.testing.expectEqual(2 * spent_cells, 1000 - budget.value_cells);
             budget.instructions = 1;
             const nodes = graph.nodes.items.len;
-            try std.testing.expectError(error.ExecutionInstructionLimit, @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget));
+            try std.testing.expectError(error.ExecutionInstructionLimit, @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget, null));
             try std.testing.expectEqual(@as(usize, 0), budget.instructions);
             try std.testing.expectEqual(nodes, graph.nodes.items.len);
             try std.testing.expectError(error.ExecutionInstructionLimit, evaluate(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, .{ .instructions = 1 }));
@@ -3041,4 +3041,28 @@ test "retained submissions report failure locations from earlier definitions" {
     try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.source_db.get(origin.file).source, "stop() -> () := { abort }") != null);
     try std.testing.expectEqual(.poisoned, session.runtime.context.state);
     try session.reset();
+}
+
+test "compile-time failures preserve nested caller sources after evaluator teardown" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\fail() -> (.result: Int32 = 0) := { abort }
+        \\middle() -> (.result: Int32) := { result = fail() }
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = #run () -> (.value: Int32) { value = middle() }
+        \\}
+    }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    try std.testing.expectError(error.Reported, pipeline.semantizeGlobalFiles(&files));
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.list.items.len);
+    const failure = diagnostics.list.items[0];
+    try std.testing.expect(std.mem.startsWith(u8, failure.msg, "#run evaluation aborted"));
+    try std.testing.expect(std.mem.indexOf(u8, failure.msg, "called from app/main.rg:2:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, failure.msg, "called from app/main.rg:4:") != null);
+    try std.testing.expectEqual(@as(u32, 1), diagnostics.lineColumn(failure.loc).line);
 }
