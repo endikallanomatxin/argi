@@ -360,6 +360,22 @@ pub const GlobalSemanticGraph = struct {
         return result;
     }
 
+    /// Release growth room in a finalized retained snapshot without moving any
+    /// element. Allocators may decline; keep the original allocation in that
+    /// case. Never use a reallocating shrink on published metadata pointers.
+    pub fn trimPoolCapacity(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
+        inline for (@typeInfo(GlobalSemanticGraph).@"struct".fields) |field| {
+            if (comptime switch (@typeInfo(field.type)) {
+                .@"struct" => @hasField(field.type, "items") and @hasField(field.type, "capacity"),
+                else => false,
+            }) {
+                const pool = &@field(self, field.name);
+                if (pool.capacity > pool.items.len and allocator.resize(pool.allocatedSlice(), pool.items.len))
+                    pool.capacity = pool.items.len;
+            }
+        }
+    }
+
     /// Snapshot append-only graph storage and the mutable lookup-index tails.
     /// This is deliberately not a transaction for resolver-local caches or
     /// side effects; callers must checkpoint those separately when needed.
@@ -1131,4 +1147,24 @@ fn cloneSafetySelectors(allocator: std.mem.Allocator) !void {
 
 test "semantic graph safety selectors survive source destruction and failed cloning" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneSafetySelectors, .{});
+}
+
+test "snapshot capacity trimming preserves pool pointers and identities" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.ensureTotalCapacity(a, 100);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.strings.appendSlice(a, "retained");
+    const type_pointer = graph.types.items.ptr;
+    const text_pointer = graph.strings.items.ptr;
+    const capacity = graph.types.capacity;
+    graph.trimPoolCapacity(a);
+    try std.testing.expectEqual(type_pointer, graph.types.items.ptr);
+    try std.testing.expectEqual(text_pointer, graph.strings.items.ptr);
+    try std.testing.expect(graph.types.capacity <= capacity);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, graph.types.items[0].builtin);
+    try std.testing.expectEqualStrings("retained", graph.strings.items);
+    // A second trim is harmless, including empty graph columns.
+    graph.trimPoolCapacity(a);
 }

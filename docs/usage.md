@@ -599,3 +599,15 @@ account for 276.19 MiB of payload and 414.29 MiB reserved; strings account for
 identify both duplicated node prefixes and retained growth capacity as concrete
 follow-up targets; they do not establish that a moving shrink is safe for every
 published metadata reference.
+
+Retained checked snapshots now attempt to release unused flat-pool capacity
+in place after finalization. Allocators may decline; no pool is moved or copied
+by this step. With the same 100-resource benchmark and process allocator,
+reserved column capacity fell from 626.21 to 424.56 MiB and total requested live
+backing from 908.55 to 706.91 MiB (peak 923.86 to 724.44 MiB). Payload remained
+418.24 MiB, with the same 3,300 compiled functions, 76,600 instructions and 100
+live acquisitions holding 4,000 bytes. Both runs completed cleanup without
+tracked leaks. Command times were 4,347.1 and 4,371.8 ms; these single samples
+show no timing improvement. This removes retained growth room without solving
+duplicated prefixes. The operation is limited to retained execution snapshots;
+ordinary AOT compilation does not perform it.

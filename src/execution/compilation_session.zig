@@ -363,6 +363,7 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
         for (result.graph.virtual_calls.items) |*call| call.* = try copy.value(@TypeOf(call.*), call.*);
     }
     if (proof) |owned| try owned.seal(temporary.allocator());
+    result.graph.trimPoolCapacity(allocator);
     return .{ .graph = result.graph, .stats = result.stats };
 }
 
