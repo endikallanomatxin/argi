@@ -99,17 +99,10 @@ pub const Lower = struct {
     }
 
     fn partialLayout(self: *Lower, source: p.SourceRef, ty: b.Type) !@import("storage_layout.zig").Layout {
-        try self.requirePartialLayout(source, ty, 0);
-        return @import("storage_layout.zig").compile(self.allocator, self.graph, ty);
-    }
-    fn requirePartialLayout(self: *Lower, source: p.SourceRef, ty: b.Type, depth: usize) anyerror!void {
-        if (depth > 64) return self.reject(source, "partial storage nesting");
-        if (types.arrayElement(self.graph, ty)) |element| {
-            try self.requirePartialLayout(source, element, depth + 1);
-        } else if (types.fields(self.graph, ty)) |fields| {
-            for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
-                try self.requirePartialLayout(source, field.ty, depth + 1);
-        }
+        return @import("storage_layout.zig").compile(self.allocator, self.graph, ty) catch |err| switch (err) {
+            error.UnsupportedStorageLayout => self.reject(source, "partial storage nesting or size"),
+            else => err,
+        };
     }
 
     fn finish(self: *Lower, expression: ?b.Function) !b.Program {

@@ -7,6 +7,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 ## Memory and lifecycle
 
 - Complete acquired aggregate/resource storage and partial choice initialization.
+  Acquired references currently preserve a byte range, not a logical slot.
+  `MaybeUninit` reduces its index to `base + index * size`; zero-sized siblings
+  therefore become indistinguishable before bytecode lowering. Preserve a
+  checked slot receipt through allocation selection and reference establishment
+  before attaching cleanup evidence. Do not key owner identity by byte address
+  or create a fresh cleanup owner for each repeated reference conversion.
   Choice cleanup now separates discriminant presence from whole-value readiness:
   partial payload consumption skips nominal destruction and cleans live siblings.
   Reinitialization restores complete cleanup through shared ancestor flags;
@@ -144,10 +150,8 @@ cleanup, rejected submissions, traps and reset. Test `#run` and computed `#if`
 through retained sessions as well as native compilation, including inactive
 branches, cycles, allocation failures and rejected evaluator-resource escapes.
 
-Recheck published CI before treating the branch as validated. Run 39495958440
-at `7b32f154` failed program fixtures 22 and 34 (`DynamicArray<String>`) on
-Linux x86_64 and ARM64; both pass on the current local tree in Debug and
-ReleaseSafe, including fresh frontend builds and repeated execution. The local
-tree still contains pending safety changes, so this does not prove that the
-published commits alone resolve those failures. Fixture exit mismatches now
-include captured output and the actual termination signal for diagnosis.
+Recheck published CI after the latest lifecycle changes. Run
+[39678224716](https://github.com/endikallanomatxin/argi/actions/runs/39678224716)
+passed at `2896cd99` on Linux and macOS, both x86_64 and ARM64. Subsequent
+structural cleanup, indexed replacement and partial owning-array changes have
+local validation but are not covered by that run.
