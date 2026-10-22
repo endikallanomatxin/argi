@@ -1025,27 +1025,43 @@ pub const SafetyChecker = struct {
         loop_transfers: ?*LoopTransfers,
     ) !void {
         const sw = self.graph.switches.items[@intFromEnum(switch_id)];
-        const choice = try self.evaluate(function, sw.expression, state);
+        const source = self.graph.node(sw.expression);
+        const captured = try self.evaluateAccess(function, sw.expression, state);
+        // Binding reads also retain their explicit-dependency checks and
+        // active-tag refinement. Address capture itself has no read effects.
+        const choice = if (source.content == .binding_use)
+            try self.evaluate(function, sw.expression, state)
+        else
+            try self.readEvaluatedAccess(function, source.source, source.ty, captured, state);
         var joined: ?FunctionState = null;
         defer if (joined) |*value| value.deinit();
         for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
             var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
             defer branch.deinit();
-            try self.refineChoice(&branch, sw.expression, case.variant, true);
+            const wanted = variantIndex(self.graph, source.ty.?, case.variant) orelse 0;
+            try self.refineChoiceStorage(&branch, sw.expression, source.ty.?, wanted, true, captured.storage);
+            var payload: facts.ValueFacts = .{};
+            for (choice.variants) |variant| if (variant.index == wanted) {
+                payload = variant.value.*;
+                break;
+            };
+            try self.activate_conditional_resources(&branch, payload);
             if (case.payload_binding) |binding| {
-                const wanted = variantIndex(self.graph, self.graph.nodes.items[@intFromEnum(sw.expression)].ty.?, case.variant) orelse 0;
-                var payload: facts.ValueFacts = .{};
-                for (choice.variants) |variant| if (variant.index == wanted) {
-                    payload = variant.value.*;
-                    break;
-                };
-                try self.activate_conditional_resources(&branch, payload);
+                var borrowed = payload.referenceCopy();
+                if (case.payload_mode == .borrow or case.payload_mode == .mut_borrow) {
+                    if (captured.pointer) |pointer| if (captured.storage == null) {
+                        if (try self.projectSymbolicStorage(pointer, .{ .variant = wanted }, &branch)) |projected| {
+                            borrowed = projected;
+                            if (!facts.isEmptyValue(payload)) try self.storeSymbolicValue(&branch, projected, payload, true);
+                        }
+                    };
+                }
                 try self.beginLexicalStorage(&branch, .{ .root = binding });
                 try self.setPlace(&branch, .{ .root = binding }, .initialized, switch (case.payload_mode) {
                     .value, .move => payload,
-                    .borrow, .mut_borrow => payload.referenceCopy(),
+                    .borrow, .mut_borrow => borrowed,
                 });
-                if (case.payload_mode == .move) if (try self.resolvePlace(sw.expression, &branch)) |storage| {
+                if (case.payload_mode == .move) if (captured.storage) |storage| {
                     // Moving a choice payload consumes the discriminated value.
                     // Keeping the aggregate initialized would allow another
                     // branch-sensitive read to observe the transferred payload.
@@ -7149,7 +7165,10 @@ pub const SafetyChecker = struct {
     fn refineChoice(self: *SafetyChecker, state: *FunctionState, node: graph_mod.GlobalNodeId, variant: graph_mod.GlobalVariantId, active: bool) !void {
         const ty = self.graph.nodes.items[@intFromEnum(node)].ty orelse return;
         const index = variantIndex(self.graph, ty, variant) orelse return;
-        const storage = try self.resolvePlace(node, state);
+        return self.refineChoiceStorage(state, node, ty, index, active, try self.resolvePlace(node, state));
+    }
+
+    fn refineChoiceStorage(self: *SafetyChecker, state: *FunctionState, node: graph_mod.GlobalNodeId, ty: graph_mod.GlobalTypeId, index: u32, active: bool, storage: ?facts.Place) !void {
         if (storage == null) {
             if (active) try self.setTemporaryActiveVariant(state, node, index);
             return;

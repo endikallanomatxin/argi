@@ -59,7 +59,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   cleanup/commit retain the original referent. Repeated array cleanup now uses
   the same abstract element projection as concrete cleanup, without expanding
   array lengths (208). Unknown elements may overlap observed fixed indices;
-  they never establish disjoint storage. Finish choice structural cleanup and
+  they never establish disjoint storage. Match payload borrows now capture
+  symbolic variant storage once, preserving field consumption and live siblings
+  (209X/210), including effectful selectors (211). This exposes partial payload state to replacement cleanup rather
+  than losing it at the match boundary. Finish choice structural cleanup and
   conditionally initialized referents.
   Symbolic slots now retain sparse stored-value facts separately from pointee
   identity/initializedness. Direct/call writes, branch/loop joins and returned

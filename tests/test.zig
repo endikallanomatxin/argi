@@ -14693,3 +14693,20 @@ test "feature_tests/execution/208_partial_symbolic_array_cleanup" {
     try runExpect("tests/feature_tests/execution/208_partial_symbolic_array_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/208_partial_symbolic_array_cleanup", 42, null);
 }
+
+test "feature_tests/execution/209X_symbolic_match_payload_keeps_consumption" {
+    try buildExpectFail("tests/feature_tests/execution/209X_symbolic_match_payload_keeps_consumption", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/209X_symbolic_match_payload_keeps_consumption", 1, "root that has ended");
+}
+
+test "feature_tests/execution/210_symbolic_match_payload_preserves_sibling" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/210_symbolic_match_payload_preserves_sibling");
+    try runExpect("tests/feature_tests/execution/210_symbolic_match_payload_preserves_sibling", 42);
+    try vmExpect("tests/feature_tests/execution/210_symbolic_match_payload_preserves_sibling", 42, null);
+}
+
+test "feature_tests/execution/211_symbolic_match_captures_effectful_selector" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector");
+    try runExpect("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector", 42);
+    try vmExpect("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector", 42, null);
+}
