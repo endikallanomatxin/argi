@@ -14,13 +14,6 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   payload construction still needs its own initialization representation.
   Share identity, projections, initialization and validity rules with ordinary
   storage without requiring identical physical representations.
-- Complete partial initialization for owning arrays.
-  Structural cleanup now uses one repeated element plan in safety and both
-  backends. Differential fixtures cover nested and empty arrays, moved elements,
-  explicit destruction and zero-sized element identities; stale aliases remain
-  rejected. Indexed replacement now uses the ordinary captured-reference write
-  plan, including index changes during RHS evaluation, explicit destruction and
-  zero-sized elements. Extend partial storage without weakening these guarantees.
 - Complete indexed cleanup identities in both backends. Whole indirect pointer
   and record-field replacements use checked plans, including the three-drop
   retargeting probe and preservation of sibling references in native and VM.

@@ -149,7 +149,9 @@ identity before evaluating the replacement; neighboring fields remain independen
 Owning array elements use the same captured-reference replacement plan. The
 array and index are evaluated once before the new value; sibling cleanup remains
 independent, including for zero-sized elements. Partially initialized owning
-arrays remain unsupported. Scalar and borrowed-only writes through references work.
+arrays clean only their live elements and nested fields. Completing scalar
+fields also updates the enclosing owner's readiness. Scalar and borrowed-only
+writes through references work.
 
 Unary virtual values retain their concrete receiver and the immutable bytecode
 unit containing the selected operations. Calls use that evidence directly, including
@@ -299,7 +301,7 @@ variant indexes. Type results remain compiler constants, display their type name
 and can be reused in queries such as `size_of(.type = _0)`. Neither their storage
 nor their identity is materialized in the VM. This is an initial value display, not the text-formatting API.
 
-Scalar, record and non-owning array bindings can be declared without an initial
+Scalar, record and array bindings can be declared without an initial
 value and written in later commands. Initialized fields and elements can be read
 independently of vacant siblings. A complete aggregate can be read once every
 field or statically identified element is initialized, including nested fields.

@@ -14043,8 +14043,10 @@ test "feature_tests/execution/103X_partial_array_missing_element" {
     try vmExpect("tests/feature_tests/execution/103X_partial_array_missing_element", 1, "deinitialized");
 }
 
-test "feature_tests/execution/104X_partial_owning_array_boundary" {
-    try vmExpect("tests/feature_tests/execution/104X_partial_owning_array_boundary", 1, "indexed cleanup identities");
+test "feature_tests/execution/104_partial_owning_array_field" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/104_partial_owning_array_field");
+    try runExpect("tests/feature_tests/execution/104_partial_owning_array_field", 0);
+    try vmExpect("tests/feature_tests/execution/104_partial_owning_array_field", 0, null);
 }
 
 test "feature_tests/execution/105X_partial_array_reference_lifetime" {
@@ -14458,4 +14460,10 @@ test "feature_tests/execution/165_indexed_owner_replacement" {
 
 test "feature_tests/execution/166X_indexed_replacement_keeps_alias_stale" {
     try buildExpectFail("tests/feature_tests/execution/166X_indexed_replacement_keeps_alias_stale", "root that has ended");
+}
+
+test "feature_tests/execution/167_partial_owning_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/167_partial_owning_array_cleanup");
+    try runExpect("tests/feature_tests/execution/167_partial_owning_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/167_partial_owning_array_cleanup", 42, null);
 }

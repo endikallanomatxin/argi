@@ -749,12 +749,22 @@ pub const Storage = struct {
     }
     // The caller has already evaluated and resolved the complete destination.
     pub fn captureResolvedWrite(self: *Storage, reference: v.Reference, activate_cleanup: bool) !WriteDestination {
+        return self.captureWriteEvidence(reference, activate_cleanup, activate_cleanup);
+    }
+
+    // Non-owning field writes still contribute to an enclosing owner's
+    // completeness. Missing evidence is permitted only when the write itself
+    // has no selected cleanup obligation; byte views carry no such flags.
+    pub fn captureWriteEvidence(self: *Storage, reference: v.Reference, activate_cleanup: bool, require_cleanup: bool) !WriteDestination {
         try self.validateWritable(reference);
         try self.validateStorageAddress(reference);
-        const cleanup_entry = if (activate_cleanup) try self.cleanupEntry(reference) else null;
+        const cleanup_entry = if (!activate_cleanup or (!require_cleanup and reference.byte_view != null)) null else self.cleanupEntry(reference) catch |err| switch (err) {
+            error.ExecutionMissingCleanup => if (require_cleanup) return err else null,
+            else => return err,
+        };
         var captured = reference;
         captured.path = try self.retainPath(reference.path);
-        return .{ .reference = captured, .cleanup_entry = cleanup_entry };
+        return .{ .reference = captured, .cleanup_entry = cleanup_entry, .require_cleanup = require_cleanup };
     }
 
     // Validate compiler-selected cleanup state independently of value storage.
@@ -1566,4 +1576,22 @@ test "repeated cleanup uses indexed identities and refreshes nested array ancest
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupSet(outside, false));
     try std.testing.expect(try storage.cleanupTest(root));
     _ = try storage.cleanupSet(root, false);
+}
+
+test "optional write evidence activates represented cleanup without inventing owners" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const slots_ = try storage.enterSession(2, &.{.{ .root = 0 }});
+    const owner: v.Reference = .{ .context = storage.context, .frame = slots_.frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    var ordinary = owner;
+    ordinary.root = 1;
+    const absent = try storage.captureWriteEvidence(ordinary, true, false);
+    try std.testing.expectEqual(@as(usize, 0), try storage.activateWriteCleanup(absent));
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.captureWriteEvidence(ordinary, true, true));
+    const present = try storage.captureWriteEvidence(owner, true, false);
+    try std.testing.expectEqual(@as(usize, 1), try storage.activateWriteCleanup(present));
+    try std.testing.expect(try storage.cleanupTest(owner));
+    ordinary.mutability = .read_only;
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.captureWriteEvidence(ordinary, true, false));
 }

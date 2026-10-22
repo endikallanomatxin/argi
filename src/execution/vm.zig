@@ -556,8 +556,7 @@ pub const Vm = struct {
                 .capture_write => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.resolvePlace(unit, current.storage, x.place, &path, false);
-                    var destination = try self.context().storage.captureResolvedWrite(reference, x.activate_cleanup);
-                    destination.require_cleanup = x.require_cleanup;
+                    const destination = try self.context().storage.captureWriteEvidence(reference, x.activate_cleanup, x.require_cleanup);
                     current.write_destinations[x.dst] = destination;
                 },
                 .check_write_cleanup => |id| {

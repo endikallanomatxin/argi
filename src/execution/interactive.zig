@@ -1109,6 +1109,35 @@ test "interactive partial records clean initialized owners at exit" {
     for (flags) |enabled| try std.testing.expect(!enabled);
 }
 
+test "interactive owning arrays complete cleanup across submissions" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Resource: Type = ()\nmake := () -> (.result: Resource) { result = () }");
+    try session.submitDefinitions("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
+    try session.submitStatements("resources :: [2]Resource");
+    try session.submitStatements("resources[0] = make()");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("resources[1]"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.submitStatements("resources[1] = make()");
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const frame = session.runtime.context.bindings.get(binding).?;
+    const flags = session.runtime.context.storage.frames.items[@intFromEnum(frame)].cleanup_flags;
+    try std.testing.expectEqual(@as(usize, 3), flags.len);
+    for (flags) |enabled| try std.testing.expect(enabled);
+    try session.close();
+    for (flags) |enabled| try std.testing.expect(!enabled);
+}
+
 test "interactive arrays retain initialized elements across commands" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});

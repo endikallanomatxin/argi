@@ -1535,8 +1535,13 @@ pub const CodeGenerator = struct {
         // Capture and validate the destination before RHS effects, just like
         // pointer/field assignment. Never defer its bounds check to the store.
         const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index, store.array_type);
-        const companion = if (pointer.reference_view) |view| try reference_evidence.elementStorage(self.builder, &self.reference_layouts, self.allocator, self.graph, store.array_type, try reference_evidence.referencesPointer(self.builder, view), index.value_ref) else null;
-        const destination: WriteDestination = .{ .address = element_ptr, .type_ref = try self.toLLVMType(store.element_type), .references = companion, .reference_type = try self.optionalReferenceValueType(store.element_type) };
+        const view: ?c.LLVMValueRef = if (pointer.reference_view) |parent|
+            try reference_evidence.elementView(self.builder, &self.reference_layouts, self.allocator, self.graph, &self.cleanup_counts, store.array_type, parent, index.value_ref)
+        else
+            null;
+        const companion: ?c.LLVMValueRef = if (view) |evidence| try reference_evidence.referencesPointer(self.builder, evidence) else null;
+        const cleanup = if (view) |evidence| try self.referenceCleanupState(evidence, store.element_type) else null;
+        const destination: WriteDestination = .{ .address = element_ptr, .type_ref = try self.toLLVMType(store.element_type), .cleanup = cleanup, .cleanup_optional = true, .references = companion, .reference_type = try self.optionalReferenceValueType(store.element_type) };
         const value = try self.prepareWriteValue(store.value, destination);
         try destination.commit(self, value);
     }
@@ -1571,8 +1576,9 @@ pub const CodeGenerator = struct {
             try reference_evidence.projectView(self.builder, self.allocator, self.graph, &self.reference_layouts, &self.cleanup_counts, store.struct_type, view, .{ .field = store.field_index })
         else
             null;
+        const optional_cleanup = if (self.replacement) |captured| captured.plan.value != store.value else true;
         const cleanup = if (store.cleanup_target) |target|
-            try self.capturedReferenceCleanup(.{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(try self.toLLVMType(store.field_type), 0), .reference_view = projected_view }, target, false)
+            try self.capturedReferenceCleanup(.{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(try self.toLLVMType(store.field_type), 0), .reference_view = projected_view }, target, optional_cleanup)
         else if (self.dropStateForNode(store.struct_ptr)) |parent|
             parent.project(self.builder, store.field_index)
         else
@@ -1583,7 +1589,7 @@ pub const CodeGenerator = struct {
             try self.referenceStorageForNode(target)
         else
             null;
-        const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup, .references = references, .reference_type = try self.optionalReferenceValueType(store.field_type) };
+        const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup, .cleanup_optional = optional_cleanup, .references = references, .reference_type = try self.optionalReferenceValueType(store.field_type) };
         const value = try self.prepareWriteValue(store.value, destination);
         try destination.commit(self, value);
     }
@@ -2040,17 +2046,24 @@ pub const CodeGenerator = struct {
         };
     }
 
+    fn referenceCleanupState(self: *CodeGenerator, view: c.LLVMValueRef, ty: graph_mod.GlobalTypeId) !?DropState {
+        const flags = try reference_evidence.cleanupPointer(self.builder, view);
+        if (c.LLVMIsNull(flags) != 0) return null;
+        var state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, ty, flags);
+        state.runtime_owner = try reference_evidence.runtimeOwner(self.builder, view);
+        return state;
+    }
+
     // Only a proven lexical referent supplies fallback flags. A reference
     // slot's own flags never establish its pointee's identity. Runtime views
     // retain the complete owner so ancestor activation uses that same identity.
-    fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId, initializing: bool) !?DropState {
+    fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId, optional: bool) !?DropState {
         const lexical = if (@import("../../4_semantics/global/lexical_storage.zig").root(self.graph, target) != null) self.dropStateForNode(target) else null;
         if (lexical == null) {
-            if (self.replacement == null) return null;
             const view = pointer.reference_view orelse return null;
             const ty = self.graph.node(target).ty orelse return CodegenError.InvalidType;
             const flags = try reference_evidence.cleanupPointer(self.builder, view);
-            if (!initializing) {
+            if (!optional) {
                 const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
                 const valid = c.LLVMAppendBasicBlock(function, "cleanup.evidence.valid");
                 const invalid = c.LLVMAppendBasicBlock(function, "cleanup.evidence.missing");
@@ -2059,9 +2072,7 @@ pub const CodeGenerator = struct {
                 try self.runtimeFailure("owning replacement requires storage cleanup evidence");
                 c.LLVMPositionBuilderAtEnd(self.builder, valid);
             }
-            var state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, ty, flags);
-            state.runtime_owner = try reference_evidence.runtimeOwner(self.builder, view);
-            return state;
+            return try self.referenceCleanupState(view, ty);
         }
         var state = lexical.?;
         if (pointer.reference_view) |view| {
@@ -2083,11 +2094,13 @@ pub const CodeGenerator = struct {
         const pointer = (try self.visitNode(assignment.pointer)) orelse return CodegenError.ValueNotFound;
         const pointer_type = self.graph.semanticType(self.graph.node(assignment.pointer).ty orelse return CodegenError.InvalidType);
         if (pointer_type != .pointer) return CodegenError.InvalidType;
+        const optional_cleanup = assignment.checked_initialization == true or
+            (if (self.replacement) |captured| captured.plan.value != assignment.value else true);
         const destination: WriteDestination = .{
             .address = pointer.value_ref,
             .type_ref = try self.toLLVMType(pointer_type.pointer.child),
-            .cleanup = try self.capturedReferenceCleanup(pointer, assignment.cleanup_target orelse assignment.pointer, assignment.checked_initialization == true),
-            .cleanup_optional = assignment.checked_initialization == true,
+            .cleanup = try self.capturedReferenceCleanup(pointer, assignment.cleanup_target orelse assignment.pointer, optional_cleanup),
+            .cleanup_optional = optional_cleanup,
             .references = if (pointer.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else if (assignment.cleanup_target) |target| try self.referenceStorageForNode(target) else null,
             .reference_type = try self.optionalReferenceValueType(pointer_type.pointer.child),
         };

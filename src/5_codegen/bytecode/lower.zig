@@ -105,8 +105,6 @@ pub const Lower = struct {
     fn requirePartialLayout(self: *Lower, source: p.SourceRef, ty: b.Type, depth: usize) anyerror!void {
         if (depth > 64) return self.reject(source, "partial storage nesting");
         if (types.arrayElement(self.graph, ty)) |element| {
-            if (self.cleanup_types[@intFromEnum(element)])
-                return self.reject(source, "partial storage for owning array elements requires indexed cleanup identities");
             try self.requirePartialLayout(source, element, depth + 1);
         } else if (types.fields(self.graph, ty)) |fields| {
             for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
@@ -594,14 +592,14 @@ const FunctionLower = struct {
                         return;
                     }
                     if (self.parent.cleanup_types[@intFromEnum(ty)]) return self.parent.reject(node.source, "session owner replacement requires a checked cleanup plan");
-                    const destination = try self.captureWrite(node.source, .{ .root = index, .region = .session, .path = &.{} }, ty, false);
+                    const destination = try self.captureWrite(node.source, .{ .root = index, .region = .session, .path = &.{} }, ty);
                     const value = try self.coerce(node.source, try self.expression(x.value), ty);
                     try self.commitWrite(node.source, destination, value);
                     return;
                 }
                 if (self.parent.isGlobal(x.binding)) {
                     const target = try self.globalPlace(x.binding, node.source);
-                    const destination = try self.captureWrite(node.source, target, self.parent.graph.binding(x.binding).ty, false);
+                    const destination = try self.captureWrite(node.source, target, self.parent.graph.binding(x.binding).ty);
                     try self.commitWrite(node.source, destination, try self.expression(x.value));
                     return;
                 }
@@ -615,7 +613,7 @@ const FunctionLower = struct {
                 const base = try self.place(x.array_ptr);
                 const index = try self.expression(x.index);
                 const target = try self.project(base, .{ .element = .{ .slot = index } });
-                const destination = try self.captureWrite(node.source, target, x.element_type, false);
+                const destination = try self.captureWrite(node.source, target, x.element_type);
                 const value = try self.coerce(node.source, try self.expression(x.value), x.element_type);
                 try self.commitWrite(node.source, destination, value);
             },
@@ -625,8 +623,7 @@ const FunctionLower = struct {
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
                 try self.captureReplacement(id, target, child);
-                const destination = try self.captureWrite(node.source, target, child, (if (self.replacement) |captured| captured.plan.write == id else false) or self.targetHasCleanup(x.cleanup_target) or
-                    (x.checked_initialization == true and self.parent.cleanup_types[@intFromEnum(child)]));
+                const destination = try self.captureWrite(node.source, target, child);
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
                 try self.commitWrite(node.source, destination, value);
             },
@@ -636,7 +633,7 @@ const FunctionLower = struct {
                 const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });
                 try self.captureReplacement(id, target, x.field_type);
-                const destination = try self.captureWrite(node.source, target, x.field_type, (if (self.replacement) |captured| captured.plan.write == id else false) or self.targetHasCleanup(x.cleanup_target));
+                const destination = try self.captureWrite(node.source, target, x.field_type);
                 const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
                 try self.commitWrite(node.source, destination, value);
             },
@@ -777,9 +774,6 @@ const FunctionLower = struct {
         const src = try self.coerce(source, value, self.slots.items[dst]);
         _ = try self.emit(source, .{ .copy = .{ .dst = dst, .src = src } });
     }
-    fn targetHasCleanup(self: *FunctionLower, target: ?g.GlobalNodeId) bool {
-        return if (target) |node| self.nodeDrop(node) != null else false;
-    }
     fn commitWrite(self: *FunctionLower, source: p.SourceRef, destination: b.Destination, value: b.Slot) !void {
         _ = try self.emit(source, .{ .check_write_cleanup = destination });
         _ = try self.emit(source, .{ .store = .{ .destination = destination, .value = value } });
@@ -794,10 +788,10 @@ const FunctionLower = struct {
             captured.ty = ty;
         };
     }
-    fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type, activate_cleanup: bool) !b.Destination {
+    fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type) !b.Destination {
         const destination: b.Destination = @intCast(self.write_destinations.items.len);
         try self.write_destinations.append(self.parent.allocator, ty);
-        _ = try self.emit(source, .{ .capture_write = .{ .dst = destination, .place = place_, .activate_cleanup = activate_cleanup, .require_cleanup = self.parent.cleanup_types[@intFromEnum(ty)] } });
+        _ = try self.emit(source, .{ .capture_write = .{ .dst = destination, .place = place_, .activate_cleanup = true, .require_cleanup = self.parent.cleanup_types[@intFromEnum(ty)] } });
         return destination;
     }
     fn addressedPlace(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {
