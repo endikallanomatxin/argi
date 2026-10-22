@@ -2110,10 +2110,11 @@ pub const Infer = struct {
             .function_call, .virtual_call => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
             .pointer_assignment => |assignment| {
                 try self.inferInputPostStatesExpression(function_id, assignment.pointer, states, exits);
+                const targets = try self.inferWritePointeePaths(function_id, assignment.pointer);
                 try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
                 try self.recordInputPostState(
                     states,
-                    try self.inferPointeePaths(function_id, assignment.pointer),
+                    targets,
                     .initialized,
                     try self.inferExpression(function_id, assignment.value),
                     false,
@@ -4815,7 +4816,34 @@ pub const Infer = struct {
     }
 
     fn inferPointeePaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId) ![]const facts.InputPath {
-        const paths = try self.inferInputPaths(function_id, pointer);
+        return self.normalizePointeePaths(function_id, pointer, try self.inferInputPaths(function_id, pointer));
+    }
+
+    // Writes through a returned reference need exact identity, not the may-
+    // dependencies used for reads. Share the proof used to validate refers_to.
+    fn inferWritePointeePaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
+        const direct = try self.inferPointeePaths(function_id, pointer);
+        if (direct.len != 0) return direct;
+        const call = switch (self.graph.node(pointer).content) {
+            .function_call => |call| call,
+            else => return &.{},
+        };
+        if (call.callee_value != null) return &.{};
+        const callee = self.graph.function(call.callee);
+        if (callee.flags.is_c_abi or callee.safety_primitive != .none or callee.output.len != 1) return &.{};
+        const ty = self.graph.fields.items[callee.output.start].ty;
+        if (self.graph.semanticType(ty) != .pointer) return &.{};
+        const input = self.graph.node(call.input).content;
+        if (input != .struct_value_literal) return &.{};
+        for (self.graph.fields.items[callee.input.start..][0..callee.input.len], 0..) |field, index| {
+            if (!types.equal(self.graph, field.ty, ty) or index >= input.struct_value_literal.fields.len) continue;
+            if (!try @import("lexical_forwarding.zig").proves(self.allocator, self.graph, callee, .{ .input_index = @intCast(index), .output_index = 0 }, false)) continue;
+            return self.inferWritePointeePaths(function_id, self.graph.value_fields.items[input.struct_value_literal.fields.start + index].value);
+        }
+        return &.{};
+    }
+
+    fn normalizePointeePaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId, paths: []const facts.InputPath) ![]const facts.InputPath {
         const pointer_ty = self.graph.node(pointer).ty orelse return paths;
         const pointer_type = self.graph.semanticType(pointer_ty);
         if (pointer_type != .pointer) return paths;

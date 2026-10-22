@@ -55,6 +55,7 @@ const global_lexical_storage = @import("4_semantics/global/lexical_storage.zig")
 const global_semantizer = @import("4_semantics/global/semantizer.zig");
 const global_safety_facts = @import("4_semantics/safety/facts.zig");
 const global_safety_checker = @import("4_semantics/safety/checker.zig");
+const safety_lexical_forwarding = @import("4_semantics/safety/lexical_forwarding.zig");
 const foreign_result = @import("4_semantics/safety/foreign_result.zig");
 const safety_choice_conditions = @import("4_semantics/safety/choice_conditions.zig");
 const safety_summaries = @import("4_semantics/safety/summaries.zig");
@@ -152,6 +153,7 @@ comptime {
     _ = global_safety_facts;
     _ = @import("4_semantics/safety/place.zig");
     _ = global_safety_checker;
+    _ = safety_lexical_forwarding;
     _ = foreign_result;
     _ = safety_choice_conditions;
     _ = safety_summaries;

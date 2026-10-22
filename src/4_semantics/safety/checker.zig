@@ -559,50 +559,8 @@ pub const SafetyChecker = struct {
         return self.provesLexicalContractForwarding(function, referent, false);
     }
 
-    /// A may-dependency summary cannot establish exact identity. Follow only
-    /// ordered lexical links, independently of the converged effect check.
-    /// Every ownership link moves the value; unknown effects or control flow
-    /// cannot certify that a later result retains the declared identity.
     fn provesLexicalContractForwarding(self: *SafetyChecker, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool) !bool {
-        const block = self.graph.blocks.items[@intFromEnum(function.body orelse return false)];
-        if (relation.input_index >= function.input_bindings.len or relation.output_index >= function.output_bindings.len) return false;
-        const input = self.graph.binding_refs.items[function.input_bindings.start + relation.input_index];
-        const output = self.graph.binding_refs.items[function.output_bindings.start + relation.output_index];
-        var links = std.array_list.Managed(graph_mod.GlobalBindingId).init(self.allocator);
-        defer links.deinit();
-        try links.append(input);
-        var assigned = false;
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| switch (self.graph.node(id).content) {
-            .binding_declaration => |binding| {
-                const record = self.graph.binding(binding);
-                if (record.deferred_initialization or binding == output or linksContains(links.items, binding)) return false;
-                const initializer = record.initialization orelse return false;
-                if (!self.isForwardingLink(initializer, links.items, owning)) return false;
-                try links.append(binding);
-            },
-            .assignment => |assignment| {
-                if (assignment.binding != output or assigned) return false;
-                if (!self.isForwardingLink(assignment.value, links.items, owning)) return false;
-                assigned = true;
-            },
-            .auto_deinit_binding => {},
-            .return_statement => |ret| return ret.expression == null and assigned,
-            else => return false,
-        };
-        return assigned;
-    }
-
-    fn linksContains(links: []const graph_mod.GlobalBindingId, binding: graph_mod.GlobalBindingId) bool {
-        return std.mem.indexOfScalar(graph_mod.GlobalBindingId, links, binding) != null;
-    }
-
-    fn isForwardingLink(self: *SafetyChecker, id: graph_mod.GlobalNodeId, links: []const graph_mod.GlobalBindingId, owning: bool) bool {
-        var expression = self.graph.node(id).content;
-        if (owning) {
-            if (expression != .move_value) return false;
-            expression = self.graph.node(expression.move_value).content;
-        }
-        return expression == .binding_use and linksContains(links, expression.binding_use);
+        return @import("lexical_forwarding.zig").proves(self.allocator, self.graph, function, relation, owning);
     }
 
     fn validateInitializerContracts(self: *SafetyChecker, engine: *summary_engine.Engine) !void {
@@ -5203,11 +5161,13 @@ pub const SafetyChecker = struct {
                 write.checked_initialization = write.checked_initialization == true and vacant;
                 if (pointer.referenced_place == null and pointer.symbolic_pointees.len == 1) {
                     const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
-                    for (state.symbolic_pointees.items) |entry| {
-                        if (entry.identity != pointer.symbolic_pointees[0]) continue;
-                        if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return;
-                        if (self.symbolicStorageComplete(state, entry.identity)) if (cleanup.deinit_fn) |callee|
-                            return self.evaluateResolvedDeinitReference(function, callee, cleanup.input orelse return, cleanup.self_field_index, .{ .value = pointer }, state);
+                    if (self.symbolicStorageComplete(state, pointer.symbolic_pointees[0])) if (cleanup.deinit_fn) |callee|
+                        return self.evaluateResolvedDeinitReference(function, callee, cleanup.input orelse return, cleanup.self_field_index, .{ .value = pointer }, state);
+                    var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                    defer candidate.deinit();
+                    if (try self.evaluateSymbolicCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, pointer, &candidate)) {
+                        self.commitState(state, &candidate);
+                        return;
                     }
                 }
                 if (pointer.referenced_place) |storage| {
@@ -5222,6 +5182,45 @@ pub const SafetyChecker = struct {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
         const storage = if (cleanup.targetNode()) |target| try self.resolvePlace(target, state) orelse return else facts.Place{ .root = cleanup.ownerBinding().? };
         try self.evaluateCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, storage, state);
+    }
+
+    // A captured unknown referent uses the same selected cleanup operations
+    // as a concrete Place. Its projected identities retain which children have
+    // been consumed without reevaluating the expression that selected it.
+    // Keep speculative traversal isolated until every projection is represented.
+    fn evaluateSymbolicCleanupOperation(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        callee: ?graph_mod.GlobalFunctionId,
+        input: ?graph_mod.GlobalNodeId,
+        self_index: u32,
+        fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId),
+        pointer: facts.ValueFacts,
+        state: *FunctionState,
+    ) anyerror!bool {
+        if (pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return false;
+        const identity = pointer.symbolic_pointees[0];
+        const entry = for (state.symbolic_pointees.items) |stored| {
+            if (stored.identity == identity) break stored;
+        } else return false;
+        if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return true;
+        if (entry.initializedness != .initialized) return false;
+        if (self.symbolicStorageComplete(state, identity)) if (callee) |selected| {
+            try self.evaluateResolvedDeinitReference(function, selected, input orelse return false, self_index, .{ .value = pointer }, state);
+            return true;
+        };
+        const children = self.graph.auto_deinit_fields.items[fields.start..][0..fields.len];
+        for (children) |child| {
+            if (child.is_variant or child.repeat_count != null) return false;
+            const projected = try self.projectSymbolicStorage(pointer, .{ .field = child.field_index }, state) orelse return false;
+            if (!try self.evaluateSymbolicCleanupOperation(function, child.deinit_fn, child.input, child.self_field_index, child.fields, projected, state)) return false;
+        }
+        const source = if (input) |node| self.graph.node(node).source else self.graph.declaration(self.graph.function(function).declaration).source;
+        _ = try self.endSymbolicGenerations(source, pointer, state);
+        for (state.symbolic_pointees.items) |*stored| if (stored.identity == identity) {
+            stored.initializedness = .deinitialized;
+        };
+        return true;
     }
 
     // Projected identities describe only observed storage, not proof of

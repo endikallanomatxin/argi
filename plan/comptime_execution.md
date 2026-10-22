@@ -47,8 +47,15 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   of executing a Place query. Complete symbolic references now pass captured
   receivers to nominal cleanup; summary post-states keep their symbolic identity
   instead of reevaluating source syntax (193). Renew the selected write after its
-  old value is destroyed; earlier aliases remain stale (194X). Finish nested symbolic
-  reference-field destinations and structural cleanup of incomplete referents.
+  old value is destroyed; earlier aliases remain stale (194X). Partial symbolic
+  records now clean live children through captured projections, skipping their
+  whole destructor. One selected returned-reference identity also feeds caller
+  write summaries, so replacement reactivates the complete new owner's cleanup
+  (195). The shared lexical proof used for `refers_to` establishes that
+  destination independently of may-dependencies. It permits independent moved
+  owners, but cannot turn lifetime-only anchors, offsets or alternative referents
+  into a definite write. Finish nested symbolic reference-field destinations,
+  array/choice structural cleanup and conditionally initialized referents.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops
