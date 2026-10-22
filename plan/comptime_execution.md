@@ -44,8 +44,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   rejected (191X). Concrete replacement cleanup consumes its captured destination,
   including effectful reference-field selectors retargeted during RHS evaluation
   (192). Symbolic renewal now uses evaluated write-operand eligibility instead
-  of executing a Place query. Finish symbolic replacement cleanup itself:
-  unknown reference-field destinations can still reevaluate effectful selectors.
+  of executing a Place query. Complete symbolic references now pass captured
+  receivers to nominal cleanup; summary post-states keep their symbolic identity
+  instead of reevaluating source syntax (193). Renew the selected write after its
+  old value is destroyed; earlier aliases remain stale (194X). Finish nested symbolic
+  reference-field destinations and structural cleanup of incomplete referents.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops

@@ -14606,3 +14606,14 @@ test "feature_tests/execution/192_captured_reference_field_cleanup" {
     try runExpect("tests/feature_tests/execution/192_captured_reference_field_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/192_captured_reference_field_cleanup", 42, null);
 }
+
+test "feature_tests/execution/193_captured_symbolic_reference_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/193_captured_symbolic_reference_cleanup");
+    try runExpect("tests/feature_tests/execution/193_captured_symbolic_reference_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/193_captured_symbolic_reference_cleanup", 42, null);
+}
+
+test "feature_tests/execution/194X_symbolic_replacement_keeps_historical_alias" {
+    try buildExpectFail("tests/feature_tests/execution/194X_symbolic_replacement_keeps_historical_alias", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/194X_symbolic_replacement_keeps_historical_alias", 1, "root that has ended");
+}
