@@ -343,6 +343,11 @@ are outside command timings; the zero-command row includes their retained memory
 Frontend/publication time is total command time minus lowering,
 verification and execution; verification includes host-binding validation.
 Function/instruction totals reveal recompilation across commands.
+Append `--graph-pools` to report final retained checked-graph columns as comment
+rows: `# graph_pool,commands,name,payload_bytes,reserved_bytes`. These rows
+exclude nested slices, lookup tables and safety arenas; they attribute flat
+pool backing only and do not add to the allocation totals above. The diagnostic
+runs after command timing and introduces no instrumentation in normal sessions.
 
 Live/peak bytes count requested allocator backing, including arena slabs, not
 RSS. Checked-graph payload excludes spare capacity and indexes; code, proof and
@@ -585,3 +590,12 @@ checked-graph payload). Its peak RSS was 686.0 MiB with process allocation,
 compared with 528.3 MiB in the earlier page-allocator sample. General-purpose
 allocation therefore does not uniformly lower RSS; its benefit here is the
 resource workload's many small allocations. Snapshot retention remains unresolved.
+
+The pool diagnostic on the 100-resource sample attributes 418.24 MiB of retained
+checked-graph payload to 626.21 MiB of reserved flat-column capacity. Nodes
+account for 276.19 MiB of payload and 414.29 MiB reserved; strings account for
+35.69 MiB and 53.34 MiB, respectively. The 100-update minimal sample has
+1,176,448 node payload bytes and 1,775,984 reserved node bytes. These measurements
+identify both duplicated node prefixes and retained growth capacity as concrete
+follow-up targets; they do not establish that a moving shrink is safe for every
+published metadata reference.

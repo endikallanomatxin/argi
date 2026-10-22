@@ -126,7 +126,30 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     if ((try slots.get(0)).integer != 42) return error.InvalidBenchmarkResult;
 }
 
-fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize) !void {
+// Diagnostic-only attribution: count retained pool payload and reserved backing
+// independently. Nested slices and lookup/safety arenas are not part of these
+// columns and remain covered by the existing total allocation counters.
+fn reportGraphPools(session: *const interactive.Interactive, commands: usize) void {
+    const Graph = @import("4_semantics/global/graph.zig").GlobalSemanticGraph;
+    inline for (@typeInfo(Graph).@"struct".fields) |field| {
+        if (comptime switch (@typeInfo(field.type)) {
+            .@"struct" => @hasField(field.type, "items") and @hasField(field.type, "capacity"),
+            else => false,
+        }) {
+            var payload: usize = 0;
+            var reserved: usize = 0;
+            for (session.compiler.versions.items) |version| {
+                const pool = @field(version.graph, field.name);
+                const width = @sizeOf(std.meta.Elem(@TypeOf(pool.items)));
+                payload += pool.items.len * width;
+                reserved += pool.capacity * width;
+            }
+            if (reserved != 0) std.debug.print("# graph_pool,{d},{s},{d},{d}\n", .{ commands, field.name, payload, reserved });
+        }
+    }
+}
+
+fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize, graph_pools: bool) !void {
     var memory: Memory = .{ .child = backing_allocator, .limit = limit };
     const allocator = memory.allocator();
     {
@@ -188,6 +211,7 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
             const result = (try session.submitInput(call)) orelse return error.MissingBenchmarkResult;
             if (result.value != .runtime or result.value.runtime != .integer or result.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
         }
+        if (graph_pools) reportGraphPools(&session, count);
         // Snapshot before cleanup; include neither reset nor teardown in timings.
         try session.close();
     }
@@ -243,7 +267,9 @@ fn benchmarkVerifier(io: std.Io) !void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const raw_args = try init.minimal.args.toSlice(init.arena.allocator());
+    const graph_pools = raw_args.len > 1 and std.mem.eql(u8, raw_args[raw_args.len - 1], "--graph-pools");
+    const args = raw_args[0 .. raw_args.len - @intFromBool(graph_pools)];
     if (args.len == 2 and std.mem.eql(u8, args[1], "--verifier")) return benchmarkVerifier(init.io);
     if (args.len > 5) return error.InvalidArguments;
     const count = if (args.len >= 2) try std.fmt.parseInt(usize, args[1], 10) else 1000;
@@ -253,7 +279,7 @@ pub fn main(init: std.process.Init) !void {
     if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions] [memory-limit-MiB=2048]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions] [memory-limit-MiB=2048] [--graph-pools]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,checked_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes\n", .{});
-    try run(init.gpa, init.io, count, modules, scenario, limit);
+    try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools);
 }
