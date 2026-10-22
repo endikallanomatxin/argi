@@ -66,9 +66,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   permitted (202). Initial unknown reference fields now intern a separate
   referent incarnation: copied references share consumption, while later slot
   retargeting preserves historical targets (204X/205). Dereference edges do not
-  transfer parent cleanup or inherit stored aggregate contents. Initial references
-  returned through call summaries still need the same identities without making
-  ordinary scalar/view reads depend on expired slot observations. Finish dynamic
+  transfer parent cleanup or inherit stored aggregate contents. Call summaries
+  now reconstruct initial referents too (206X). Lazy observations of existing
+  symbolic storage remain live while constructing conditional choice outputs;
+  only new branch resources receive conditional lifetimes. Finish dynamic
   indices and integration with opaque/acquired storage identities.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.

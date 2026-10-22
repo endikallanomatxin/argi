@@ -2219,8 +2219,12 @@ pub const SafetyChecker = struct {
                     symbolic = if (value.symbolic_pointees.len == 1) value else null;
                     if (symbolic) |pointer| {
                         const identity = pointer.symbolic_pointees[0];
-                        if (try self.symbolicValueAt(state, identity)) |stored|
+                        if (try self.symbolicValueAt(state, identity)) |stored| {
                             value = try self.reconstructSymbolicValue(state, identity, stored.value);
+                        } else {
+                            const observed = try self.readSymbolicValue(state, pointer, null);
+                            if (!facts.isEmptyValue(observed)) value = observed;
+                        }
                     }
                 }
             } else {
@@ -2234,7 +2238,12 @@ pub const SafetyChecker = struct {
                     if (projected) |reference| {
                         const identity = reference.symbolic_pointees[0];
                         const stored = try self.symbolicValueAt(state, identity);
-                        value = try self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else fallback);
+                        value = if (stored) |known|
+                            try self.reconstructSymbolicValue(state, identity, known.value)
+                        else blk: {
+                            const observed = try self.readSymbolicValue(state, reference, null);
+                            break :blk if (facts.isEmptyValue(observed)) fallback else observed;
+                        };
                     } else value = fallback;
                 } else value = fallback;
             }
@@ -3924,6 +3933,12 @@ pub const SafetyChecker = struct {
                     for (state.storage_generations.items) |generation| if (generation.generation == root.id) {
                         input_storage = true;
                         break;
+                    };
+                    if (!input_storage) for (state.symbolic_pointees.items) |pointee| {
+                        if (pointee.backing == root.id or pointee.generation == root.id) {
+                            input_storage = true;
+                            break;
+                        }
                     };
                     if (!input_storage) root.state = .conditional;
                 }
@@ -10242,4 +10257,41 @@ test "initial symbolic reference reads intern referents independently of slot ow
     try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &state));
     try std.testing.expect(!state.tracker.dependenciesAreAlive(repeated));
     try std.testing.expect(checker.symbolicStorageComplete(&state, slot.symbolic_pointees[0]));
+}
+
+test "choice output materialization preserves existing symbolic storage lifetimes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = generation });
+    const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .dependencies = &.{ .{ .root = backing }, .{ .root = generation } } };
+    const payload: facts.ValueEffect = .{
+        .input_place_values = &.{.{ .input_index = 0, .projections = &.{.dereference} }},
+        .fresh_dependencies = &.{123},
+    };
+    const result = try checker.instantiateOutput(.{ .variants = &.{.{ .index = 0, .value = &payload }} }, &.{slot}, &state);
+    const observed = try checker.readSymbolicValue(&state, slot, null);
+    try std.testing.expect(state.tracker.dependenciesAreAlive(observed));
+    try std.testing.expectEqual(@as(usize, 2), state.symbolic_pointees.items.len);
+    for (result.variants[0].value.dependencies) |dependency| {
+        if (!valueDependsOnRoot(observed, dependency.root))
+            try std.testing.expect(state.tracker.roots.items[@intFromEnum(dependency.root)].state == .conditional);
+    }
 }
