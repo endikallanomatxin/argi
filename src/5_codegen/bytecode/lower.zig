@@ -1086,6 +1086,32 @@ const FunctionLower = struct {
         _ = try self.emit(node.source, .{ .record = .{ .dst = result, .fields = outputs } });
         return result;
     }
+    fn capturedCleanupPlace(self: *FunctionLower, input: p.CapturedCleanupInput, args: []const b.Slot, source: p.SourceRef) !?b.Place {
+        if (input.argument_index >= args.len) return error.InvalidBytecode;
+        const slot = args[input.argument_index];
+        var ty = self.slots.items[slot];
+        var target: b.Place = .{ .root = slot, .path = &.{} };
+        for (input.projections) |projection| {
+            ty = try @import("../../4_semantics/global/cleanup_input.zig").inputProjectionType(self.parent.graph, ty, projection);
+            const selected: b.Projection = switch (projection) {
+                .field => |index| .{ .field = index },
+                .element => |index| element: {
+                    const index_type: b.Type = for (self.parent.graph.types.items, 0..) |candidate, position_| {
+                        if (candidate == .builtin and candidate.builtin == .UIntNative) break @enumFromInt(position_);
+                    } else return error.InvalidBytecode;
+                    const index_slot = try self.newSlot(index_type);
+                    _ = try self.emit(source, .{ .constant = .{ .dst = index_slot, .value = .{ .integer = index } } });
+                    break :element .{ .element = .{ .slot = index_slot } };
+                },
+            };
+            target = try self.project(target, selected);
+        }
+        if (self.parent.graph.semanticType(ty) != .pointer) return error.InvalidBytecode;
+        const pointer = self.parent.graph.semanticType(ty).pointer;
+        if (!self.parent.cleanup_types[@intFromEnum(pointer.child)]) return null;
+        return try self.project(target, .dereference);
+    }
+
     fn updateCallCleanups(
         self: *FunctionLower,
         source: p.SourceRef,
@@ -1102,6 +1128,8 @@ const FunctionLower = struct {
         for (consumed) |value| try self.updateCallCleanup(value, false, fields, args);
         for (initialized) |value| try self.updateCallCleanup(value, true, fields, args);
         for (outcomes) |cleanup| {
+            const captured_target = if (cleanup.captured_input) |input| try self.capturedCleanupPlace(input, args, source) else null;
+            if (cleanup.captured_input != null and captured_target == null) continue;
             var path = try cleanup_plan.OutcomePath.init(self.parent.graph, output_fields, cleanup);
             var value = outputs[cleanup.output_index];
             var branches: std.ArrayList(u32) = .empty;
@@ -1115,7 +1143,9 @@ const FunctionLower = struct {
                     value = child;
                 }
             }
-            try self.updateCallCleanup(cleanup.place, cleanup.enabled, fields, args);
+            if (captured_target) |target| {
+                _ = try self.emit(source, .{ .cleanup_set = .{ .place = target, .enabled = cleanup.enabled } });
+            } else try self.updateCallCleanup(cleanup.place, cleanup.enabled, fields, args);
             for (branches.items) |branch| self.code.items[branch].op.branch_variant.no = self.position();
         }
     }

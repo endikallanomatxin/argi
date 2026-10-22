@@ -514,12 +514,19 @@ pub fn Virtualize(comptime Ids: type) type {
     };
 }
 
+pub const CleanupInputProjection = union(enum) { field: u32, element: u64 };
+pub const CapturedCleanupInput = struct {
+    argument_index: u32,
+    projections: []const CleanupInputProjection = &.{},
+};
+
 /// A returned choice selects whether the caller still owns cleanup of a place.
 /// The place can name a lexical owner or an evaluated pointer input snapshot.
 /// Parent variants guard nested payload tags before their values are inspected.
 pub fn OutcomeCleanup(comptime Ids: type) type {
     return struct {
         place: Ids.NodeId,
+        captured_input: ?CapturedCleanupInput = null,
         output_index: u32,
         parent_variants: []const u32 = &.{},
         variant_index: u32,

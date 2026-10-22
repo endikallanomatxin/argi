@@ -14561,3 +14561,9 @@ test "feature_tests/execution/184_indexed_outcome_cleanup" {
     try runExpect("tests/feature_tests/execution/184_indexed_outcome_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/184_indexed_outcome_cleanup", 42, null);
 }
+
+test "feature_tests/execution/185_composite_outcome_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/185_composite_outcome_cleanup");
+    try runExpect("tests/feature_tests/execution/185_composite_outcome_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/185_composite_outcome_cleanup", 42, null);
+}

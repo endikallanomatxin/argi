@@ -691,6 +691,7 @@ fn relocateOutcomeCleanups(allocator: std.mem.Allocator, o: Offsets, cleanups: [
     const result = try allocator.alloc(primitives.OutcomeCleanup(global_sg.Ids), cleanups.len);
     for (cleanups, result) |cleanup, *relocated| relocated.* = .{
         .place = globalNode(o, cleanup.place),
+        .captured_input = if (cleanup.captured_input) |input| .{ .argument_index = input.argument_index, .projections = try allocator.dupe(primitives.CleanupInputProjection, input.projections) } else null,
         .output_index = cleanup.output_index,
         .parent_variants = try allocator.dupe(u32, cleanup.parent_variants),
         .variant_index = cleanup.variant_index,
@@ -874,4 +875,20 @@ test "globalizer relocates cleanup storage identities without inventing indirect
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), cleanups[4].targetNode().?);
     try std.testing.expect(cleanups[5].ownerBinding() == null);
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), cleanups[5].targetNode().?);
+}
+
+test "globalizer retains captured cleanup paths without relocating argument positions" {
+    const a = std.testing.allocator;
+    var projections = [_]primitives.CleanupInputProjection{ .{ .field = 1 }, .{ .element = 2 } };
+    var offsets = std.mem.zeroes(Offsets);
+    offsets.node_base = 7;
+    const result = try relocateOutcomeCleanups(a, offsets, &.{.{ .place = @enumFromInt(3), .captured_input = .{ .argument_index = 2, .projections = &projections }, .output_index = 0, .variant_index = 1 }});
+    defer a.free(result);
+    defer a.free(result[0].parent_variants);
+    defer a.free(result[0].captured_input.?.projections);
+    projections[0] = .{ .field = 99 };
+    try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(10)), result[0].place);
+    try std.testing.expectEqual(@as(u32, 2), result[0].captured_input.?.argument_index);
+    try std.testing.expectEqual(@as(u32, 1), result[0].captured_input.?.projections[0].field);
+    try std.testing.expectEqual(@as(u64, 2), result[0].captured_input.?.projections[1].element);
 }

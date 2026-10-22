@@ -1757,26 +1757,46 @@ pub const SafetyChecker = struct {
                     break;
                 };
                 if (unconditional) continue;
-                // A whole pointer input already captures its exact destination.
-                // Retain that input identity instead of reconstructing an index
-                // or alias expression to execute again after the call.
-                const captured: ?graph_mod.GlobalNodeId = captured: {
-                    if (post.target.storage_domain != null or post.target.projections.len != 0 or post.target.input_index >= ids.len) break :captured null;
-                    const argument = self.graph.value_fields.items[@intFromEnum(ids[post.target.input_index])].value;
-                    const ty = self.graph.node(argument).ty orelse break :captured null;
-                    break :captured if (isPointer(self.graph, ty)) argument else null;
-                };
-                const node = captured orelse try self.cleanupNodeForPlace(target) orelse {
+                // Keep an explicit path into the already-evaluated argument.
+                // The lexical place remains a static cleanup-activation anchor.
+                const captured = try self.capturedCleanupInput(post.target, ids);
+                const node = try self.cleanupNodeForPlace(target) orelse (if (captured) |input| self.graph.value_fields.items[@intFromEnum(ids[input.argument_index])].value else null) orelse {
                     for (self.graph.auto_deinits.items) |cleanup| if (cleanup.ownerBinding() == target.root) {
                         try self.report(self.graph.binding(target.root).source, "conditional consumption needs a lexical cleanup place; move the indexed or indirect owner into a local value first", .{});
                         break;
                     };
                     continue;
                 };
-                try result.append(.{ .place = node, .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index, .enabled = initializing });
+                try result.append(.{ .place = node, .captured_input = captured, .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index, .enabled = initializing });
             }
         }
         return result.toOwnedSlice();
+    }
+
+    fn capturedCleanupInput(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId) !?primitives.CapturedCleanupInput {
+        if (path.storage_domain != null or path.input_index >= ids.len) return null;
+        const argument = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
+        var ty = self.graph.node(argument).ty orelse return null;
+        // A pointer input already starts at its referent in summary paths.
+        // Its extra dereference selects another storage identity, not a value
+        // projection inside a copied argument.
+        if (isPointer(self.graph, ty)) return if (path.projections.len == 0) .{ .argument_index = path.input_index } else null;
+        var projections: std.ArrayList(primitives.CleanupInputProjection) = .empty;
+        defer projections.deinit(self.allocator);
+        for (path.projections, 0..) |projection, index| {
+            if (projection == .dereference) {
+                if (index + 1 != path.projections.len or !isPointer(self.graph, ty)) return null;
+                return .{ .argument_index = path.input_index, .projections = try projections.toOwnedSlice(self.allocator) };
+            }
+            const selected: primitives.CleanupInputProjection = switch (projection) {
+                .field => |field| .{ .field = field },
+                .static_index => |element| .{ .element = element },
+                else => return null,
+            };
+            ty = @import("../global/cleanup_input.zig").inputProjectionType(self.graph, ty, selected) catch return null;
+            try projections.append(self.allocator, selected);
+        }
+        return null;
     }
 
     fn mayMoveInput(summary: facts.SafetySummary, post: facts.PlacePostState) bool {

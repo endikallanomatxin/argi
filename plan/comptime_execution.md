@@ -30,8 +30,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   unrepresented outcomes are rejected (case 183X). Whole pointer inputs now
   retain evaluated argument identities for conditional cleanup, including
   indexed destinations, effectful selectors changed by the callee, and
-  zero-sized siblings (case 184). Finish projected input paths through copied
-  records/arrays without reconstructing indexed or indirect destination syntax.
+  zero-sized siblings (case 184). Captured projection paths also preserve
+  reference leaves inside nested by-value records (case 185), with shared type
+  validation and relocation. Finish nested array-reference summary validation:
+  consuming and reinitializing element zero currently rejects calls even with
+  distinct constant referents. Preserve those obligations while fixing the
+  selected-reference generation handling.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops
