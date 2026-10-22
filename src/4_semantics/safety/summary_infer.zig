@@ -1302,18 +1302,25 @@ pub const Infer = struct {
                         const value = (try self.localPointeeEffect(function_id, arguments[0].value)) orelse
                             try self.inferOpaqueRead(function_id, node_id, arguments[0].value, try self.inferExpression(function_id, arguments[0].value));
                         for (try self.localAddressTargets(arguments[1].value)) |target|
-                            try self.storeSelectedValueEffect(function_id, target, &.{}, try self.withOwnershipTransfer(value), outputs);
+                            try self.storeSelectedValueEffect(function_id, target, &.{}, try self.withOwnershipTransfer(value), outputs, .locals_and_outputs);
                     }
                 },
                 .struct_field_store => |store| {
+                    // Resolve the destination before RHS inference can retarget
+                    // a local alias. One selected value feeds every possible
+                    // destination; never replay its opaque effects per target.
                     const targets = try self.localAddressTargets(store.struct_ptr);
-                    if (targets.len != 0) for (targets) |target| {
-                        try self.storeOutputProjection(function_id, target, &.{.{ .field = store.field_index }}, store.value, outputs);
-                    } else try self.storeOutputProjection(function_id, store.struct_ptr, &.{.{ .field = store.field_index }}, store.value, outputs);
+                    if (!self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    const value = try self.inferExpression(function_id, store.value);
+                    for (targets) |target|
+                        try self.storeSelectedValueEffect(function_id, target, &.{.{ .field = store.field_index }}, value, outputs, .outputs);
                 },
                 .pointer_assignment => |store| {
-                    for (try self.localAddressTargets(store.pointer)) |target|
-                        try self.storeOutputProjection(function_id, target, &.{}, store.value, outputs);
+                    const targets = try self.localAddressTargets(store.pointer);
+                    if (!self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    const value = try self.inferExpression(function_id, store.value);
+                    for (targets) |target|
+                        try self.storeSelectedValueEffect(function_id, target, &.{}, value, outputs, .outputs);
                 },
                 .if_statement => |statement| {
                     const alternatives = try OutputAlternatives.init(self.allocator, outputs);
@@ -4534,17 +4541,18 @@ pub const Infer = struct {
         return self.rebaseFreshSources(aggregate, call_node);
     }
 
-    // Field-wise construction is ordinary output construction. Preserve the
-    // dependencies of projected writes just as whole-binding assignments do.
-    fn storeOutputProjection(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!void {
-        // Ordinary projected writes still need a shared flow for their RHS:
-        // replaying opaque effects here can duplicate them. A relocation below
-        // supplies its already-selected source value without replaying a write.
-        if (standard_contracts.initializedType(self.graph, function) == null) return;
-        try self.storeSelectedValueEffect(function, target, path, try self.inferExpression(function, value), outputs);
+    fn hasOutputDestination(self: *Infer, function: graph_mod.GlobalFunctionId, targets: []const graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) bool {
+        if (outputs == null) return false;
+        for (targets) |target| {
+            const root = @import("../global/lexical_storage.zig").root(self.graph, target) orelse continue;
+            if (self.outputIndex(function, root) != null) return true;
+        }
+        return false;
     }
 
-    fn storeSelectedValueEffect(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: facts.ValueEffect, outputs: ?[]facts.ValueEffect) anyerror!void {
+    const DestinationEffects = enum { outputs, locals_and_outputs };
+
+    fn storeSelectedValueEffect(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: facts.ValueEffect, outputs: ?[]facts.ValueEffect, scope: DestinationEffects) anyerror!void {
         switch (self.graph.node(target).content) {
             .binding_use => |binding| {
                 // Effects through inputs have their own caller-relative flow.
@@ -4552,7 +4560,7 @@ pub const Infer = struct {
                 if (self.inputIndex(function, binding) != null) return;
                 if (self.outputIndex(function, binding)) |index| {
                     if (outputs) |values| values[index] = try self.storeEffectProjection(values[index], path, value);
-                } else {
+                } else if (scope == .locals_and_outputs) {
                     const previous: facts.ValueEffect = self.bindings.get(binding) orelse .{};
                     const updated = try self.storeEffectProjection(previous, path, value);
                     try self.bindings.put(binding, updated);
@@ -4563,13 +4571,13 @@ pub const Infer = struct {
                 const nested = try self.allocator.alloc(facts.Projection, path.len + 1);
                 nested[0] = .{ .field = field.field_index };
                 @memcpy(nested[1..], path);
-                try self.storeSelectedValueEffect(function, field.value, nested, value, outputs);
+                try self.storeSelectedValueEffect(function, field.value, nested, value, outputs, scope);
             },
             .dereference => |read| {
                 for (try self.localAddressTargets(read.pointer)) |place|
-                    try self.storeSelectedValueEffect(function, place, path, value, outputs);
+                    try self.storeSelectedValueEffect(function, place, path, value, outputs, scope);
             },
-            .address_of => |place| try self.storeSelectedValueEffect(function, place, path, value, outputs),
+            .address_of => |place| try self.storeSelectedValueEffect(function, place, path, value, outputs, scope),
             else => {},
         }
     }
@@ -4598,7 +4606,10 @@ pub const Infer = struct {
             child.* = try self.storeEffectProjection(.{}, projections[1..], value);
             try fields.append(.{ .index = index, .value = child });
         }
-        var result: facts.ValueEffect = .{};
+        // Projected writes do not discard whole-value ownership or facts
+        // supplied by a previously selected aggregate-producing operation.
+        var result = previous;
+        result.fields = &.{};
         for (fields.items) |field| {
             result = try self.mergeValueEffects(result, field.value.*);
             result.variants = &.{};

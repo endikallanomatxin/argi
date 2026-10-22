@@ -51,10 +51,11 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   the separate symbolic-address reevaluation walk has been removed. Extend this
   to remaining projections and syntax-based Place queries; preserve evaluated
   pointer facts rather than suppressing diagnostics.
-  Extend ordinary projected output summaries beyond Init without replaying RHS
-  effects. Relocation now supplies selected source effects, and output vectors
-  join branch, loop and match alternatives; general local/alias writes still
-  need the same captured-destination flow.
+  Ordinary projected output writes now preserve selected RHS effects beyond
+  Init, including direct field writes and lexical reference aliases. Capture
+  their candidate targets before RHS inference and infer the value once.
+  Output vectors join branch, loop and match alternatives. General retargeting
+  through calls still needs the same captured-destination flow in summaries.
   Field/array stores commit checker facts to the captured referent after RHS
   evaluation, even when that RHS retargets the reference used to select it.
   Payload reads and addresses reuse their evaluated choice access and active-tag

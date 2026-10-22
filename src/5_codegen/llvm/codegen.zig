@@ -1054,7 +1054,11 @@ pub const CodeGenerator = struct {
     // address occupied by the language value (including zero-sized fields).
     fn referenceStorageForNode(self: *CodeGenerator, id: graph_mod.GlobalNodeId) anyerror!?c.LLVMValueRef {
         return switch (self.graph.node(id).content) {
-            .binding_use => |binding| if (self.bindings.get(binding)) |storage| storage.reference_view else null,
+            .binding_use => |binding| if (self.bindings.contains(binding) and
+                try self.optionalReferenceValueType(self.graph.binding(binding).ty) != null)
+                try self.referenceViewStorage(binding)
+            else
+                null,
             .struct_field_access => |field| blk: {
                 // Public representation fields of a virtual handle are not
                 // semantic projections of its erased receiver evidence.
