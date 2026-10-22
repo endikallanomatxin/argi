@@ -611,3 +611,10 @@ tracked leaks. Command times were 4,347.1 and 4,371.8 ms; these single samples
 show no timing improvement. This removes retained growth room without solving
 duplicated prefixes. The operation is limited to retained execution snapshots;
 ordinary AOT compilation does not perform it.
+
+VM initialization prepares immutable external-input descriptors alongside
+bytecode verification. Invocations validate scalar widths, record/array shapes
+and selected choice payloads through those descriptors rather than traversing
+the semantic graph. External references and virtual handles remain rejected.
+Descriptors share repeated types and array element shapes, belong to the VM,
+and are released on its destruction; they are not persisted in session values.

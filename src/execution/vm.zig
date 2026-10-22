@@ -196,6 +196,7 @@ pub const Vm = struct {
     limits: Limits,
     steps: usize = 0,
     linked_hosts: host.LinkedPrograms = .{},
+    input_layouts: @import("input_layout.zig").Inputs,
     owned_context: Context,
     shared_context: ?*Context = null,
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
@@ -211,7 +212,7 @@ pub const Vm = struct {
         _ = try linked.get(a, &program, bindings);
         var context_ = Context.init(a, limits.value_cells);
         context_.host_bindings = bindings;
-        return .{ .linked_hosts = linked, .owned_context = context_, .allocator = a, .program = program, .limits = limits };
+        return .{ .input_layouts = try @import("input_layout.zig").Inputs.init(a, program), .linked_hosts = linked, .owned_context = context_, .allocator = a, .program = program, .limits = limits };
     }
     /// Borrow session-owned execution storage without transferring it. The
     /// memory quota belongs to that context; instruction/depth limits are local
@@ -222,12 +223,13 @@ pub const Vm = struct {
         var linked: host.LinkedPrograms = .{};
         errdefer linked.deinit(a);
         _ = try linked.get(a, &program, shared.host_bindings);
-        return .{ .linked_hosts = linked, .owned_context = undefined, .shared_context = shared, .allocator = a, .program = program, .limits = limits };
+        return .{ .input_layouts = try @import("input_layout.zig").Inputs.init(a, program), .linked_hosts = linked, .owned_context = undefined, .shared_context = shared, .allocator = a, .program = program, .limits = limits };
     }
     pub fn context(self: *Vm) *Context {
         return self.shared_context orelse &self.owned_context;
     }
     pub fn deinit(self: *Vm) void {
+        self.input_layouts.deinit();
         self.linked_hosts.deinit(self.allocator);
         if (self.shared_context == null) self.owned_context.deinit();
     }
@@ -303,10 +305,7 @@ pub const Vm = struct {
         return function;
     }
     fn validateArguments(self: *Vm, function: *const b.Function, args: []const b.Value) !void {
-        if (args.len != function.inputs.len) return error.InvalidArguments;
-        // Check against the bounded supported type shape before cloning caller
-        // values, so malformed input trees cannot drive unbounded recursion.
-        for (args, function.inputs) |value, slot| if (!b.valueFits(self.program.graph, function.slots[slot], value)) return error.InvalidArguments;
+        if (!self.input_layouts.accepts(function, args)) return error.InvalidArguments;
     }
     fn frame(self: *Vm, program: *const b.Program, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
         const linked = try self.linked_hosts.get(self.allocator, program, self.context().host_bindings);

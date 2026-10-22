@@ -165,6 +165,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Lower semantic decisions into explicit runtime descriptors for layout,
   references, variants, memory operations and selected dispatch.
+  VM preparation now resolves external input shapes once. Invocation validates
+  widths, aggregate lengths and choice payloads through those descriptors,
+  without consulting GlobalSG; external references remain forbidden. Descriptors
+  belong to the VM and neither retain executor values nor duplicate safety rules.
   Numeric byte-view instructions now carry verified permission and endianness
   alongside their physical layout; execution no longer reads those decisions
   from slot types or the semantic target. Ordinary value/storage borrows also

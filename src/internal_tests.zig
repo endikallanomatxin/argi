@@ -76,6 +76,7 @@ comptime {
     _ = @import("execution/host_output.zig");
     _ = @import("5_codegen/bytecode/numeric_layout.zig");
     _ = @import("execution/storage.zig");
+    _ = @import("execution/input_layout.zig");
     _ = @import("execution/acquisitions.zig");
     _ = @import("execution/partial_storage.zig");
     _ = @import("5_codegen/global_initialization.zig");
