@@ -100,7 +100,10 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   ordinals and scalar index kinds; execution follows them without graph traversal.
   Host signatures are lowered to verified symbol/range descriptors; execution
   links them without consulting semantic fields or types.
-- Replace core adapter name/path recognition with explicit primitive identities.
+- Keep runtime adapters on registered identities. Heap boundaries use checked
+  primitive identities; generated trace calls and their reachability roots now
+  use signature-validated metadata shared by LLVM and bytecode. Do not restore
+  name-based lookup when extending this boundary.
 - Complete native value-evidence production for arrays, choices, error propagation
   and lifecycle wrappers. Ordinary and virtual call inputs/results carry the
   private channels; bulk-copy paths must transport destination companions before

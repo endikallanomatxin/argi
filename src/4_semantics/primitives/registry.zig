@@ -21,6 +21,8 @@ pub const Spec = struct {
 pub const specs = [_]Spec{
     .{ .flags = .{ .is_source_location_id = true }, .path = "core/errors/source_location.rg", .name = "error_location_id", .signatures = &.{"() -> (.location: SourceLocationId)"} },
     .{ .flags = .{ .is_source_location_resolver = true }, .path = "core/errors/source_location.rg", .name = "source_location", .signatures = &.{"(.id: SourceLocationId) -> (.location: SourceLocation)"} },
+    .{ .flags = .{ .is_error_context_view = true }, .path = "core/errors/error_tracer.rg", .name = "_add_error_context", .signatures = &.{"(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: StringView) -> ()"} },
+    .{ .flags = .{ .is_error_context_text = true }, .path = "core/errors/error_tracer.rg", .name = "_add_error_context_text", .signatures = &.{"(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar) -> ()"} },
     .{ .primitive = .float_math, .path = "core/numbers/math.rg", .name = "_float_math", .signatures = &.{"#(.t: Type: Float)(.operation: UInt32, .left: t, .right: t) -> (.result: t)"} },
     .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },

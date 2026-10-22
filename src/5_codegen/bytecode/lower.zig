@@ -868,13 +868,6 @@ const FunctionLower = struct {
         }
         if (self.nodeDrop(node)) |drop| try self.setDrop(drop, enabled);
     }
-    fn coreFunction(self: *FunctionLower, function: g.GlobalFunctionId, name: []const u8) bool {
-        const graph = self.parent.graph;
-        const declaration = graph.function(function).declaration;
-        const owner = graph.moduleForDeclaration(declaration) orelse return false;
-        return graph.modules.items[@intFromEnum(owner)].is_bundled_core and std.mem.eql(u8, graph.text(graph.declaration(declaration).name), name);
-    }
-
     fn traceLocation(self: *FunctionLower, node: g.Node) !b.Slot {
         const graph = self.parent.graph;
         const owner = graph.files.items[node.source.file_index].module;
@@ -908,10 +901,10 @@ const FunctionLower = struct {
         return result;
     }
 
-    fn coreFunctionId(self: *FunctionLower, name: []const u8, source: p.SourceRef) !g.GlobalFunctionId {
+    fn errorContextFunction(self: *FunctionLower, view: bool, source: p.SourceRef) !g.GlobalFunctionId {
         for (self.parent.graph.functions.items, 0..) |_, index| {
             const id: g.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(index)));
-            if (self.coreFunction(id, name)) return id;
+            if (self.parent.graph.function(id).flags.matchesErrorContext(view)) return id;
         }
         return self.parent.reject(source, "missing checked core error helper");
     }
@@ -946,7 +939,7 @@ const FunctionLower = struct {
         _ = try self.emit(source, .{ .field = .{ .dst = tracer, .base = payload, .index = trace.index } });
         const context = if (context_node) |node| try self.expression(node) else null;
         const is_view = if (context) |slot| types.isStringView(graph, self.slots.items[slot]) else true;
-        const helper = try self.coreFunctionId(if (is_view) "_add_error_context" else "_add_error_context_text", source);
+        const helper = try self.errorContextFunction(is_view, source);
         const function = graph.function(helper);
         if (function.input.len != 3 or function.output.len != 0) return error.InvalidBytecode;
         const inputs = graph.fields.items[function.input.start..][0..3];

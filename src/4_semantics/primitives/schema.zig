@@ -185,7 +185,16 @@ pub const FunctionFlags = packed struct(u16) {
     // Trusted metadata identities retain ordinary function-body safety.
     is_source_location_id: bool = false,
     is_source_location_resolver: bool = false,
-    _padding: u2 = 0,
+    is_error_context_view: bool = false,
+    is_error_context_text: bool = false,
+
+    pub fn isTraceSupport(self: FunctionFlags) bool {
+        return self.is_source_location_resolver or self.is_error_context_view or self.is_error_context_text;
+    }
+
+    pub fn matchesErrorContext(self: FunctionFlags, view: bool) bool {
+        return if (view) self.is_error_context_view else self.is_error_context_text;
+    }
 };
 
 pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };

@@ -80,7 +80,7 @@ pub fn executionRoots(
             !function.flags.is_test and std.mem.eql(u8, name, "main");
         // Open Errable signatures are completed from their bodies and can be
         // inspected while resolving an otherwise reachable caller.
-        const trace_runtime = isTraceRuntime(graph, function);
+        const trace_runtime = function.flags.isTraceSupport();
         if (entrypoint or trace_runtime or function.flags.is_c_export or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
     }
@@ -92,15 +92,8 @@ pub fn executionRoots(
 /// need the same support whether they originate in a program or a REPL command.
 pub fn includeRuntimeSupport(graph: *const graph_mod.GlobalSemanticGraph, functions: *FunctionSet) !void {
     for (graph.functions.items, 0..) |function, raw| {
-        if (isTraceRuntime(graph, function)) _ = try functions.include(@enumFromInt(@as(u32, @intCast(raw))));
+        if (function.flags.isTraceSupport()) _ = try functions.include(@enumFromInt(@as(u32, @intCast(raw))));
     }
-}
-
-fn isTraceRuntime(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function) bool {
-    const owner = graph.moduleForDeclaration(function.declaration) orelse return false;
-    if (!graph.modules.items[@intFromEnum(owner)].is_bundled_core) return false;
-    const name = graph.text(graph.declaration(function.declaration).name);
-    return std.mem.eql(u8, name, "_add_error_context") or std.mem.eql(u8, name, "_add_error_context_text") or std.mem.eql(u8, name, "source_location");
 }
 
 /// Extend a root set with every function referenced by its currently
@@ -542,4 +535,23 @@ test "summary dependency order handles late callees and recursive cycles" {
     const recursive = try dependencyOrder(allocator, &graph, &functions);
     defer allocator.free(recursive);
     try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, ordered, recursive);
+}
+
+test "runtime support follows metadata independently of declaration spelling" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    // Support inclusion must not consult declaration names or module paths.
+    // Metadata-only synthetic functions suffice to exercise that boundary.
+    try graph.functions.appendSlice(a, &.{
+        .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } },
+        .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_error_context_view = true } },
+        .{ .declaration = @enumFromInt(2), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_error_context_text = true } },
+        .{ .declaration = @enumFromInt(3), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_source_location_resolver = true } },
+    });
+    var retained = FunctionSet.init(a);
+    defer retained.deinit();
+    try includeRuntimeSupport(&graph, &retained);
+    try std.testing.expect(!retained.contains(@enumFromInt(0)));
+    for (1..4) |index| try std.testing.expect(retained.contains(@enumFromInt(index)));
 }

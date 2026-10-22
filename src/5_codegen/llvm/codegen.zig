@@ -2240,8 +2240,8 @@ pub const CodeGenerator = struct {
         const trace_value = c.LLVMBuildExtractValue(self.builder, error_value, trace.index, "error.tracer");
         const context_value = if (context_node) |node| try self.visitNode(node) else null;
         const is_view = if (context_value) |value| if (value.ty) |ty| self.isStringView(ty) else false else false;
-        const helper = try self.runtimeFunction(if (is_view) "_add_error_context" else "_add_error_context_text");
-        const function_id = try self.coreFunctionId(if (is_view) "_add_error_context" else "_add_error_context_text");
+        const function_id = try self.errorContextFunction(is_view);
+        const helper = self.functions.get(function_id) orelse return CodegenError.SymbolNotFound;
         const function = self.graph.function(function_id);
         const location_ty = self.graph.fields.items[function.input.start + 1].ty;
         var location_value = c.LLVMGetUndef(try self.toLLVMType(location_ty));
@@ -2255,17 +2255,9 @@ pub const CodeGenerator = struct {
         return error_value;
     }
 
-    fn isCoreFunction(self: *CodeGenerator, id: graph_mod.GlobalFunctionId, name: []const u8) bool {
-        const declaration = self.graph.function(id).declaration;
-        const owner = self.graph.moduleForDeclaration(declaration) orelse return false;
-        return self.graph.modules.items[@intFromEnum(owner)].is_bundled_core and
-            std.mem.eql(u8, self.graph.text(self.graph.declaration(declaration).name), name);
-    }
-
-    fn coreFunctionId(self: *CodeGenerator, name: []const u8) !graph_mod.GlobalFunctionId {
-        for (self.graph.functions.items, 0..) |_, raw| {
-            const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (self.isCoreFunction(id, name)) return id;
+    fn errorContextFunction(self: *CodeGenerator, view: bool) !graph_mod.GlobalFunctionId {
+        for (self.graph.functions.items, 0..) |function, raw| {
+            if (function.flags.matchesErrorContext(view)) return @enumFromInt(@as(u32, @intCast(raw)));
         }
         return CodegenError.SymbolNotFound;
     }
@@ -2330,10 +2322,6 @@ pub const CodeGenerator = struct {
             .line = position.line,
             .column = position.column,
         };
-    }
-
-    fn runtimeFunction(self: *CodeGenerator, name: []const u8) !FunctionSymbol {
-        return self.functions.get(try self.coreFunctionId(name)) orelse return CodegenError.SymbolNotFound;
     }
 
     fn genTestingExpectError(self: *CodeGenerator, expect: graph_mod.TestingExpectError, source: primitives.SourceRef) !TypedValue {

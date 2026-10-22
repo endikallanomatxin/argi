@@ -21,6 +21,8 @@ pub fn lower(
             semantic.safety_primitive = spec.primitive;
             semantic.flags.is_source_location_id = spec.flags.is_source_location_id;
             semantic.flags.is_source_location_resolver = spec.flags.is_source_location_resolver;
+            semantic.flags.is_error_context_view = spec.flags.is_error_context_view;
+            semantic.flags.is_error_context_text = spec.flags.is_error_context_text;
         };
     }
 
@@ -146,5 +148,45 @@ test "source metadata identities require canonical trusted declarations" {
         }
         try std.testing.expectEqual(case.selected, location_id);
         try std.testing.expectEqual(case.selected, resolver);
+    }
+}
+
+test "trace helper metadata requires the registered core path and keeps ordinary safety" {
+    const source =
+        "ErrorTracer#(.T: Type): Contract = ()\n" ++
+        "SourceLocationId: Type = (.value: UInt32)\n" ++
+        "StringView: Type = (.length: UIntNative)\n" ++
+        "_add_error_context(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: StringView) -> () := {}\n" ++
+        "_add_error_context_text(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar) -> () := {}\n";
+    const cases = [_]struct { path: []const u8, trusted: bool, selected: bool }{
+        .{ .path = "core/errors/error_tracer.rg", .trusted = true, .selected = true },
+        .{ .path = "core/errors/unrelated.rg", .trusted = true, .selected = false },
+        .{ .path = "core/errors/error_tracer.rg", .trusted = false, .selected = false },
+    };
+    for (cases) |case| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = case.path, .code = source }};
+        var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+        defer diagnostics.deinit();
+        var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(a, &diagnostics, source, @enumFromInt(0));
+        defer tokenizer.deinit();
+        _ = try tokenizer.tokenize();
+        var syntaxer = @import("../../3_syntax/syntaxer.zig").Syntaxer.initFile(a, @import("../../3_syntax/syntax_tree.zig").FileSyntaxTree.initOwnedTokens(@enumFromInt(0), tokenizer.takeTokens()), source, &diagnostics);
+        defer syntaxer.deinit();
+        var tree = try syntaxer.parse();
+        defer tree.deinit(a);
+        var built = try @import("semantizer.zig").build(a, "core", &.{.{ .path = case.path, .tree = &tree, .source = source, .is_bundled_core = case.trusted }});
+        defer built.graph.deinit(a);
+        var view = false;
+        var text = false;
+        for (built.graph.semantic.function_semantics.items) |semantic| {
+            view = view or semantic.flags.is_error_context_view;
+            text = text or semantic.flags.is_error_context_text;
+            try std.testing.expectEqual(.none, semantic.safety_primitive);
+        }
+        try std.testing.expectEqual(case.selected, view);
+        try std.testing.expectEqual(case.selected, text);
     }
 }
