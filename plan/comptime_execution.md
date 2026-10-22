@@ -68,8 +68,12 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   over possible variants and availability, using nominal cleanup only on its
   complete-value alternative (213). Availability refinement requires one live
   common incarnation; dead or divergent generations cannot be revived, and
-  historical aliases remain stale after replacement (214X). Finish divergent
-  generation identities and partially initialized choice construction.
+  historical aliases remain stale after replacement (214X). Divergent live
+  generations of the same storage now receive a joined observation. Only
+  references that observed each incoming current value follow it; historical
+  aliases retain their stale roots (215/216X), including repeated replacement
+  in a loop (217). Finish loop observation canonicalization and partially
+  initialized choice construction.
   Symbolic slots now retain sparse stored-value facts separately from pointee
   identity/initializedness. Direct/call writes, branch/loop joins and returned
   field references preserve target dependencies (196X/198X/199X/200X); copied

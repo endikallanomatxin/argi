@@ -6636,6 +6636,44 @@ pub const SafetyChecker = struct {
         return null;
     }
 
+    const SymbolicGenerationJoin = struct {
+        identity: facts.SymbolicPointeeId,
+        left: facts.ValidityRootId,
+        right: facts.ValidityRootId,
+        result: facts.ValidityRootId,
+    };
+
+    fn joinObservedSymbolicValues(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts, left_state: *const FunctionState, right_state: *const FunctionState, generations: []const SymbolicGenerationJoin) anyerror!facts.ValueFacts {
+        const merged = try self.mergeValueFacts(left, right);
+        if (generations.len == 0) return merged;
+        var result = merged;
+        if (left.symbolic_pointees.len == 1 and right.symbolic_pointees.len == 1 and
+            left.symbolic_pointees[0] == right.symbolic_pointees[0] and
+            left.opaque_provenance.len == 0 and right.opaque_provenance.len == 0 and
+            left_state.tracker.dependenciesAreAlive(left) and right_state.tracker.dependenciesAreAlive(right))
+        {
+            for (generations) |generation| {
+                if (generation.identity != left.symbolic_pointees[0]) continue;
+                // Only observations of each incoming current value follow the
+                // joined incarnation. Historical aliases keep their old roots.
+                if (valueDependsOnRoot(left, generation.left) and valueDependsOnRoot(right, generation.right))
+                    result = try self.replaceValueRoots(result, &.{ generation.left, generation.right }, generation.result);
+            }
+        }
+        var projected = false;
+        for (left.fields) |a| for (right.fields) |b| if (a.index == b.index) {
+            result = try self.replaceProjectedValue(result, .{ .field = a.index }, try self.joinObservedSymbolicValues(a.value.*, b.value.*, left_state, right_state, generations));
+            projected = true;
+            break;
+        };
+        for (left.variants) |a| for (right.variants) |b| if (a.index == b.index) {
+            result = try self.replaceProjectedValue(result, .{ .variant = a.index }, try self.joinObservedSymbolicValues(a.value.*, b.value.*, left_state, right_state, generations));
+            projected = true;
+            break;
+        };
+        return if (projected) self.refreshProjectedValueRoots(merged, result) else result;
+    }
+
     fn joinState(self: *SafetyChecker, destination: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
         if (!left.reachable) return self.copyState(destination, right);
         if (!right.reachable) return self.copyState(destination, left);
@@ -6675,19 +6713,6 @@ pub const SafetyChecker = struct {
             }
         }
 
-        for (left.symbolic_values.items) |stored| {
-            const other = try self.symbolicValueAt(right, stored.identity);
-            try joined.symbolic_values.append(try self.joinSymbolicStoredValue(stored, other));
-        }
-        for (right.symbolic_values.items) |stored| {
-            var found = false;
-            for (left.symbolic_values.items) |other| if (other.identity == stored.identity) {
-                found = true;
-                break;
-            };
-            if (!found) try joined.symbolic_values.append(try self.joinSymbolicStoredValue(stored, try self.symbolicValueAt(left, stored.identity)));
-        }
-
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
             const id: facts.ValidityRootId = @enumFromInt(index);
@@ -6720,6 +6745,41 @@ pub const SafetyChecker = struct {
             });
         }
 
+        var generations: std.ArrayList(SymbolicGenerationJoin) = .empty;
+        defer generations.deinit(self.allocator);
+        for (joined.symbolic_pointees.items) |*pointee| {
+            if (pointee.generation != null or pointee.initializedness != .initialized or pointee.backing == null) continue;
+            const a = for (left.symbolic_pointees.items) |entry| {
+                if (entry.identity == pointee.identity) break entry;
+            } else continue;
+            const b = for (right.symbolic_pointees.items) |entry| {
+                if (entry.identity == pointee.identity) break entry;
+            } else continue;
+            const left_generation = a.generation orelse continue;
+            const right_generation = b.generation orelse continue;
+            if (!left.tracker.isAlive(left_generation) or !right.tracker.isAlive(right_generation) or
+                !left.tracker.isAlive(pointee.backing.?) or !right.tracker.isAlive(pointee.backing.?)) continue;
+            const current = try joined.tracker.establish(.fresh);
+            pointee.generation = current;
+            try generations.append(self.allocator, .{ .identity = pointee.identity, .left = left_generation, .right = right_generation, .result = current });
+        }
+
+        for (left.symbolic_values.items) |stored| {
+            const other = try self.symbolicValueAt(right, stored.identity);
+            var merged = try self.joinSymbolicStoredValue(stored, other);
+            if (generations.items.len != 0 and stored.definite and other != null and other.?.definite)
+                merged.value = try self.joinObservedSymbolicValues(stored.value, other.?.value, left, right, generations.items);
+            try joined.symbolic_values.append(merged);
+        }
+        for (right.symbolic_values.items) |stored| {
+            var found = false;
+            for (left.symbolic_values.items) |other| if (other.identity == stored.identity) {
+                found = true;
+                break;
+            };
+            if (!found) try joined.symbolic_values.append(try self.joinSymbolicStoredValue(stored, try self.symbolicValueAt(left, stored.identity)));
+        }
+
         const capability_count = @max(left.storage_capabilities.items.len, right.storage_capabilities.items.len);
         for (0..capability_count) |index| {
             const left_state: StorageCapabilityState = if (index < left.storage_capabilities.items.len)
@@ -6743,7 +6803,7 @@ pub const SafetyChecker = struct {
                 if (left_place.initializedness == .moved) left_place.moved_at else right_place.moved_at
             else
                 null;
-            merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+            merged.value = try self.joinObservedSymbolicValues(left_place.value, right_place.value, left, right, generations.items);
 
             try joined.places.append(merged);
         }
@@ -6756,7 +6816,7 @@ pub const SafetyChecker = struct {
                     if (left_place.initializedness == .moved) left_place.moved_at else right_place.moved_at
                 else
                     null;
-                merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+                merged.value = try self.joinObservedSymbolicValues(left_place.value, right_place.value, left, right, generations.items);
 
                 try joined.places.append(merged);
             }
@@ -10545,4 +10605,51 @@ test "symbolic cleanup availability refines only a live common incarnation" {
     try std.testing.expect(!checker.refineSymbolicCleanupLive(&joined, @enumFromInt(0), false));
     joined.symbolic_pointees.items[0].generation = null;
     try std.testing.expect(!checker.refineSymbolicCleanupLive(&joined, @enumFromInt(0), false));
+}
+
+test "symbolic generation joins renew current observations without renewing historical aliases" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (0..2) |_| try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var left = SafetyChecker.FunctionState.init(a);
+    defer left.deinit();
+    left.tracker.namespace = &namespace;
+    const backing = try left.tracker.establish(.fresh);
+    const first = try left.tracker.establish(.fresh);
+    try left.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(0), .initializedness = .initialized, .backing = backing, .generation = first });
+    const reference: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .dependencies = &.{ .{ .root = backing }, .{ .root = first } } };
+    try checker.setPlace(&left, .{ .root = @enumFromInt(0) }, .initialized, reference);
+    try checker.setPlace(&left, .{ .root = @enumFromInt(1) }, .initialized, reference);
+    var right = try left.clone(a, null);
+    defer right.deinit();
+    right.tracker.end(first);
+    const second = try right.tracker.establish(.fresh);
+    right.symbolic_pointees.items[0].generation = second;
+    try checker.setPlace(&right, .{ .root = @enumFromInt(0) }, .initialized, try checker.replaceValueRoots(reference, &.{first}, second));
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    const current = checker.valueAtPlace(&joined, .{ .root = @enumFromInt(0) }).?;
+    const historical = checker.valueAtPlace(&joined, .{ .root = @enumFromInt(1) }).?;
+    const generation = joined.symbolic_pointees.items[0].generation.?;
+    try std.testing.expect(generation != first and generation != second);
+    try std.testing.expect(joined.tracker.dependenciesAreAlive(current));
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(historical));
+    try std.testing.expect(valueDependsOnRoot(historical, first));
+    joined.tracker.end(generation);
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(current));
 }
