@@ -625,6 +625,10 @@ pub const Vm = struct {
                     try self.chargeCleanup(updated);
                 },
                 .field => |x| try slots.put(x.dst, (try slots.get(x.base)).record[x.index]),
+                .integer_cast => |x| {
+                    const bits = (try slots.get(x.src)).integer;
+                    try slots.put(x.dst, .{ .integer = integer.encode(integer.decode(bits, x.from.bounds().?), x.to.bounds().?) });
+                },
                 .binary => |x| {
                     const left_value = try slots.get(x.left);
                     const right_value = try slots.get(x.right);

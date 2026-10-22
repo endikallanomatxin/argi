@@ -14876,3 +14876,9 @@ test "feature_tests/execution/240_contextual_default_resource_cleanup" {
     try runExpect("tests/feature_tests/execution/240_contextual_default_resource_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/240_contextual_default_resource_cleanup", 42, null);
 }
+
+test "feature_tests/execution/241_integer_conversions" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/241_integer_conversions");
+    try runExpect("tests/feature_tests/execution/241_integer_conversions", 42);
+    try vmExpect("tests/feature_tests/execution/241_integer_conversions", 42, null);
+}

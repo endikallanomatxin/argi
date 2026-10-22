@@ -208,6 +208,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const to = program.graph.semanticType(f.slots[x.dst]);
                     if (from != .pointer or to != .pointer or from.pointer.mutability != .read_write or to.pointer.mutability != .read_only or !types.equal(program.graph, from.pointer.child, to.pointer.child)) return error.InvalidBytecode;
                 },
+                .integer_cast => |x| {
+                    if (x.from.bounds() == null or x.to.bounds() == null or
+                        x.from != b.scalarKind(program.graph, f.slots[x.src]) or
+                        x.to != b.scalarKind(program.graph, f.slots[x.dst])) return error.InvalidBytecode;
+                },
                 .binary => |x| {
                     if (x.kind != b.scalarKind(program.graph, f.slots[x.dst]) or (x.kind.bounds() == null and !x.kind.floating()) or !types.equal(program.graph, f.slots[x.dst], f.slots[x.left]) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode;
                 },
@@ -502,6 +507,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
         .offset_reference => |x| x.dst,
         .copy => |x| x.dst,
         .readonly => |x| x.dst,
+        .integer_cast => |x| x.dst,
         .binary => |x| x.dst,
         .compare => |x| x.dst,
         .record => |x| x.dst,
@@ -524,6 +530,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
 }
 fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !void {
     switch (i.op) {
+        .integer_cast => |x| try out.append(a, x.src),
         .copy => |x| try out.append(a, x.src),
         .resolve_location => |x| try out.append(a, x.id),
         .virtualize => |x| try out.append(a, x.receiver),
@@ -840,4 +847,28 @@ test "bytecode verifier loop backedges cannot initialize the function entry" {
     try std.testing.expectError(error.UninitializedBytecodeSlot, verify(a, program));
     function.inputs = &.{ 0, 1 };
     try verify(a, program);
+}
+
+test "bytecode integer casts reject forged widths signs and noninteger descriptors" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int8 }, .{ .builtin = .Int64 } });
+    const source = @import("../../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    var code = [_]Instruction{
+        .{ .source = source, .op = .{ .integer_cast = .{ .dst = 1, .src = 0, .from = .i8, .to = .i64 } } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+    };
+    const function = b.Function{ .slots = &.{ @enumFromInt(0), @enumFromInt(1) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code };
+    const program = Program{ .graph = &graph, .functions = &.{}, .expression = &function };
+    try verify(a, program);
+    for ([_]b.ScalarKind{ .u8, .i16, .f32, .unresolved }) |kind| {
+        code[0].op.integer_cast.from = kind;
+        try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+    }
+    code[0].op.integer_cast.from = .i8;
+    for ([_]b.ScalarKind{ .u64, .i32, .f64, .unresolved }) |kind| {
+        code[0].op.integer_cast.to = kind;
+        try std.testing.expectError(error.InvalidBytecode, verify(a, program));
+    }
 }

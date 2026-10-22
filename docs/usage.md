@@ -96,6 +96,9 @@ function calls, local assignments, `if`, `while`, `for`, `break`, `continue`, an
 bare `return`. Calls support multiple named outputs through their checked record
 result. Boolean operators short-circuit. A program entry has no inputs and either no
 result or `status_code: Int32`; its status follows native process truncation.
+Selected integer `Convert` operations retain core range checks and execute
+sign extension, zero extension or truncation with the declared widths. These
+conversions also work inside `#run`; range failures preserve the original tracer.
 
 String literals use immutable UTF-8 backing owned by the execution context,
 shared across repeated literals and valid after calls return. `StringView` values

@@ -1281,10 +1281,15 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .virtualize = .{ .dst = dst, .receiver = try self.expression(selected.value), .table = table } });
             },
             .explicit_cast => |cast| {
-                // TODO: Lower checked integer conversions with shared width/sign semantics.
                 const target = self.parent.graph.semanticType(cast.target_type);
                 const source_slot = try self.expression(cast.value);
                 const from = self.slots.items[source_slot];
+                const source_kind = b.scalarKind(self.parent.graph, from);
+                const target_kind = b.scalarKind(self.parent.graph, cast.target_type);
+                if (source_kind.bounds() != null and target_kind.bounds() != null) {
+                    _ = try self.emit(node.source, .{ .integer_cast = .{ .dst = dst, .src = source_slot, .from = source_kind, .to = target_kind } });
+                    return dst;
+                }
                 if (self.parent.mode != .runtime or target != .pointer or !types.isBuiltin(self.parent.graph, from, .UIntNative) or
                     (self.safety_primitive != .establish_inherited_reference and self.safety_primitive != .establish_allocation_slot))
                     return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
