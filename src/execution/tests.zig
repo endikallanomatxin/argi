@@ -3085,3 +3085,26 @@ test "retained virtual failures preserve the creation unit source" {
     try std.testing.expectEqual(.poisoned, session.runtime.context.state);
     try session.reset();
 }
+
+test "compile-time expression failures retain source after evaluator teardown" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main(.value: Int32) -> (.result: Int32) := { result = value }" }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = @constCast(try pipeline.semantizeGlobalFiles(&files));
+    const g = @import("../4_semantics/global/graph.zig");
+    const root: g.GlobalNodeId = for (graph.nodes.items, 0..) |node, index| {
+        if (node.content == .binding_use) break @enumFromInt(index);
+    } else return error.MissingExpression;
+    var trace: @import("failure.zig").Trace = .{};
+    var budget: vm.Limits = .{ .instructions = 0 };
+    try std.testing.expectError(error.ExecutionInstructionLimit, @import("evaluate.zig").evaluateExpression(a, graph, root, &.{root}, &.{.{ .integer = 42 }}, &budget, &trace));
+    try std.testing.expectEqual(@as(usize, 1), trace.count);
+    const location = @import("../4_semantics/global/source_location.zig").location(graph, &diagnostics, trace.sources[0]);
+    try std.testing.expectEqualStrings("app/main.rg", diagnostics.path(location));
+    try std.testing.expectEqual(@as(u32, 1), diagnostics.lineColumn(location).line);
+}

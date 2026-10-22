@@ -155,7 +155,8 @@ fn freeze(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, ty: g.Glo
 // Execute an already-selected expression with constant operands. It uses
 // the normal expression lowerer, verifier and VM, without synthesizing language
 // functions or duplicating primitive semantics in the constant resolver.
-pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, root: g.GlobalNodeId, operands: []const g.GlobalNodeId, args: []const bytecode.Value, budget: *Limits) !g.GlobalNodeId {
+pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, root: g.GlobalNodeId, operands: []const g.GlobalNodeId, args: []const bytecode.Value, budget: *Limits, failure: ?*@import("failure.zig").Trace) !g.GlobalNodeId {
+    if (failure) |trace| trace.count = 0;
     const node = graph.node(root);
     switch (node.content) {
         .binding_use, .binary_operation, .comparison, .struct_field_access, .array_index => {},
@@ -178,7 +179,10 @@ pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemantic
         budget.instructions -|= executor.steps;
         if (executor.context().state != .fresh) budget.value_cells -|= executor.context().storage.cells;
     }
-    const result = try executor.runExpression(args);
+    const result = executor.runExpression(args) catch |err| {
+        if (failure) |trace| trace.capture(&executor);
+        return err;
+    };
     if (result.len != 1 or !bytecode.valueFits(graph, ty, result[0])) return error.UnfreezableEvaluationResult;
     const node_start = graph.nodes.items.len;
     const field_start = graph.value_fields.items.len;

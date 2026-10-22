@@ -201,7 +201,7 @@ const Context = struct {
             if (binding.mutability != .constant) return error.NonConstantCompileTimeArgument;
             const initialization = binding.initialization orelse return error.NonConstantCompileTimeArgument;
             const value = try self.constant(initialization, depth + 1);
-            return @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, &.{id}, &.{value}, &self.budget);
+            return @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, &.{id}, &.{value}, &self.budget, &self.failure_trace);
         }
         var operands: [2]g.GlobalNodeId = undefined;
         const count: usize = switch (node.content) {
@@ -223,7 +223,7 @@ const Context = struct {
         var args: [2]b.Value = undefined;
         for (operands[0..count], args[0..count]) |operand, *arg|
             arg.* = try self.constant(operand, depth + 1);
-        const result = try @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, operands[0..count], args[0..count], &self.budget);
+        const result = try @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, operands[0..count], args[0..count], &self.budget, &self.failure_trace);
         return result;
     }
 
