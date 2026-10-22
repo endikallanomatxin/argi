@@ -14583,3 +14583,20 @@ test "feature_tests/execution/188X_array_reference_input_historical_copy" {
     try buildExpectFail("tests/feature_tests/execution/188X_array_reference_input_historical_copy", "reference depends on a root that has ended");
     try vmExpect("tests/feature_tests/execution/188X_array_reference_input_historical_copy", 1, "reference depends on a root that has ended");
 }
+
+test "feature_tests/execution/189_array_owner_reference_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/189_array_owner_reference_initialization");
+    try runExpect("tests/feature_tests/execution/189_array_owner_reference_initialization", 42);
+    try vmExpect("tests/feature_tests/execution/189_array_owner_reference_initialization", 42, null);
+}
+
+test "feature_tests/execution/190_array_owner_reference_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/190_array_owner_reference_cleanup");
+    try runExpect("tests/feature_tests/execution/190_array_owner_reference_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/190_array_owner_reference_cleanup", 42, null);
+}
+
+test "feature_tests/execution/191X_reference_self_initialization" {
+    try buildExpectFail("tests/feature_tests/execution/191X_reference_self_initialization", "value was deinitialized");
+    try vmExpect("tests/feature_tests/execution/191X_reference_self_initialization", 1, "value was deinitialized");
+}

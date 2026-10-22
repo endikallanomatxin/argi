@@ -916,11 +916,8 @@ pub const SafetyChecker = struct {
                     }
                 },
                 .pointer_assignment => |assignment| {
-                    const pointer_node = self.graph.node(assignment.pointer);
-                    var pointer = switch (pointer_node.content) {
-                        .address_of => |child| try self.evaluateAddress(function, pointer_node.source, child, state, true),
-                        else => try self.evaluate(function, assignment.pointer, state),
-                    };
+                    const operand = try self.evaluateWritePointer(function, assignment.pointer, state);
+                    var pointer = operand.value;
                     const was_deinitialized = if (pointer.referenced_place) |target|
                         self.initializednessAtPlace(state, target) == .deinitialized
                     else
@@ -941,7 +938,7 @@ pub const SafetyChecker = struct {
                             // Only the precise pointer used to initialize storage
                             // follows its new generation; historical aliases do not.
                             pointer = try self.replaceValueRoots(pointer, &.{old_generation}, generation);
-                            if (try self.resolvePlace(assignment.pointer, state)) |pointer_storage|
+                            if (operand.slot) |pointer_storage|
                                 try self.setPlace(state, pointer_storage, .initialized, pointer);
                         }
                     }
@@ -955,18 +952,13 @@ pub const SafetyChecker = struct {
                             const old_generation = try self.storageGeneration(state, target);
                             try self.refreshStorageGenerationChecked(node.source, state, target);
                             pointer = try self.replaceValueRoots(pointer, &.{old_generation}, try self.storageGeneration(state, target));
-                            if (@import("../global/lexical_storage.zig").root(self.graph, assignment.pointer)) |root| {
-                                if (self.graph.binding(root).mutability == .constant)
-                                    if (try self.resolvePlace(assignment.pointer, state)) |pointer_storage|
-                                        try self.setPlace(state, pointer_storage, .initialized, pointer);
-                            }
+                            try self.renewWriteReferenceSlot(state, operand, pointer);
                         }
                     }
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
                     if (symbolic_renewal != null) {
-                        if (try self.resolvePlace(assignment.pointer, state)) |slot|
-                            try self.setPlace(state, slot, .initialized, pointer);
+                        try self.renewWriteReferenceSlot(state, operand, pointer);
                     }
                     if (pointer.referenced_place == null) for (pointer.symbolic_pointees) |identity| {
                         for (state.symbolic_pointees.items) |*entry| if (entry.identity == identity) {
@@ -5568,6 +5560,38 @@ pub const SafetyChecker = struct {
         return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{identity.?}) };
     }
 
+    const WritePointer = struct { value: facts.ValueFacts, slot: ?facts.Place = null };
+
+    fn renewWriteReferenceSlot(self: *SafetyChecker, state: *FunctionState, operand: WritePointer, renewed: facts.ValueFacts) !void {
+        const slot = operand.slot orelse return;
+        if (self.initializednessAtPlace(state, slot) != .initialized) return;
+        const current = self.valueAtPlace(state, slot) orelse return;
+        // RHS effects may retarget or consume the slot. Renewal applies only
+        // to the same reference observation captured before those effects.
+        if (sameReferenceObservation(current, operand.value))
+            try self.setPlace(state, slot, .initialized, renewed);
+    }
+
+    fn evaluateWritePointer(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !WritePointer {
+        const node = self.graph.node(node_id);
+        // Address formation produces a reference value, not a reference slot.
+        // Publishing it into the referent would invent initialization before RHS.
+        if (node.content == .address_of)
+            return .{ .value = try self.evaluateAddress(function, node.source, node.content.address_of, state, true) };
+        const access: EvaluatedAccess = switch (node.content) {
+            .binding_use => |binding| return .{ .value = try self.evaluate(function, node_id, state), .slot = .{ .root = binding } },
+            .struct_field_access, .array_index, .dereference, .choice_payload_access => try self.evaluateAccess(function, node_id, state),
+            else => return .{ .value = try self.evaluate(function, node_id, state) },
+        };
+        const value = try self.readEvaluatedAccess(function, node.source, node.ty, access, state);
+        const slot = access.storage orelse return .{ .value = value };
+        const ty = self.domainStorageType(slot) orelse return .{ .value = value };
+        if (!isPointer(self.graph, ty)) return .{ .value = value };
+        // An unknown index does not identify one stable reference-valued slot.
+        for (slot.projections) |projection| if (projection == .dynamic_index) return .{ .value = value };
+        return .{ .value = value, .slot = slot };
+    }
+
     const EvaluatedAccess = struct {
         storage: ?facts.Place = null,
         pointer: ?facts.ValueFacts = null,
@@ -7291,6 +7315,15 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
     for (value.dependencies) |dependency| try appendRootFact(roots, dependency.root);
     for (value.fields) |field| try collectDependencyRoots(field.value.*, roots);
     for (value.variants) |variant| try collectDependencyRoots(variant.value.*, roots);
+}
+
+fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.explicit_dependency != right.explicit_dependency or left.foreign_storage != right.foreign_storage or left.opaque_provenance.len != 0 or right.opaque_provenance.len != 0) return false;
+    if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
+    if (left.referenced_place) |place| if (!place.eql(right.referenced_place.?)) return false;
+    if (!std.mem.eql(facts.SymbolicPointeeId, left.symbolic_pointees, right.symbolic_pointees) or left.dependencies.len != right.dependencies.len) return false;
+    for (left.dependencies, right.dependencies) |a, b| if (!std.meta.eql(a, b)) return false;
+    return true;
 }
 
 fn valueDependsOnDeadRoot(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {

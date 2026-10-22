@@ -36,9 +36,13 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   elements from converged summaries, preserving identity through local copies
   and preventing duplicate destruction (case 186); aliased participants and
   historical copies remain rejected (cases 187X/188X). A million-element input
-  with two observed indices retains two symbolic leaves. Finish the separate
-  owner-envelope liveness issue: consuming/reinitializing a reference still
-  rejects calls when distinct referents are elements of one owning array.
+  with two observed indices retains two symbolic leaves. Write operands now
+  distinguish temporary address values from reference-valued slots: array
+  owner initialization no longer publishes a pointer into the destination
+  before RHS cleanup. Read-only calls and conditional cleanup through distinct
+  elements share native/VM coverage (189/190); vacant self-initialization is
+  rejected (191X). Finish single-evaluation symbolic renewal and effectful
+  reference-field selectors without syntax-based destination reevaluation.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops
