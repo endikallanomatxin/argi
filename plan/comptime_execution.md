@@ -11,6 +11,9 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   reference companions. Byte addresses cannot identify owners or zero-sized slots.
   Typed `allocate` currently loses its element count: settle explicit evidence
   reservation before enabling resource borrows, without allocation during borrowing.
+  Native opaque writes already forward reference companions, but address-based
+  establishment supplies none. Reserve companions and cleanup ranges together;
+  borrowing must project that reservation rather than create it lazily.
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.
