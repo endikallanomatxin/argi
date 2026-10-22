@@ -362,7 +362,7 @@ pub const SafetyChecker = struct {
             var state = FunctionState.init(self.allocator);
             state.tracker.namespace = &namespace;
             defer state.deinit();
-            try self.seedFunctionInputs(function, &state);
+            try self.seedFunctionInputs(id, function, &state);
             try self.call_stack.append(id);
             defer _ = self.call_stack.pop();
             try self.validateBlock(id, function.body.?, &state, null);
@@ -714,6 +714,8 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         shared_backing: *?facts.ValidityRootId,
         shared_generation: *?facts.ValidityRootId,
+        summary: ?*const facts.SafetySummary,
+        prefix: facts.InputPath,
     ) anyerror!facts.ValueFacts {
         if (isPointer(self.graph, ty)) {
             const backing = shared_backing.* orelse blk: {
@@ -736,6 +738,24 @@ pub const SafetyChecker = struct {
                 .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{identity}),
             };
         }
+        if (types.arrayElement(self.graph, ty)) |element| {
+            if (!self.inputTypeHasReferences(element, 0)) return .{};
+            const selected = summary orelse return .{};
+            const indices = try @import("input_demands.zig").arrayIndices(self.allocator, selected, prefix, types.arrayLength(self.graph, ty).?);
+            defer self.allocator.free(indices);
+            const fields = try self.allocator.alloc(facts.FieldFacts, indices.len);
+            var result: facts.ValueFacts = .{};
+            for (fields, indices) |*field, index| {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                const nested = try self.appendInputProjection(prefix, .{ .static_index = index });
+                stored.* = try self.seedInputValue(element, state, shared_backing, shared_generation, summary, nested);
+                field.* = .{ .index = index, .value = stored };
+                result = try self.mergeValueFacts(result, stored.*);
+            }
+            result.fields = fields;
+            result.symbolic_pointees = &.{};
+            return result;
+        }
         // Copied input records retain one identity per reference leaf. Empty
         // siblings remain explicit so projection never inherits another leaf's
         // facts. Plain scalar records allocate no field facts.
@@ -743,7 +763,9 @@ pub const SafetyChecker = struct {
         var fields: ?[]facts.FieldFacts = null;
         var result: facts.ValueFacts = .{};
         for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
-            const child = try self.seedInputValue(field.ty, state, shared_backing, shared_generation);
+            const aggregate = types.arrayElement(self.graph, field.ty) != null or types.fields(self.graph, field.ty) != null;
+            const nested = if (aggregate) try self.appendInputProjection(prefix, .{ .field = @intCast(index) }) else prefix;
+            const child = try self.seedInputValue(field.ty, state, shared_backing, shared_generation, summary, nested);
             if (facts.isEmptyValue(child)) continue;
             if (fields == null) {
                 fields = try self.allocator.alloc(facts.FieldFacts, range.len);
@@ -761,12 +783,29 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn seedFunctionInputs(self: *SafetyChecker, function: graph_mod.Function, state: *FunctionState) !void {
+    fn inputTypeHasReferences(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+        if (depth > 64) return true;
+        if (isPointer(self.graph, ty)) return true;
+        if (types.arrayElement(self.graph, ty)) |element| return self.inputTypeHasReferences(element, depth + 1);
+        const fields = types.fields(self.graph, ty) orelse return false;
+        for (self.graph.fields.items[fields.start..][0..fields.len]) |field| if (self.inputTypeHasReferences(field.ty, depth + 1)) return true;
+        return false;
+    }
+
+    fn seedFunctionInputs(self: *SafetyChecker, id: graph_mod.GlobalFunctionId, function: graph_mod.Function, state: *FunctionState) !void {
         var shared_pointer_root: ?facts.ValidityRootId = null;
         var shared_value_generation: ?facts.ValidityRootId = null;
-        for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |binding| {
+        const summary = if (self.active_summaries) |engine| engine.summaryFor(id) else null;
+        const demand: ?*const facts.SafetySummary = if (summary) |*value| value else null;
+        for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, index| {
             const record = self.graph.bindings.items[@intFromEnum(binding)];
-            var value = try self.seedInputValue(record.ty, state, &shared_pointer_root, &shared_value_generation);
+            var value = self.seedInputValue(record.ty, state, &shared_pointer_root, &shared_value_generation, demand, .{ .input_index = @intCast(index) }) catch |err| {
+                if (err == error.UnsupportedInputReferenceIndex) {
+                    try self.report(record.source, "array reference input index exceeds the supported safety fact range", .{});
+                    return error.Reported;
+                }
+                return err;
+            };
             const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
             if (self.graph.semanticType(ty) == .virtual) {
                 for (self.graph.virtualizes.items) |virtualize| {
@@ -9279,7 +9318,7 @@ test "symbolic input records retain separate reference leaves and explicit empty
     defer state.deinit();
     var backing: ?facts.ValidityRootId = null;
     var generation: ?facts.ValidityRootId = null;
-    const value = try checker.seedInputValue(record, &state, &backing, &generation);
+    const value = try checker.seedInputValue(record, &state, &backing, &generation, null, .{ .input_index = 0 });
     const first = try checker.projectValueFacts(value, &.{.{ .field = 0 }});
     const empty = try checker.projectValueFacts(value, &.{.{ .field = 1 }});
     const second = try checker.projectValueFacts(value, &.{.{ .field = 2 }});
@@ -9602,9 +9641,9 @@ test "projected consumption retains other participant generations for caller ali
     state.tracker.namespace = &namespace;
     var backing: ?facts.ValidityRootId = null;
     var generation: ?facts.ValidityRootId = null;
-    const holder = try checker.seedInputValue(@enumFromInt(5), &state, &backing, &generation);
-    const resource = try checker.seedInputValue(@enumFromInt(6), &state, &backing, &generation);
-    const counter = try checker.seedInputValue(@enumFromInt(2), &state, &backing, &generation);
+    const holder = try checker.seedInputValue(@enumFromInt(5), &state, &backing, &generation, null, .{ .input_index = 0 });
+    const resource = try checker.seedInputValue(@enumFromInt(6), &state, &backing, &generation, null, .{ .input_index = 0 });
+    const counter = try checker.seedInputValue(@enumFromInt(2), &state, &backing, &generation, null, .{ .input_index = 0 });
     const item = (try checker.projectSymbolicReference(holder, 0, &state)).?;
     const sibling = (try checker.projectSymbolicReference(holder, 1, &state)).?;
     try std.testing.expect(try checker.endSymbolicGenerations(source, item, &state));
@@ -9643,4 +9682,37 @@ test "published continuation snapshots own place paths and root namespaces" {
     try std.testing.expectEqual(@as(u32, 2), retained.namespace.initial_storage.items[0].storage.projections[0].field);
     try std.testing.expectEqual(@as(u32, 2), retained.state.places.items[0].value.referenced_place.?.projections[0].field);
     try std.testing.expectEqual(@as(u32, 2), retained.state.storage_generations.items[0].storage.projections[0].field);
+}
+
+test "by-value input reference arrays seed only observed elements with independent identities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+        .{ .array = .{ .element = @enumFromInt(1), .length = 1_000_000 } },
+    });
+    const summary: facts.SafetySummary = .{ .required_live_inputs = &.{
+        .{ .input_index = 0, .projections = &.{.{ .static_index = 0 }} },
+        .{ .input_index = 0, .projections = &.{.{ .static_index = 999_999 }} },
+    } };
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    var backing: ?facts.ValidityRootId = null;
+    var generation: ?facts.ValidityRootId = null;
+    const value = try checker.seedInputValue(@enumFromInt(2), &state, &backing, &generation, &summary, .{ .input_index = 0 });
+    try std.testing.expectEqual(@as(usize, 2), value.fields.len);
+    try std.testing.expectEqual(@as(usize, 2), state.symbolic_pointees.items.len);
+    try std.testing.expectEqual(@as(usize, 0), value.symbolic_pointees.len);
+    const first = try checker.projectValueFacts(value, &.{.{ .static_index = 0 }});
+    const last = try checker.projectValueFacts(value, &.{.{ .static_index = 999_999 }});
+    try std.testing.expect(first.symbolic_pointees[0] != last.symbolic_pointees[0]);
+    try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &state));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(last));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(first));
 }

@@ -14567,3 +14567,19 @@ test "feature_tests/execution/185_composite_outcome_cleanup" {
     try runExpect("tests/feature_tests/execution/185_composite_outcome_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/185_composite_outcome_cleanup", 42, null);
 }
+
+test "feature_tests/execution/186_array_reference_input_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/186_array_reference_input_cleanup");
+    try runExpect("tests/feature_tests/execution/186_array_reference_input_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/186_array_reference_input_cleanup", 42, null);
+}
+
+test "feature_tests/execution/187X_array_reference_input_alias" {
+    try buildExpectFail("tests/feature_tests/execution/187X_array_reference_input_alias", "aliased participant has consumed its value");
+    try vmExpect("tests/feature_tests/execution/187X_array_reference_input_alias", 1, "aliased participant has consumed its value");
+}
+
+test "feature_tests/execution/188X_array_reference_input_historical_copy" {
+    try buildExpectFail("tests/feature_tests/execution/188X_array_reference_input_historical_copy", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/188X_array_reference_input_historical_copy", 1, "reference depends on a root that has ended");
+}

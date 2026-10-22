@@ -32,10 +32,13 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
   indexed destinations, effectful selectors changed by the callee, and
   zero-sized siblings (case 184). Captured projection paths also preserve
   reference leaves inside nested by-value records (case 185), with shared type
-  validation and relocation. Finish nested array-reference summary validation:
-  consuming and reinitializing element zero currently rejects calls even with
-  distinct constant referents. Preserve those obligations while fixing the
-  selected-reference generation handling.
+  validation and relocation. By-value reference arrays now seed only demanded
+  elements from converged summaries, preserving identity through local copies
+  and preventing duplicate destruction (case 186); aliased participants and
+  historical copies remain rejected (cases 187X/188X). A million-element input
+  with two observed indices retains two symbolic leaves. Finish the separate
+  owner-envelope liveness issue: consuming/reinitializing a reference still
+  rejects calls when distinct referents are elements of one owning array.
   Incomplete records must never invoke a whole-value destructor.
   Preserve capture, RHS evaluation, old cleanup, commit and activation.
 - Validate projected symbolic storage identities across aliases, branches, loops
