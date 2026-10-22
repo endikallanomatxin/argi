@@ -14681,3 +14681,9 @@ test "feature_tests/execution/206X_returned_initial_symbolic_reference_keeps_tar
     try buildExpectFail("tests/feature_tests/execution/206X_returned_initial_symbolic_reference_keeps_target", "root that has ended");
     try vmExpect("tests/feature_tests/execution/206X_returned_initial_symbolic_reference_keeps_target", 1, "root that has ended");
 }
+
+test "feature_tests/execution/207_nested_symbolic_replacement_captures_target" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/207_nested_symbolic_replacement_captures_target");
+    try runExpect("tests/feature_tests/execution/207_nested_symbolic_replacement_captures_target", 42);
+    try vmExpect("tests/feature_tests/execution/207_nested_symbolic_replacement_captures_target", 42, null);
+}
