@@ -114,11 +114,12 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     defer arena.deinit();
                     const metadata = @import("../allocation_metadata.zig");
                     const ty = metadata.participant(program.graph, id) catch return error.InvalidBytecode;
-                    _ = try cleanup_counts.count(allocator, program.graph, ty);
-                    const expected = metadata.reservation(arena.allocator(), program.graph, ty, f.slots[x.receipt], &cleanup_counts) catch return error.InvalidBytecode;
-                    if (expected.endian != x.layout.endian or !std.meta.eql(expected.receipt, x.layout.receipt) or !@import("numeric_layout.zig").equal(expected.physical, x.layout.physical) or expected.values.nodes.len != x.layout.values.nodes.len) return error.InvalidBytecode;
+                    if (owning_types[@intFromEnum(ty)]) _ = try cleanup_counts.count(allocator, program.graph, ty);
+                    const expected = metadata.reservation(arena.allocator(), program.graph, ty, f.slots[x.receipt], &cleanup_counts, owning_types[@intFromEnum(ty)]) catch return error.InvalidBytecode;
+                    if (expected.endian != x.layout.endian or !std.meta.eql(expected.geometry, x.layout.geometry) or !std.meta.eql(expected.receipt, x.layout.receipt) or !@import("numeric_layout.zig").equal(expected.physical, x.layout.physical) or expected.values.nodes.len != x.layout.values.nodes.len) return error.InvalidBytecode;
                     for (expected.values.nodes, x.layout.values.nodes) |left, right| if (!std.meta.eql(left, right)) return error.InvalidBytecode;
-                    if (!try cleanup_equal.compare(expected.cleanup, x.layout.cleanup, 0)) return error.InvalidBytecode;
+                    if ((expected.cleanup == null) != (x.layout.cleanup == null)) return error.InvalidBytecode;
+                    if (expected.cleanup) |layout| if (!try cleanup_equal.compare(layout, x.layout.cleanup.?, 0)) return error.InvalidBytecode;
                 },
                 .acquired_reference => |x| {
                     if (fi >= program.graph.functions.items.len) return error.InvalidBytecode;
@@ -149,12 +150,14 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                         }
                     } else if (primitive == .establish_allocation_slot) return error.InvalidBytecode;
                     if (owning_types[@intFromEnum(target.pointer.child)] != (x.cleanup != null)) return error.InvalidBytecode;
-                    if (x.cleanup) |layout| {
+                    if (x.cleanup != null or x.layout.has_references) {
                         if (x.receipt == null or x.receipt.?.layout.metadata == null) return error.InvalidBytecode;
-                        _ = try cleanup_counts.count(allocator, program.graph, target.pointer.child);
-                        if (!try cleanup_equal.compare(cleanup_counts.retained(target.pointer.child), layout, 0)) return error.InvalidBytecode;
+                        if (x.cleanup) |layout| {
+                            _ = try cleanup_counts.count(allocator, program.graph, target.pointer.child);
+                            if (!try cleanup_equal.compare(cleanup_counts.retained(target.pointer.child), layout, 0)) return error.InvalidBytecode;
+                        }
                     }
-                    const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, target.pointer.child) catch return error.InvalidBytecode;
+                    const expected = (if (x.receipt != null) @import("numeric_layout.zig").compileAcquired(arena.allocator(), program.graph, target.pointer.child) else @import("numeric_layout.zig").compile(arena.allocator(), program.graph, target.pointer.child)) catch return error.InvalidBytecode;
                     if (!@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;
                 },
                 .erase_reference => |x| {

@@ -14983,3 +14983,30 @@ test "feature_tests/execution/253_acquired_boolean_resources" {
     try runExpect("tests/feature_tests/execution/253_acquired_boolean_resources", 42);
     try vmExpect("tests/feature_tests/execution/253_acquired_boolean_resources", 42, null);
 }
+
+test "feature_tests/execution/254_acquired_reference_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/254_acquired_reference_resources");
+    try runExpect("tests/feature_tests/execution/254_acquired_reference_resources", 42);
+    try vmExpect("tests/feature_tests/execution/254_acquired_reference_resources", 42, null);
+}
+
+test "feature_tests/execution/255_acquired_borrowed_records" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/255_acquired_borrowed_records");
+    try runExpect("tests/feature_tests/execution/255_acquired_borrowed_records", 42);
+    try vmExpect("tests/feature_tests/execution/255_acquired_borrowed_records", 42, null);
+}
+
+test "argi repl retains acquired reference companions across submissions" {
+    const commands =
+        \\Pair: Type = (.source: &Int32)
+        \\value :: Int32 = 42
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Pair)(.self = allocator))
+        \\raw ::= raw_pointer#(.t: Pair)(.address = memory.data.address).raw
+        \\reference ::= trusted_establish_allocation_slot#(.t: Pair)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = reference, .source = Pair(.source = &value))
+        \\borrowed ::= reference&.source
+        \\borrowed&
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = ()\n_1 = 42\n");
+}

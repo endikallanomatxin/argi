@@ -303,8 +303,8 @@ const FunctionLower = struct {
                 _ = try self.emit(source, .{ .constant = .{ .dst = outputs[0], .value = .{ .integer = 0 } } });
             } else {
                 if (self.parent.mode != .runtime) return self.parent.reject(source, "acquired metadata preparation during compile-time execution");
-                const layout = metadata.reservation(a, self.parent.graph, ty, self.slots.items[inputs[0]], &self.parent.cleanup_layouts) catch |err| switch (err) {
-                    error.UnsupportedNumericLayout => return self.parent.reject(source, "acquired reference metadata for nonnumeric storage"),
+                const layout = metadata.reservation(a, self.parent.graph, ty, self.slots.items[inputs[0]], &self.parent.cleanup_layouts, self.parent.cleanup_types[@intFromEnum(ty)]) catch |err| switch (err) {
+                    error.UnsupportedNumericLayout => return self.parent.reject(source, "acquired metadata for unsupported storage representation"),
                     else => return err,
                 };
                 _ = try self.emit(source, .{ .prepare_acquired = .{ .dst = outputs[0], .receipt = inputs[0], .layout = layout } });
@@ -1334,7 +1334,7 @@ const FunctionLower = struct {
                     return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
                 const needs_cleanup = self.parent.cleanup_types[@intFromEnum(target.pointer.child)];
                 if (needs_cleanup and self.allocation_receipt == null) return self.parent.reject(node.source, "acquired reference requiring a prepared allocation receipt");
-                const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child) catch return self.parent.reject(node.source, "acquired reference to nonnumeric storage");
+                const layout = (if (self.allocation_receipt != null) @import("numeric_layout.zig").compileAcquired(self.parent.allocator, self.parent.graph, target.pointer.child) else @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child)) catch return self.parent.reject(node.source, "acquired reference to unsupported storage representation");
                 const instruction = try self.parent.allocator.create(b.AcquiredReference);
                 instruction.* = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() };
                 if (self.allocation_receipt) |receipt| {

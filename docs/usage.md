@@ -210,9 +210,12 @@ reads check the backing value but expose no concrete representation. Core
 context-owned regions. Typed allocations prepare independent slot state for
 resource-bearing numeric records and arrays, including zero-sized elements.
 Opaque initialization, extraction and destruction preserve those obligations
-across calls and REPL submissions. Stored references and choices still require
-additional acquired-storage lowering. Compile-time
-evaluation continues to reject foreign calls.
+across calls and REPL submissions. Acquired records and arrays may also contain
+safe references, retained as evidence in prepared slots. Physical writes revoke
+only reference leaves whose bytes they touch. Reference representation bytes are
+opaque in the VM: byte copies neither serialize nor reconstruct that evidence.
+Choices and virtual values still require additional acquired-storage lowering.
+Compile-time evaluation continues to reject foreign calls.
 
 Floating values preserve Float16, Float32 and Float64 precision in literals,
 arithmetic, comparisons and compile-time results. Byte views and acquired storage

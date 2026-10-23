@@ -6,13 +6,15 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 ## Memory and cleanup
 
-- Extend prepared acquired slots beyond numeric resource representations to
-  stored references and choices. Typed `allocate` now reserves companion ranges
-  in the same acquisition and transports a private handle through `Allocation`.
-  LLVM and bytecode share geometry; numeric resource initialization, extraction,
-  reuse and zero-sized slots use independent per-receipt identities. Borrowing
-  projects a reservation without allocating metadata or recovering owners from
-  data addresses. Raw/inherited resource storage still needs explicit preparation.
+- Extend prepared acquired slots to choices and virtual values. Typed `allocate`
+  reserves companion ranges in the same acquisition and transports a private handle through `Allocation`.
+  LLVM and bytecode share geometry; resource initialization, extraction,
+  reuse and zero-sized slots use independent per-receipt identities. Records
+  and arrays retain safe reference leaves separately from numeric bytes; physical
+  writes revoke affected evidence without invalidating neighboring elements.
+  Borrowing projects a reservation without allocating metadata or recovering owners from
+  data addresses. Raw/inherited storage with resources or stored references still
+  needs explicit preparation.
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.

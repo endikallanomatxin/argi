@@ -3,14 +3,16 @@ const g = @import("../../4_semantics/global/graph.zig");
 const types = @import("../../4_semantics/global/types.zig");
 const b = @import("bytecode.zig");
 
-/// Physical byte views support booleans and numeric data only. References and cleanup
-/// evidence cannot be reconstructed from integer bytes. Descriptors belong to
-/// the compilation arena and contain no semantic graph pointers.
+/// Physical byte views support booleans and numeric data. Acquired layouts also
+/// describe reference leaves, whose evidence is stored separately from bytes.
+/// Descriptors belong to the compilation arena and contain no graph pointers.
 pub const Layout = struct {
     size: usize,
     alignment: usize,
+    has_references: bool = false,
     shape: union(enum) {
         boolean,
+        reference: @import("../../4_semantics/primitives/schema.zig").PointerMutability,
         integer: struct { signed: bool },
         floating: enum { float16, float32, float64 },
         fields: []const Field,
@@ -21,9 +23,10 @@ pub const Layout = struct {
 };
 
 pub fn equal(left: *const Layout, right: *const Layout) bool {
-    if (left.size != right.size or left.alignment != right.alignment or std.meta.activeTag(left.shape) != std.meta.activeTag(right.shape)) return false;
+    if (left.size != right.size or left.alignment != right.alignment or left.has_references != right.has_references or std.meta.activeTag(left.shape) != std.meta.activeTag(right.shape)) return false;
     return switch (left.shape) {
         .boolean => true,
+        .reference => |permission| permission == right.shape.reference,
         .integer => |integer| integer.signed == right.shape.integer.signed,
         .floating => |kind| kind == right.shape.floating,
         .array => |array| array.length == right.shape.array.length and array.stride == right.shape.array.stride and equal(array.element, right.shape.array.element),
@@ -36,15 +39,25 @@ pub fn equal(left: *const Layout, right: *const Layout) bool {
 }
 
 pub fn compile(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) !*const Layout {
-    return compileDepth(allocator, graph, ty, 0);
+    return compileDepth(allocator, graph, ty, 0, false);
 }
 
-fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, depth: usize) anyerror!*const Layout {
+// Acquired references retain their evidence separately from physical bytes.
+// Ordinary byte views still reject every representation containing references.
+pub fn compileAcquired(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) !*const Layout {
+    return compileDepth(allocator, graph, ty, 0, true);
+}
+
+fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, depth: usize, acquired: bool) anyerror!*const Layout {
     if (depth > 64) return error.UnsupportedNumericLayout;
     const physical = try types.layoutOf(graph, ty);
     const size = std.math.cast(usize, physical.size) orelse return error.Overflow;
     const alignment = std.math.cast(usize, physical.alignment) orelse return error.Overflow;
-    const shape: @FieldType(Layout, "shape") = if (types.isBuiltin(graph, ty, .Bool)) blk: {
+    const semantic = graph.semanticType(ty);
+    const shape: @FieldType(Layout, "shape") = if (acquired and semantic == .pointer) blk: {
+        if (size != graph.target.pointerBytes()) return error.UnsupportedNumericLayout;
+        break :blk .{ .reference = semantic.pointer.mutability };
+    } else if (types.isBuiltin(graph, ty, .Bool)) blk: {
         if (size != 1 or alignment != 1) return error.UnsupportedNumericLayout;
         break :blk .boolean;
     } else if (b.integerBounds(graph, ty)) |bounds| blk: {
@@ -60,7 +73,7 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
         if (size != expected) return error.UnsupportedNumericLayout;
         break :blk .{ .floating = kind };
     } else if (types.arrayElement(graph, ty)) |element_ty| blk: {
-        const element = try compileDepth(allocator, graph, element_ty, depth + 1);
+        const element = try compileDepth(allocator, graph, element_ty, depth + 1, acquired);
         const length = std.math.cast(usize, types.arrayLength(graph, ty).?) orelse return error.Overflow;
         const stride = try alignOffset(element.size, element.alignment);
         if (try std.math.mul(usize, stride, length) != size) return error.UnsupportedNumericLayout;
@@ -73,7 +86,7 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
         const result = try allocator.alloc(Layout.Field, fields.len);
         var offset: usize = 0;
         for (result, graph.fields.items[fields.start..][0..fields.len]) |*out, field| {
-            const child = try compileDepth(allocator, graph, field.ty, depth + 1);
+            const child = try compileDepth(allocator, graph, field.ty, depth + 1, acquired);
             offset = try alignOffset(offset, child.alignment);
             out.* = .{ .offset = offset, .layout = child };
             offset = try std.math.add(usize, offset, child.size);
@@ -82,7 +95,16 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
         break :blk .{ .fields = result };
     };
     const result = try allocator.create(Layout);
-    result.* = .{ .size = size, .alignment = alignment, .shape = shape };
+    const has_references = switch (shape) {
+        .reference => true,
+        .array => |array| array.length != 0 and array.element.has_references,
+        .fields => |fields| blk: {
+            for (fields) |field| if (field.layout.has_references) break :blk true;
+            break :blk false;
+        },
+        else => false,
+    };
+    result.* = .{ .size = size, .alignment = alignment, .shape = shape, .has_references = has_references };
     return result;
 }
 
@@ -96,6 +118,7 @@ fn alignOffset(value: usize, alignment: usize) !usize {
 pub fn readByte(layout: *const Layout, value: b.Value, offset: usize, endian: std.builtin.Endian) anyerror!u8 {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
+        .reference => error.ExecutionInvalidReference,
         .boolean => if (value == .boolean) @intFromBool(value.boolean) else error.ExecutionInvalidReference,
         .integer, .floating => blk: {
             const bits = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
@@ -237,6 +260,7 @@ pub fn encodeFloat(layout: *const Layout, value: b.Value, bytes: []u8, endian: s
 pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
+        .reference => error.ExecutionInvalidReference,
         .boolean => if (value == .boolean) .{ .boolean = byte & 1 != 0 } else error.ExecutionInvalidReference,
         .integer, .floating => blk: {
             const previous = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;

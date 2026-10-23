@@ -458,9 +458,15 @@ pub const Vm = struct {
                     if (state.token != 0 or state.element_size != x.layout.physical.size) return error.ExecutionInvalidAcquisition;
                     if (bounds.address % 8 != 0) return error.ExecutionInvalidAlignment;
                     const bytes = std.math.mul(usize, state.count, state.element_size) catch return error.ExecutionMemoryLimit;
-                    const flags = std.math.mul(usize, state.count, x.layout.cleanup.count) catch return error.ExecutionMemoryLimit;
+                    const flags = std.math.mul(usize, state.count, if (x.layout.cleanup) |layout| layout.count else 0) catch return error.ExecutionMemoryLimit;
+                    const geometry = x.layout.geometry;
+                    const leaves = std.math.mul(usize, state.count, @intCast(geometry.reference_leaves)) catch return error.ExecutionMemoryLimit;
+                    const reference_bytes = std.math.mul(usize, leaves, @intCast(geometry.reference_bytes)) catch return error.ExecutionMemoryLimit;
+                    const padded_flags = (std.math.add(usize, flags, @intCast(geometry.alignment - 1)) catch return error.ExecutionMemoryLimit) & ~@as(usize, @intCast(geometry.alignment - 1));
+                    const companions = std.math.add(usize, padded_flags, reference_bytes) catch return error.ExecutionMemoryLimit;
+                    const prefix = std.math.add(usize, @intCast(geometry.header_bytes), companions) catch return error.ExecutionMemoryLimit;
                     const grant = bounds.grant orelse return error.ExecutionInvalidAcquisition;
-                    if (grant.address < bounds.address or grant.address - bounds.address < (std.math.add(usize, @import("../5_codegen/allocation_metadata.zig").header_bytes, flags) catch return error.ExecutionMemoryLimit)) return error.ExecutionInvalidAcquisition;
+                    if (grant.address < bounds.address or grant.address - bounds.address < prefix) return error.ExecutionInvalidAcquisition;
                     const range = try storage.acquisitions.resolveReceipt(storage, bounds, grant.address, bytes, x.layout.physical.alignment);
                     const reservation = try storage.reserveAcquiredReceipt(range.handle, range.offset, x.layout.physical, x.layout.endian, x.layout.values, x.layout.cleanup, state.count, range.offset - (grant.address - bounds.address));
                     try slots.put(x.dst, .{ .integer = @as(u64, @intFromEnum(reservation.frame)) + 1 });
@@ -480,7 +486,7 @@ pub const Vm = struct {
                         const value = (try slots.get(selection.value)).choice;
                         break :blk if (value.variant == selection.some_ordinal) value.payload.?.record[0].integer else null;
                     } else null;
-                    const reference = if (x.cleanup != null) blk: {
+                    const reference = if (x.cleanup != null or x.layout.has_references) blk: {
                         const receipt = x.receipt orelse return error.ExecutionMissingCleanup;
                         const value = try storage.read((try slots.get(receipt.value)).reference);
                         const state = (try @import("../5_codegen/bytecode/acquired_receipt.zig").decodeState(receipt.layout.*, value)) orelse return error.ExecutionMissingCleanup;

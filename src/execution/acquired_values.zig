@@ -6,16 +6,51 @@ const Handle = @import("acquisitions.zig").Handle;
 const Layout = @import("../5_codegen/bytecode/numeric_layout.zig").Layout;
 const Value = @import("../5_codegen/bytecode/value.zig").Value;
 
+const v = @import("../5_codegen/bytecode/value.zig");
+
+const Evidence = struct {
+    root: v.Reference,
+    path: [64]v.Projection = undefined,
+    len: usize,
+
+    fn push(self: *Evidence, projection: v.Projection) !void {
+        if (self.len == self.path.len) return error.ExecutionValueDepthLimit;
+        self.path[self.len] = projection;
+        self.len += 1;
+    }
+
+    fn reference(self: *Evidence, storage: *Storage, permission: p.PointerMutability) !Value {
+        var selected = self.root;
+        selected.path = self.path[0..self.len];
+        var value = try storage.acquiredStoredValue(selected);
+        if (value != .reference or (permission == .read_write and value.reference.mutability != .read_write)) return error.ExecutionInvalidReference;
+        try storage.validateLive(&.{value});
+        value.reference.mutability = permission;
+        return value;
+    }
+};
+
+pub fn readPrepared(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, reference: v.Reference) !Value {
+    if (reference.path.len > 64) return error.ExecutionValueDepthLimit;
+    var evidence: Evidence = .{ .root = reference, .len = reference.path.len };
+    @memcpy(evidence.path[0..evidence.len], reference.path);
+    return readWithEvidence(storage, handle, offset, layout, endian, &evidence);
+}
+
 // Typed numeric access uses compiler-selected physical layouts. Padding is not
 // a value and need not be initialized. Bytes cannot reconstruct reference or
 // cleanup evidence; prepared storage retains those obligations independently.
 pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) anyerror!Value {
+    return readWithEvidence(storage, handle, offset, layout, endian, null);
+}
+
+fn readWithEvidence(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, evidence: ?*Evidence) anyerror!Value {
     var empty: []Value = &.{};
     switch (layout.shape) {
-        .boolean, .integer, .floating => return readValidated(storage, handle, offset, layout, endian, &empty),
+        .reference, .boolean, .integer, .floating => return readValidated(storage, handle, offset, layout, endian, &empty, evidence),
         .fields, .array => {},
     }
-    const cells = try readableCells(storage, handle, offset, layout);
+    const cells = try readableCells(storage, handle, offset, layout, evidence);
     if (cells > storage.limit -| storage.cells) return error.ExecutionMemoryLimit;
     // One backing allocation owns the entire numeric snapshot. Nested values
     // contain views into it, so allocation failure cannot leave partial trees.
@@ -25,38 +60,53 @@ pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Lay
         storage.cells -= cells;
     }
     var remaining = backing;
-    const value = try readValidated(storage, handle, offset, layout, endian, &remaining);
+    const value = try readValidated(storage, handle, offset, layout, endian, &remaining, evidence);
     std.debug.assert(remaining.len == 0);
     return value;
 }
 
 // Inspect typed leaves only: record padding is neither a value nor required to
 // be initialized. Failed reads publish no snapshots and consume no cell quota.
-fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout) anyerror!usize {
+fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, evidence: ?*Evidence) anyerror!usize {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
+        .reference => |permission| blk: {
+            _ = try (evidence orelse return error.ExecutionMissingCleanup).reference(storage, permission);
+            break :blk 0;
+        },
         .boolean, .integer, .floating => blk: {
             try storage.acquisitions.requireInitialized(storage, handle, offset, layout.size);
             break :blk 0;
         },
         .fields => |fields| blk: {
             var count: usize = fields.len;
-            for (fields) |field|
-                count = std.math.add(usize, count, try readableCells(storage, handle, offset + field.offset, field.layout)) catch return error.ExecutionMemoryLimit;
+            for (fields, 0..) |field, index| {
+                if (evidence) |selected| try selected.push(.{ .field = @intCast(index) });
+                defer if (evidence) |selected| {
+                    selected.len -= 1;
+                };
+                count = std.math.add(usize, count, try readableCells(storage, handle, offset + field.offset, field.layout, evidence)) catch return error.ExecutionMemoryLimit;
+            }
             break :blk count;
         },
         .array => |array| blk: {
             var count: usize = array.length;
-            for (0..array.length) |index|
-                count = std.math.add(usize, count, try readableCells(storage, handle, offset + index * array.stride, array.element)) catch return error.ExecutionMemoryLimit;
+            for (0..array.length) |index| {
+                if (evidence) |selected| try selected.push(.{ .element = index });
+                defer if (evidence) |selected| {
+                    selected.len -= 1;
+                };
+                count = std.math.add(usize, count, try readableCells(storage, handle, offset + index * array.stride, array.element, evidence)) catch return error.ExecutionMemoryLimit;
+            }
             break :blk count;
         },
     };
 }
 
-fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, remaining: *[]Value) anyerror!Value {
+fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, remaining: *[]Value, evidence: ?*Evidence) anyerror!Value {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
+        .reference => |permission| try (evidence orelse return error.ExecutionMissingCleanup).reference(storage, permission),
         .boolean => blk: {
             var bytes: [1]u8 = undefined;
             try storage.acquisitions.read(storage, handle, offset, &bytes);
@@ -72,13 +122,25 @@ fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *cons
         .fields => |fields| blk: {
             const values = remaining.*[0..fields.len];
             remaining.* = remaining.*[fields.len..];
-            for (fields, values) |field, *value| value.* = try readValidated(storage, handle, offset + field.offset, field.layout, endian, remaining);
+            for (fields, values, 0..) |field, *value, index| {
+                if (evidence) |selected| try selected.push(.{ .field = @intCast(index) });
+                defer if (evidence) |selected| {
+                    selected.len -= 1;
+                };
+                value.* = try readValidated(storage, handle, offset + field.offset, field.layout, endian, remaining, evidence);
+            }
             break :blk .{ .record = values };
         },
         .array => |array| blk: {
             const values = remaining.*[0..array.length];
             remaining.* = remaining.*[array.length..];
-            for (values, 0..) |*value, index| value.* = try readValidated(storage, handle, offset + index * array.stride, array.element, endian, remaining);
+            for (values, 0..) |*value, index| {
+                if (evidence) |selected| try selected.push(.{ .element = index });
+                defer if (evidence) |selected| {
+                    selected.len -= 1;
+                };
+                value.* = try readValidated(storage, handle, offset + index * array.stride, array.element, endian, remaining, evidence);
+            }
             break :blk .{ .array = values };
         },
     };
@@ -94,6 +156,13 @@ pub fn write(storage: *Storage, handle: Handle, offset: usize, layout: *const La
 fn walkWrite(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, value: Value, endian: std.builtin.Endian, commit: bool) anyerror!void {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     switch (layout.shape) {
+        .reference => |permission| {
+            if (value != .reference or (permission == .read_write and value.reference.mutability != .read_write)) return error.ExecutionInvalidReference;
+            try storage.validateLive(&.{value});
+            // Reference representation bytes remain opaque in the interpreter.
+            // Only the prepared logical cell can carry the reference evidence.
+            if (commit) try storage.acquisitions.forgetBytes(storage, handle, offset, layout.size);
+        },
         .boolean => {
             if (value != .boolean) return error.ExecutionInvalidReference;
             if (layout.size != 1) return error.ExecutionInvalidReference;

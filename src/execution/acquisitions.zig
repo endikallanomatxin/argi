@@ -119,12 +119,24 @@ pub const Regions = struct {
         @memcpy(destination, region.bytes[offset..][0..destination.len]);
     }
 
-    pub fn write(self: *Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, source: []const u8) !void {
+    pub fn write(self: *Regions, storage: *storage_mod.Storage, handle: Handle, offset: usize, source: []const u8) !void {
         _ = try self.range(storage, handle, offset, source.len, 1);
         const region = try self.get(storage, handle);
+        try storage.invalidateAcquiredReferences(handle, offset, source.len);
         @memcpy(region.bytes[offset..][0..source.len], source);
         for (offset..offset + source.len) |index|
             region.initialized[index / 8] |= @as(u8, 1) << @as(u3, @intCast(index % 8));
+    }
+
+    // Replacing an opaque representation makes its bytes unavailable. Retained
+    // reference evidence is published separately by the prepared typed write;
+    // stale bytes must not appear to encode that new reference.
+    pub fn forgetBytes(self: *Regions, storage: *storage_mod.Storage, handle: Handle, offset: usize, length: usize) !void {
+        _ = try self.range(storage, handle, offset, length, 1);
+        const region = try self.get(storage, handle);
+        try storage.invalidateAcquiredReferences(handle, offset, length);
+        for (offset..offset + length) |index|
+            region.initialized[index / 8] &= ~(@as(u8, 1) << @as(u3, @intCast(index % 8)));
     }
 
     /// Checked physical scalar access is deliberately distinct from safe
@@ -138,7 +150,7 @@ pub const Regions = struct {
         return @import("../5_codegen/bytecode/numeric_layout.zig").decodeInteger(layout, bytes[0..layout.size], endian);
     }
 
-    pub fn storeInteger(self: *Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, layout: *const @import("../5_codegen/bytecode/numeric_layout.zig").Layout, value: i128, endian: std.builtin.Endian) !void {
+    pub fn storeInteger(self: *Regions, storage: *storage_mod.Storage, handle: Handle, offset: usize, layout: *const @import("../5_codegen/bytecode/numeric_layout.zig").Layout, value: i128, endian: std.builtin.Endian) !void {
         if (layout.size > 8) return error.ExecutionInvalidReference;
         _ = try self.range(storage, handle, offset, layout.size, layout.alignment);
         var bytes: [8]u8 = undefined;

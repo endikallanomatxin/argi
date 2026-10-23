@@ -130,6 +130,14 @@ pub const Storage = struct {
         return self.writeAt(.{}, path, value, 0);
     }
 
+    // Physical writes revoke only the selected logical evidence. Unpack cached
+    // ancestors to preserve siblings, and clear descendants so a later partial
+    // write cannot revive the old value.
+    pub fn clear(self: *Storage, path: []const Projection) !void {
+        try self.validateWritePath(path);
+        try self.writeAt(.{}, path, null, 0);
+    }
+
     // Preflight cached ancestors without unpacking them. A rejected projection
     // must not change occupancy or turn a cached value into a partial tree.
     pub fn validateWritePath(self: *const Storage, path: []const Projection) !void {
@@ -156,10 +164,10 @@ pub const Storage = struct {
             position = selected;
         }
     }
-    fn writeAt(self: *Storage, position: Position, path: []const Projection, value: b.Value, depth: usize) !void {
+    fn writeAt(self: *Storage, position: Position, path: []const Projection, value: ?b.Value, depth: usize) !void {
         if (depth > 64) return error.ExecutionValueDepthLimit;
         if (path.len == 0) {
-            self.values[position.cell] = value;
+            if (value == null) @memset(self.values[position.cell..][0..self.layout.nodes[position.node].span], null) else self.values[position.cell] = value;
             return;
         }
         const target = try self.selectChild(position, path[0]);
@@ -317,4 +325,24 @@ test "rejected nested writes preserve cached ancestors and vacant child cells" {
     const retained = try storage.read(allocator, &.{});
     try std.testing.expect(retained.record.ptr == value.record.ptr);
     try std.testing.expectEqual(@as(u64, 22), retained.record[0].array[1].integer);
+}
+
+test "clearing a partial subtree preserves siblings without reviving cached descendants" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var storage = try Storage.init(a, .{ .nodes = &.{
+        .{ .kind = .record, .first = 1, .count = 2, .span = 5 },
+        .{ .kind = .record, .first = 3, .count = 2, .span = 3, .offset = 1 },
+        .{ .offset = 4 },
+        .{ .offset = 1 },
+        .{ .offset = 2 },
+    } });
+    try storage.write(&.{}, .{ .record = &.{ .{ .record = &.{ .{ .integer = 11 }, .{ .integer = 12 } } }, .{ .integer = 31 } } });
+    const old = try storage.read(a, &.{});
+    try storage.clear(&.{.{ .field = 0 }});
+    try storage.write(&.{ .{ .field = 0 }, .{ .field = 0 } }, .{ .integer = 21 });
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(a, &.{ .{ .field = 0 }, .{ .field = 1 } }));
+    try std.testing.expectEqual(@as(u64, 31), (try storage.read(a, &.{.{ .field = 1 }})).integer);
+    try std.testing.expectEqual(@as(u64, 12), old.record[0].record[1].integer);
 }

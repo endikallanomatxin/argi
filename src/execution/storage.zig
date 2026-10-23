@@ -68,7 +68,7 @@ pub const WriteDestination = struct {
 };
 
 // Executor capability, never a language address or a proof of a legal borrow.
-pub const AcquiredCleanup = struct { context: v.ContextId, frame: v.FrameId };
+pub const AcquiredReservation = struct { context: v.ContextId, frame: v.FrameId };
 
 const CleanupSelection = struct { offset: usize, layout: *const cleanup_layout.Layout };
 
@@ -85,6 +85,9 @@ pub const Storage = struct {
     reusable_frames: std.AutoHashMapUnmanaged(FrameSize, ?v.FrameId) = .empty,
     acquisitions: acquired.Regions = .{},
     acquired_views: std.AutoHashMapUnmanaged(v.FrameId, AcquiredView) = .empty,
+    // One entry per reference-bearing batch, never per leaf or element. Byte
+    // writes into ordinary numeric sessions do not scan unrelated view frames.
+    reference_acquired_frames: std.ArrayList(v.FrameId) = .empty,
     // Reuse exact immutable numeric views, never infer typed owner identity
     // from a physical address. Permissions remain on each returned reference.
     acquired_frames: std.HashMapUnmanaged(AcquiredView, v.FrameId, AcquiredViewContext, std.hash_map.default_max_load_percentage) = .empty,
@@ -156,25 +159,27 @@ pub const Storage = struct {
     /// exact logical slot. This neither initializes bytes nor activates cleanup.
     /// The caller supplies a checked layout which must outlive the reservation.
     /// A previously published byte view cannot be upgraded into an owning slot.
-    pub fn reserveAcquiredCleanup(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout) !AcquiredCleanup {
+    pub fn reserveAcquiredCleanup(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout) !AcquiredReservation {
         return self.reserveAcquiredCleanupBatch(handle, offset, layout, endian, logical_index, value_layout, cleanup, 1);
     }
 
     /// A batch shares its descriptors and owns contiguous value/flag buffers.
     /// Slots are independent owners, not children of an initialized array value.
-    pub fn reserveAcquiredCleanupBatch(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout, count: usize) !AcquiredCleanup {
+    pub fn reserveAcquiredCleanupBatch(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout, count: usize) !AcquiredReservation {
         return self.reserveAcquiredBatch(handle, offset, layout, endian, logical_index, value_layout, cleanup, count, null);
     }
 
     // Region allocators can issue distinct receipts from one physical region.
     // Their private origins delimit logical index namespaces, not owner handles.
-    pub fn reserveAcquiredReceipt(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout, count: usize, receipt_origin: usize) !AcquiredCleanup {
+    pub fn reserveAcquiredReceipt(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, value_layout: partial.Layout, cleanup: ?*const cleanup_layout.Layout, count: usize, receipt_origin: usize) !AcquiredReservation {
         if (receipt_origin > offset) return error.ExecutionInvalidReference;
         _ = try self.acquisitions.range(self, handle, receipt_origin, offset - receipt_origin, 1);
         return self.reserveAcquiredBatch(handle, offset, layout, endian, 0, value_layout, cleanup, count, receipt_origin);
     }
 
-    fn reserveAcquiredBatch(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout, count: usize, receipt_origin: ?usize) !AcquiredCleanup {
+    const empty_cleanup: cleanup_layout.Layout = .{};
+
+    fn reserveAcquiredBatch(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: ?*const cleanup_layout.Layout, count: usize, receipt_origin: ?usize) !AcquiredReservation {
         if (count > std.math.maxInt(b.Slot)) return error.ExecutionMemoryLimit;
         _ = std.math.add(u64, logical_index, count -| 1) catch return error.ExecutionMemoryLimit;
         const extent = std.math.mul(usize, count, layout.size) catch return error.ExecutionMemoryLimit;
@@ -189,9 +194,9 @@ pub const Storage = struct {
         const Description = struct { owners: [1]b.Cleanup, values: partial.Layout };
         const description = try self.allocator.create(Description);
         errdefer self.allocator.destroy(description);
-        description.* = .{ .owners = .{.{ .root = 0, .offset = 0, .layout = cleanup }}, .values = value_layout };
+        description.* = .{ .owners = .{.{ .root = 0, .offset = 0, .layout = cleanup orelse &empty_cleanup }}, .values = value_layout };
         view.value_layout = &description.values;
-        const frame = try self.publishAcquiredFrame(view, &description.owners);
+        const frame = try self.publishAcquiredFrame(view, if (cleanup != null) &description.owners else &.{});
         return .{ .context = self.context, .frame = frame };
     }
 
@@ -220,14 +225,15 @@ pub const Storage = struct {
 
     /// Project a previously reserved identity without allocating. The lowering
     /// must transport this capability; an address lookup cannot recover it.
-    pub fn borrowAcquiredCleanup(self: *Storage, reservation: AcquiredCleanup, permission: p.PointerMutability) !v.Reference {
+    pub fn borrowAcquiredReservation(self: *Storage, reservation: AcquiredReservation, permission: p.PointerMutability) !v.Reference {
         return self.borrowAcquiredElement(reservation, 0, permission);
     }
 
-    pub fn borrowAcquiredElement(self: *Storage, reservation: AcquiredCleanup, index: usize, permission: p.PointerMutability) !v.Reference {
+    pub fn borrowAcquiredElement(self: *Storage, reservation: AcquiredReservation, index: usize, permission: p.PointerMutability) !v.Reference {
         const reference: v.Reference = .{ .context = reservation.context, .frame = reservation.frame, .root = std.math.cast(b.Slot, index) orelse return error.ExecutionIndexOutOfBounds, .path = &.{}, .mutability = permission };
         try self.validateContext(reference);
-        if (try self.acquiredView(reference) == null or self.frames.items[@intFromEnum(reservation.frame)].cleanup.len == 0) return error.ExecutionMissingCleanup;
+        const view = try self.acquiredView(reference) orelse return error.ExecutionMissingCleanup;
+        if (view.value_layout == null) return error.ExecutionMissingCleanup;
         return reference;
     }
 
@@ -246,12 +252,17 @@ pub const Storage = struct {
         // arena-owned, and every lookup checks acquisition liveness first.
         try self.acquired_views.ensureUnusedCapacity(self.allocator, 1);
         try self.acquired_frames.ensureUnusedCapacity(self.allocator, 1);
+        if (view.layout.has_references) {
+            if (view.value_layout == null) return error.ExecutionMissingCleanup;
+            try self.reference_acquired_frames.ensureUnusedCapacity(self.allocator, 1);
+        }
         const values = if (view.value_layout) |logical| std.math.mul(usize, view.count, logical.nodes[0].span) catch return error.ExecutionMemoryLimit else 1;
         const flags = std.math.mul(usize, view.count, b.cleanupFlagCount(cleanup) catch return error.ExecutionInvalidReference) catch return error.ExecutionMemoryLimit;
         const frame = try self.enterBuffers(values, cleanup, flags);
         self.acquired_views.putAssumeCapacityNoClobber(frame, view);
         self.acquired_frames.putAssumeCapacityNoClobber(view, frame);
         self.frames.items[@intFromEnum(frame)].duration = .acquired;
+        if (view.layout.has_references) self.reference_acquired_frames.appendAssumeCapacity(frame);
         return frame;
     }
 
@@ -293,6 +304,60 @@ pub const Storage = struct {
         const start = try std.math.mul(usize, reference.root, span);
         if (start > values.len or span > values.len - start) return error.ExecutionInvalidReference;
         return .{ .layout = logical.*, .values = values[start..][0..span] };
+    }
+
+    // Physical writes cannot manufacture or preserve reference evidence. One
+    // compact reservation describes all repeated elements; inspect only the
+    // intersecting elements and clear touched reference leaves without allocating.
+    pub fn invalidateAcquiredReferences(self: *Storage, handle: acquired.Handle, offset: usize, length: usize) !void {
+        if (length == 0) return;
+        for (self.reference_acquired_frames.items) |frame| {
+            const view = self.acquired_views.get(frame) orelse return error.ExecutionMissingCleanup;
+            if (!std.meta.eql(view.handle, handle)) continue;
+            const logical = view.value_layout orelse return error.ExecutionMissingCleanup;
+            const extent = try std.math.mul(usize, view.count, view.layout.size);
+            if (!overlappingRanges(offset, length, view.offset, extent)) continue;
+            const first = (offset -| view.offset) / view.layout.size;
+            const last = @min(view.count, (offset + length - 1 -| view.offset) / view.layout.size + 1);
+            const values = try self.frameValues(frame);
+            for (first..last) |index| {
+                const start = try std.math.mul(usize, index, logical.nodes[0].span);
+                var record: partial.Storage = .{ .layout = logical.*, .values = values[start..][0..logical.nodes[0].span] };
+                var path: [64]v.Projection = undefined;
+                try invalidateReferenceBytes(&record, view.layout, view.offset + index * view.layout.size, offset, length, &path, 0);
+            }
+        }
+    }
+
+    fn invalidateReferenceBytes(record: *partial.Storage, layout: *const numeric.Layout, base: usize, offset: usize, length: usize, path: *[64]v.Projection, depth: usize) anyerror!void {
+        if (!layout.has_references or !overlappingRanges(base, layout.size, offset, length)) return;
+        if (depth > path.len) return error.ExecutionValueDepthLimit;
+        switch (layout.shape) {
+            .reference => try record.clear(path[0..depth]),
+            .fields => |fields| {
+                if (depth == path.len) return error.ExecutionValueDepthLimit;
+                for (fields, 0..) |field, index| {
+                    path[depth] = .{ .field = @intCast(index) };
+                    try invalidateReferenceBytes(record, field.layout, base + field.offset, offset, length, path, depth + 1);
+                }
+            },
+            .array => |array| {
+                if (depth == path.len or array.stride == 0) return error.ExecutionInvalidReference;
+                const first = (offset -| base) / array.stride;
+                const last = @min(array.length, (offset + length - 1 -| base) / array.stride + 1);
+                for (first..last) |index| {
+                    path[depth] = .{ .element = index };
+                    try invalidateReferenceBytes(record, array.element, base + index * array.stride, offset, length, path, depth + 1);
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn acquiredStoredValue(self: *Storage, reference: v.Reference) !b.Value {
+        _ = try self.acquiredView(reference);
+        const logical = try self.acquiredValues(reference) orelse return error.ExecutionMissingCleanup;
+        return logical.storedValue(reference.path);
     }
 
     pub fn init(allocator: std.mem.Allocator, limit: usize) !Storage {
@@ -654,6 +719,7 @@ pub const Storage = struct {
         return @intCast(index);
     }
     pub fn numericBytes(self: *Storage, reference: v.Reference, layout: *const @import("../5_codegen/bytecode/numeric_layout.zig").Layout, endian: std.builtin.Endian) !v.Reference {
+        if (layout.has_references) return error.ExecutionInvalidReference;
         if (reference.byte_view != null) return error.ExecutionInvalidReference;
         _ = try self.read(reference);
         if (layout.size == 0) return error.ExecutionIndexOutOfBounds;
@@ -692,7 +758,7 @@ pub const Storage = struct {
         if (try self.acquiredView(reference)) |view| {
             if (try self.acquiredValues(reference)) |record|
                 _ = try record.materializationCells(reference.path);
-            return @import("acquired_values.zig").read(self, view.handle, view.offset, view.layout, view.endian);
+            return if (view.layout.has_references) @import("acquired_values.zig").readPrepared(self, view.handle, view.offset, view.layout, view.endian, reference) else @import("acquired_values.zig").read(self, view.handle, view.offset, view.layout, view.endian);
         }
         _ = try self.frameValues(reference.frame);
         const frame = self.frames.items[@intFromEnum(reference.frame)];
@@ -1026,6 +1092,7 @@ pub const Storage = struct {
         }
         if (try self.acquiredView(reference)) |view| {
             var record = try self.acquiredValues(reference);
+            if (view.layout.has_references and record == null) return error.ExecutionMissingCleanup;
             if (record) |*logical| try logical.validateWritePath(reference.path);
             try @import("acquired_values.zig").write(self, view.handle, view.offset, view.layout, value, view.endian);
             if (record) |*logical| try logical.write(reference.path, value);
@@ -1851,14 +1918,14 @@ test "reserved acquired cleanup keeps zero-sized owners distinct and borrowing a
     const frames = storage.frames.items.len;
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
     storage.allocator = failing.allocator();
-    const a = try storage.borrowAcquiredCleanup(first, .read_write);
-    const b_ = try storage.borrowAcquiredCleanup(second, .read_write);
+    const a = try storage.borrowAcquiredReservation(first, .read_write);
+    const b_ = try storage.borrowAcquiredReservation(second, .read_write);
     try std.testing.expect(!try storage.cleanupTest(a));
     try std.testing.expect(!try storage.cleanupTest(b_));
     _ = try storage.cleanupSet(a, true);
     try std.testing.expect(try storage.cleanupTest(a));
     try std.testing.expect(!try storage.cleanupTest(b_));
-    const readonly = try storage.borrowAcquiredCleanup(first, .read_only);
+    const readonly = try storage.borrowAcquiredReservation(first, .read_only);
     try std.testing.expectError(error.ExecutionReadonlyReference, storage.cleanupSet(readonly, false));
     try std.testing.expectEqual(cells, storage.cells);
     try std.testing.expectEqual(frames, storage.frames.items.len);
@@ -1866,7 +1933,7 @@ test "reserved acquired cleanup keeps zero-sized owners distinct and borrowing a
     storage.allocator = arena.allocator();
     const captured = try storage.captureResolvedWrite(b_, true);
     try storage.acquisitions.release(&storage, handle);
-    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.borrowAcquiredCleanup(first, .read_write));
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.borrowAcquiredReservation(first, .read_write));
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.cleanupTest(a));
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.checkWriteCleanup(captured));
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.activateWriteCleanup(captured));
@@ -1887,7 +1954,7 @@ test "acquired cleanup reservation failures publish neither owners nor charges" 
         storage.allocator = failure.allocator();
         if (storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 0, value_layout, &cleanup)) |reservation| {
             try std.testing.expect(!failure.has_induced_failure);
-            const reference = try storage.borrowAcquiredCleanup(reservation, .read_write);
+            const reference = try storage.borrowAcquiredReservation(reservation, .read_write);
             try std.testing.expect(!try storage.cleanupTest(reference));
             return;
         } else |err| {
@@ -1898,7 +1965,7 @@ test "acquired cleanup reservation failures publish neither owners nor charges" 
             try std.testing.expectEqual(@as(u32, 0), storage.acquired_frames.count());
         }
     }
-    return error.MissingSuccessfulAcquiredCleanupReservation;
+    return error.MissingSuccessfulAcquiredReservationReservation;
 }
 
 test "reserved acquired cleanup projects partial owners independently of byte offsets" {
@@ -1922,7 +1989,7 @@ test "reserved acquired cleanup projects partial owners independently of byte of
         .{ .offset = 2 },
     } };
     const reservation = try storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 0, value_layout, &cleanup);
-    const root = try storage.borrowAcquiredCleanup(reservation, .read_write);
+    const root = try storage.borrowAcquiredReservation(reservation, .read_write);
     var first = root;
     first.path = &.{.{ .field = 0 }};
     var second = root;
@@ -1972,7 +2039,7 @@ test "reserved acquired values separate occupancy from live numeric bytes and cl
         .{ .offset = 2 },
     } };
     const reservation = try storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 0, value_layout, &cleanup);
-    const root = try storage.borrowAcquiredCleanup(reservation, .read_write);
+    const root = try storage.borrowAcquiredReservation(reservation, .read_write);
     var first = root;
     first.path = &.{.{ .field = 0 }};
     var second = root;
@@ -2013,7 +2080,7 @@ test "reserved acquired arrays share templates and retain zero-sized element occ
         .{ .offset = 1 },
     } };
     const reservation = try storage.reserveAcquiredCleanup(handle, 0, &layout, .little, 0, value_layout, &cleanup);
-    const root = try storage.borrowAcquiredCleanup(reservation, .read_write);
+    const root = try storage.borrowAcquiredReservation(reservation, .read_write);
     var first = root;
     first.path = &.{.{ .element = 0 }};
     var last = root;
@@ -2087,7 +2154,7 @@ test "empty acquired batches and oversized reservations publish no usable owners
     const cleanup: cleanup_layout.Layout = .{ .is_record = true };
     const logical: partial.Layout = .{ .nodes = &.{.{}} };
     const empty = try storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 0, logical, &cleanup, 0);
-    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.borrowAcquiredCleanup(empty, .read_write));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.borrowAcquiredReservation(empty, .read_write));
     const cells = storage.cells;
     const frames = storage.frames.items.len;
     try std.testing.expectError(error.ExecutionMemoryLimit, storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 0, logical, &cleanup, 1000));
@@ -2292,7 +2359,7 @@ test "zero-sized cleanup batches intersect by logical index rather than address"
     const next = try storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 13, logical, &cleanup, 1);
     _ = try storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, std.math.maxInt(u64), logical, &cleanup, 1);
     try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, std.math.maxInt(u64) - 1, logical, &cleanup, 2));
-    const last = try storage.borrowAcquiredCleanup(next, .read_write);
+    const last = try storage.borrowAcquiredReservation(next, .read_write);
     try storage.store(last, .{ .record = &.{} });
     _ = try storage.cleanupSet(last, true);
     try std.testing.expect(try storage.cleanupTest(last));
@@ -2360,4 +2427,56 @@ test "distinct acquired receipts retain independent zero-sized slot namespaces" 
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(right));
     try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredReceipt(handle, 8, &physical, .little, logical, &cleanup, 1, 0));
     try std.testing.expectError(error.ExecutionInvalidReference, storage.reserveAcquiredReceipt(handle, 8, &physical, .little, logical, &cleanup, 1, 9));
+}
+
+test "prepared acquired references retain siblings and revoke only physically overwritten evidence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const caller = try storage.enter(2);
+    const slots_ = try storage.slots(caller);
+    try slots_.put(0, .{ .integer = 11 });
+    try slots_.put(1, .{ .integer = 31 });
+    const left: v.Reference = .{ .context = storage.context, .frame = caller, .root = 0, .path = &.{}, .mutability = .read_write };
+    const right: v.Reference = .{ .context = storage.context, .frame = caller, .root = 1, .path = &.{}, .mutability = .read_only };
+    const pointer: numeric.Layout = .{ .size = 8, .alignment = 8, .has_references = true, .shape = .{ .reference = .read_only } };
+    const number: numeric.Layout = .{ .size = 8, .alignment = 8, .shape = .{ .integer = .{ .signed = false } } };
+    const physical: numeric.Layout = .{ .size = 24, .alignment = 8, .has_references = true, .shape = .{ .fields = &.{ .{ .offset = 0, .layout = &pointer }, .{ .offset = 8, .layout = &pointer }, .{ .offset = 16, .layout = &number } } } };
+    const logical: partial.Layout = .{ .nodes = &.{ .{ .kind = .record, .first = 1, .count = 3, .span = 4 }, .{ .offset = 1 }, .{ .offset = 2 }, .{ .offset = 3 } } };
+    const handle = try storage.acquisitions.acquire(&storage, 80, 8);
+    const prepared = try storage.reserveAcquiredReceipt(handle, 32, &physical, .little, logical, null, 2, 0);
+    const first = try storage.borrowAcquiredElement(prepared, 0, .read_write);
+    const second = try storage.borrowAcquiredElement(prepared, 1, .read_write);
+    const value: b.Value = .{ .record = &.{ .{ .reference = left }, .{ .reference = right }, .{ .integer = 5 } } };
+    try storage.store(first, value);
+    try storage.store(second, value);
+    try std.testing.expectEqual(@as(usize, 0), storage.frames.items[@intFromEnum(prepared.frame)].cleanup_flags.len);
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.store(first, .{ .record = &.{ .{ .reference = right }, .{ .integer = 0 }, .{ .integer = 99 } } }));
+    const snapshot = try storage.read(first);
+    try std.testing.expectEqual(@as(u64, 11), (try storage.read(snapshot.record[0].reference)).integer);
+    try std.testing.expectEqual(p.PointerMutability.read_only, snapshot.record[0].reference.mutability);
+    var field = first;
+    field.path = &.{.{ .field = 0 }};
+    try storage.acquisitions.write(&storage, handle, 32, &.{0});
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(field));
+    field.path = &.{.{ .field = 1 }};
+    try std.testing.expectEqual(@as(u64, 31), (try storage.read((try storage.read(field)).reference)).integer);
+    try storage.acquisitions.write(&storage, handle, 48, &.{9});
+    try std.testing.expectEqual(@as(u64, 31), (try storage.read((try storage.read(field)).reference)).integer);
+    field.path = &.{.{ .field = 2 }};
+    try std.testing.expectEqual(@as(u64, 9), (try storage.read(field)).integer);
+    try std.testing.expectEqual(@as(u64, 5), (try storage.read(second)).record[2].integer);
+    field.path = &.{.{ .field = 0 }};
+    try storage.store(field, .{ .reference = left });
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.acquisitions.requireInitialized(&storage, handle, 32, 1));
+    try std.testing.expectEqual(@as(u64, 11), (try storage.read((try storage.read(field)).reference)).integer);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.write(&storage, handle, 79, &.{ 0, 0 }));
+    try std.testing.expectEqual(@as(u64, 11), (try storage.read((try storage.read(field)).reference)).integer);
+    try storage.acquisitions.write(&storage, handle, 33, &.{0});
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(field));
+    // An earlier value copy keeps its original reference; revocation belongs
+    // to the overwritten storage slot, not to the pointee or immutable copies.
+    try std.testing.expectEqual(@as(u64, 11), (try storage.read(snapshot.record[0].reference)).integer);
+    try storage.acquisitions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(second));
 }

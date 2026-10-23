@@ -37,24 +37,29 @@ pub fn describe(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
 // occupancy. These descriptors outlive execution and contain no graph pointers.
 pub const Reservation = struct {
     endian: std.builtin.Endian,
+    geometry: Shape,
     receipt: @import("bytecode/acquired_receipt.zig").Layout,
     physical: *const @import("bytecode/numeric_layout.zig").Layout,
     values: @import("bytecode/storage_layout.zig").Layout,
-    cleanup: *const cleanup.Layout,
+    cleanup: ?*const cleanup.Layout,
 };
 
-pub fn reservation(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, receipt_type: g.GlobalTypeId, counts: *cleanup.Counts) !*const Reservation {
-    const physical = try @import("bytecode/numeric_layout.zig").compile(allocator, graph, ty);
+pub fn reservation(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, receipt_type: g.GlobalTypeId, counts: *cleanup.Counts, owning: bool) !*const Reservation {
+    const physical = try @import("bytecode/numeric_layout.zig").compileAcquired(allocator, graph, ty);
     const result = try allocator.create(Reservation);
-    _ = try counts.count(allocator, graph, ty);
+    if (owning) _ = try counts.count(allocator, graph, ty);
+    var leaves: references.Layout = .{};
+    defer leaves.deinit(allocator);
+    const geometry = try describe(allocator, graph, ty, owning, counts, &leaves);
     const receipt = try @import("bytecode/acquired_receipt.zig").compile(graph, receipt_type);
     if (receipt.metadata == null or receipt.grant == null) return error.InvalidAllocationMetadataPrimitive;
     result.* = .{
         .endian = graph.target.stdTarget().cpu.arch.endian(),
+        .geometry = geometry,
         .receipt = receipt,
         .physical = physical,
         .values = try @import("bytecode/storage_layout.zig").compile(allocator, graph, ty),
-        .cleanup = counts.retained(ty),
+        .cleanup = if (owning) counts.retained(ty) else null,
     };
     return result;
 }
