@@ -997,7 +997,7 @@ test "generic interning fast index preserves argument matching and rollback" {
 
     const saved = graph.checkpoint();
     const speculative = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(8), .arguments = .{ .start = 0, .len = 1 } } });
-    graph.rollback(saved);
+    graph.rollback(allocator, saved);
     try graph.types.append(allocator, .{ .builtin = .Bool });
     const committed = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(8), .arguments = .{ .start = 0, .len = 1 } } });
     try std.testing.expect(committed != speculative);

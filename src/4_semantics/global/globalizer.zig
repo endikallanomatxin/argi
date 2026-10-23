@@ -55,7 +55,7 @@ pub const Relocation = struct {
         const saved = self.graph.checkpoint();
         const offset_count = self.offsets.items.len;
         errdefer {
-            self.graph.rollback(saved);
+            self.graph.rollback(allocator, saved);
             self.offsets.shrinkRetainingCapacity(offset_count);
         }
         const total = std.math.add(usize, offset_count, modules.len) catch return error.GlobalSemanticGraphTooLarge;

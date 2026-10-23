@@ -44,7 +44,7 @@ test "standard contract lookup preserves ownership with complete and stale index
     try std.testing.expect(graph.indexedDeclarationsNamed("Init") == null);
     try std.testing.expectEqual(expected, standardDeclaration(&graph, "Init").?);
     _ = try graph.declarationsNamed(allocator, "Init");
-    graph.rollback(saved);
+    graph.rollback(allocator, saved);
     try std.testing.expectEqual(expected, standardDeclaration(&graph, "Init").?);
 }
 

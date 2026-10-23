@@ -429,12 +429,12 @@ test "staged requests own transient type descriptions after selection rollback" 
         try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
         try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
         try std.testing.expectEqual(null, scheduler.requests.items[0].bindings.types[0]);
-        graph.rollback(checkpoint_);
+        graph.rollback(a, checkpoint_);
         try graph.types.append(a, .{ .array = .{ .length = 2, .element = @enumFromInt(0) } });
         if (pending_errable) try graph.types.append(a, .{ .inferred_errable = @enumFromInt(1) });
         try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
         try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
-        graph.rollback(checkpoint_);
+        graph.rollback(a, checkpoint_);
         try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
         if (pending_errable) try graph.types.append(a, .{ .inferred_errable = @enumFromInt(1) });
         scheduler.requests.items[0].value = .{ .boolean = true };

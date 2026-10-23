@@ -75,7 +75,7 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
         // Publish the signature only once all backing pools are ready. A failed
         // allocation leaves this function unchanged and earlier imports intact.
         const saved = graph.checkpoint();
-        errdefer graph.rollback(saved);
+        errdefer graph.rollback(allocator, saved);
         const source = graph.declaration(function.declaration).source;
         const segment_start: u32 = @intCast(graph.reach_segments.items.len);
         try graph.reach_segments.append(allocator, name);

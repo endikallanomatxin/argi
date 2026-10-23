@@ -1305,12 +1305,12 @@ pub const Resolver = struct {
             .struct_value_literal => |value| value,
             else => return null,
         };
-        const checkpoint = self.graph.checkpoint();
+        var checkpoint = self.graph.beginTransaction(self.allocator);
         const caches = self.checkpointResolution();
         const comptime_failure = self.generics.comptime_failure;
         const argument_failure = self.generics.argument_failure;
         defer {
-            self.graph.rollback(checkpoint);
+            checkpoint.rollback();
             self.rollbackResolution(caches);
             self.generics.comptime_failure = comptime_failure;
             self.generics.argument_failure = argument_failure;

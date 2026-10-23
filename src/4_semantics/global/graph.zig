@@ -196,6 +196,8 @@ pub const GlobalSemanticGraph = struct {
         pool_lengths: [@typeInfo(GlobalSemanticGraph).@"struct".fields.len]usize,
         indexed_functions: usize,
         indexed_declarations: usize,
+        indexed_parameterized_modules: usize,
+        indexed_module_functions: usize,
         type_resolution_len: usize,
         binding_type_resolution_len: usize,
         type_rewrites_len: usize,
@@ -209,6 +211,7 @@ pub const GlobalSemanticGraph = struct {
     /// mutations still require the resolver's side-effect checkpoint.
     pub const Transaction = struct {
         graph: *GlobalSemanticGraph,
+        allocator: std.mem.Allocator,
         saved: Checkpoint,
         parent: ?MutationFrontier,
         frontier: MutationFrontier,
@@ -224,7 +227,7 @@ pub const GlobalSemanticGraph = struct {
         pub fn rollback(self: *Transaction) void {
             if (!self.active) return;
             std.debug.assert(std.meta.eql(self.graph.mutation_frontier.?, self.frontier));
-            self.graph.rollback(self.saved);
+            self.graph.rollback(self.allocator, self.saved);
             self.graph.mutation_frontier = self.parent;
             self.active = false;
         }
@@ -234,12 +237,12 @@ pub const GlobalSemanticGraph = struct {
         }
     };
 
-    pub fn beginTransaction(self: *GlobalSemanticGraph) Transaction {
+    pub fn beginTransaction(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) Transaction {
         const parent = self.mutation_frontier;
         const frontier: MutationFrontier = .{ .types = self.types.items.len, .bindings = self.bindings.items.len, .depth = if (parent) |value| value.depth + 1 else 1 };
         const saved = self.checkpoint();
         self.mutation_frontier = frontier;
-        return .{ .graph = self, .saved = saved, .parent = parent, .frontier = frontier };
+        return .{ .graph = self, .allocator = allocator, .saved = saved, .parent = parent, .frontier = frontier };
     }
 
     pub const BindingInitialization = struct {
@@ -443,6 +446,8 @@ pub const GlobalSemanticGraph = struct {
             .pool_lengths = @splat(0),
             .indexed_functions = self.lookup.indexed_functions,
             .indexed_declarations = self.lookup.indexed_declarations,
+            .indexed_parameterized_modules = self.lookup.indexed_parameterized_modules,
+            .indexed_module_functions = self.lookup.indexed_module_functions,
             .type_resolution_len = self.construction.type_resolution.items.len,
             .binding_type_resolution_len = self.construction.binding_type_resolution.items.len,
             .type_rewrites_len = self.construction.type_rewrites.items.len,
@@ -463,9 +468,10 @@ pub const GlobalSemanticGraph = struct {
     /// including canonical arguments. Binding types and function completions
     /// are restored before their referenced pools shrink.
     /// Other in-place mutations of pre-existing entries remain outside this checkpoint.
-    pub fn rollback(self: *GlobalSemanticGraph, saved: Checkpoint) void {
+    pub fn rollback(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
-        self.discardIndexedTail(saved.indexed_functions, saved.indexed_declarations);
+        self.discardIndexedTail(allocator, saved.indexed_functions, saved.indexed_declarations);
+        self.discardParameterizedTail(allocator, saved.indexed_parameterized_modules, saved.indexed_module_functions);
         while (self.construction.function_completions.items.len > saved.function_completions_len) {
             switch (self.construction.function_completions.pop().?) {
                 .body => |id| self.functions.items[@intFromEnum(id)].body = null,
@@ -560,14 +566,7 @@ pub const GlobalSemanticGraph = struct {
             }
             const decl = self.declarations.items[@intFromEnum(callable.declaration)];
             const spelling = self.text(decl.name);
-            if (self.lookup.function_names.getPtr(spelling) == null) {
-                const owned = try allocator.dupe(u8, spelling);
-                self.lookup.function_names.put(allocator, owned, .empty) catch |err| {
-                    allocator.free(owned);
-                    return err;
-                };
-            }
-            try self.lookup.function_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            try appendNamed(GlobalFunctionId, allocator, &self.lookup.function_names, spelling, @enumFromInt(raw));
 
             self.lookup.indexed_functions += 1;
         }
@@ -578,14 +577,7 @@ pub const GlobalSemanticGraph = struct {
         while (self.lookup.indexed_declarations < self.declarations.items.len) {
             const raw = self.lookup.indexed_declarations;
             const spelling = self.text(self.declarations.items[raw].name);
-            if (self.lookup.declaration_names.getPtr(spelling) == null) {
-                const owned = try allocator.dupe(u8, spelling);
-                self.lookup.declaration_names.put(allocator, owned, .empty) catch |err| {
-                    allocator.free(owned);
-                    return err;
-                };
-            }
-            try self.lookup.declaration_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            try appendNamed(GlobalDeclId, allocator, &self.lookup.declaration_names, spelling, @enumFromInt(raw));
             self.lookup.indexed_declarations += 1;
         }
         return if (self.lookup.declaration_names.get(name)) |matches| matches.items else &.{};
@@ -600,19 +592,60 @@ pub const GlobalSemanticGraph = struct {
 
     /// Speculative resolution can append functions and declarations before
     /// rolling their pools back. Remove those IDs before truncating the pools.
-    pub fn discardIndexedTail(self: *GlobalSemanticGraph, function_count: usize, declaration_count: usize) void {
+    pub fn discardIndexedTail(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, function_count: usize, declaration_count: usize) void {
         while (self.lookup.indexed_functions > function_count) {
             self.lookup.indexed_functions -= 1;
             const entry = self.functions.items[self.lookup.indexed_functions];
             if (!isNamedFunction(entry)) continue;
             const name = self.text(self.declarations.items[@intFromEnum(entry.declaration)].name);
-            _ = self.lookup.function_names.getPtr(name).?.pop();
+            popNamed(GlobalFunctionId, allocator, &self.lookup.function_names, name);
         }
         while (self.lookup.indexed_declarations > declaration_count) {
             self.lookup.indexed_declarations -= 1;
             const name = self.text(self.declarations.items[self.lookup.indexed_declarations].name);
-            _ = self.lookup.declaration_names.getPtr(name).?.pop();
+            popNamed(GlobalDeclId, allocator, &self.lookup.declaration_names, name);
         }
+    }
+
+    fn appendNamed(comptime T: type, allocator: std.mem.Allocator, map: *std.StringHashMapUnmanaged(std.ArrayList(T)), name: []const u8, value: T) !void {
+        if (map.getPtr(name)) |items| return items.append(allocator, value);
+        const owned = try allocator.dupe(u8, name);
+        errdefer allocator.free(owned);
+        var items: std.ArrayList(T) = .empty;
+        errdefer items.deinit(allocator);
+        try items.append(allocator, value);
+        try map.put(allocator, owned, items);
+    }
+
+    fn popNamed(comptime T: type, allocator: std.mem.Allocator, map: *std.StringHashMapUnmanaged(std.ArrayList(T)), name: []const u8) void {
+        const items = map.getPtr(name).?;
+        _ = items.pop().?;
+        if (items.items.len != 0) return;
+        var removed = map.fetchRemove(name).?;
+        removed.value.deinit(allocator);
+        allocator.free(removed.key);
+    }
+
+    fn discardParameterizedTail(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, module_count: usize, function_count: usize) void {
+        if (self.lookup.indexed_parameterized_modules == module_count and self.lookup.indexed_module_functions == function_count) return;
+        var entries = self.lookup.parameterized_function_names.iterator();
+        while (entries.next()) |entry| {
+            const items = entry.value_ptr;
+            while (items.items.len != 0) {
+                const last = items.items[items.items.len - 1];
+                if (last.module_index < module_count or (last.module_index == module_count and last.function_index < function_count)) break;
+                _ = items.pop();
+            }
+            if (items.items.len == 0) {
+                const key = entry.key_ptr.*;
+                items.deinit(allocator);
+                // Removing the current slot does not move or rehash the table.
+                self.lookup.parameterized_function_names.removeByPtr(entry.key_ptr);
+                allocator.free(key);
+            }
+        }
+        self.lookup.indexed_parameterized_modules = module_count;
+        self.lookup.indexed_module_functions = function_count;
     }
 
     /// Retained modules are immutable; newly appended modules extend this
@@ -637,15 +670,7 @@ pub const GlobalSemanticGraph = struct {
                     continue;
                 }
                 const spelling = module.text(module.declarations.items[@intFromEnum(candidate.declaration)].name);
-                if (self.lookup.parameterized_function_names.getPtr(spelling) == null) {
-                    const owned = try allocator.dupe(u8, spelling);
-                    self.lookup.parameterized_function_names.put(allocator, owned, .empty) catch |err| {
-                        allocator.free(owned);
-                        return err;
-                    };
-                }
-
-                try self.lookup.parameterized_function_names.getPtr(spelling).?.append(allocator, .{
+                try appendNamed(ParameterizedFunctionCandidate, allocator, &self.lookup.parameterized_function_names, spelling, .{
                     .module_index = @intCast(module_index),
                     .function_index = @intCast(function_index),
                 });
@@ -999,7 +1024,7 @@ test "name indexes discard speculative functions before IDs are reused" {
         .output = .{ .start = 0, .len = 0 },
     });
     try std.testing.expectEqual(@as(usize, 1), (try graph.functionsNamed(allocator, "discarded")).len);
-    graph.discardIndexedTail(1, 3);
+    graph.discardIndexedTail(allocator, 1, 3);
     graph.functions.shrinkRetainingCapacity(1);
     try graph.functions.append(allocator, .{
         .declaration = @enumFromInt(2),
@@ -1057,7 +1082,7 @@ test "semantic graph checkpoint restores append-only pools and name indexes" {
     _ = try graph.declarationsNamed(allocator, "discarded");
     _ = try graph.functionsNamed(allocator, "discarded");
 
-    graph.rollback(saved);
+    graph.rollback(allocator, saved);
     try std.testing.expectEqual(@as(usize, 1), graph.declarations.items.len);
     try std.testing.expectEqual(@as(usize, 1), graph.functions.items.len);
     try std.testing.expectEqual(@as(usize, 0), graph.nodes.items.len);
@@ -1109,10 +1134,10 @@ test "generic argument rewrites restore existing types across nested checkpoints
     const inner = graph.checkpoint();
     try graph.generic_arguments.append(allocator, graph.generic_arguments.items[0]);
     try graph.replaceTypeArguments(allocator, @enumFromInt(1), .{ .start = 2, .len = 1 });
-    graph.rollback(inner);
+    graph.rollback(allocator, inner);
     try std.testing.expectEqual(@as(u32, 1), graph.types.items[1].generic.arguments.start);
     try std.testing.expectEqual(@as(usize, 2), graph.generic_arguments.items.len);
-    graph.rollback(outer);
+    graph.rollback(allocator, outer);
     try std.testing.expectEqual(@as(u32, 0), graph.types.items[1].generic.arguments.start);
     try std.testing.expectEqual(@as(usize, 1), graph.generic_arguments.items.len);
     try std.testing.expectEqual(@as(usize, 0), graph.construction.type_rewrites.items.len);
@@ -1155,7 +1180,7 @@ test "named function lookup excludes instances and callback prototypes across ro
     // Cached bodies remain addressable for codegen, without joining name lookup.
     try std.testing.expect(graph.function(@enumFromInt(1)).flags.is_generic_instantiation);
     try std.testing.expect(graph.function(@enumFromInt(2)).flags.is_c_function_pointer);
-    graph.rollback(saved);
+    graph.rollback(allocator, saved);
     try graph.functions.append(allocator, callable);
     try std.testing.expectEqual(@as(usize, 2), (try graph.functionsNamed(allocator, "identity")).len);
 }
@@ -1328,12 +1353,12 @@ test "function completions preserve published bodies across nested rollback and 
     try graph.completeFunctionBody(a, @enumFromInt(1), @enumFromInt(1), &.{.{ .binding = @enumFromInt(0), .value = @enumFromInt(0) }});
     try std.testing.expectError(error.FunctionBodyAlreadyCompleted, graph.completeFunctionBody(a, @enumFromInt(0), @enumFromInt(1), &.{}));
     for (0..64) |_| try graph.functions.append(a, graph.functions.items[0]);
-    graph.rollback(inner);
+    graph.rollback(a, inner);
     try std.testing.expectEqual(@as(usize, 2), graph.functions.items.len);
     try std.testing.expectEqual(@as(?GlobalBlockId, @enumFromInt(0)), graph.functions.items[0].body);
     try std.testing.expect(graph.functions.items[1].body == null);
     try std.testing.expectEqual(@as(?GlobalNodeId, @enumFromInt(1)), graph.bindings.items[0].initialization);
-    graph.rollback(outer);
+    graph.rollback(a, outer);
     try std.testing.expect(graph.functions.items[0].body == null);
     try std.testing.expectEqual(@as(?GlobalNodeId, @enumFromInt(0)), graph.bindings.items[0].initialization);
     try std.testing.expectEqualDeep(outer, graph.checkpoint());
@@ -1349,7 +1374,7 @@ fn completeFunctionWithAllocationFailures(allocator: std.mem.Allocator) !void {
         std.debug.assert(graph.construction.function_completions.items.len == saved.function_completions_len);
     }
     try graph.completeFunctionBody(allocator, @enumFromInt(0), @enumFromInt(0), &.{.{ .binding = @enumFromInt(0), .value = @enumFromInt(1) }});
-    graph.rollback(saved);
+    graph.rollback(allocator, saved);
     try std.testing.expectEqualDeep(saved, graph.checkpoint());
 }
 
@@ -1372,12 +1397,12 @@ test "resolution transactions restore older holes after nested commit and pool g
     var graph = try resolutionTransactionGraph(a);
     defer graph.deinit(a);
     const saved = graph.checkpoint();
-    var outer = graph.beginTransaction();
+    var outer = graph.beginTransaction(a);
     defer outer.deinit();
     try graph.types.append(a, .{ .builtin = .UInt8 });
     try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .Int32 });
     try graph.resolveBindingType(a, @enumFromInt(0), @enumFromInt(1));
-    var inner = graph.beginTransaction();
+    var inner = graph.beginTransaction(a);
     defer inner.deinit();
     try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .UInt64 });
     try graph.resolveBindingType(a, @enumFromInt(0), @enumFromInt(0));
@@ -1397,12 +1422,12 @@ test "resolution transactions distinguish new tails from parent-owned slots" {
     const a = std.testing.allocator;
     var graph: GlobalSemanticGraph = .{};
     defer graph.deinit(a);
-    var outer = graph.beginTransaction();
+    var outer = graph.beginTransaction(a);
     defer outer.deinit();
     try graph.types.append(a, .{ .builtin = .Int32 });
     try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .UInt8 });
     try std.testing.expectEqual(@as(usize, 0), graph.construction.type_rewrites.items.len);
-    var inner = graph.beginTransaction();
+    var inner = graph.beginTransaction(a);
     defer inner.deinit();
     try graph.markTypeUnresolved(a, @enumFromInt(0));
     try std.testing.expect(graph.isTypeUnresolved(@enumFromInt(0)));
@@ -1418,7 +1443,7 @@ test "resolution transactions undo canonicalization and completion in write orde
     var graph = try resolutionTransactionGraph(a);
     defer graph.deinit(a);
     const before = graph.checkpoint();
-    var transaction = graph.beginTransaction();
+    var transaction = graph.beginTransaction(a);
     defer transaction.deinit();
     try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } });
     try graph.resolveType(a, @enumFromInt(0), .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } } });
@@ -1438,7 +1463,7 @@ fn resolveWithAllocationFailures(allocator: std.mem.Allocator) !void {
     const before = graph.checkpoint();
     const scope = struct {
         fn attempt(alloc: std.mem.Allocator, target: *GlobalSemanticGraph) !void {
-            var transaction = target.beginTransaction();
+            var transaction = target.beginTransaction(alloc);
             defer transaction.deinit();
             try target.types.append(alloc, .{ .builtin = .UInt8 });
             try target.resolveType(alloc, @enumFromInt(0), .{ .builtin = .Int32 });
@@ -1463,14 +1488,14 @@ test "resolution transactions preserve accepted completions after later rejectio
     const a = std.testing.allocator;
     var graph = try resolutionTransactionGraph(a);
     defer graph.deinit(a);
-    var accepted = graph.beginTransaction();
+    var accepted = graph.beginTransaction(a);
     defer accepted.deinit();
     try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .Int32 });
     try graph.resolveBindingType(a, @enumFromInt(0), @enumFromInt(0));
     accepted.commit();
     graph.commitCompletions(a);
     const saved = graph.checkpoint();
-    var rejected = graph.beginTransaction();
+    var rejected = graph.beginTransaction(a);
     defer rejected.deinit();
     try graph.markTypeUnresolved(a, @enumFromInt(0));
     try graph.markBindingTypeUnresolved(a, @enumFromInt(0));
@@ -1480,4 +1505,93 @@ test "resolution transactions preserve accepted completions after later rejectio
     try std.testing.expect(!graph.isBindingTypeUnresolved(@enumFromInt(0)));
     try std.testing.expectEqual(@as(GlobalTypeId, @enumFromInt(0)), graph.binding(@enumFromInt(0)).ty);
     try std.testing.expectEqualDeep(saved, graph.checkpoint());
+}
+
+test "rejected unique names retain no index entries or per-name allocations" {
+    var memory = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const a = memory.allocator();
+    {
+        var graph: GlobalSemanticGraph = .{};
+        defer graph.deinit(a);
+        var retained: ?usize = null;
+        for (0..1000) |index| {
+            const saved = graph.checkpoint();
+            var buffer: [32]u8 = undefined;
+            const spelling = try std.fmt.bufPrint(&buffer, "rejected_{d:0>4}", .{index});
+            const name = try graph.addString(a, spelling);
+            try graph.declarations.append(a, .{ .kind = .function, .name = name, .source = .{ .file_index = 0, .offset = 0 } });
+            try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+            try std.testing.expectEqual(@as(usize, 1), (try graph.functionsNamed(a, spelling)).len);
+            try std.testing.expectEqual(@as(usize, 1), (try graph.declarationsNamed(a, spelling)).len);
+            graph.rollback(a, saved);
+            try std.testing.expectEqual(@as(u32, 0), graph.lookup.function_names.count());
+            try std.testing.expectEqual(@as(u32, 0), graph.lookup.declaration_names.count());
+            const live = memory.allocated_bytes - memory.freed_bytes;
+            if (retained) |previous| try std.testing.expectEqual(previous, live) else retained = live;
+        }
+    }
+    try std.testing.expectEqual(memory.allocated_bytes, memory.freed_bytes);
+}
+
+test "parameterized name indexes restore cursors and reject reused module identities" {
+    const a = std.testing.allocator;
+    var modules: [3]module_sg.ModuleSemanticGraph = @splat(.{});
+    defer for (&modules) |*module| module.deinit(a);
+    const names = [_][]const []const u8{ &.{"work"}, &.{ "work", "discarded" }, &.{"replacement"} };
+    for (&modules, names) |*module, spellings| {
+        module.module_dir = try a.dupe(u8, "module");
+        for (spellings, 0..) |spelling, index| {
+            const name = try semantic_strings.append(&module.strings, a, spelling);
+            try module.declarations.append(a, .{ .kind = .function, .name = name, .source_offset = 0, .module_file_index = 0 });
+            try module.semantic.parameterized_storage.parameterized_functions.append(a, .{
+                .declaration = @enumFromInt(index),
+                .parameters = .{ .start = 0, .len = 0 },
+                .input = @enumFromInt(0),
+                .output = @enumFromInt(0),
+                .body = null,
+            });
+        }
+    }
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    _ = try graph.parameterizedFunctionsNamed(a, modules[0..1], "work");
+    const saved = graph.checkpoint();
+    try std.testing.expectEqual(@as(usize, 2), (try graph.parameterizedFunctionsNamed(a, modules[0..2], "work")).len);
+    try std.testing.expectEqual(@as(usize, 1), (try graph.parameterizedFunctionsNamed(a, modules[0..2], "discarded")).len);
+    graph.rollback(a, saved);
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+    try std.testing.expectEqual(@as(u32, 1), graph.lookup.parameterized_function_names.count());
+    const replacement = [_]module_sg.ModuleSemanticGraph{ modules[0], modules[2] };
+    try std.testing.expectEqual(@as(usize, 0), (try graph.parameterizedFunctionsNamed(a, &replacement, "discarded")).len);
+    try std.testing.expectEqual(@as(usize, 1), (try graph.parameterizedFunctionsNamed(a, &replacement, "work")).len);
+    const selected = try graph.parameterizedFunctionsNamed(a, &replacement, "replacement");
+    try std.testing.expectEqual(@as(usize, 1), selected.len);
+    try std.testing.expectEqual(@as(u32, 1), selected[0].module_index);
+}
+
+fn indexNamesWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const scope = struct {
+        fn attempt(a: std.mem.Allocator, target: *GlobalSemanticGraph) !void {
+            var transaction = target.beginTransaction(a);
+            defer transaction.deinit();
+            const name = try target.addString(a, "discarded");
+            try target.declarations.append(a, .{ .kind = .function, .name = name, .source = .{ .file_index = 0, .offset = 0 } });
+            try target.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+            _ = try target.functionsNamed(a, "discarded");
+            _ = try target.declarationsNamed(a, "discarded");
+        }
+    };
+    errdefer {
+        std.debug.assert(graph.lookup.function_names.count() == 0);
+        std.debug.assert(graph.lookup.declaration_names.count() == 0);
+    }
+    try scope.attempt(allocator, &graph);
+    try std.testing.expectEqual(@as(u32, 0), graph.lookup.function_names.count());
+    try std.testing.expectEqual(@as(u32, 0), graph.lookup.declaration_names.count());
+}
+
+test "name indexes publish keys atomically under allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, indexNamesWithAllocationFailures, .{});
 }

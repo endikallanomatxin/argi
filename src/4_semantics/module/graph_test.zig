@@ -1031,7 +1031,7 @@ test "scoped implementation evidence retains call and source identities" {
     const saved_bindings = result.graph.contract_operation_bindings.items.len;
     const saved = result.graph.checkpoint();
     _ = try result.graph.contract_operation_bindings.addOne(allocator);
-    result.graph.rollback(saved);
+    result.graph.rollback(allocator, saved);
     try std.testing.expectEqual(saved_bindings, result.graph.contract_operation_bindings.items.len);
 }
 

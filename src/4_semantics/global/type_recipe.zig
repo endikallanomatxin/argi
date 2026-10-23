@@ -538,7 +538,7 @@ test "type recipes outlive rollback and distinguish reused type identities" {
     var cloned = try recipe.clone(a);
     defer cloned.deinit(a);
     try std.testing.expect(try recipe.matches(a, &graph, &roots));
-    graph.rollback(checkpoint);
+    graph.rollback(a, checkpoint);
     // The former pointer ID now names a pointer to Bool. Matching must use
     // the retained structure, not a recycled numerical identity.
     try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } });
@@ -604,7 +604,7 @@ fn aggregateDefaultFailures(a: std.mem.Allocator, array: bool) !void {
     try std.testing.expect(try retained.matches(a, &graph, &roots));
     graph.nodes.items[0].content.int_literal = 99;
     try std.testing.expect(!try retained.matches(a, &graph, &roots));
-    graph.rollback(checkpoint);
+    graph.rollback(a, checkpoint);
     try graph.types.append(owner, .{ .builtin = .Bool });
     try graph.nodes.append(owner, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 99 } });
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
@@ -690,7 +690,7 @@ test "type recipes retain literal defaults and their origins across rollback" {
     var retained = try recipe.clone(allocator);
     defer retained.deinit(allocator);
     try std.testing.expect(try retained.matches(allocator, &graph, &roots));
-    graph.rollback(checkpoint);
+    graph.rollback(allocator, checkpoint);
     try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 99 } });
     for ([_][]const u8{ "first", "second" }) |name| try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, name), .ty = @enumFromInt(0), .source = source, .default_value = @enumFromInt(0) });
     try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } });
@@ -743,7 +743,7 @@ test "type recipes preserve literal precision and owned string bytes after rollb
     try std.testing.expect(try recipe.matches(a, &graph, &.{@enumFromInt(3)}));
     graph.nodes.items[0].content = .{ .float_literal = 0.0 };
     try std.testing.expect(!try recipe.matches(a, &graph, &.{@enumFromInt(3)}));
-    graph.rollback(checkpoint);
+    graph.rollback(a, checkpoint);
     _ = try graph.addString(a, "overwritten graph string storage");
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     defer core.deinitReachedCalls();
@@ -781,7 +781,7 @@ fn pendingDefaultFailures(a: std.mem.Allocator) !void {
     try std.testing.expect(try retained.matches(a, &graph, &.{@enumFromInt(2)}));
     graph.argument_default_bindings.items[1].integer = 43;
     try std.testing.expect(!try retained.matches(a, &graph, &.{@enumFromInt(2)}));
-    graph.rollback(checkpoint);
+    graph.rollback(a, checkpoint);
     // Recycled graph pools cannot become part of the retained substitution.
     try graph.types.append(a, .{ .builtin = .Bool });
     try graph.argument_defaults.append(a, .{ .module_index = 0, .expression = @enumFromInt(99), .bindings = .{ .start = 0, .len = 0 } });
@@ -840,7 +840,7 @@ fn choiceDefaultFailures(a: std.mem.Allocator, with_payload: bool) !void {
         graph.nodes.items[0].content.int_literal = 99;
         try std.testing.expect(!try retained.matches(a, &graph, &roots));
     }
-    graph.rollback(checkpoint);
+    graph.rollback(a, checkpoint);
     // Recycle both type and variant IDs before reconstructing the saved value.
     try graph.types.append(a, .{ .builtin = .Bool });
     try graph.variants.append(a, .{ .name = try graph.addString(a, "unrelated"), .source = source, .value = 0 });
@@ -884,7 +884,7 @@ test "type recipes preserve pending errable wrappers without retaining speculati
     var cloned = try recipe.clone(a);
     defer cloned.deinit(a);
     try std.testing.expect(try cloned.matches(a, &graph, &roots));
-    graph.rollback(checkpoint);
+    graph.rollback(a, checkpoint);
     try graph.types.append(a, .{ .array = .{ .element = @enumFromInt(1), .length = 3 } });
     try graph.types.append(a, .{ .inferred_errable = @enumFromInt(2) });
     try std.testing.expect(!try cloned.matches(a, &graph, &roots));

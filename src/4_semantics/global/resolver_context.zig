@@ -325,7 +325,7 @@ test "resolver context extends conformance registration without duplicating reta
     try context.contracts.prepareParticipantConformances();
     try std.testing.expectEqual(@as(usize, 2), retained.graph.contract_conformances.items.len);
     try std.testing.expectEqual(null, context.contracts.participant_conformance_failure);
-    retained.graph.rollback(graph_checkpoint);
+    retained.graph.rollback(a, graph_checkpoint);
     context.contracts.rollbackResolution(resolution_checkpoint);
     try context.contracts.prepareParticipantConformances();
     try std.testing.expectEqual(@as(usize, 2), retained.graph.contract_conformances.items.len);

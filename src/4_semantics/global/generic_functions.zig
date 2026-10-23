@@ -136,7 +136,7 @@ pub const Resolver = struct {
     };
 
     pub fn beginSpeculation(self: *Resolver) Speculation {
-        return .{ .resolver = self, .graph = self.graph.beginTransaction(), .effects = self.checkpointSideEffects() };
+        return .{ .resolver = self, .graph = self.graph.beginTransaction(self.allocator), .effects = self.checkpointSideEffects() };
     }
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {

@@ -1582,7 +1582,7 @@ pub const Resolver = struct {
             .struct_value_literal => |value| value,
             else => return false,
         };
-        var transaction = self.graph.beginTransaction();
+        var transaction = self.graph.beginTransaction(self.allocator);
         defer transaction.deinit();
         var effects = if (self.argument_defaults) |defaults|
             defaults.checkpoint(defaults.context)
@@ -2486,7 +2486,7 @@ test "reached signature rollback restores interfaces before discarded pools are 
         }, @enumFromInt(0))).?;
     }
     try std.testing.expectEqual(@as(u32, 2), graph.functions.items[0].input_bindings.len);
-    graph.rollback(saved);
+    graph.rollback(allocator, saved);
     resolver.rollback_reached_signatures(0);
     try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input.len);
     try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input_bindings.len);
