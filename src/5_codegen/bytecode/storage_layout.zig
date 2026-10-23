@@ -25,7 +25,7 @@ fn matchesNode(layout: Layout, index: usize, physical: *const @import("numeric_l
     if (depth > 64 or index >= layout.nodes.len) return false;
     const node = layout.nodes[index];
     return switch (physical.shape) {
-        .integer, .floating => node.kind == .leaf,
+        .boolean, .integer, .floating => node.kind == .leaf,
         .fields => |fields| blk: {
             if (fields.len == 0) break :blk node.kind == .leaf;
             if (node.kind != .record or node.count != fields.len or node.first > layout.nodes.len or fields.len > layout.nodes.len - node.first) break :blk false;

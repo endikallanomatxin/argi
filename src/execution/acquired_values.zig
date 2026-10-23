@@ -12,7 +12,7 @@ const Value = @import("../5_codegen/bytecode/value.zig").Value;
 pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) anyerror!Value {
     var empty: []Value = &.{};
     switch (layout.shape) {
-        .integer, .floating => return readValidated(storage, handle, offset, layout, endian, &empty),
+        .boolean, .integer, .floating => return readValidated(storage, handle, offset, layout, endian, &empty),
         .fields, .array => {},
     }
     const cells = try readableCells(storage, handle, offset, layout);
@@ -35,7 +35,7 @@ pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Lay
 fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout) anyerror!usize {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
-        .integer, .floating => blk: {
+        .boolean, .integer, .floating => blk: {
             try storage.acquisitions.requireInitialized(storage, handle, offset, layout.size);
             break :blk 0;
         },
@@ -57,6 +57,11 @@ fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *cons
 fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, remaining: *[]Value) anyerror!Value {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
+        .boolean => blk: {
+            var bytes: [1]u8 = undefined;
+            try storage.acquisitions.read(storage, handle, offset, &bytes);
+            break :blk .{ .boolean = bytes[0] & 1 != 0 };
+        },
         .integer => |kind| .{ .integer = integer.encode(try storage.acquisitions.loadInteger(storage, handle, offset, layout, endian), p.integerRangeForWidth(@intCast(layout.size * 8), kind.signed)) },
         .floating => blk: {
             if (layout.size > 8) return error.ExecutionInvalidReference;
@@ -89,6 +94,11 @@ pub fn write(storage: *Storage, handle: Handle, offset: usize, layout: *const La
 fn walkWrite(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, value: Value, endian: std.builtin.Endian, commit: bool) anyerror!void {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     switch (layout.shape) {
+        .boolean => {
+            if (value != .boolean) return error.ExecutionInvalidReference;
+            if (layout.size != 1) return error.ExecutionInvalidReference;
+            if (commit) try storage.acquisitions.write(storage, handle, offset, &.{@intFromBool(value.boolean)});
+        },
         .integer => {
             if (value != .integer) return error.ExecutionInvalidReference;
             if (layout.size > 8) return error.ExecutionInvalidReference;
@@ -149,4 +159,22 @@ fn failedAggregateSnapshot(allocator: std.mem.Allocator) !void {
 
 test "acquired aggregate snapshots allocate one complete backing or preserve storage" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, failedAggregateSnapshot, .{});
+}
+
+test "acquired booleans share byte initialization and reject integer values before writing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1024);
+    const handle = try storage.acquisitions.acquire(&storage, 2, 1);
+    const boolean: Layout = .{ .size = 1, .alignment = 1, .shape = .boolean };
+    const pair: Layout = .{ .size = 2, .alignment = 1, .shape = .{ .array = .{ .element = &boolean, .length = 2, .stride = 1 } } };
+    try std.testing.expectError(error.ExecutionUninitializedStorage, read(&storage, handle, 0, &boolean, .little));
+    try std.testing.expectError(error.ExecutionInvalidReference, write(&storage, handle, 0, &pair, .{ .array = &.{ .{ .boolean = true }, .{ .integer = 1 } } }, .little));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, read(&storage, handle, 0, &boolean, .little));
+    try storage.acquisitions.write(&storage, handle, 0, &.{1});
+    try std.testing.expect((try read(&storage, handle, 0, &boolean, .little)).boolean);
+    try write(&storage, handle, 0, &boolean, .{ .boolean = false }, .big);
+    var bytes: [1]u8 = undefined;
+    try storage.acquisitions.read(&storage, handle, 0, &bytes);
+    try std.testing.expectEqual(@as(u8, 0), bytes[0]);
 }

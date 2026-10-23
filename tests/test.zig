@@ -14977,3 +14977,9 @@ test "feature_tests/execution/252_metadata_free_typed_allocation" {
     try runExpect("tests/feature_tests/execution/252_metadata_free_typed_allocation", 42);
     try vmExpect("tests/feature_tests/execution/252_metadata_free_typed_allocation", 42, null);
 }
+
+test "feature_tests/execution/253_acquired_boolean_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/253_acquired_boolean_resources");
+    try runExpect("tests/feature_tests/execution/253_acquired_boolean_resources", 42);
+    try vmExpect("tests/feature_tests/execution/253_acquired_boolean_resources", 42, null);
+}

@@ -3,13 +3,14 @@ const g = @import("../../4_semantics/global/graph.zig");
 const types = @import("../../4_semantics/global/types.zig");
 const b = @import("bytecode.zig");
 
-/// Physical byte views support numeric data only. References and cleanup
+/// Physical byte views support booleans and numeric data only. References and cleanup
 /// evidence cannot be reconstructed from integer bytes. Descriptors belong to
 /// the compilation arena and contain no semantic graph pointers.
 pub const Layout = struct {
     size: usize,
     alignment: usize,
     shape: union(enum) {
+        boolean,
         integer: struct { signed: bool },
         floating: enum { float16, float32, float64 },
         fields: []const Field,
@@ -22,6 +23,7 @@ pub const Layout = struct {
 pub fn equal(left: *const Layout, right: *const Layout) bool {
     if (left.size != right.size or left.alignment != right.alignment or std.meta.activeTag(left.shape) != std.meta.activeTag(right.shape)) return false;
     return switch (left.shape) {
+        .boolean => true,
         .integer => |integer| integer.signed == right.shape.integer.signed,
         .floating => |kind| kind == right.shape.floating,
         .array => |array| array.length == right.shape.array.length and array.stride == right.shape.array.stride and equal(array.element, right.shape.array.element),
@@ -42,7 +44,10 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
     const physical = try types.layoutOf(graph, ty);
     const size = std.math.cast(usize, physical.size) orelse return error.Overflow;
     const alignment = std.math.cast(usize, physical.alignment) orelse return error.Overflow;
-    const shape: @FieldType(Layout, "shape") = if (b.integerBounds(graph, ty)) |bounds| blk: {
+    const shape: @FieldType(Layout, "shape") = if (types.isBuiltin(graph, ty, .Bool)) blk: {
+        if (size != 1 or alignment != 1) return error.UnsupportedNumericLayout;
+        break :blk .boolean;
+    } else if (b.integerBounds(graph, ty)) |bounds| blk: {
         if (size == 0 or size > 8) return error.UnsupportedNumericLayout;
         break :blk .{ .integer = .{ .signed = bounds.minimum < 0 } };
     } else if (b.floatType(graph, ty)) blk: {
@@ -91,6 +96,7 @@ fn alignOffset(value: usize, alignment: usize) !usize {
 pub fn readByte(layout: *const Layout, value: b.Value, offset: usize, endian: std.builtin.Endian) anyerror!u8 {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
+        .boolean => if (value == .boolean) @intFromBool(value.boolean) else error.ExecutionInvalidReference,
         .integer, .floating => blk: {
             const bits = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
             const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
@@ -231,6 +237,7 @@ pub fn encodeFloat(layout: *const Layout, value: b.Value, bytes: []u8, endian: s
 pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
+        .boolean => if (value == .boolean) .{ .boolean = byte & 1 != 0 } else error.ExecutionInvalidReference,
         .integer, .floating => blk: {
             const previous = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
             const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
@@ -338,4 +345,25 @@ test "numeric scalar codecs agree with byte views across widths and endianness" 
             try std.testing.expectEqualSlices(u8, &(@as([8]u8, @splat(99))), &bytes);
         };
     };
+}
+
+test "boolean byte layout preserves LLVM i1 storage without integer coercion" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const layout = try compile(arena.allocator(), &graph, @enumFromInt(0));
+    try std.testing.expectEqual(@as(usize, 1), layout.size);
+    try std.testing.expectEqual(@as(usize, 1), layout.alignment);
+    try std.testing.expect(layout.shape == .boolean);
+    for ([_]std.builtin.Endian{ .little, .big }) |endian| {
+        try std.testing.expectEqual(@as(u8, 0), try readByte(layout, .{ .boolean = false }, 0, endian));
+        try std.testing.expectEqual(@as(u8, 1), try readByte(layout, .{ .boolean = true }, 0, endian));
+        try std.testing.expect((try writeByte(a, layout, .{ .boolean = false }, 0, 1, endian)).boolean);
+        try std.testing.expect(!(try writeByte(a, layout, .{ .boolean = true }, 0, 0, endian)).boolean);
+    }
+    try std.testing.expectError(error.ExecutionInvalidReference, readByte(layout, .{ .integer = 1 }, 0, .little));
+    try std.testing.expectError(error.ExecutionInvalidReference, writeByte(a, layout, .{ .integer = 0 }, 0, 1, .little));
 }

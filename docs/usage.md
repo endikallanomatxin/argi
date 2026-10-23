@@ -199,7 +199,7 @@ Callback failures poison execution. `argi repl` registers stdout/stderr adapters
 `argi run --vm` currently registers none. Registered core heap acquisition and
 release primitives use context-owned byte storage instead of native allocation;
 raw addresses remain virtual tokens. Checked core establishment can form references
-to integers, floats and numeric records/arrays in acquired storage. Allocation
+to booleans, integers, floats and records/arrays of those scalars in acquired storage. Allocation
 slots carry prepared receipt descriptors; selection stays within that receipt's
 authenticated extent even when other regions are live. Numeric reference offsets
 retain the intersection of declared and authenticated byte extents; selecting an
