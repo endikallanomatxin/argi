@@ -14925,3 +14925,9 @@ test "feature_tests/execution/246_vacant_reference_offset" {
     try runExpect("tests/feature_tests/execution/246_vacant_reference_offset", 42);
     try vmExpect("tests/feature_tests/execution/246_vacant_reference_offset", 42, null);
 }
+
+test "feature_tests/execution/247_reference_offset_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/247_reference_offset_cleanup");
+    try runExpect("tests/feature_tests/execution/247_reference_offset_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/247_reference_offset_cleanup", 42, null);
+}

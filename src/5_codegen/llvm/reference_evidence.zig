@@ -213,6 +213,24 @@ pub fn elementView(builder: c.LLVMBuilderRef, layout: *references.Layout, alloca
     });
 }
 
+// Advance between referents, whose views already point past any enclosing
+// array flag. Data and evidence use independent strides, including zero-sized data.
+pub fn advanceView(builder: c.LLVMBuilderRef, layout: *references.Layout, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, counts: *@import("../cleanup_layout.zig").Counts, ty: g.GlobalTypeId, view: c.LLVMValueRef, index: c.LLVMValueRef) !c.LLVMValueRef {
+    if (c.LLVMGetTypeKind(c.LLVMTypeOf(index)) != c.LLVMIntegerTypeKind or c.LLVMGetIntTypeWidth(c.LLVMTypeOf(index)) > 64) return error.InvalidReferenceEvidenceStorage;
+    const widened = c.LLVMBuildIntCast2(builder, index, c.LLVMInt64Type(), 0, "reference.advance.index");
+    const cleanup_stride = try counts.count(allocator, graph, ty);
+    const reference_stride = try layout.count(allocator, graph, ty);
+    const cleanup_offset = c.LLVMBuildMul(builder, widened, c.LLVMConstInt(c.LLVMInt64Type(), cleanup_stride, 0), "reference.advance.cleanup");
+    const reference_offset = c.LLVMBuildMul(builder, widened, c.LLVMConstInt(c.LLVMInt64Type(), reference_stride, 0), "reference.advance.leaves");
+    var owner = try runtimeOwner(builder, view);
+    owner.offset = c.LLVMBuildAdd(builder, owner.offset, cleanup_offset, "reference.advance.owner");
+    return storageView(builder, .{
+        .cleanup = nullableOffsetValue(builder, try cleanupPointer(builder, view), c.LLVMInt1Type(), cleanup_offset),
+        .references = if (reference_stride == 0) null else nullableOffsetValue(builder, try referencesPointer(builder, view), storageViewType(), reference_offset),
+        .owner = owner,
+    });
+}
+
 // The caller has already checked this index for the data access. Reuse its
 // SSA value; this projection introduces neither another evaluation nor flags
 // for indexed cleanup, which has a separate frontend representation obligation.
@@ -334,4 +352,28 @@ test "native array element views preserve cleanup identity and absent companions
     try std.testing.expect(c.LLVMIsNull(owner.flags) != 0);
     try std.testing.expect(c.LLVMIsNull(owner.refresh) != 0);
     try std.testing.expectError(error.InvalidReferenceEvidenceStorage, elementView(builder, &layout, a, &graph, &counts, @enumFromInt(0), null_view, c.LLVMConstInt(c.LLVMInt32Type(), 0, 0)));
+}
+
+test "native reference advancement retains absent companions and independent strides" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    var layout: references.Layout = .{};
+    defer layout.deinit(a);
+    var counts: @import("../cleanup_layout.zig").Counts = .{};
+    defer counts.deinit(a);
+    const builder = c.LLVMCreateBuilder();
+    defer c.LLVMDisposeBuilder(builder);
+    const advanced = try advanceView(builder, &layout, a, &graph, &counts, @enumFromInt(1), c.LLVMConstNull(storageViewType()), c.LLVMConstInt(c.LLVMInt32Type(), 3, 0));
+    try std.testing.expect(c.LLVMIsNull(try cleanupPointer(builder, advanced)) != 0);
+    try std.testing.expect(c.LLVMIsNull(try referencesPointer(builder, advanced)) != 0);
+    const owner = try runtimeOwner(builder, advanced);
+    try std.testing.expect(c.LLVMIsNull(owner.flags) != 0);
+    try std.testing.expect(c.LLVMIsNull(owner.refresh) != 0);
+    try std.testing.expectEqual(@as(c_ulonglong, 3), c.LLVMConstIntGetZExtValue(owner.offset));
+    try std.testing.expectError(error.InvalidReferenceEvidenceStorage, advanceView(builder, &layout, a, &graph, &counts, @enumFromInt(1), c.LLVMConstNull(storageViewType()), c.LLVMConstReal(c.LLVMDoubleType(), 1)));
 }

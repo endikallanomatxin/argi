@@ -2112,6 +2112,27 @@ pub const CodeGenerator = struct {
         try destination.commit(self, value);
     }
 
+    // Only checked reference primitives may recover companions after their
+    // address arithmetic. Ordinary integer-to-pointer casts grant no evidence.
+    fn castReferenceEvidence(self: *CodeGenerator, target: graph_mod.GlobalTypeId) !?c.LLVMValueRef {
+        const function = self.graph.function(self.current_function orelse return null);
+        const offset = switch (function.safety_primitive) {
+            .reference_offset, .mutable_reference_offset => true,
+            .read_reference => false,
+            else => return null,
+        };
+        if (function.input_bindings.len != @as(u32, if (offset) 2 else 1)) return CodegenError.InvalidType;
+        const bindings = self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len];
+        const base = try self.bindingValue(bindings[0]);
+        const source_type = self.graph.semanticType(base.ty orelse return CodegenError.InvalidType);
+        const target_type = self.graph.semanticType(target);
+        if (source_type != .pointer or target_type != .pointer or !types.equal(self.graph, source_type.pointer.child, target_type.pointer.child)) return CodegenError.InvalidType;
+        const view = base.reference_view orelse return null;
+        if (!offset) return view;
+        const index = try self.bindingValue(bindings[1]);
+        return try reference_evidence.advanceView(self.builder, &self.reference_layouts, self.allocator, self.graph, &self.cleanup_counts, target_type.pointer.child, view, index.value_ref);
+    }
+
     fn explicitCast(self: *CodeGenerator, cast: anytype) !TypedValue {
         const value = (try self.visitNode(cast.value)) orelse return CodegenError.ValueNotFound;
         const source = self.graph.nodes.items[@intFromEnum(cast.value)].ty orelse return CodegenError.InvalidType;
@@ -2144,7 +2165,7 @@ pub const CodeGenerator = struct {
         const source_native = types.isBuiltin(self.graph, source, .UIntNative);
         const target_native = types.isBuiltin(self.graph, target, .UIntNative);
         if (source_ptr and target_native) return .{ .value_ref = c.LLVMBuildPtrToInt(self.builder, value.value_ref, target_ref, "ptr.to.int"), .type_ref = target_ref, .ty = target };
-        if (source_native and target_ptr) return .{ .value_ref = c.LLVMBuildIntToPtr(self.builder, value.value_ref, target_ref, "int.to.ptr"), .type_ref = target_ref, .ty = target };
+        if (source_native and target_ptr) return .{ .value_ref = c.LLVMBuildIntToPtr(self.builder, value.value_ref, target_ref, "int.to.ptr"), .type_ref = target_ref, .ty = target, .reference_view = try self.castReferenceEvidence(target) };
         if (source_ptr and target_ptr) return .{ .value_ref = c.LLVMBuildBitCast(self.builder, value.value_ref, target_ref, "ptr.cast"), .type_ref = target_ref, .ty = target };
         return CodegenError.InvalidType;
     }

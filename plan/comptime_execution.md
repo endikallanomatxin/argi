@@ -58,8 +58,10 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   scalar operations, storage projections, variants and host signatures already use
   prepared descriptors. Virtual compatibility still requires stable identities
   across semantic refinement: choosing the first equal type per snapshot is unsafe.
-- Complete native reference-evidence production for checked offsets, arrays,
-  choices, propagation, lifecycle wrappers and bulk copies. Bulk paths must carry
+- Complete native reference-evidence production for acquired storage, arrays,
+  choices, propagation, lifecycle wrappers and bulk copies. Checked reference
+  offsets and readonly demotion now preserve existing companions, including
+  zero-sized referents; they do not establish acquired companions. Bulk paths must carry
   destination companions before accepting reference aggregates. Reuse semantic
   plans, without a universal IR.
 - Keep adapters on registered, signature-checked primitive identities; do not
