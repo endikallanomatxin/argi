@@ -152,6 +152,8 @@ pub const CompilationSession = struct {
         const semantic = try self.allocator.create(sema.Session);
         errdefer self.allocator.destroy(semantic);
         try self.semantic.fork(semantic, self.allocator, diagnostics);
+        errdefer semantic.deinit();
+        try semantic.beginUnit();
         return .{ .owner = self, .revision = self.revision, .semantic = semantic };
     }
 
@@ -918,5 +920,40 @@ test "semantic unit completion keeps the same graph open for later roots" {
     defer result.deinit(a);
     try std.testing.expectEqual(body, result.graph.function(helper).body);
     try std.testing.expect(result.graph.constructionStateEmpty());
+    try std.testing.expect(!diagnostics.hasErrors());
+}
+
+test "compilation units do not inherit preceding command roots" {
+    const a = std.testing.allocator;
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    var module = try sourceModule(a,
+        \\first := () -> () { first_value :: Int32 = 7 }
+        \\second := () -> () { second_value :: Int32 = 42 }
+    , &diagnostics);
+    defer module.deinit(a);
+    var session = try CompilationSession.init(a, &.{module}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false, .root_selection = .requests_only });
+    defer session.deinit();
+    const graph = &session.semantic.relocation.graph;
+    const first: @import("../4_semantics/global/graph.zig").GlobalFunctionId = for (graph.functions.items, 0..) |function, raw| {
+        if (std.mem.eql(u8, graph.text(graph.declaration(function.declaration).name), "first")) break @enumFromInt(raw);
+    } else return error.MissingFirst;
+    const second: @import("../4_semantics/global/graph.zig").GlobalFunctionId = for (graph.functions.items, 0..) |function, raw| {
+        if (std.mem.eql(u8, graph.text(graph.declaration(function.declaration).name), "second")) break @enumFromInt(raw);
+    } else return error.MissingSecond;
+    var previous = try session.prepareContinuation(&.{module}, &diagnostics, first);
+    defer previous.deinit();
+    const checked = previous.checked.?;
+    try std.testing.expect(checked.unit.?.contains(first));
+    try std.testing.expect(!checked.unit.?.contains(second));
+    try session.accept(&previous);
+    var current = try session.prepareContinuation(&.{module}, &diagnostics, second);
+    defer current.deinit();
+    try std.testing.expect(current.checked.?.unit.?.contains(second));
+    try std.testing.expect(!current.checked.?.unit.?.contains(first));
+    try std.testing.expectEqual(checked.graph.function(first).body, current.checked.?.graph.function(first).body);
+    try std.testing.expect(current.checked.?.graph.function(first).body != null);
+    try std.testing.expect(checked.unit.?.contains(first));
+    try std.testing.expect(!checked.unit.?.contains(second));
     try std.testing.expect(!diagnostics.hasErrors());
 }

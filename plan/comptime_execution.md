@@ -72,6 +72,9 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 - Separate unit finalization and Safety proofs from persistent semantics. Reuse
   verified bodies only with stable hypotheses; check caller facts independently.
   Keep Code Units immutable without copying whole function/type tables per command.
+- Keep definition lookup separate from instantiation evidence. Delayed body
+  completion must preserve its selected context; new conformances must not
+  invalidate safety assumptions of published code.
 - Recover temporary metadata/frames only after all live dependents release them;
   preserve cross-unit virtual dispatch, references, cleanup and reset.
 - Continue measuring 10/100/1,000-command sessions, separating frontend, lowering,

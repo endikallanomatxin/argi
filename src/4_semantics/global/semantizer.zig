@@ -530,6 +530,21 @@ pub const Session = struct {
         candidate.phase = .quiescent;
     }
 
+    /// A unit selects execution dependencies; previous roots are not semantic
+    /// declarations or proofs. Keep materialized bodies and resolver state.
+    pub fn beginUnit(self: *Session) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        const next: ?reachability_mod.FunctionSet = if (self.options.root_selection == .requests_only)
+            reachability_mod.FunctionSet.init(self.allocator)
+        else if (!self.options.exhaustive_function_bodies)
+            try reachability_mod.executionRoots(self.allocator, &self.relocation.graph, self.options.selected_test_name)
+        else
+            null;
+        if (self.reachable) |*previous| previous.deinit();
+        self.reachable = next;
+        self.phase = .ready;
+    }
+
     fn reachableSet(self: *Session) ?*reachability_mod.FunctionSet {
         return if (self.reachable) |*set| set else null;
     }
