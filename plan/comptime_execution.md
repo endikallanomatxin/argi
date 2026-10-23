@@ -15,9 +15,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   Native opaque writes already forward reference companions, but address-based
   establishment supplies none. Reserve companions and cleanup ranges together;
   borrowing must project that reservation rather than create it lazily.
-  Carry the receipt into lowering explicitly: the current acquired-reference
-  instruction retains only address, layout and optional logical index. Address
-  lookup recovers a physical region, not a typed reservation or its obligations.
+  Lowering now carries verified receipt field descriptors and logical indices.
+  Receipt bounds select a physical region, not a typed cleanup reservation.
   Executor reservations now hold inactive cleanup per logical slot and support
   allocation-free borrowing by capability. Connect them to lowering, native
   companions and nonnumeric storage; raw address lookup cannot recover them.

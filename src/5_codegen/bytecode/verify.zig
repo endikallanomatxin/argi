@@ -115,6 +115,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     var arena = std.heap.ArenaAllocator.init(allocator);
                     defer arena.deinit();
                     if (x.permission != target.pointer.mutability or x.endian != program.graph.target.stdTarget().cpu.arch.endian()) return error.InvalidBytecode;
+                    if (x.receipt) |receipt| {
+                        if (primitive != .establish_allocation_slot or f.inputs.len != 4 or receipt.value != f.inputs[0]) return error.InvalidBytecode;
+                        const expected_receipt = @import("acquired_receipt.zig").compile(program.graph, f.slots[receipt.value]) catch return error.InvalidBytecode;
+                        if (!std.meta.eql(expected_receipt, receipt.layout)) return error.InvalidBytecode;
+                    } else if (primitive == .establish_allocation_slot) return error.InvalidBytecode;
                     if (x.logical_index) |selection| {
                         if (primitive != .establish_allocation_slot or f.inputs.len != 4 or selection.value != f.inputs[3]) return error.InvalidBytecode;
                         if (selection.value >= f.slots.len) return error.InvalidBytecode;
@@ -545,6 +550,7 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
         },
         .acquired_reference => |x| {
             try out.append(a, x.address);
+            if (x.receipt) |receipt| try out.append(a, receipt.value);
             if (x.logical_index) |selection| try out.append(a, selection.value);
         },
         .erase_reference => |x| try out.append(a, x.src),

@@ -2837,9 +2837,17 @@ test "acquired slot indices use verified inputs and survive execution" {
         .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
         .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
         .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } },
+        .{ .structural = .{ .fields = .{ .start = 6, .len = 3 } } },
+        .{ .pointer = .{ .child = @enumFromInt(5), .mutability = .read_only } },
     });
     for ([_]g.GlobalTypeId{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(2) }) |ty|
         try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = ty, .source = source });
+    graph.fields.items[1].ty = @enumFromInt(6);
+    for ([_][]const u8{ "_storage_address", "_storage_size", "_storage_alignment" }) |name| {
+        const start: u32 = @intCast(graph.strings.items.len);
+        try graph.strings.appendSlice(a, name);
+        try graph.fields.append(a, .{ .name = .{ .start = start, .len = @intCast(name.len) }, .ty = @enumFromInt(0), .source = source });
+    }
     try graph.variants.appendSlice(a, &.{
         .{ .name = .{ .start = 0, .len = 0 }, .source = source, .value = 0 },
         .{ .name = .{ .start = 0, .len = 0 }, .source = source, .value = 1, .payload_type = @enumFromInt(3) },
@@ -2847,11 +2855,18 @@ test "acquired slot indices use verified inputs and survive execution" {
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 1, .len = 4 }, .output = .{ .start = 5, .len = 1 }, .safety_primitive = .establish_allocation_slot });
     const layout: @import("../5_codegen/bytecode/numeric_layout.zig").Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
     var code = [_]b.Instruction{
-        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 4, .address = 0, .logical_index = .{ .value = 3, .some_ordinal = 1 }, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() } } },
+        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 4, .address = 0, .receipt = .{ .value = 5, .layout = .{ .address = 0, .size = 1, .alignment = 2 } }, .logical_index = .{ .value = 3, .some_ordinal = 1 }, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() } } },
         .{ .source = source, .op = .{ .ret = &.{4} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(2) }, .inputs = &.{ 0, 1, 2, 3 }, .outputs = &.{4}, .code = &code }};
-    const program: b.Program = .{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(2), @enumFromInt(6) }, .inputs = &.{ 5, 0, 2, 3 }, .outputs = &.{4}, .code = &code }};
+    const entry_code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .record = .{ .dst = 5, .fields = &.{ 1, 2, 3 } } } },
+        .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 6, .place = .{ .root = 5, .path = &.{} }, .permission = .read_only } } },
+        .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(0), .args = &.{ 6, 0, 3, 4 }, .outputs = &.{7} } } },
+        .{ .source = source, .op = .{ .ret = &.{7} } },
+    };
+    const entry: b.Function = .{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(5), @enumFromInt(6), @enumFromInt(2) }, .inputs = &.{ 0, 1, 2, 3, 4 }, .outputs = &.{7}, .code = &entry_code };
+    const program: b.Program = .{ .graph = &graph, .functions = &functionPointers(&functions), .expression = &entry };
     try b.verify(a, program);
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
@@ -2859,16 +2874,41 @@ test "acquired slot indices use verified inputs and survive execution" {
     const storage = &executor.context().storage;
     const address = try storage.acquisitions.address(storage, handle, 44);
     const payload: b.Value = .{ .record = &.{.{ .integer = 11 }} };
-    const result = try executor.invoke(@enumFromInt(0), &.{ .{ .integer = address }, .{ .integer = 0 }, .{ .integer = 0 }, .{ .choice = .{ .variant = 1, .payload = &payload } } });
+    const result = try executor.invokeExpression(&.{
+        .{ .integer = address },
+        .{ .integer = try storage.acquisitions.address(storage, handle, 0) },
+        .{ .integer = 64 },
+        .{ .integer = 4 },
+        .{ .choice = .{ .variant = 1, .payload = &payload } },
+    });
     const view = storage.acquired_views.get(result[0].reference.frame).?;
     try std.testing.expectEqual(@as(?u64, 11), view.logical_index);
     try std.testing.expectEqual(@as(usize, 44), view.offset);
+    const original = code[0];
+    code[0].op.acquired_reference.receipt.?.value = 2;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[0] = original;
+    code[0].op.acquired_reference.receipt.?.layout.size = 0;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[0] = original;
+    code[0].op.acquired_reference.receipt = null;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[0] = original;
     code[0].op.acquired_reference.logical_index.?.some_ordinal = 0;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[0].op.acquired_reference.logical_index = .{ .value = 2, .some_ordinal = 1 };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[0].op.acquired_reference.logical_index = null;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[0] = original;
+    const other = try executor.context().acquireRegion(64, 4);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, executor.invokeExpression(&.{
+        .{ .integer = try storage.acquisitions.address(storage, other, 0) },
+        .{ .integer = try storage.acquisitions.address(storage, handle, 0) },
+        .{ .integer = 64 },
+        .{ .integer = 4 },
+        .{ .choice = .{ .variant = 1, .payload = &payload } },
+    }));
 }
 
 test "bytecode relocation requires selected matching mutable evidence" {

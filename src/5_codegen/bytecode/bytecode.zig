@@ -158,7 +158,7 @@ pub const Instruction = struct {
         resolve_location: struct { dst: Slot, id: Slot },
         trace_location: struct { dst: Slot, location: *const TraceLocation },
         static_bytes: struct { dst: Slot, bytes: []const u8 },
-        acquired_reference: struct { dst: Slot, address: Slot, logical_index: ?struct { value: Slot, some_ordinal: u32 } = null, layout: *const @import("numeric_layout.zig").Layout, permission: p.PointerMutability, endian: std.builtin.Endian },
+        acquired_reference: struct { dst: Slot, address: Slot, receipt: ?struct { value: Slot, layout: @import("acquired_receipt.zig").Layout } = null, logical_index: ?struct { value: Slot, some_ordinal: u32 } = null, layout: *const @import("numeric_layout.zig").Layout, permission: p.PointerMutability, endian: std.builtin.Endian },
         erase_reference: struct { dst: Slot, src: Slot },
         numeric_bytes: struct { dst: Slot, src: Slot, layout: *const @import("numeric_layout.zig").Layout, permission: p.PointerMutability, endian: std.builtin.Endian },
         offset_reference: struct { dst: Slot, src: Slot, elements: Slot },

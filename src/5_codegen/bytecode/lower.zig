@@ -203,6 +203,7 @@ const FunctionLower = struct {
     parent: *Lower,
     safety_primitive: p.SafetyPrimitive = .none,
     allocation_index: ?b.Slot = null,
+    allocation_receipt: ?b.Slot = null,
     slots: std.ArrayList(b.Type) = .empty,
     code: std.ArrayList(b.Instruction) = .empty,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, b.Slot) = .empty,
@@ -269,6 +270,7 @@ const FunctionLower = struct {
         }
         if (f.safety_primitive == .establish_allocation_slot) {
             if (inputs.len != 4) return error.InvalidBytecode;
+            self.allocation_receipt = inputs[0];
             self.allocation_index = inputs[3];
         }
         const outputs = try a.alloc(b.Slot, f.output_bindings.len);
@@ -1296,6 +1298,10 @@ const FunctionLower = struct {
                 if (self.parent.cleanup_types[@intFromEnum(target.pointer.child)]) return self.parent.reject(node.source, "acquired reference requiring cleanup evidence");
                 const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child) catch return self.parent.reject(node.source, "acquired reference to nonnumeric storage");
                 var instruction: @FieldType(@FieldType(b.Instruction, "op"), "acquired_reference") = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() };
+                if (self.allocation_receipt) |receipt| instruction.receipt = .{
+                    .value = receipt,
+                    .layout = try @import("acquired_receipt.zig").compile(self.parent.graph, self.slots.items[receipt]),
+                };
                 if (self.allocation_index) |index| {
                     const variants = types.variants(self.parent.graph, self.slots.items[index]) orelse return error.InvalidBytecode;
                     for (self.parent.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, ordinal| {

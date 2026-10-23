@@ -92,6 +92,17 @@ pub const Regions = struct {
         return .{ .handle = handle, .offset = offset, .length = length };
     }
 
+    /// Resolve the acquisition named by a checked receipt, then select within
+    /// its granted extent. A different live region at the requested address
+    /// cannot substitute for that acquisition. This grants no typed occupancy.
+    pub fn resolveReceipt(self: *const Regions, storage: *const storage_mod.Storage, receipt: @import("../5_codegen/bytecode/acquired_receipt.zig").Bounds, address_: usize, length: usize, alignment: usize) !Range {
+        const backing = try self.resolveAddress(storage, receipt.address, receipt.size, receipt.alignment);
+        if (address_ < receipt.address) return error.ExecutionIndexOutOfBounds;
+        const offset = address_ - receipt.address;
+        if (offset > receipt.size or length > receipt.size - offset) return error.ExecutionIndexOutOfBounds;
+        return self.range(storage, backing.handle, try std.math.add(usize, backing.offset, offset), length, alignment);
+    }
+
     /// Copy reads instead of exporting a mutable host slice or an untracked
     /// language reference. Validate the entire range before touching output.
     pub fn requireInitialized(self: *const Regions, storage: *const storage_mod.Storage, handle: Handle, offset: usize, length: usize) !void {
@@ -177,6 +188,32 @@ test "acquired regions enforce extent alignment lifetime and execution identity"
     try std.testing.expectEqual(@as(usize, 2), regions.entries.items.len);
     var other = try storage_mod.Storage.init(arena.allocator(), 100);
     try std.testing.expectError(error.ExecutionForeignReference, regions.range(&other, next, 0, 0, 1));
+}
+
+test "acquired receipts bound selection to their own live granted region" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try storage_mod.Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 32, 8);
+    const base = try storage.acquisitions.address(&storage, handle, 0);
+    const receipt: @import("../5_codegen/bytecode/acquired_receipt.zig").Bounds = .{ .address = base + 8, .size = 16, .alignment = 8 };
+    const selected = try storage.acquisitions.resolveReceipt(&storage, receipt, base + 12, 4, 4);
+    try std.testing.expectEqual(handle, selected.handle);
+    try std.testing.expectEqual(@as(usize, 12), selected.offset);
+    _ = try storage.acquisitions.resolveReceipt(&storage, receipt, base + 24, 0, 8);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.resolveReceipt(&storage, receipt, base + 4, 4, 4));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.resolveReceipt(&storage, receipt, base + 24, 1, 1));
+    try std.testing.expectError(error.ExecutionInvalidAlignment, storage.acquisitions.resolveReceipt(&storage, receipt, base + 9, 4, 4));
+    const other = try storage.acquisitions.acquire(&storage, 32, 8);
+    const other_address = try storage.acquisitions.address(&storage, other, 0);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.resolveReceipt(&storage, receipt, other_address, 4, 4));
+    var expanded = receipt;
+    expanded.size = 32;
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.resolveReceipt(&storage, expanded, base + 8, 4, 4));
+    try storage.acquisitions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.acquisitions.resolveReceipt(&storage, receipt, base + 12, 4, 4));
+    var foreign = try storage_mod.Storage.init(arena.allocator(), 4096);
+    try std.testing.expectError(error.ExecutionForeignReference, storage.acquisitions.resolveReceipt(&foreign, receipt, base + 12, 4, 4));
 }
 
 fn failedAcquisition(a: std.mem.Allocator) !void {

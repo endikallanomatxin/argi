@@ -197,8 +197,10 @@ Callback failures poison execution. `argi repl` registers stdout/stderr adapters
 `argi run --vm` currently registers none. Registered core heap acquisition and
 release primitives use context-owned byte storage instead of native allocation;
 raw addresses remain virtual tokens. Checked core establishment can form references
-to integers, floats and numeric records/arrays in acquired storage;
-reads require initialized bytes and release invalidates every view. Erased anchor
+to integers, floats and numeric records/arrays in acquired storage. Allocation
+slots carry prepared receipt descriptors; selection stays within that receipt's
+authenticated extent even when other regions are live. Reads require initialized
+bytes and release invalidates every view. Erased anchor
 reads check the backing value but expose no concrete representation. Core
 `CAllocator` allocations execute ordinary `Allocation` cleanup and release their
 context-owned regions. Resource-bearing elements, references stored in acquired
