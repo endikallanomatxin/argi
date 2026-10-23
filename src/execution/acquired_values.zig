@@ -19,13 +19,19 @@ const Evidence = struct {
         self.len += 1;
     }
 
-    fn reference(self: *Evidence, storage: *Storage, permission: p.PointerMutability) !Value {
+    fn retained(self: *Evidence, storage: *Storage, layout: *const Layout) !Value {
         var selected = self.root;
         selected.path = self.path[0..self.len];
         var value = try storage.acquiredStoredValue(selected);
-        if (value != .reference or (permission == .read_write and value.reference.mutability != .read_write)) return error.ExecutionInvalidReference;
+        switch (layout.shape) {
+            .reference => |permission| {
+                if (value != .reference or (permission == .read_write and value.reference.mutability != .read_write)) return error.ExecutionInvalidReference;
+                value.reference.mutability = permission;
+            },
+            .virtual_reference => if (value != .virtual_) return error.ExecutionInvalidReference,
+            else => return error.ExecutionInvalidReference,
+        }
         try storage.validateLive(&.{value});
-        value.reference.mutability = permission;
         return value;
     }
 };
@@ -47,7 +53,7 @@ pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Lay
 fn readWithEvidence(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, evidence: ?*Evidence) anyerror!Value {
     var empty: []Value = &.{};
     switch (layout.shape) {
-        .reference, .boolean, .integer, .floating => return readValidated(storage, handle, offset, layout, endian, &empty, evidence),
+        .reference, .virtual_reference, .boolean, .integer, .floating => return readValidated(storage, handle, offset, layout, endian, &empty, evidence),
         .fields, .array => {},
     }
     const cells = try readableCells(storage, handle, offset, layout, evidence);
@@ -70,8 +76,8 @@ fn readWithEvidence(storage: *Storage, handle: Handle, offset: usize, layout: *c
 fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, evidence: ?*Evidence) anyerror!usize {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
-        .reference => |permission| blk: {
-            _ = try (evidence orelse return error.ExecutionMissingCleanup).reference(storage, permission);
+        .reference, .virtual_reference => blk: {
+            _ = try (evidence orelse return error.ExecutionMissingCleanup).retained(storage, layout);
             break :blk 0;
         },
         .boolean, .integer, .floating => blk: {
@@ -106,7 +112,7 @@ fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *cons
 fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, remaining: *[]Value, evidence: ?*Evidence) anyerror!Value {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
-        .reference => |permission| try (evidence orelse return error.ExecutionMissingCleanup).reference(storage, permission),
+        .reference, .virtual_reference => try (evidence orelse return error.ExecutionMissingCleanup).retained(storage, layout),
         .boolean => blk: {
             var bytes: [1]u8 = undefined;
             try storage.acquisitions.read(storage, handle, offset, &bytes);
@@ -161,6 +167,11 @@ fn walkWrite(storage: *Storage, handle: Handle, offset: usize, layout: *const La
             try storage.validateLive(&.{value});
             // Reference representation bytes remain opaque in the interpreter.
             // Only the prepared logical cell can carry the reference evidence.
+            if (commit) try storage.acquisitions.forgetBytes(storage, handle, offset, layout.size);
+        },
+        .virtual_reference => {
+            if (value != .virtual_) return error.ExecutionInvalidReference;
+            try storage.validateLive(&.{value});
             if (commit) try storage.acquisitions.forgetBytes(storage, handle, offset, layout.size);
         },
         .boolean => {

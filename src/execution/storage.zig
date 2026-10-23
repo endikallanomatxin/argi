@@ -333,7 +333,7 @@ pub const Storage = struct {
         if (!layout.has_references or !overlappingRanges(base, layout.size, offset, length)) return;
         if (depth > path.len) return error.ExecutionValueDepthLimit;
         switch (layout.shape) {
-            .reference => try record.clear(path[0..depth]),
+            .reference, .virtual_reference => try record.clear(path[0..depth]),
             .fields => |fields| {
                 if (depth == path.len) return error.ExecutionValueDepthLimit;
                 for (fields, 0..) |field, index| {
@@ -2479,4 +2479,62 @@ test "prepared acquired references retain siblings and revoke only physically ov
     try std.testing.expectEqual(@as(u64, 11), (try storage.read(snapshot.record[0].reference)).integer);
     try storage.acquisitions.release(&storage, handle);
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(second));
+}
+
+test "prepared acquired virtual values retain one selected witness and invalidate both physical words" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const frame = try storage.enter(1);
+    try (try storage.slots(frame)).put(0, .{ .integer = 42 });
+    const receiver: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_only };
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    const program: b.Program = .{ .graph = &graph, .functions = &.{} };
+    const table: b.VirtualTable = .{ .virtual_type = @enumFromInt(0), .concrete_type = @enumFromInt(0), .methods = &.{} };
+    const value = try storage.virtualize(receiver, &program, &table);
+    const physical: numeric.Layout = .{ .size = 16, .alignment = 8, .has_references = true, .shape = .virtual_reference };
+    const logical: partial.Layout = .{ .nodes = &.{.{}} };
+    const handle = try storage.acquisitions.acquire(&storage, 80, 8);
+    const prepared = try storage.reserveAcquiredReceipt(handle, 64, &physical, .little, logical, null, 1, 0);
+    const slot = try storage.borrowAcquiredElement(prepared, 0, .read_write);
+    try storage.store(slot, value);
+    const before = storage.cells;
+    const retained = try storage.read(slot);
+    try std.testing.expectEqual(before, storage.cells);
+    try std.testing.expect(retained.virtual_ == value.virtual_);
+    try std.testing.expect(retained.virtual_.table == &table);
+    try std.testing.expect(retained.virtual_.program.graph == &graph);
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.store(slot, .{ .reference = receiver }));
+    try std.testing.expect((try storage.read(slot)).virtual_ == value.virtual_);
+    try storage.acquisitions.write(&storage, handle, 64, &.{0});
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(slot));
+    try storage.store(slot, value);
+    try storage.acquisitions.write(&storage, handle, 72, &.{0});
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(slot));
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read(retained.virtual_.receiver)).integer);
+    storage.leave(frame);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.store(slot, retained));
+}
+
+test "prepared acquired mutable references preserve permission without upgrading readonly values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1024);
+    const frame = try storage.enter(1);
+    try (try storage.slots(frame)).put(0, .{ .integer = 7 });
+    const mutable: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    var readonly = mutable;
+    readonly.mutability = .read_only;
+    const physical: numeric.Layout = .{ .size = 8, .alignment = 8, .has_references = true, .shape = .{ .reference = .read_write } };
+    const logical: partial.Layout = .{ .nodes = &.{.{}} };
+    const handle = try storage.acquisitions.acquire(&storage, 72, 8);
+    const prepared = try storage.reserveAcquiredReceipt(handle, 64, &physical, .little, logical, null, 1, 0);
+    const slot = try storage.borrowAcquiredElement(prepared, 0, .read_write);
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.store(slot, .{ .reference = readonly }));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(slot));
+    try storage.store(slot, .{ .reference = mutable });
+    const retained = (try storage.read(slot)).reference;
+    try storage.store(retained, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read(mutable)).integer);
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.numericBytes(slot, &physical, .little));
 }

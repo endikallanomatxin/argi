@@ -12,6 +12,7 @@ pub const Layout = struct {
     has_references: bool = false,
     shape: union(enum) {
         boolean,
+        virtual_reference,
         reference: @import("../../4_semantics/primitives/schema.zig").PointerMutability,
         integer: struct { signed: bool },
         floating: enum { float16, float32, float64 },
@@ -25,7 +26,7 @@ pub const Layout = struct {
 pub fn equal(left: *const Layout, right: *const Layout) bool {
     if (left.size != right.size or left.alignment != right.alignment or left.has_references != right.has_references or std.meta.activeTag(left.shape) != std.meta.activeTag(right.shape)) return false;
     return switch (left.shape) {
-        .boolean => true,
+        .boolean, .virtual_reference => true,
         .reference => |permission| permission == right.shape.reference,
         .integer => |integer| integer.signed == right.shape.integer.signed,
         .floating => |kind| kind == right.shape.floating,
@@ -57,6 +58,9 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
     const shape: @FieldType(Layout, "shape") = if (acquired and semantic == .pointer) blk: {
         if (size != graph.target.pointerBytes()) return error.UnsupportedNumericLayout;
         break :blk .{ .reference = semantic.pointer.mutability };
+    } else if (acquired and semantic == .virtual) blk: {
+        if (size != graph.target.pointerBytes() * 2) return error.UnsupportedNumericLayout;
+        break :blk .virtual_reference;
     } else if (types.isBuiltin(graph, ty, .Bool)) blk: {
         if (size != 1 or alignment != 1) return error.UnsupportedNumericLayout;
         break :blk .boolean;
@@ -96,7 +100,7 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
     };
     const result = try allocator.create(Layout);
     const has_references = switch (shape) {
-        .reference => true,
+        .reference, .virtual_reference => true,
         .array => |array| array.length != 0 and array.element.has_references,
         .fields => |fields| blk: {
             for (fields) |field| if (field.layout.has_references) break :blk true;
@@ -118,7 +122,7 @@ fn alignOffset(value: usize, alignment: usize) !usize {
 pub fn readByte(layout: *const Layout, value: b.Value, offset: usize, endian: std.builtin.Endian) anyerror!u8 {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
-        .reference => error.ExecutionInvalidReference,
+        .reference, .virtual_reference => error.ExecutionInvalidReference,
         .boolean => if (value == .boolean) @intFromBool(value.boolean) else error.ExecutionInvalidReference,
         .integer, .floating => blk: {
             const bits = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
@@ -260,7 +264,7 @@ pub fn encodeFloat(layout: *const Layout, value: b.Value, bytes: []u8, endian: s
 pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
-        .reference => error.ExecutionInvalidReference,
+        .reference, .virtual_reference => error.ExecutionInvalidReference,
         .boolean => if (value == .boolean) .{ .boolean = byte & 1 != 0 } else error.ExecutionInvalidReference,
         .integer, .floating => blk: {
             const previous = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;

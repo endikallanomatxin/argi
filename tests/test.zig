@@ -15010,3 +15010,33 @@ test "argi repl retains acquired reference companions across submissions" {
     ;
     try expectReplFixture(null, commands, "_0 = ()\n_1 = 42\n");
 }
+
+test "feature_tests/execution/256_acquired_virtual_records" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/256_acquired_virtual_records");
+    try runExpect("tests/feature_tests/execution/256_acquired_virtual_records", 42);
+    try vmExpect("tests/feature_tests/execution/256_acquired_virtual_records", 42, null);
+}
+
+test "argi repl retains acquired virtual witnesses across submissions" {
+    const commands =
+        \\Counter: Type = (.value: Int32)
+        \\Counting#(.State: Type): Contract = (
+        \\    .bump: (.self: $&State, .amount: Int32) -> () where {}
+        \\    .read: (.self: &State) -> (.result: Int32) where {}
+        \\)
+        \\implement Counting#(Counter) (
+        \\    .bump = (.self: $&Counter, .amount: Int32) -> () { self&.value = self&.value + amount }
+        \\    .read = (.self: &Counter) -> (.result: Int32) { result = self&.value }
+        \\)
+        \\Holder: Type = (.counter: Virtual#(.contract: Counting))
+        \\counter :: Counter = (.value = 7)
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = allocator))
+        \\raw ::= raw_pointer#(.t: Holder)(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot#(.t: Holder)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = Holder(.counter = to_virtual#(.contract: Counting)(.value = $&counter)))
+        \\Counting#().bump(.self = $&slot&.counter, .amount = 35)
+        \\Counting#().read(.self = &slot&.counter).result
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = ()\n_1 = ()\n_2 = 42\n");
+}
