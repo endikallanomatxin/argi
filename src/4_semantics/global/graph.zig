@@ -198,9 +198,49 @@ pub const GlobalSemanticGraph = struct {
         indexed_declarations: usize,
         type_resolution_len: usize,
         binding_type_resolution_len: usize,
-        type_argument_rewrites_len: usize,
+        type_rewrites_len: usize,
+        binding_rewrites_len: usize,
         function_completions_len: usize,
     };
+
+    const MutationFrontier = struct { types: usize, bindings: usize, depth: usize };
+
+    /// Coordinates pool tails and type/binding completions. Other resolver
+    /// mutations still require the resolver's side-effect checkpoint.
+    pub const Transaction = struct {
+        graph: *GlobalSemanticGraph,
+        saved: Checkpoint,
+        parent: ?MutationFrontier,
+        frontier: MutationFrontier,
+        active: bool = true,
+
+        pub fn commit(self: *Transaction) void {
+            if (!self.active) return;
+            std.debug.assert(std.meta.eql(self.graph.mutation_frontier.?, self.frontier));
+            self.graph.mutation_frontier = self.parent;
+            self.active = false;
+        }
+
+        pub fn rollback(self: *Transaction) void {
+            if (!self.active) return;
+            std.debug.assert(std.meta.eql(self.graph.mutation_frontier.?, self.frontier));
+            self.graph.rollback(self.saved);
+            self.graph.mutation_frontier = self.parent;
+            self.active = false;
+        }
+
+        pub fn deinit(self: *Transaction) void {
+            self.rollback();
+        }
+    };
+
+    pub fn beginTransaction(self: *GlobalSemanticGraph) Transaction {
+        const parent = self.mutation_frontier;
+        const frontier: MutationFrontier = .{ .types = self.types.items.len, .bindings = self.bindings.items.len, .depth = if (parent) |value| value.depth + 1 else 1 };
+        const saved = self.checkpoint();
+        self.mutation_frontier = frontier;
+        return .{ .graph = self, .saved = saved, .parent = parent, .frontier = frontier };
+    }
 
     pub const BindingInitialization = struct {
         binding: GlobalBindingId,
@@ -216,16 +256,23 @@ pub const GlobalSemanticGraph = struct {
         function_completions: std.ArrayList(FunctionCompletion) = .empty,
         type_resolution: std.ArrayList(TypeResolutionState) = .empty,
         binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
-        type_argument_rewrites: std.ArrayList(struct {
+        type_rewrites: std.ArrayList(struct {
             type_id: GlobalTypeId,
-            previous: primitives.Range(GlobalGenericArgId),
+            previous: GlobalType,
+            resolution: TypeResolutionState,
+        }) = .empty,
+        binding_rewrites: std.ArrayList(struct {
+            binding_id: GlobalBindingId,
+            previous: GlobalTypeId,
+            resolution: TypeResolutionState,
         }) = .empty,
 
         fn deinit(self: *ConstructionState, allocator: std.mem.Allocator) void {
             self.function_completions.deinit(allocator);
             self.type_resolution.deinit(allocator);
             self.binding_type_resolution.deinit(allocator);
-            self.type_argument_rewrites.deinit(allocator);
+            self.type_rewrites.deinit(allocator);
+            self.binding_rewrites.deinit(allocator);
             self.* = .{};
         }
     };
@@ -326,6 +373,7 @@ pub const GlobalSemanticGraph = struct {
     // Pending-slot metadata is separate from language types. A selected unit
     // must resolve every binding it uses; dormant bodies may retain holes.
     construction: ConstructionState = .{},
+    mutation_frontier: ?MutationFrontier = null,
 
     pub fn safetyAllocator(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !std.mem.Allocator {
         if (self.safety_arena == null) {
@@ -392,12 +440,13 @@ pub const GlobalSemanticGraph = struct {
     pub fn checkpoint(self: *const GlobalSemanticGraph) Checkpoint {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         var result: Checkpoint = .{
-            .pool_lengths = undefined,
+            .pool_lengths = @splat(0),
             .indexed_functions = self.lookup.indexed_functions,
             .indexed_declarations = self.lookup.indexed_declarations,
             .type_resolution_len = self.construction.type_resolution.items.len,
             .binding_type_resolution_len = self.construction.binding_type_resolution.items.len,
-            .type_argument_rewrites_len = self.construction.type_argument_rewrites.items.len,
+            .type_rewrites_len = self.construction.type_rewrites.items.len,
+            .binding_rewrites_len = self.construction.binding_rewrites.items.len,
             .function_completions_len = self.construction.function_completions.items.len,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
@@ -410,8 +459,9 @@ pub const GlobalSemanticGraph = struct {
     }
 
     /// Drop indexed IDs before truncating the append-only pools they reference.
-    /// Canonical generic argument rewrites are restored before their pools shrink.
-    /// Function-body completions and staged defaults are restored as well.
+    /// Type rewrites restore payloads and resolution flags in write order,
+    /// including canonical arguments. Binding types and function completions
+    /// are restored before their referenced pools shrink.
     /// Other in-place mutations of pre-existing entries remain outside this checkpoint.
     pub fn rollback(self: *GlobalSemanticGraph, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
@@ -422,9 +472,19 @@ pub const GlobalSemanticGraph = struct {
                 .initializer => |entry| self.bindings.items[@intFromEnum(entry.binding)].initialization = entry.previous,
             }
         }
-        while (self.construction.type_argument_rewrites.items.len > saved.type_argument_rewrites_len) {
-            const rewrite = self.construction.type_argument_rewrites.pop().?;
-            self.types.items[@intFromEnum(rewrite.type_id)].generic.arguments = rewrite.previous;
+        while (self.construction.type_rewrites.items.len > saved.type_rewrites_len) {
+            const rewrite = self.construction.type_rewrites.pop().?;
+            const raw = @intFromEnum(rewrite.type_id);
+            self.types.items[raw] = rewrite.previous;
+            if (raw < self.construction.type_resolution.items.len)
+                self.construction.type_resolution.items[raw] = rewrite.resolution;
+        }
+        while (self.construction.binding_rewrites.items.len > saved.binding_rewrites_len) {
+            const rewrite = self.construction.binding_rewrites.pop().?;
+            const raw = @intFromEnum(rewrite.binding_id);
+            self.bindings.items[raw].ty = rewrite.previous;
+            if (raw < self.construction.binding_type_resolution.items.len)
+                self.construction.binding_type_resolution.items[raw] = rewrite.resolution;
         }
         self.construction.type_resolution.shrinkRetainingCapacity(saved.type_resolution_len);
         self.construction.binding_type_resolution.shrinkRetainingCapacity(saved.binding_type_resolution_len);
@@ -624,6 +684,7 @@ pub const GlobalSemanticGraph = struct {
     pub fn markTypeUnresolved(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalTypeId) !void {
         const raw: usize = @intFromEnum(id);
         if (raw >= self.types.items.len) return error.InvalidGlobalTypeId;
+        try self.recordTypeRewrite(allocator, id, false);
         try self.ensureTypeResolutionCovers(allocator, self.types.items.len);
         self.construction.type_resolution.items[raw] = .unresolved;
         self.types.items[raw] = .{ .declared = unresolved_type_poison_decl };
@@ -632,9 +693,10 @@ pub const GlobalSemanticGraph = struct {
     /// Publish a type through the construction-state boundary. Type holes must
     /// be resolved through this API so GlobalSema never needs to rediscover
     /// direct slot writes with a full-pool reconciliation scan.
-    pub fn resolveType(self: *GlobalSemanticGraph, id: GlobalTypeId, value: GlobalType) !void {
+    pub fn resolveType(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalTypeId, value: GlobalType) !void {
         const raw: usize = @intFromEnum(id);
         if (raw >= self.types.items.len) return error.InvalidGlobalTypeId;
+        try self.recordTypeRewrite(allocator, id, false);
         self.types.items[raw] = value;
         if (raw < self.construction.type_resolution.items.len)
             self.construction.type_resolution.items[raw] = .resolved;
@@ -647,8 +709,32 @@ pub const GlobalSemanticGraph = struct {
         if (raw >= self.types.items.len or self.types.items[raw] != .generic) return error.InvalidGlobalTypeId;
         const previous = self.types.items[raw].generic.arguments;
         if (previous.start == arguments.start and previous.len == arguments.len) return;
-        try self.construction.type_argument_rewrites.append(allocator, .{ .type_id = id, .previous = previous });
+        try self.recordTypeRewrite(allocator, id, true);
         self.types.items[raw].generic.arguments = arguments;
+    }
+
+    fn recordTypeRewrite(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalTypeId, canonical_arguments: bool) !void {
+        const raw = @intFromEnum(id);
+        if (!canonical_arguments) {
+            const frontier = self.mutation_frontier orelse return;
+            if (raw >= frontier.types) return;
+        }
+        try self.construction.type_rewrites.append(allocator, .{
+            .type_id = id,
+            .previous = self.types.items[raw],
+            .resolution = if (self.isTypeUnresolved(id)) .unresolved else .resolved,
+        });
+    }
+
+    fn recordBindingRewrite(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBindingId) !void {
+        const frontier = self.mutation_frontier orelse return;
+        const raw = @intFromEnum(id);
+        if (raw >= frontier.bindings) return;
+        try self.construction.binding_rewrites.append(allocator, .{
+            .binding_id = id,
+            .previous = self.bindings.items[raw].ty,
+            .resolution = if (self.isBindingTypeUnresolved(id)) .unresolved else .resolved,
+        });
     }
 
     pub fn hasUnresolvedTypes(self: *const GlobalSemanticGraph) bool {
@@ -662,13 +748,16 @@ pub const GlobalSemanticGraph = struct {
         if (self.hasUnresolvedTypes()) return error.UnresolvedGlobalTypeSlots;
         self.construction.type_resolution.deinit(allocator);
         self.construction.type_resolution = .empty;
-        self.construction.type_argument_rewrites.deinit(allocator);
-        self.construction.type_argument_rewrites = .empty;
     }
 
     /// A successful outer publication no longer needs completion undo entries.
     /// This invalidates checkpoints taken before publication.
-    pub fn commitFunctionCompletions(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
+    pub fn commitCompletions(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
+        std.debug.assert(self.mutation_frontier == null);
+        self.construction.type_rewrites.deinit(allocator);
+        self.construction.type_rewrites = .empty;
+        self.construction.binding_rewrites.deinit(allocator);
+        self.construction.binding_rewrites = .empty;
         self.construction.function_completions.deinit(allocator);
         self.construction.function_completions = .empty;
     }
@@ -727,6 +816,7 @@ pub const GlobalSemanticGraph = struct {
     pub fn markBindingTypeUnresolved(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBindingId) !void {
         const raw: usize = @intFromEnum(id);
         if (raw >= self.bindings.items.len) return error.InvalidGlobalBindingId;
+        try self.recordBindingRewrite(allocator, id);
         try self.ensureBindingTypeResolutionCovers(allocator, self.bindings.items.len);
         self.construction.binding_type_resolution.items[raw] = .unresolved;
         self.bindings.items[raw].ty = unresolved_binding_type_poison;
@@ -735,9 +825,10 @@ pub const GlobalSemanticGraph = struct {
     /// Publish a binding type through the construction-state boundary. New
     /// resolution code should prefer this over patching the binding slot
     /// directly so provisional state is updated at the same time.
-    pub fn resolveBindingType(self: *GlobalSemanticGraph, id: GlobalBindingId, ty: GlobalTypeId) !void {
+    pub fn resolveBindingType(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBindingId, ty: GlobalTypeId) !void {
         const raw: usize = @intFromEnum(id);
         if (raw >= self.bindings.items.len) return error.InvalidGlobalBindingId;
+        try self.recordBindingRewrite(allocator, id);
         self.bindings.items[raw].ty = ty;
         if (raw < self.construction.binding_type_resolution.items.len)
             self.construction.binding_type_resolution.items[raw] = .resolved;
@@ -999,7 +1090,7 @@ test "unresolved global type slots are construction state, not Any" {
     try std.testing.expect(graph.resolvedSemanticType(@enumFromInt(0)) == null);
     try std.testing.expectError(error.UnresolvedGlobalTypeSlots, graph.finishTypeResolution(allocator));
 
-    try graph.resolveType(@enumFromInt(0), .{ .builtin = .Int32 });
+    try graph.resolveType(allocator, @enumFromInt(0), .{ .builtin = .Int32 });
     try std.testing.expect(!graph.hasUnresolvedTypes());
     try graph.finishTypeResolution(allocator);
     try std.testing.expect(graph.constructionStateEmpty());
@@ -1024,7 +1115,7 @@ test "generic argument rewrites restore existing types across nested checkpoints
     graph.rollback(outer);
     try std.testing.expectEqual(@as(u32, 0), graph.types.items[1].generic.arguments.start);
     try std.testing.expectEqual(@as(usize, 1), graph.generic_arguments.items.len);
-    try std.testing.expectEqual(@as(usize, 0), graph.construction.type_argument_rewrites.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.construction.type_rewrites.items.len);
 }
 
 test "named function lookup excludes instances and callback prototypes across rollback" {
@@ -1150,7 +1241,7 @@ fn cloneConstructionGraph(allocator: std.mem.Allocator) !void {
     var copy = try source.clone(allocator);
     defer copy.deinit(allocator);
     try std.testing.expect(copy.isTypeUnresolved(@enumFromInt(0)));
-    try copy.resolveType(@enumFromInt(0), .{ .builtin = .UInt8 });
+    try copy.resolveType(allocator, @enumFromInt(0), .{ .builtin = .UInt8 });
     copy.types.items[1] = .{ .builtin = .Int64 };
     copy.functions.items[0].flags.is_c_export = true;
     try std.testing.expect(source.isTypeUnresolved(@enumFromInt(0)));
@@ -1264,4 +1355,129 @@ fn completeFunctionWithAllocationFailures(allocator: std.mem.Allocator) !void {
 
 test "function completions leave published slots intact on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, completeFunctionWithAllocationFailures, .{});
+}
+
+fn resolutionTransactionGraph(allocator: std.mem.Allocator) !GlobalSemanticGraph {
+    var graph: GlobalSemanticGraph = .{};
+    errdefer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.markTypeUnresolved(allocator, @enumFromInt(0));
+    try graph.bindings.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .mutability = .constant });
+    try graph.markBindingTypeUnresolved(allocator, @enumFromInt(0));
+    return graph;
+}
+
+test "resolution transactions restore older holes after nested commit and pool growth" {
+    const a = std.testing.allocator;
+    var graph = try resolutionTransactionGraph(a);
+    defer graph.deinit(a);
+    const saved = graph.checkpoint();
+    var outer = graph.beginTransaction();
+    defer outer.deinit();
+    try graph.types.append(a, .{ .builtin = .UInt8 });
+    try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .Int32 });
+    try graph.resolveBindingType(a, @enumFromInt(0), @enumFromInt(1));
+    var inner = graph.beginTransaction();
+    defer inner.deinit();
+    try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .UInt64 });
+    try graph.resolveBindingType(a, @enumFromInt(0), @enumFromInt(0));
+    inner.commit();
+    try std.testing.expectEqual(primitives.BuiltinType.UInt64, graph.semanticType(@enumFromInt(0)).builtin);
+    for (0..64) |_| try graph.types.append(a, .{ .builtin = .UInt8 });
+    outer.rollback();
+    try std.testing.expect(graph.mutation_frontier == null);
+    try std.testing.expect(graph.isTypeUnresolved(@enumFromInt(0)));
+    try std.testing.expect(graph.resolvedSemanticType(@enumFromInt(0)) == null);
+    try std.testing.expect(graph.isBindingTypeUnresolved(@enumFromInt(0)));
+    try std.testing.expectEqual(unresolved_binding_type_poison, graph.binding(@enumFromInt(0)).ty);
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+}
+
+test "resolution transactions distinguish new tails from parent-owned slots" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var outer = graph.beginTransaction();
+    defer outer.deinit();
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .UInt8 });
+    try std.testing.expectEqual(@as(usize, 0), graph.construction.type_rewrites.items.len);
+    var inner = graph.beginTransaction();
+    defer inner.deinit();
+    try graph.markTypeUnresolved(a, @enumFromInt(0));
+    try std.testing.expect(graph.isTypeUnresolved(@enumFromInt(0)));
+    inner.rollback();
+    try std.testing.expectEqual(primitives.BuiltinType.UInt8, graph.semanticType(@enumFromInt(0)).builtin);
+    try std.testing.expect(!graph.isTypeUnresolved(@enumFromInt(0)));
+    outer.rollback();
+    try std.testing.expectEqual(@as(usize, 0), graph.types.items.len);
+}
+
+test "resolution transactions undo canonicalization and completion in write order" {
+    const a = std.testing.allocator;
+    var graph = try resolutionTransactionGraph(a);
+    defer graph.deinit(a);
+    const before = graph.checkpoint();
+    var transaction = graph.beginTransaction();
+    defer transaction.deinit();
+    try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } });
+    try graph.resolveType(a, @enumFromInt(0), .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } } });
+    try graph.generic_arguments.append(a, graph.generic_arguments.items[0]);
+    try graph.replaceTypeArguments(a, @enumFromInt(0), .{ .start = 1, .len = 1 });
+    try graph.markTypeUnresolved(a, @enumFromInt(0));
+    try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .UInt8 });
+    transaction.rollback();
+    try std.testing.expect(graph.isTypeUnresolved(@enumFromInt(0)));
+    try std.testing.expectEqual(unresolved_type_poison_decl, graph.semanticType(@enumFromInt(0)).declared);
+    try std.testing.expectEqualDeep(before, graph.checkpoint());
+}
+
+fn resolveWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    var graph = try resolutionTransactionGraph(allocator);
+    defer graph.deinit(allocator);
+    const before = graph.checkpoint();
+    const scope = struct {
+        fn attempt(alloc: std.mem.Allocator, target: *GlobalSemanticGraph) !void {
+            var transaction = target.beginTransaction();
+            defer transaction.deinit();
+            try target.types.append(alloc, .{ .builtin = .UInt8 });
+            try target.resolveType(alloc, @enumFromInt(0), .{ .builtin = .Int32 });
+            try target.resolveBindingType(alloc, @enumFromInt(0), @enumFromInt(1));
+        }
+    };
+    errdefer {
+        std.debug.assert(graph.mutation_frontier == null);
+        std.debug.assert(graph.isTypeUnresolved(@enumFromInt(0)));
+        std.debug.assert(graph.isBindingTypeUnresolved(@enumFromInt(0)));
+        std.debug.assert(std.meta.eql(before, graph.checkpoint()));
+    }
+    try scope.attempt(allocator, &graph);
+    try std.testing.expectEqualDeep(before, graph.checkpoint());
+}
+
+test "resolution transactions restore holes and metadata on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resolveWithAllocationFailures, .{});
+}
+
+test "resolution transactions preserve accepted completions after later rejection" {
+    const a = std.testing.allocator;
+    var graph = try resolutionTransactionGraph(a);
+    defer graph.deinit(a);
+    var accepted = graph.beginTransaction();
+    defer accepted.deinit();
+    try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .Int32 });
+    try graph.resolveBindingType(a, @enumFromInt(0), @enumFromInt(0));
+    accepted.commit();
+    graph.commitCompletions(a);
+    const saved = graph.checkpoint();
+    var rejected = graph.beginTransaction();
+    defer rejected.deinit();
+    try graph.markTypeUnresolved(a, @enumFromInt(0));
+    try graph.markBindingTypeUnresolved(a, @enumFromInt(0));
+    rejected.rollback();
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, graph.semanticType(@enumFromInt(0)).builtin);
+    try std.testing.expect(!graph.isTypeUnresolved(@enumFromInt(0)));
+    try std.testing.expect(!graph.isBindingTypeUnresolved(@enumFromInt(0)));
+    try std.testing.expectEqual(@as(GlobalTypeId, @enumFromInt(0)), graph.binding(@enumFromInt(0)).ty);
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
 }

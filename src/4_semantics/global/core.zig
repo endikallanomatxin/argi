@@ -198,7 +198,7 @@ pub const Resolver = struct {
                     const name = module.text(reference.name);
                     const resolved_builtin = primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget());
                     if (resolved_builtin) |builtin_type| {
-                        try self.graph.resolveType(globalizer.globalType(o, local_id), .{ .builtin = builtin_type });
+                        try self.graph.resolveType(self.allocator, globalizer.globalType(o, local_id), .{ .builtin = builtin_type });
                         self.stats.external_types += 1;
                         continue;
                     }
@@ -208,7 +208,7 @@ pub const Resolver = struct {
                 if (reference.generic_arguments != null) continue;
                 const target = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch continue;
                 const target_type = self.graph.declarations.items[@intFromEnum(target)].type_id orelse continue;
-                try self.graph.resolveType(globalizer.globalType(o, local_id), .{ .declared = target });
+                try self.graph.resolveType(self.allocator, globalizer.globalType(o, local_id), .{ .declared = target });
                 _ = target_type;
                 self.stats.external_types += 1;
             }
@@ -275,7 +275,7 @@ pub const Resolver = struct {
             }
             const inferred = self.graph.nodes.items[@intFromEnum(initialization)].ty orelse continue;
             if (self.graph.isTypeUnresolved(inferred)) continue;
-            try self.graph.resolveBindingType(id, inferred);
+            try self.graph.resolveBindingType(self.allocator, id, inferred);
             self.stats.binding_types += 1;
             changed = true;
         }
@@ -461,7 +461,7 @@ pub const Resolver = struct {
             .resolve_value_type => |value| blk: {
                 const ty = self.graph.node(globalizer.globalNode(o, value.value)).ty orelse break :blk .deferred;
                 if (self.graph.isTypeUnresolved(ty)) break :blk .deferred;
-                try self.graph.resolveType(globalizer.globalType(o, value.destination), self.graph.types.items[@intFromEnum(ty)]);
+                try self.graph.resolveType(self.allocator, globalizer.globalType(o, value.destination), self.graph.types.items[@intFromEnum(ty)]);
                 break :blk .resolved;
             },
             .resolve_call => |value| try self.resolveCall(module_index, module, o, value),
@@ -714,7 +714,7 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
         if (reference.generic_arguments != null or (reference.projection_base != null or reference.computed_type != null)) return .not_applicable;
         const target = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch return .deferred;
-        try self.graph.resolveType(globalizer.globalType(o, value.destination), .{ .declared = target });
+        try self.graph.resolveType(self.allocator, globalizer.globalType(o, value.destination), .{ .declared = target });
         self.stats.external_types += 1;
         return .resolved;
     }
@@ -1582,7 +1582,8 @@ pub const Resolver = struct {
             .struct_value_literal => |value| value,
             else => return false,
         };
-        const saved = self.graph.checkpoint();
+        var transaction = self.graph.beginTransaction();
+        defer transaction.deinit();
         var effects = if (self.argument_defaults) |defaults|
             defaults.checkpoint(defaults.context)
         else
@@ -1593,7 +1594,7 @@ pub const Resolver = struct {
         defer if (!published) {
             self.rollbackReachedCalls(calls);
             self.rollback_reached_signatures(signatures);
-            self.graph.rollback(saved);
+            transaction.rollback();
             if (effects) |checkpoint| self.argument_defaults.?.rollback(self.argument_defaults.?.context, checkpoint);
         };
         errdefer |err| {
@@ -1642,6 +1643,7 @@ pub const Resolver = struct {
             .fields = .{ .start = start, .len = expected_fields.len },
             .assumed_fields = literal.assumed_fields,
         };
+        transaction.commit();
         published = true;
         return true;
     }
@@ -2396,7 +2398,7 @@ test "address type materializes after its child resolves" {
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     try std.testing.expect(!try resolver.materializeAddresses());
 
-    try graph.resolveType(unresolved_ty, .{ .builtin = .Int32 });
+    try graph.resolveType(allocator, unresolved_ty, .{ .builtin = .Int32 });
     try std.testing.expect(try resolver.materializeAddresses());
     const result_pointer = switch (graph.semanticType(graph.node(@enumFromInt(1)).ty.?)) {
         .pointer => |pointer| pointer,
@@ -2512,7 +2514,7 @@ test "string literal type lookup respects incomplete indexes and unresolved core
     try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(2)), resolver.defaultStringLiteralType());
     _ = try graph.declarationsNamed(allocator, "StringView");
     try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(2)), resolver.defaultStringLiteralType());
-    try graph.resolveType(@enumFromInt(1), .{ .builtin = .Int32 });
+    try graph.resolveType(allocator, @enumFromInt(1), .{ .builtin = .Int32 });
     try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(1)), resolver.defaultStringLiteralType());
 }
 
@@ -2536,7 +2538,7 @@ test "binding materialization follows pending states as bindings are appended" {
     try std.testing.expect(try resolver.materializeBindingTypes());
     try std.testing.expect(graph.isBindingTypeUnresolved(@enumFromInt(1)));
     try std.testing.expect(!graph.isBindingTypeUnresolved(@enumFromInt(2)));
-    try graph.resolveBindingType(@enumFromInt(1), @enumFromInt(1));
+    try graph.resolveBindingType(allocator, @enumFromInt(1), @enumFromInt(1));
     try std.testing.expect(!try resolver.materializeBindingTypes());
     try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(0), .initialization = @enumFromInt(0), .mutability = .constant });
     try graph.markBindingTypeUnresolved(allocator, @enumFromInt(3));

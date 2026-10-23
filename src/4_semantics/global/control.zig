@@ -149,7 +149,7 @@ pub const Resolver = struct {
             .source = source,
             .value = 1,
         });
-        try self.graph.resolveType(id, .{ .inferred_choice = .{
+        try self.graph.resolveType(self.allocator, id, .{ .inferred_choice = .{
             .identity = @intFromEnum(id),
             .kind = .errable,
             .variants = .{ .start = variant_start, .len = 2 },
@@ -453,7 +453,7 @@ pub const Resolver = struct {
             if (case.payload_binding) |local_binding| {
                 const payload_ty = hit.variant.payload_type.?;
                 const binding = globalizer.globalBinding(o, local_binding);
-                try self.graph.resolveBindingType(binding, try self.matchBindingType(payload_ty, case.mode));
+                try self.graph.resolveBindingType(self.allocator, binding, try self.matchBindingType(payload_ty, case.mode));
             }
 
             const tag = try self.appendIntNode(types.variantTag(self.graph, choice_ty, hit), self.sourceFor(option_ref.source, o));
@@ -515,13 +515,8 @@ pub const Resolver = struct {
         // Desugaring is speculative while downstream types/functions may still
         // be unresolved. Roll every append-only GlobalSG pool back unless the
         // complete iterator loop can be published atomically.
-        const checkpoint = self.graph.checkpoint();
-        const side_effect_checkpoint = generic_functions.checkpointSideEffects();
-        var committed = false;
-        defer if (!committed) {
-            self.graph.rollback(checkpoint);
-            generic_functions.rollbackSideEffects(side_effect_checkpoint);
-        };
+        var scope = generic_functions.beginSpeculation();
+        defer scope.deinit();
 
         const ForProtocol = struct {
             iterable_contract: []const u8,
@@ -651,7 +646,7 @@ pub const Resolver = struct {
 
         const target = globalizer.globalNode(o, value.node);
         const void_ty = try self.builtin(.Void);
-        try self.graph.resolveBindingType(item_binding, element_ty);
+        try self.graph.resolveBindingType(self.allocator, item_binding, element_ty);
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = source,
             .ty = void_ty,
@@ -679,7 +674,7 @@ pub const Resolver = struct {
         });
         self.graph.nodes.items[@intFromEnum(target)].content = .{ .code_block = wrapper };
         self.stats.for_loops += 1;
-        committed = true;
+        scope.commit();
         return .resolved;
     }
 

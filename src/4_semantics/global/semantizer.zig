@@ -1052,7 +1052,7 @@ pub const Session = struct {
         try self.relocation.graph.finishTypeResolution(self.allocator);
         if (!self.relocation.graph.hasUnresolvedBindingTypes())
             try self.relocation.graph.finishBindingTypeResolution(self.allocator);
-        self.relocation.graph.commitFunctionCompletions(self.allocator);
+        self.relocation.graph.commitCompletions(self.allocator);
         self.phase = .published;
         const unit = self.reachable;
         self.reachable = null;
@@ -3948,7 +3948,7 @@ test "semantic session retains construction state until explicit publication" {
     try std.testing.expect(session.relocation.graph.isTypeUnresolved(id));
     try std.testing.expect(session.resolvers.core.graph == &session.relocation.graph);
     const rounds = session.resolution.progress.profile_rounds;
-    try session.relocation.graph.resolveType(id, .{ .builtin = .Int32 });
+    try session.relocation.graph.resolveType(a, id, .{ .builtin = .Int32 });
     try session.advance();
     try std.testing.expect(session.resolution.progress.profile_rounds > rounds);
     var result = try session.finish();

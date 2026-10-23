@@ -249,7 +249,7 @@ pub const FrontendPipeline = struct {
         // Validate pending conditions directly. Completion keeps the session
         // open, including dormant bindings needed by later submissions.
         _ = try session.completeUnit();
-        session.relocation.graph.commitFunctionCompletions(self.allocator);
+        session.relocation.graph.commitCompletions(self.allocator);
         self.prepared_session = session;
         return session;
     }

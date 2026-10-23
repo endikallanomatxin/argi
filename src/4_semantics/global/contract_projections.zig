@@ -128,7 +128,7 @@ pub fn resolveAssociatedTypes(self: *Resolver) !void {
                     },
                     else => return err,
                 };
-                try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(result)]);
+                try self.graph.resolveType(self.allocator, destination, self.graph.types.items[@intFromEnum(result)]);
                 changed = true;
             }
         }

@@ -105,12 +105,13 @@ pub const Resolver = struct {
     /// Destroying the scope rolls both back unless selection commits them.
     pub const Speculation = struct {
         resolver: *Resolver,
-        graph: global_sg.GlobalSemanticGraph.Checkpoint,
+        graph: global_sg.GlobalSemanticGraph.Transaction,
         effects: SideEffectCheckpoint,
         active: bool = true,
         retain_execution: bool = false,
 
         pub fn commit(self: *Speculation) void {
+            self.graph.commit();
             self.active = false;
         }
 
@@ -122,7 +123,7 @@ pub const Resolver = struct {
 
         pub fn rollback(self: *Speculation) void {
             if (!self.active) return;
-            self.resolver.graph.rollback(self.graph);
+            self.graph.rollback();
             var effects = self.effects;
             if (self.retain_execution) effects.execution_requests = null;
             self.resolver.rollbackSideEffects(effects);
@@ -135,7 +136,7 @@ pub const Resolver = struct {
     };
 
     pub fn beginSpeculation(self: *Resolver) Speculation {
-        return .{ .resolver = self, .graph = self.graph.checkpoint(), .effects = self.checkpointSideEffects() };
+        return .{ .resolver = self, .graph = self.graph.beginTransaction(), .effects = self.checkpointSideEffects() };
     }
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
@@ -2293,7 +2294,7 @@ pub const Resolver = struct {
                 if (source_ty == null) {
                     if (self.resolver.graph.nodes.items[@intFromEnum(initialization)].ty) |inferred| {
                         if (!self.resolver.graph.isTypeUnresolved(inferred)) {
-                            try self.resolver.graph.resolveBindingType(global, inferred);
+                            try self.resolver.graph.resolveBindingType(self.resolver.allocator, global, inferred);
                         }
                     }
                 }
@@ -3155,7 +3156,7 @@ pub const Resolver = struct {
                 const payload_binding = if (case.payload_binding) |local_binding| blk: {
                     const payload = variant.variant.payload_type orelse return error.ParameterizedMatchPayloadOnPayloadlessVariant;
                     const binding = try self.instantiateBinding(local_binding);
-                    try self.resolver.graph.resolveBindingType(binding, try self.matchBindingType(payload, case.mode));
+                    try self.resolver.graph.resolveBindingType(self.resolver.allocator, binding, try self.matchBindingType(payload, case.mode));
                     break :blk binding;
                 } else null;
                 const body = try self.instantiateBlock(case.body);

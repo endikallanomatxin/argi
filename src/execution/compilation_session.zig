@@ -286,7 +286,7 @@ pub const CompilationSession = struct {
         if (snapshot == .retain) try self.versions.ensureUnusedCapacity(self.allocator, 1);
         // Every fallible publication step has succeeded. Nested speculation
         // is closed, so accepted bodies no longer need their undo entries.
-        candidate.semantic.?.relocation.graph.commitFunctionCompletions(self.allocator);
+        candidate.semantic.?.relocation.graph.commitCompletions(self.allocator);
         const previous = self.semantic;
         self.semantic = candidate.semantic.?;
         if (snapshot == .retain) {

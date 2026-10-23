@@ -88,7 +88,7 @@ pub const Resolver = struct {
                 const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch continue;
                 const global_args = try self.relocateModuleArguments(module_index, args);
                 const destination = globalizer.globalType(o, local_id);
-                try self.graph.resolveType(destination, .{ .generic = .{ .base = base, .arguments = global_args } });
+                try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
                 self.stats.type_holes += 1;
             }
         }
@@ -140,7 +140,7 @@ pub const Resolver = struct {
             var bindings = try Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
             const resolved = try self.instantiateParameterizedType(module_index, computed, &bindings);
-            try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(resolved)]);
+            try self.graph.resolveType(self.allocator, destination, self.graph.types.items[@intFromEnum(resolved)]);
             return .resolved;
         }
         if (reference.projection_base) |base| {
@@ -150,7 +150,7 @@ pub const Resolver = struct {
                 .file_index = o.file_base + reference.source.file_index,
                 .offset = reference.source.offset,
             });
-            try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(resolved)]);
+            try self.graph.resolveType(self.allocator, destination, self.graph.types.items[@intFromEnum(resolved)]);
             self.stats.type_holes += 1;
             return .resolved;
         }
@@ -158,7 +158,7 @@ pub const Resolver = struct {
         const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch return .deferred;
         const global_args = try self.relocateModuleArguments(module_index, args);
         const destination = globalizer.globalType(o, value.destination);
-        try self.graph.resolveType(destination, .{ .generic = .{ .base = base, .arguments = global_args } });
+        try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
         _ = try self.ensureGenericInstance(destination);
         self.stats.type_holes += 1;
         return .resolved;
