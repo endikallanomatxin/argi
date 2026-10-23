@@ -10,7 +10,9 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
 }
 
 pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @import("reachability.zig").FunctionSet) !void {
-    try require(graph.constructionStateEmpty());
+    if (unit == null) {
+        try require(graph.constructionStateEmpty());
+    } else try require(!graph.hasUnresolvedTypes());
     const bounds = makeBounds(graph);
     for (graph.comptime_requests.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
     try verifyModulePartitions(graph);
@@ -55,7 +57,13 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
             try require(graph.binding(binding).initialization == null);
     }
     try verifyGenericFunctionInstances(graph);
-    for (graph.bindings.items) |value| try payload.binding(graph_mod.Ids, value, bounds);
+    for (graph.bindings.items, 0..) |value, raw| {
+        const id: graph_mod.GlobalBindingId = @enumFromInt(raw);
+        if (graph.isBindingTypeUnresolved(id)) {
+            try require(unit != null and !unit.?.containsBinding(id));
+            try payload.bindingMetadata(graph_mod.Ids, value, bounds);
+        } else try payload.binding(graph_mod.Ids, value, bounds);
+    }
     for (graph.block_assumptions.items) |value| {
         try require(verify.idFits(value.block, graph.blocks.items.len));
         try require(verify.rangeFits(value.bindings, graph.binding_refs.items.len));

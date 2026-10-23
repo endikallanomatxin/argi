@@ -310,8 +310,8 @@ pub const GlobalSemanticGraph = struct {
     // derived state and are not part of a persistent semantic representation.
     lookup: LookupState = .{},
 
-    // Construction-only resolution state. Final graphs empty these tables
-    // before they are exposed to Safety, Codegen or the LSP.
+    // Pending-slot metadata is separate from language types. A selected unit
+    // must resolve every binding it uses; dormant bodies may retain holes.
     construction: ConstructionState = .{},
 
     pub fn safetyAllocator(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !std.mem.Allocator {
@@ -635,9 +635,8 @@ pub const GlobalSemanticGraph = struct {
         return false;
     }
 
-    /// Construction metadata is not part of the durable GlobalSG. Calling this
-    /// before every slot is resolved is an error rather than silently exposing
-    /// a provisional graph to Safety, Codegen or the LSP.
+    /// Release completed type-resolution bookkeeping. This does not change
+    /// semantic type identities or stand in for selected-unit verification.
     pub fn finishTypeResolution(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !void {
         if (self.hasUnresolvedTypes()) return error.UnresolvedGlobalTypeSlots;
         self.construction.type_resolution.deinit(allocator);

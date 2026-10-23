@@ -804,8 +804,6 @@ pub const Session = struct {
         try contracts.validateGenericFunctionInstances();
         control.annotateChoiceTests();
 
-        if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
-
         if (control.for_each_failure) |failure| {
             if (options.diagnostics) |diagnostics| {
                 var actual_name = std.array_list.Managed(u8).init(allocator);
@@ -909,9 +907,9 @@ pub const Session = struct {
             std.debug.print("global sema unresolved global type slots remain\n", .{});
             return error.UnsupportedGlobalSemantic;
         }
-        if (relocation.graph.hasUnresolvedBindingTypes()) {
+        if (hasSelectedUnresolvedBindingTypes(&relocation.graph, reachable)) {
             if (options.diagnostics) |diagnostics|
-                if (try diagnoseUnresolvedBindingTypes(&relocation.graph, diagnostics))
+                if (try diagnoseUnresolvedBindingTypes(&relocation.graph, reachable, diagnostics))
                     return error.Reported;
             std.debug.print("global sema unresolved binding types remain\n", .{});
             return error.UnsupportedGlobalSemantic;
@@ -967,7 +965,10 @@ pub const Session = struct {
             return err;
         };
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        try relocation.graph.finishBindingTypeResolution(allocator);
+        // Inactive bodies can retain pending binding types. Publication must
+        // not replace them with a language type merely to close this unit.
+        if (!relocation.graph.hasUnresolvedBindingTypes())
+            try relocation.graph.finishBindingTypeResolution(allocator);
 
         var generic_bodies_built: u64 = 0;
         var generic_bodies_unreachable: u64 = 0;
@@ -2051,22 +2052,19 @@ fn isActive(item: PendingWorkItem, reachable: ?*const reachability_mod.FunctionS
     return set.contains(owner);
 }
 
-/// ModuleSG owns relocatable storage for every lowered body. Selective
-/// semantizing publishes only the reachable bodies, so provisional binding
-/// types in the remaining dormant storage must not keep GlobalSG in its
-/// construction state. Any is used solely as a valid inert payload for those
-/// unreachable records; no published body can observe it.
-fn retireDormantBindingResolution(
-    graph: *global_sg.GlobalSemanticGraph,
-    reachable: *const reachability_mod.FunctionSet,
-    dormant_type: global_sg.GlobalTypeId,
-) !void {
+/// A unit requires concrete binding types only in its selected dependency
+/// closure. Pending slots in dormant bodies remain available for later work.
+fn hasSelectedUnresolvedBindingTypes(
+    graph: *const global_sg.GlobalSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
+) bool {
     for (0..graph.bindings.items.len) |raw| {
-        const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        const binding: global_sg.GlobalBindingId = @enumFromInt(raw);
         if (!graph.isBindingTypeUnresolved(binding)) continue;
-        if (reachable.containsBinding(binding)) continue;
-        try graph.resolveBindingType(binding, dormant_type);
+        if (reachable) |set| if (!set.containsBinding(binding)) continue;
+        return true;
     }
+    return false;
 }
 
 fn pendingOwnerTag(tag: PendingTag) PendingOwner {
@@ -2416,9 +2414,11 @@ fn diagnoseMissingArrayTypeContext(graph: *const global_sg.GlobalSemanticGraph, 
     return false;
 }
 
-fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !bool {
+fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, reachable: ?*const reachability_mod.FunctionSet, diagnostics: *diagnostics_mod.Diagnostics) !bool {
     for (graph.bindings.items, 0..) |binding, raw| {
-        if (!graph.isBindingTypeUnresolved(@enumFromInt(raw))) continue;
+        const id: global_sg.GlobalBindingId = @enumFromInt(raw);
+        if (!graph.isBindingTypeUnresolved(id)) continue;
+        if (reachable) |set| if (!set.containsBinding(id)) continue;
         if (binding.name.len == 0 or binding.deferred_initialization) {
             try diagnostics.add(diagnosticLocation(graph, diagnostics, binding.source), .semantic, "cannot infer the type of this value; add an explicit type annotation", .{});
         } else {
@@ -4068,7 +4068,7 @@ fn forkSemanticSession(allocator: std.mem.Allocator) !void {
     try accepted.advance();
     var result = try accepted.finish();
     defer result.deinit(a);
-    try std.testing.expectEqual(@as(usize, 2), result.graph.types.items.len);
+    try std.testing.expectEqual(@as(usize, 1), result.graph.types.items.len);
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
 }
 

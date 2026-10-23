@@ -785,3 +785,52 @@ test "unit selection retains dormant bodies and checks them when selected later"
     try std.testing.expect(session.semantic.relocation.graph.function(dormant.?).body != null);
     try std.testing.expect(!session.versions.items[0].unit.?.contains(dormant.?));
 }
+
+test "unit selection preserves pending binding types for later materialization" {
+    const a = std.testing.allocator;
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    var module = try sourceModule(a,
+        \\identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }
+        \\helper := () -> (.result: Int32) {
+        \\    local ::= identity#(.T: Int32)(.value = 7)
+        \\    result = local
+        \\}
+        \\main := () -> (.status_code: Int32) { status_code = 0 }
+    , &diagnostics);
+    defer module.deinit(a);
+    var session = try CompilationSession.init(a, &.{module}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    var candidate = try session.prepare(&.{module}, &diagnostics);
+    defer candidate.deinit();
+    const checked = candidate.checked.?;
+    const helper: @import("../4_semantics/global/graph.zig").GlobalFunctionId = for (checked.graph.functions.items, 0..) |function, raw| {
+        if (std.mem.eql(u8, checked.graph.text(checked.graph.declaration(function.declaration).name), "helper")) break @enumFromInt(raw);
+    } else return error.MissingHelper;
+    try std.testing.expect(checked.graph.hasUnresolvedBindingTypes());
+    var pending: ?@import("../4_semantics/global/graph.zig").GlobalBindingId = null;
+    for (checked.graph.bindings.items, 0..) |binding, raw| {
+        if (!std.mem.eql(u8, checked.graph.text(binding.name), "local")) continue;
+        pending = @enumFromInt(raw);
+        try std.testing.expect(checked.graph.isBindingTypeUnresolved(pending.?));
+        try std.testing.expect(!checked.unit.?.containsBinding(pending.?));
+    }
+    try std.testing.expect(pending != null);
+    const verify = @import("../4_semantics/global/verify.zig");
+    try verify.verifyUnit(&checked.graph, &checked.unit.?);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verify.verifyGlobal(&checked.graph));
+    var invalid_unit = try checked.unit.?.clone(a);
+    defer invalid_unit.deinit();
+    try invalid_unit.bindings.put(pending.?, {});
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verify.verifyUnit(&checked.graph, &invalid_unit));
+    try session.accept(&candidate);
+    var draft = try session.beginPreparation(&diagnostics);
+    defer draft.deinit();
+    try draft.semantic.?.includeExecutionRoot(helper);
+    var selected = try draft.finishDefinitions(&.{module}, &diagnostics);
+    defer selected.deinit();
+    try std.testing.expect(selected.checked.?.unit.?.contains(helper));
+    try std.testing.expect(!selected.checked.?.graph.isBindingTypeUnresolved(pending.?));
+    try std.testing.expect(checked.graph.isBindingTypeUnresolved(pending.?));
+    try std.testing.expect(!diagnostics.hasErrors());
+}

@@ -103,9 +103,15 @@ pub fn function(comptime Ids: type, value: primitives.Function(Ids), bounds: Bou
 }
 
 pub fn binding(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bounds) !void {
+    try require(verify.idFits(value.ty, bounds.types));
+    try bindingMetadata(Ids, value, bounds);
+}
+
+/// Storage identity and initializer links can be checked before a dormant
+/// binding's type is completed. The caller checks its resolution state.
+pub fn bindingMetadata(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bounds) !void {
     try require(verify.stringFits(value.name, bounds.strings));
     try require(verify.sourceFits(value.source, bounds.files));
-    try require(verify.idFits(value.ty, bounds.types));
     try require(verify.optionalIdFits(value.initialization, bounds.nodes));
     try require(verify.optionalIdFits(value.reinitialize_cleanup, bounds.nodes));
     try require(verify.optionalIdFits(value.cleanup_arguments, bounds.nodes));
