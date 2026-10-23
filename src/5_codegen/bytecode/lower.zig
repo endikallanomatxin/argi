@@ -947,16 +947,19 @@ const FunctionLower = struct {
     }
 
     fn stringValue(self: *FunctionLower, source: p.SourceRef, ty: b.Type, text: []const u8) !b.Slot {
+        // Instructions outlive semantic pool allocations. Keep literal data
+        // in the Code Unit rather than borrowing a relocatable string slice.
+        const bytes = try self.parent.allocator.dupe(u8, text);
         const dst = try self.newSlot(ty);
         if (self.parent.graph.semanticType(ty) == .pointer) {
-            _ = try self.emit(source, .{ .static_bytes = .{ .dst = dst, .bytes = text } });
+            _ = try self.emit(source, .{ .static_bytes = .{ .dst = dst, .bytes = bytes } });
         } else {
             if (!types.isStringView(self.parent.graph, ty)) return self.parent.reject(source, "string literal representation");
             const fields = types.fields(self.parent.graph, ty).?;
             const data = try self.newSlot(self.parent.graph.fields.items[fields.start].ty);
             const length = try self.newSlot(self.parent.graph.fields.items[fields.start + 1].ty);
-            _ = try self.emit(source, .{ .static_bytes = .{ .dst = data, .bytes = text } });
-            _ = try self.emit(source, .{ .constant = .{ .dst = length, .value = .{ .integer = text.len } } });
+            _ = try self.emit(source, .{ .static_bytes = .{ .dst = data, .bytes = bytes } });
+            _ = try self.emit(source, .{ .constant = .{ .dst = length, .value = .{ .integer = bytes.len } } });
             _ = try self.emit(source, .{ .record = .{ .dst = dst, .fields = try self.parent.allocator.dupe(b.Slot, &.{ data, length }) } });
         }
         return dst;

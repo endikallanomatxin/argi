@@ -129,9 +129,13 @@ fn failedHostLink(allocator: std.mem.Allocator) !void {
     };
     const range = comptime p.integerRangeForWidth(32, true);
     const available = [_]Binding{.{ .symbol = "host_step", .inputs = &.{range}, .outputs = &.{range}, .call = Adapter.call }};
-    const descriptor = try signature.describe(a, &graph, @enumFromInt(0));
-    defer a.free(descriptor.inputs);
-    defer a.free(descriptor.outputs);
+    const descriptor = try signature.describe(allocator, &graph, @enumFromInt(0));
+    defer allocator.free(descriptor.symbol);
+    defer allocator.free(descriptor.inputs);
+    defer allocator.free(descriptor.outputs);
+    try std.testing.expect(descriptor.symbol.ptr != symbol(&graph, @enumFromInt(0)).ptr);
+    try graph.strings.ensureUnusedCapacity(a, graph.strings.capacity + 4096);
+    try std.testing.expectEqualStrings("host_step", descriptor.symbol);
     try std.testing.expect(signature.matches(&graph, descriptor));
     var invalid = descriptor;
     invalid.inputs = &.{comptime p.integerRangeForWidth(8, false)};

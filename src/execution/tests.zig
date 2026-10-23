@@ -3393,3 +3393,35 @@ test "virtual once analysis deduplicates handles and checks repeated calls" {
         \\}
     , .{}));
 }
+
+test "lowered literal bytes belong to the code unit rather than semantic pools" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const text = try graph.addString(a, "hello");
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+    });
+    try graph.nodes.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(1), .content = .{ .string_literal = text } });
+    var compiler = try lower.Lower.init(allocator, &graph);
+    const program = try compiler.compileExpression(@enumFromInt(0), &.{});
+    var found = false;
+    for (program.expression.?.code) |instruction| {
+        if (instruction.op != .static_bytes) continue;
+        found = true;
+        try std.testing.expect(instruction.op.static_bytes.bytes.ptr != graph.text(text).ptr);
+    }
+    try std.testing.expect(found);
+    // Overwrite the old storage before growing it. A borrowed slice would
+    // observe this change even if the allocator extended the pool in place.
+    @memset(graph.strings.items[text.start..][0..text.len], 'x');
+    try graph.strings.ensureUnusedCapacity(a, graph.strings.capacity + 4096);
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    const reference = (try executor.runExpression(&.{}))[0].reference;
+    try std.testing.expectEqualStrings("hello", try executor.context().storage.literalBytes(reference));
+}

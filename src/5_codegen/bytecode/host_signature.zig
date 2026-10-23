@@ -39,6 +39,7 @@ pub fn symbol(graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) []con
 
 // Lower the checked ABI once. Execution links this descriptor without reading
 // semantic fields or interpreting types; verification checks it against them.
+// The descriptor owns its symbol bytes as well as its scalar ABI arrays.
 pub fn describe(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) !b.HostFunction {
     try validate(graph, id);
     const function = graph.function(id);
@@ -48,7 +49,7 @@ pub fn describe(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
     errdefer allocator.free(outputs);
     for (inputs, graph.fields.items[function.input.start..][0..inputs.len]) |*range, field| range.* = b.integerBounds(graph, field.ty).?;
     for (outputs, graph.fields.items[function.output.start..][0..outputs.len]) |*range, field| range.* = b.integerBounds(graph, field.ty).?;
-    return .{ .function = id, .source = graph.declaration(function.declaration).source, .symbol = symbol(graph, id), .inputs = inputs, .outputs = outputs };
+    return .{ .function = id, .source = graph.declaration(function.declaration).source, .symbol = try allocator.dupe(u8, symbol(graph, id)), .inputs = inputs, .outputs = outputs };
 }
 
 pub fn matches(graph: *const g.GlobalSemanticGraph, descriptor: b.HostFunction) bool {
