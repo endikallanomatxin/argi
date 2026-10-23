@@ -156,7 +156,8 @@ pub fn autoDeinit(comptime Ids: type, value: primitives.AutoDeinit(Ids), bounds:
 }
 
 pub fn virtualRegistry(comptime Ids: type, value: primitives.VirtualMethodRegistry(Ids), bounds: Bounds) !void {
-    try require(verify.rangeFits(value.implementations, bounds.function_refs));
+    if (value.contract_input_count) |count| try require(value.receiver_input_index < count);
+    try require(verify.optionalIdFits(value.contract_output_type, bounds.types));
 }
 
 pub fn virtualize(comptime Ids: type, value: primitives.Virtualize(Ids), bounds: Bounds) !void {

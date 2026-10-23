@@ -82,18 +82,6 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
             for (contract.referents) |referent| try require(referent.output_index < contract.output_count);
             for (contract.domain_dependencies) |dependency| try require(dependency.output_index < contract.output_count);
         }
-        for (graph.function_refs.items[value.implementations.start..][0..value.implementations.len]) |method| {
-            try require(verify.idFits(method, graph.functions.items.len));
-            try require(value.receiver_input_index < graph.function(method).input.len);
-            if (value.safety_contract) |contract| {
-                try require(contract.output_count == graph.function(method).output.len);
-                for (contract.invalidates) |index| try require(index < graph.function(method).input.len);
-                for (contract.dependencies) |dependency| try require(dependency.input_index < graph.function(method).input.len);
-                for (contract.referents) |referent| try require(referent.input_index < graph.function(method).input.len);
-                for (contract.domain_dependencies) |dependency| try require(dependency.input.input_index < graph.function(method).input.len);
-                for (contract.invalidated_domains) |domain| try require(domain.input_index < graph.function(method).input.len);
-            }
-        }
     }
     for (graph.contract_conformances.items) |value| {
         try require(verify.idFits(value.context, graph.modules.items.len));
@@ -148,7 +136,14 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
             try require(transfer.input_index < method.input.len);
         }
     }
-    for (graph.virtualizes.items) |value| try payload.virtualize(graph_mod.Ids, value, bounds);
+    for (graph.virtualizes.items) |value| {
+        try payload.virtualize(graph_mod.Ids, value, bounds);
+        try require(value.methods.len == value.safety_methods.len);
+        for (graph.function_refs.items[value.methods.start..][0..value.methods.len], graph.virtual_registry_refs.items[value.safety_methods.start..][0..value.safety_methods.len]) |method, registry| {
+            try require(verify.idFits(registry, graph.virtual_registries.items.len));
+            try verifyVirtualImplementation(graph, graph.virtual_registries.items[@intFromEnum(registry)], method);
+        }
+    }
     for (graph.virtual_calls.items) |value| {
         try payload.virtualCall(graph_mod.Ids, value, bounds);
         try require(graph.virtual_registries.items[@intFromEnum(value.safety_methods)].receiver_input_index == value.self_input_index);
@@ -174,6 +169,20 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
         const replacement = @import("replacement.zig");
         const id: graph_mod.GlobalNodeId = @enumFromInt(index);
         if (node.content == .replacement) _ = try replacement.plan(graph, id);
+    }
+}
+
+fn verifyVirtualImplementation(graph: *const graph_mod.GlobalSemanticGraph, descriptor: graph_mod.VirtualMethodRegistry, method: graph_mod.GlobalFunctionId) !void {
+    try require(verify.idFits(method, graph.functions.items.len));
+    const function = graph.function(method);
+    try require(descriptor.receiver_input_index < function.input.len);
+    if (descriptor.safety_contract) |contract| {
+        try require(contract.output_count == function.output.len);
+        for (contract.invalidates) |index| try require(index < function.input.len);
+        for (contract.dependencies) |dependency| try require(dependency.input_index < function.input.len);
+        for (contract.referents) |referent| try require(referent.input_index < function.input.len);
+        for (contract.domain_dependencies) |dependency| try require(dependency.input.input_index < function.input.len);
+        for (contract.invalidated_domains) |domain| try require(domain.input_index < function.input.len);
     }
 }
 

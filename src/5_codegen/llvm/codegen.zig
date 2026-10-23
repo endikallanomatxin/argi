@@ -298,7 +298,9 @@ pub const CodeGenerator = struct {
             // semantic contracts/templates, not runtime ABI symbols.
             if (function.body == null and function.flags.has_declared_body) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (self.unit) |unit| if (!unit.contains(id)) continue;
+            // Foreign declarations share a symbol namespace even when unused;
+            // their ABI compatibility is independent of body reachability.
+            if (self.unit) |unit| if (!unit.contains(id) and function.body != null) continue;
             _ = self.declareFunction(id) catch |err| {
                 if (err == CodegenError.Reported or err == error.OutOfMemory) return err;
                 const declaration = self.graph.declaration(function.declaration);

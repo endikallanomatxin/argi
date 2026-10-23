@@ -487,9 +487,10 @@ pub fn AutoDeinit(comptime Ids: type) type {
     };
 }
 
+/// Erased signature and declared safety effects, completed independently of
+/// concrete handles. Runtime tables keep their own selected method identities.
 pub fn VirtualMethodRegistry(comptime Ids: type) type {
     return struct {
-        implementations: Range(Ids.FunctionId),
         /// Receiver position comes from the erased contract. A known
         /// argument may have the same concrete type as the participant after substitution.
         receiver_input_index: u32,

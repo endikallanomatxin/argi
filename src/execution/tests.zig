@@ -3361,3 +3361,35 @@ test "prepared acquisition bytecode rejects altered receipt value and cleanup de
     }
     return error.MissingEntry;
 }
+
+test "virtual once analysis deduplicates handles and checks repeated calls" {
+    const declarations =
+        \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
+        \\Box: Type = (.value: Int32)
+        \\once acquire := () -> () {}
+        \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) {
+        \\    acquire()
+        \\    result = source&.value
+        \\})
+        \\
+    ;
+    try std.testing.expectEqual(@as(i128, 42), try execute(declarations ++
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    first :: Box = (.value = 42)
+        \\    second :: Box = (.value = 7)
+        \\    left ::= to_virtual#(.contract: Readable)(.value = &first)
+        \\    right ::= to_virtual#(.contract: Readable)(.value = &second)
+        \\    status_code = Readable#().read(&left).result
+        \\}
+    , .{}));
+    try std.testing.expectError(error.Reported, execute(declarations ++
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    first :: Box = (.value = 42)
+        \\    second :: Box = (.value = 7)
+        \\    left ::= to_virtual#(.contract: Readable)(.value = &first)
+        \\    right ::= to_virtual#(.contract: Readable)(.value = &second)
+        \\    status_code = Readable#().read(&left).result
+        \\    status_code = Readable#().read(&right).result
+        \\}
+    , .{}));
+}

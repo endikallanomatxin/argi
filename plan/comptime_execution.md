@@ -66,13 +66,18 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 ## Scalability
 
-- Reduce duplicated checked-graph prefixes and regenerated bodies while preserving
-  stable identities, old virtual code units and rejected-command isolation.
-  Recover temporary metadata/frames only after all live dependents release them.
+- Replace session forks and historical checked graphs with shared append-only
+  GlobalSG pools and coordinated transactions. Journal completions of older slots;
+  cover resolvers, indexes, caches, staged requests and rejected allocation memory.
+- Separate unit finalization and Safety proofs from persistent semantics. Reuse
+  verified bodies only with stable hypotheses; check caller facts independently.
+  Keep Code Units immutable without copying whole function/type tables per command.
+- Recover temporary metadata/frames only after all live dependents release them;
+  preserve cross-unit virtual dispatch, references, cleanup and reset.
 - Continue measuring 10/100/1,000-command sessions, separating frontend, lowering,
   verification, execution and retained memory. Use `--graph-pools` for flat columns;
   account separately for nested metadata, safety proofs, bytecode and runtime storage.
-- Current [measurements](../docs/usage.md#measuring-retained-execution): 100 resource
+- Baseline [measurements](../docs/usage.md#measuring-retained-execution): 100 resource
   commands retain 707 MiB with only 4,000 acquired bytes; graph payload is 418 MiB.
   Nonmoving trimming reduced column capacity from 626 to 425 MiB. Duplication
   remains. Minimal 1,000 updates retain about 436 MiB versus 19 MiB for definitions.

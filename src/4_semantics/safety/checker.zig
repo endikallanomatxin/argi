@@ -611,18 +611,25 @@ pub const SafetyChecker = struct {
         return .{ .input_index = path.input_index, .projections = projections };
     }
 
+    fn validateStorageRepresentation(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, source: primitives.SourceRef) !bool {
+        if (types.incompleteDeclaration(self.graph, ty)) |id| {
+            try self.report(source, "CIncomplete type '{s}' has no value representation; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
+            return false;
+        }
+        if (self.graph.resolvedSemanticType(ty)) |semantic| if (semantic == .pointer) {
+            if (types.incompleteDeclaration(self.graph, semantic.pointer.child)) |id| {
+                try self.report(source, "cannot form a safe reference to CIncomplete type '{s}'; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
+                return false;
+            }
+        };
+        return true;
+    }
+
     fn validateForeignSignatures(self: *SafetyChecker) !void {
         const c_abi = @import("../global/c_abi.zig");
         for (self.graph.bindings.items, 0..) |binding, raw| {
             if (self.unit) |unit| if (!unit.containsBinding(@enumFromInt(raw))) continue;
-            if (types.incompleteDeclaration(self.graph, binding.ty)) |id|
-                try self.report(binding.source, "CIncomplete type '{s}' has no value representation; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
-            if (self.graph.resolvedSemanticType(binding.ty)) |semantic| {
-                if (semantic == .pointer) {
-                    if (types.incompleteDeclaration(self.graph, semantic.pointer.child)) |id|
-                        try self.report(binding.source, "cannot form a safe reference to CIncomplete type '{s}'; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
-                }
-            }
+            _ = try self.validateStorageRepresentation(binding.ty, binding.source);
         }
         for (self.graph.declarations.items) |declaration| {
             if (declaration.struct_layout != .c_struct) continue;
@@ -655,12 +662,14 @@ pub const SafetyChecker = struct {
                 try self.report(declaration.source, "C function '{s}' must have zero or one output; use explicit pointer parameters for additional results", .{name});
             }
             for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+                if (!try self.validateStorageRepresentation(field.ty, field.source)) continue;
                 if (function.flags.is_c_function_pointer and index < c_abi.physicalInputCount(function) and c_abi.isSafeReferenceValue(self.graph, field.ty))
                     try self.report(field.source, "CFunctionPointer parameters require RawPointer instead of safe references", .{});
                 if (!c_abi.supportsCValue(self.graph, field.ty))
                     try self.report(field.source, "C function '{s}' input '{s}' has an unsupported C ABI type; aggregate arguments require target-specific lowering", .{ name, self.graph.text(field.name) });
             }
             for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                if (!try self.validateStorageRepresentation(field.ty, field.source)) continue;
                 if (function.flags.is_c_function_pointer and c_abi.isSafeReferenceValue(self.graph, field.ty))
                     try self.report(field.source, "CFunctionPointer results require RawPointer instead of safe references", .{});
                 if (!c_abi.supportsCValue(self.graph, field.ty))

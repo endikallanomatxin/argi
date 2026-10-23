@@ -6349,7 +6349,7 @@ test "forwarded output preserves unrelated and shared may effects" {
     try std.testing.expectEqual(.maybe_initialized, infer.findInputPostState(moving.input_post_states, .{ .input_index = 2 }).?.initializedness);
 }
 
-test "virtual safety contract scalar summaries do not read implementations" {
+test "virtual safety contract scalar summaries require no concrete implementations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -6360,7 +6360,6 @@ test "virtual safety contract scalar summaries do not read implementations" {
     var infer = Infer.init(allocator, &graph, &engine);
     defer infer.deinit();
     try graph.virtual_registries.append(allocator, .{
-        .implementations = .{ .start = 0, .len = 0 },
         .receiver_input_index = 1,
         .contract_input_count = 2,
         .safety_contract = .{ .output_count = 1, .source = .{ .file_index = 0, .offset = 0 }, .dependencies = &.{.{ .output_index = 0, .input_index = 1 }} },
@@ -6369,13 +6368,6 @@ test "virtual safety contract scalar summaries do not read implementations" {
     try std.testing.expectEqual(@as(usize, 2), first.required_live_inputs.len);
     try std.testing.expectEqual(@as(u32, 1), first.outputs[0].input_receiver_values[0].input_index);
     try std.testing.expectEqual(@as(usize, 0), first.outputs[0].input_dependencies.len);
-    // No concrete summaries exist. Changing the implementation list must not
-    // introduce a read of a concrete body or change the published call effects.
-    try graph.function_refs.appendSlice(allocator, &.{ @enumFromInt(0), @enumFromInt(1) });
-    graph.virtual_registries.items[0].implementations.len = 2;
-    infer.virtual_summaries.clearRetainingCapacity();
-    const second = (try infer.virtualSummary(@enumFromInt(0))).?;
-    try std.testing.expect(summaries.summaryEql(first, second));
     var declaration = graph.virtual_registries.items[0].safety_contract.?;
     declaration.output_count = 0;
     declaration.dependencies = &.{};

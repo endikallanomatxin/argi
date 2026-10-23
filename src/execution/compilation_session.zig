@@ -834,3 +834,42 @@ test "unit selection preserves pending binding types for later materialization" 
     try std.testing.expect(checked.graph.isBindingTypeUnresolved(pending.?));
     try std.testing.expect(!diagnostics.hasErrors());
 }
+
+test "virtual signature completion is stable across repeated unit preparation" {
+    const a = std.testing.allocator;
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    var module = try sourceModule(a,
+        \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
+        \\Box: Type = (.value: Int32)
+        \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    box :: Box = (.value = 42)
+        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
+        \\    status_code = Readable#().read(&erased).result
+        \\}
+    , &diagnostics);
+    defer module.deinit(a);
+    var session: sema.Session = undefined;
+    try session.init(a, &.{module}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try session.advance();
+    try session.resolvers.contracts.closeVirtualMethodRegistries();
+    const graph = &session.relocation.graph;
+    try std.testing.expect(graph.virtual_registries.items.len != 0);
+    const signature = graph.virtual_registries.items[0];
+    try std.testing.expect(signature.contract_input_count != null);
+    try std.testing.expect(signature.safety_contract != null);
+    const saved = graph.checkpoint();
+    try session.resolvers.contracts.closeVirtualMethodRegistries();
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+    try std.testing.expectEqualDeep(signature, graph.virtual_registries.items[0]);
+    // Pool growth must not turn a completed descriptor into a new per-unit
+    // implementation table or require updating existing references.
+    for (0..64) |_| try graph.functions.append(a, graph.functions.items[0]);
+    const grown = graph.checkpoint();
+    try session.resolvers.contracts.closeVirtualMethodRegistries();
+    try std.testing.expectEqualDeep(grown, graph.checkpoint());
+    try std.testing.expectEqualDeep(signature, graph.virtual_registries.items[0]);
+    try std.testing.expect(!diagnostics.hasErrors());
+}

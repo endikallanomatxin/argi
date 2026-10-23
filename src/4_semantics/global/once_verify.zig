@@ -153,9 +153,15 @@ const State = struct {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
-                const registry = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)];
-                for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |callee|
+                const evidence = @import("contract_evidence.zig");
+                const contract = evidence.virtualContractType(self.graph, call) orelse return error.InvalidVirtualContract;
+                var candidates: evidence.PossibleVirtualMethods = .{ .graph = self.graph, .contract = contract, .method_index = call.method_index };
+                var seen: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, void) = .empty;
+                defer seen.deinit(self.allocator);
+                while (candidates.next()) |callee| {
+                    if ((try seen.getOrPut(self.allocator, callee)).found_existing) continue;
                     try self.walkCall(node_id, callee);
+                }
             },
             .code_block, .value_sequence, .replacement => |block| try self.walkBlock(block),
             .list_literal => |literal| {

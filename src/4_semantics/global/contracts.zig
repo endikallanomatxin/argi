@@ -311,7 +311,6 @@ pub const Resolver = struct {
         for (methods.items, 0..) |_, index| {
             const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));
             try self.graph.virtual_registries.append(self.allocator, .{
-                .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },
                 .receiver_input_index = receiver_indices.items[index],
             });
             try self.graph.virtual_registry_refs.append(self.allocator, registry);
@@ -629,7 +628,7 @@ pub const Resolver = struct {
                 const completed = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal;
                 const handle = self.graph.value_fields.items[completed.fields.start + index].value;
                 const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));
-                try self.graph.virtual_registries.append(self.allocator, .{ .implementations = .{ .start = @intCast(self.graph.function_refs.items.len), .len = 0 }, .receiver_input_index = index });
+                try self.graph.virtual_registries.append(self.allocator, .{ .receiver_input_index = index });
                 const call_id: global_sg.GlobalVirtualCallId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_calls.items.len)));
                 try self.graph.virtual_calls.append(self.allocator, .{
                     .handle = handle,
@@ -2465,10 +2464,8 @@ pub const Resolver = struct {
         }
     }
 
-    /// Bind each virtual contract to its fixed signature. Implementation lists
-    /// describe runtime reachability and once obligations, not safety effects:
-    /// Safety generates dispatch summaries from the declaration and checks
-    /// each selected concrete method independently.
+    /// Complete each erased signature from its contract declaration. Concrete
+    /// methods belong to selected handles; they do not alter virtual effects.
     pub fn closeVirtualMethodRegistries(self: *Resolver) !void {
         try self.closeVirtualMethodRegistriesInUnit(null);
     }
@@ -2476,11 +2473,16 @@ pub const Resolver = struct {
     /// Staged evaluation closes only its resolved dependency unit. Unrelated
     /// virtual constructions may still have pending bodies or type bindings.
     pub fn closeVirtualMethodRegistriesInUnit(self: *Resolver, unit: ?*const @import("reachability.zig").FunctionSet) !void {
-        for (self.graph.virtualizes.items, 0..) |virtualize, raw| {
+        var raw: usize = 0;
+        while (raw < self.graph.virtualizes.items.len) : (raw += 1) {
             if (unit) |selected| if (!selected.virtualizes.contains(@enumFromInt(raw))) continue;
-            const registries = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len];
-            for (registries, 0..) |registry_id, method_index|
-                try self.closeVirtualMethodRegistry(registry_id, self.graph.semanticType(virtualize.virtual_type).virtual, method_index, unit);
+            const virtualize = self.graph.virtualizes.items[raw];
+            for (0..virtualize.safety_methods.len) |method_index| {
+                // Resolving a signature may grow any semantic pool. Retain
+                // ranges and IDs, then reacquire each row before using it.
+                const registry_id = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start + method_index];
+                try self.closeVirtualMethodRegistry(registry_id, self.graph.semanticType(virtualize.virtual_type).virtual, method_index);
+            }
         }
         var nodes = if (unit) |selected| selected.nodes.keyIterator() else null;
         if (nodes) |*selected| {
@@ -2489,11 +2491,15 @@ pub const Resolver = struct {
                 if (content != .virtual_call) continue;
                 const call = self.graph.virtual_calls.items[@intFromEnum(content.virtual_call)];
                 const contract_ty = contract_evidence.virtualContractType(self.graph, call) orelse continue;
-                try self.closeVirtualMethodRegistry(call.safety_methods, contract_ty, call.method_index, unit);
+                try self.closeVirtualMethodRegistry(call.safety_methods, contract_ty, call.method_index);
             }
-        } else for (self.graph.virtual_calls.items) |call| {
-            const contract_ty = contract_evidence.virtualContractType(self.graph, call) orelse continue;
-            try self.closeVirtualMethodRegistry(call.safety_methods, contract_ty, call.method_index, null);
+        } else {
+            raw = 0;
+            while (raw < self.graph.virtual_calls.items.len) : (raw += 1) {
+                const call = self.graph.virtual_calls.items[raw];
+                const contract_ty = contract_evidence.virtualContractType(self.graph, call) orelse continue;
+                try self.closeVirtualMethodRegistry(call.safety_methods, contract_ty, call.method_index);
+            }
         }
     }
 
@@ -2502,45 +2508,24 @@ pub const Resolver = struct {
         registry_id: global_sg.GlobalVirtualRegistryId,
         contract_ty: global_sg.GlobalTypeId,
         method_index: usize,
-        unit: ?*const @import("reachability.zig").FunctionSet,
     ) !void {
+        // The descriptor belongs to the erased signature, not the currently
+        // known collection of concrete handles. Complete it once.
+        if (self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_input_count != null) return;
         const use = self.contractUse(contract_ty) orelse return error.InvalidVirtualContract;
         const located = self.findContractDefinition(use.declaration) orelse return error.InvalidVirtualContract;
         const requirement = self.modules[located.module_index].semantic.parameterized_storage.contract_requirements.items[located.definition.requirements.start + method_index];
-        if (requirement.safety_contract) |declared| {
-            const instance = (try self.requirementInstanceForContractUse(use, contract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidContractRequirement;
-            self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract = try contract_safety.globalSafetyContract(self, located.module_index, declared, global_types.fields(self.graph, instance.input) orelse return error.InvalidContractRequirementInput, instance.output);
-        }
-
-        var implementations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
-        defer implementations.deinit(self.allocator);
-
-        for (self.graph.virtualizes.items, 0..) |candidate, raw| {
-            if (unit) |selected| if (!selected.virtualizes.contains(@enumFromInt(raw))) continue;
-            if (!global_types.equal(self.graph, self.graph.semanticType(candidate.virtual_type).virtual, contract_ty) or method_index >= candidate.methods.len) continue;
-            const implementation = self.graph.function_refs.items[candidate.methods.start + @as(u32, @intCast(method_index))];
-            var exists = false;
-            for (implementations.items) |existing| if (existing == implementation) {
-                exists = true;
-                break;
-            };
-            if (exists) continue;
-            try implementations.append(self.allocator, implementation);
-        }
-
-        const start: u32 = @intCast(self.graph.function_refs.items.len);
-        try self.graph.function_refs.appendSlice(self.allocator, implementations.items);
-        self.graph.virtual_registries.items[@intFromEnum(registry_id)].implementations = .{
-            .start = start,
-            .len = @intCast(implementations.items.len),
-        };
-        if (requirement.safety_contract != null) {
-            const instance = (try self.requirementInstanceForContractUse(use, contract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidContractRequirement;
-            const input = try self.virtualInputType(instance.input, instance.output);
-            const fields = global_types.fields(self.graph, input) orelse return error.InvalidContractRequirementInput;
-            self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_input_count = fields.len;
-            self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_output_type = instance.output;
-        }
+        const declared = requirement.safety_contract orelse return;
+        const instance = (try self.requirementInstanceForContractUse(use, contract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidContractRequirement;
+        const signature = global_types.fields(self.graph, instance.input) orelse return error.InvalidContractRequirementInput;
+        const contract = try contract_safety.globalSafetyContract(self, located.module_index, declared, signature, instance.output);
+        const input = try self.virtualInputType(instance.input, instance.output);
+        const fields = global_types.fields(self.graph, input) orelse return error.InvalidContractRequirementInput;
+        // Reacquire the row after resolution, which may grow semantic pools.
+        const registry = &self.graph.virtual_registries.items[@intFromEnum(registry_id)];
+        registry.safety_contract = contract;
+        registry.contract_input_count = fields.len;
+        registry.contract_output_type = instance.output;
     }
 
     fn isUnaryReceiverParticipantType(self: *const Resolver, located: LocatedContractDefinition, ty: @import("../module/parameterized/ir.zig").ParameterizedTypeId) bool {

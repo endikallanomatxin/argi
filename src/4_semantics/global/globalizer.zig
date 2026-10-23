@@ -413,7 +413,6 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .fields = relocateEntityRange(global_sg.GlobalAutoDeinitFieldId, o.auto_deinit_field_base, value.fields),
     });
     for (storage.virtual_registries.items) |value| try result.virtual_registries.append(allocator, .{
-        .implementations = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.implementations),
         .receiver_input_index = value.receiver_input_index,
         .contract_input_count = value.contract_input_count,
         .contract_output_type = if (value.contract_output_type) |ty| globalType(o, ty) else null,

@@ -305,11 +305,6 @@ const State = struct {
                 try self.walkNode(value.value);
                 for (self.graph.function_refs.items[value.methods.start..][0..value.methods.len]) |method|
                     try self.includeFunction(method);
-                for (self.graph.virtual_registry_refs.items[value.safety_methods.start..][0..value.safety_methods.len]) |registry_id| {
-                    const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
-                    for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |method|
-                        try self.includeFunction(method);
-                }
             },
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
@@ -319,9 +314,8 @@ const State = struct {
                 for (call.consumed_auto_deinits) |value| try self.walkNode(value);
                 for (call.initialized_auto_deinits) |value| try self.walkNode(value);
                 for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
-                const registry = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)];
-                for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |callee|
-                    try self.includeFunction(callee);
+                // A virtual call uses its declared effects. Concrete bodies
+                // are retained by the handle constructions that selected them.
             },
             .code_block, .value_sequence, .replacement => |block| try self.walkBlock(block),
             .list_literal => |literal| {
