@@ -375,6 +375,7 @@ fn compileResolvedPlan(
         return error.CompilationFailed;
     };
     defer generator.deinit();
+    generator.unit = if (pipeline.global_unit) |*unit| unit else null;
     const module = generator.generate() catch |err| {
         if (flags.show_semantic_graph) graph_print.print(graph);
         dumpDiagnostics(&diagnostics, flags);

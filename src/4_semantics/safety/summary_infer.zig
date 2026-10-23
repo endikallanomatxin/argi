@@ -146,12 +146,10 @@ pub const Infer = struct {
         // These hints select precision only; they never infer virtual effects
         // from concrete implementations or depend on their final summaries.
         for (self.graph.contract_safety_conformances.items) |proof| {
-            if (!proof.safety_required) continue;
-            if (self.unit) |unit| if (!unit.operations.contains(proof.selection) and !unit.cleanup_functions.contains(proof.method)) continue;
+            if (self.unit) |unit| if (!unit.requiresConformance(self.graph, proof)) continue;
             try self.requestContractSelectors(proof.method, proof.contract);
         }
         for (self.graph.virtualizes.items, 0..) |virtualize, raw| {
-            if (!virtualize.safety_required) continue;
             if (self.unit) |unit| if (!unit.virtualizes.contains(@enumFromInt(raw))) continue;
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const declared = self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract orelse continue;

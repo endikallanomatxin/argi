@@ -50,6 +50,15 @@ pub const FunctionSet = struct {
         return !result.found_existing;
     }
 
+    // Proof selection belongs to the compilation unit. Sharing a method body
+    // with selected cleanup does not select unrelated contract operations.
+    pub fn requiresConformance(self: *const FunctionSet, graph: *const graph_mod.GlobalSemanticGraph, proof: graph_mod.ContractSafetyConformance) bool {
+        if (self.operations.contains(proof.selection)) return true;
+        if (!self.cleanup_functions.contains(proof.method)) return false;
+        const conformance = graph.contract_conformances.items[proof.selection.conformance];
+        return @import("standard_contracts.zig").standardDeclaration(graph, "Deinit") == conformance.declaration;
+    }
+
     pub fn containsBinding(self: *const FunctionSet, binding: graph_mod.GlobalBindingId) bool {
         return self.bindings.contains(binding);
     }

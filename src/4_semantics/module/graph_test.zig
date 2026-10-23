@@ -467,7 +467,7 @@ test "implicit generic calls infer pointer parameters through nested calls" {
     var module = try @import("semantizer.zig").build(allocator, "inference", &inputs);
     defer module.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     try std.testing.expectEqual(@as(usize, 2), result.graph.generic_function_instances.items.len);
     for (result.graph.generic_function_instances.items) |instance| {
@@ -538,7 +538,7 @@ test "explicit contract bounds specialize one body per concrete participant" {
     var arithmetic_core = try buildArithmeticTestCore(allocator);
     defer arithmetic_core.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     var instances: usize = 0;
     for (result.graph.generic_function_instances.items) |instance| {
         const declaration = result.graph.declaration(instance.parameterized_declaration);
@@ -668,7 +668,7 @@ test "parameterized call defaults reach caller bindings after instantiation" {
     }});
     defer module.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
 }
 
@@ -716,7 +716,7 @@ test "named call inputs reject unrelated default-only operation identities" {
     var module = try @import("semantizer.zig").build(allocator, "named_operations", &.{.{ .path = "named_operations/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     var matched = false;
     for (result.graph.nodes.items) |node| {
@@ -742,7 +742,7 @@ test "ordinary reached default selects a caller binding" {
     var module = try @import("semantizer.zig").build(allocator, "reach_local", &.{.{ .path = "reach_local/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     var reached = false;
     for (result.graph.nodes.items) |node| {
@@ -774,7 +774,7 @@ test "reached defaults propagate through an intermediate function" {
     var module = try @import("semantizer.zig").build(allocator, "reach_propagation", &.{.{ .path = "reach_propagation/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     var found = false;
     for (result.graph.functions.items) |function| {
@@ -803,7 +803,7 @@ test "callback invocation preserves binding and field editor targets" {
     var arithmetic_core = try buildArithmeticTestCore(allocator);
     defer arithmetic_core.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     var index = try @import("../../0_commands/lsp_index.zig").Index.build(allocator, &result.graph);
     defer index.deinit(allocator);
     const callback_offset = std.mem.indexOf(u8, source, "callback()").?;
@@ -935,7 +935,7 @@ test "unary and tuple conformances publish canonical static evidence" {
     var arithmetic_core = try buildArithmeticTestCore(allocator);
     defer arithmetic_core.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     var evidence: usize = 0;
     for (result.graph.contract_conformances.items) |conformance| {
         if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?)].is_bundled_core) continue;
@@ -1002,7 +1002,7 @@ test "scoped implementation evidence retains call and source identities" {
     var arithmetic_core = try buildArithmeticTestCore(allocator);
     defer arithmetic_core.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try @import("../global/verify.zig").verifyGlobal(&result.graph);
     var evidence: usize = 0;
     var operation_bindings: usize = 0;
@@ -1087,7 +1087,7 @@ test "generic implementation selection binds associated results and operation bo
     var arithmetic_core = try buildArithmeticTestCore(allocator);
     defer arithmetic_core.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try @import("../global/verify.zig").verifyGlobal(&result.graph);
     var subject_count: usize = 0;
     for (result.graph.contract_conformances.items) |conformance| {
@@ -1118,7 +1118,7 @@ test "repeated participant specificity is independent of declaration order" {
         var arithmetic_core = try buildArithmeticTestCore(allocator);
         defer arithmetic_core.graph.deinit(allocator);
         var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
-        defer result.graph.deinit(allocator);
+        defer result.deinit(allocator);
         var subject_count: usize = 0;
         for (result.graph.contract_conformances.items) |conformance| {
             if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) == 0) subject_count += 1;
@@ -1155,7 +1155,7 @@ test "nested reference array specificity selects the element parameter" {
         var arithmetic_core = try buildArithmeticTestCore(allocator);
         defer arithmetic_core.graph.deinit(allocator);
         var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
-        defer result.graph.deinit(allocator);
+        defer result.deinit(allocator);
         var subject: ?@TypeOf(result.graph.contract_conformances.items[0]) = null;
         for (result.graph.contract_conformances.items) |conformance| {
             if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;

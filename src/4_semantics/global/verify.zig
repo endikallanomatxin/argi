@@ -6,6 +6,10 @@ const lexical_storage = @import("lexical_storage.zig");
 const types = @import("types.zig");
 
 pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
+    return verifyUnit(graph, null);
+}
+
+pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @import("reachability.zig").FunctionSet) !void {
     try require(graph.constructionStateEmpty());
     const bounds = makeBounds(graph);
     for (graph.comptime_requests.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
@@ -45,9 +49,9 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.fields.items) |value| try payload.field(graph_mod.Ids, value, bounds);
     for (graph.variants.items) |value| try payload.variant(graph_mod.Ids, value, bounds);
     for (graph.generic_arguments.items) |value| try payload.genericArgument(graph_mod.Ids, value, bounds);
-    for (graph.functions.items) |value| {
+    for (graph.functions.items, 0..) |value, raw| {
         try payload.function(graph_mod.Ids, value, bounds);
-        if (value.body != null) for (graph.binding_refs.items[value.output_bindings.start..][0..value.output_bindings.len]) |binding|
+        if (value.body != null and (unit == null or unit.?.contains(@enumFromInt(raw)))) for (graph.binding_refs.items[value.output_bindings.start..][0..value.output_bindings.len]) |binding|
             try require(graph.binding(binding).initialization == null);
     }
     try verifyGenericFunctionInstances(graph);

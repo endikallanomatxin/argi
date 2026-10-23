@@ -65,7 +65,7 @@ test "module fragments retain declaration identities and share lexical and quali
     try std.testing.expect(!session.resolvers.core.declarationVisible(2, original, @enumFromInt(0)));
     try session.advance();
     var result = try session.finish();
-    defer result.graph.deinit(a);
+    defer result.deinit(a);
     try std.testing.expectEqual(@as(g.GlobalModuleId, @enumFromInt(0)), result.graph.moduleNamespace(@enumFromInt(1)));
     try std.testing.expectEqual(@as(g.GlobalModuleId, @enumFromInt(0)), result.graph.module_aliases.items[0].target);
     try std.testing.expectEqual(@as(g.GlobalModuleId, @enumFromInt(1)), result.graph.moduleForDeclaration(result.graph.functions.items[1].declaration).?);
@@ -152,7 +152,7 @@ test "module fragments select contract implementations in the shared namespace" 
     try session.appendModuleFragment(&modules, @enumFromInt(0));
     try session.advance();
     var result = try session.finish();
-    defer result.graph.deinit(a);
+    defer result.deinit(a);
     const functions = try result.graph.functionsNamed(a, "answer");
     try std.testing.expectEqual(@as(usize, 1), functions.len);
     var scratch = std.heap.ArenaAllocator.init(a);
@@ -177,7 +177,7 @@ fn appendFragmentWithAllocationFailures(allocator: std.mem.Allocator, modules: *
     try session.appendModuleFragment(modules, @enumFromInt(0));
     try session.advance();
     var result = try session.finish();
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(g.GlobalModuleId, @enumFromInt(0)), result.graph.moduleNamespace(@enumFromInt(1)));
 }
 
@@ -214,7 +214,7 @@ test "module fragment candidates preserve namespaces without publishing rejected
     defer publication.deinit();
     try std.testing.expect(publication.resolvers.core.sameDeclarationNamespace(0, 1));
     var checked = try publication.finish();
-    defer checked.graph.deinit(a);
+    defer checked.deinit(a);
     try std.testing.expect(checked.graph.sameModuleNamespace(@enumFromInt(0), @enumFromInt(1)));
 }
 
@@ -311,7 +311,7 @@ test "unresolved module conditions cannot publish a completed semantic graph" {
     try std.testing.expectEqual(@as(?bool, null), try session.evaluateModuleCondition(0, recipe.?));
     if (session.finish()) |value| {
         var unexpected = value;
-        unexpected.graph.deinit(a);
+        unexpected.deinit(a);
         return error.ExpectedPendingConditionFailure;
     } else |_| {}
     try std.testing.expect(diagnostics.hasErrors());
@@ -348,7 +348,7 @@ test "checked module decisions select source fragments without evaluating discar
     try session.appendModuleFragment(&modules, @enumFromInt(0));
     try session.advance();
     var checked = try session.finish();
-    defer checked.graph.deinit(a);
+    defer checked.deinit(a);
     const declarations = try checked.graph.declarationsNamed(a, "answer");
     try std.testing.expectEqual(@as(usize, 1), declarations.len);
     const declaration = checked.graph.declaration(declarations[0]);

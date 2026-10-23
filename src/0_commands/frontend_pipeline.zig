@@ -56,6 +56,7 @@ pub const FrontendPipeline = struct {
     /// can be materialized by this pipeline anymore.
     global_graph: ?global_sg.GlobalSemanticGraph = null,
     global_stats: global_semantizer.Stats = .{},
+    global_unit: ?@import("../4_semantics/global/reachability.zig").FunctionSet = null,
     global_safety_stats: global_safety_checker.SafetyChecker.Stats = .{},
     safety_ctx: ?global_safety_checker.SafetyChecker = null,
     safety_ns: u64 = 0,
@@ -250,7 +251,7 @@ pub const FrontendPipeline = struct {
         try session.fork(&publication, self.allocator, self.diagnostics);
         defer publication.deinit();
         var checked = try publication.finish();
-        defer checked.graph.deinit(self.allocator);
+        defer checked.deinit(self.allocator);
         self.prepared_session = session;
         return session;
     }
@@ -447,6 +448,7 @@ pub const FrontendPipeline = struct {
         self.safety_ctx = null;
         const graph = &self.global_graph.?;
         self.safety_ctx = global_safety_checker.SafetyChecker.init(self.allocator, self.diagnostics, graph);
+        self.safety_ctx.?.unit = if (self.global_unit) |*unit| unit else null;
         if (self.options.collect_stats) self.safety_ctx.?.enableStats(self.io);
         const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         try self.safety_ctx.?.analyze();
@@ -606,6 +608,7 @@ pub const FrontendPipeline = struct {
         });
         self.global_graph = result.graph;
         self.global_stats = result.stats;
+        self.global_unit = result.unit;
         try global_once_verify.verify(
             self.allocator,
             &self.global_graph.?,
@@ -827,6 +830,8 @@ pub const FrontendPipeline = struct {
         }
         if (self.safety_ctx) |*ctx| ctx.deinit();
         self.safety_ctx = null;
+        if (self.global_unit) |*unit| unit.deinit();
+        self.global_unit = null;
         if (self.global_graph) |*graph| graph.deinit(self.allocator);
         self.global_graph = null;
         if (self.options.module_cache != null) {

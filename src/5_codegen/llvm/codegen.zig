@@ -148,6 +148,7 @@ pub const CodeGenerator = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     graph: *const graph_mod.GlobalSemanticGraph,
+    unit: ?*const reachability.FunctionSet = null,
     diags: *diagnostic.Diagnostics,
     options: Options,
     module: llvm.c.LLVMModuleRef,
@@ -264,6 +265,7 @@ pub const CodeGenerator = struct {
 
         for (self.graph.functions.items, 0..) |_, raw| {
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (self.unit) |unit| if (!unit.contains(id)) continue;
             if (self.graph.function(id).flags.is_source_location_resolver) try self.generateTraceLocationResolver(id);
         }
 
@@ -296,6 +298,7 @@ pub const CodeGenerator = struct {
             // semantic contracts/templates, not runtime ABI symbols.
             if (function.body == null and function.flags.has_declared_body) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (self.unit) |unit| if (!unit.contains(id)) continue;
             _ = self.declareFunction(id) catch |err| {
                 if (err == CodegenError.Reported or err == error.OutOfMemory) return err;
                 const declaration = self.graph.declaration(function.declaration);

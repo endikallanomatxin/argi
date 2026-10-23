@@ -81,8 +81,10 @@ const TemporalProof = struct {
 pub const Version = struct {
     graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph,
     stats: sema.Stats,
+    unit: ?@import("../4_semantics/global/reachability.zig").FunctionSet = null,
 
     fn deinit(self: *Version, allocator: std.mem.Allocator) void {
+        if (self.unit) |*unit| unit.deinit();
         self.graph.deinit(allocator);
         self.* = undefined;
     }
@@ -312,7 +314,7 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
     try semantic.fork(&publication, allocator, diagnostics);
     defer publication.deinit();
     var result = try publication.finish();
-    errdefer result.graph.deinit(allocator);
+    errdefer result.deinit(allocator);
     var temporary = std.heap.ArenaAllocator.init(allocator);
     defer temporary.deinit();
     // Rejected analysis can leave its candidate tables in scratch storage.
@@ -334,6 +336,7 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
     }
     var safety = Safety.init(proof_allocator, diagnostics, &result.graph);
     safety.graph_allocator = allocator;
+    safety.unit = if (result.unit) |*unit| unit else null;
     defer safety.deinit();
     if (continuation) |function| {
         const command = result.graph.function(function);
@@ -364,7 +367,7 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
     }
     if (proof) |owned| try owned.seal(temporary.allocator());
     result.graph.trimPoolCapacity(allocator);
-    return .{ .graph = result.graph, .stats = result.stats };
+    return .{ .graph = result.graph, .stats = result.stats, .unit = result.unit };
 }
 
 test "compilation session publishes checked candidates and rejects stale revisions" {
@@ -742,4 +745,43 @@ test "definition publication owns checked annotations and releases failure paths
 
 test "semantic-only definition publication releases checked graphs and failure paths" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{false});
+}
+
+test "unit selection retains dormant bodies and checks them when selected later" {
+    const a = std.testing.allocator;
+    var diagnostic_arena = std.heap.ArenaAllocator.init(a);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
+    defer diagnostics.deinit();
+    var module = try sourceModule(a,
+        \\unused := () -> (.result: &Int32) {
+        \\    local :: Int32 = 7
+        \\    result = &local
+        \\}
+        \\main := () -> (.status_code: Int32) { status_code = 0 }
+    , &diagnostics);
+    defer module.deinit(a);
+    var session = try CompilationSession.init(a, &.{module}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    var candidate = try session.prepare(&.{module}, &diagnostics);
+    defer candidate.deinit();
+    const checked = candidate.checked.?;
+    var dormant: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId = null;
+    for (checked.graph.functions.items, 0..) |function, index| {
+        if (!std.mem.eql(u8, checked.graph.text(checked.graph.declaration(function.declaration).name), "unused")) continue;
+        dormant = @enumFromInt(index);
+        try std.testing.expect(function.body != null);
+        try std.testing.expect(!checked.unit.?.contains(dormant.?));
+    }
+    try std.testing.expect(dormant != null);
+    try std.testing.expect(!diagnostics.hasErrors());
+    try session.accept(&candidate);
+    var draft = try session.beginPreparation(&diagnostics);
+    defer draft.deinit();
+    try draft.semantic.?.includeExecutionRoot(dormant.?);
+    try std.testing.expectError(error.Reported, draft.finishDefinitions(&.{module}, &diagnostics));
+    try std.testing.expect(diagnostics.hasErrors());
+    try std.testing.expect(session.semantic.relocation.graph.function(dormant.?).body != null);
+    try std.testing.expect(!session.versions.items[0].unit.?.contains(dormant.?));
 }

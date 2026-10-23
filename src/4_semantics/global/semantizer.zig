@@ -115,6 +115,15 @@ pub const Stats = struct {
 pub const Result = struct {
     graph: global_sg.GlobalSemanticGraph,
     stats: Stats,
+    // Compilation selection owns IDs only. Materialized bodies and semantic
+    // evidence remain in the graph independently of this unit's roots.
+    unit: ?reachability_mod.FunctionSet = null,
+
+    pub fn deinit(self: *Result, allocator: std.mem.Allocator) void {
+        if (self.unit) |*unit| unit.deinit();
+        self.graph.deinit(allocator);
+        self.* = undefined;
+    }
 };
 
 fn profileTimestamp(io: ?std.Io) i96 {
@@ -968,24 +977,12 @@ pub const Session = struct {
                     generic_bodies_built += 1;
             }
         }
-        if (reachable) |set| {
-            for (relocation.graph.contract_safety_conformances.items) |*proof| {
-                const conformance = relocation.graph.contract_conformances.items[proof.selection.conformance];
-                const cleanup = set.cleanup_functions.contains(proof.method) and
-                    @import("standard_contracts.zig").standardDeclaration(&relocation.graph, "Deinit") == conformance.declaration;
-                proof.safety_required = cleanup or set.operations.contains(proof.selection);
+        if (options.profile_io != null) if (reachable) |set| {
+            for (relocation.graph.functions.items, 0..) |function, raw| {
+                if (function.flags.is_generic_instantiation and function.body != null and !set.contains(@enumFromInt(raw)))
+                    generic_bodies_unreachable += 1;
             }
-            for (relocation.graph.virtualizes.items, 0..) |*value, raw| {
-                value.safety_required = set.virtualizes.contains(@enumFromInt(raw));
-            }
-            for (relocation.graph.functions.items, 0..) |*function, raw| {
-                const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-                if (options.profile_io != null and function.flags.is_generic_instantiation and function.body != null) {
-                    if (!set.contains(id)) generic_bodies_unreachable += 1;
-                }
-                if (!set.contains(id)) function.body = null;
-            }
-        }
+        };
 
         var stats = Stats{
             .core = core.stats,
@@ -1015,7 +1012,7 @@ pub const Session = struct {
         };
 
         const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-        try global_verify.verifyGlobal(&relocation.graph);
+        try global_verify.verifyUnit(&relocation.graph, reachable);
         const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         stats.remaining = 0;
         var setup_stage_times: [setup_stage_count]u64 = undefined;
@@ -1050,7 +1047,9 @@ pub const Session = struct {
             .verify_ns = @intCast(profile_end - profile_preverify),
         };
         self.phase = .published;
-        return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+        const unit = self.reachable;
+        self.reachable = null;
+        return .{ .graph = relocation.takeGraph(allocator), .stats = stats, .unit = unit };
     }
 
     pub fn deinit(self: *Session) void {
@@ -3766,7 +3765,7 @@ test "pending operation ownership is explicit" {
 test "global semantizer accepts an empty program" {
     const allocator = std.testing.allocator;
     var result = try semantize(allocator, &.{});
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), result.graph.nodes.items.len);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     try std.testing.expectEqual(@as(u64, 0), result.stats.pending_attempts);
@@ -3947,7 +3946,7 @@ test "semantic session retains construction state until explicit publication" {
     try session.advance();
     try std.testing.expect(session.resolution.progress.profile_rounds > rounds);
     var result = try session.finish();
-    defer result.graph.deinit(a);
+    defer result.deinit(a);
     try std.testing.expectEqual(@as(usize, 1), result.graph.types.items.len);
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
     try std.testing.expectEqual(@as(usize, 0), session.relocation.graph.types.items.len);
@@ -3963,7 +3962,7 @@ fn initializeSemanticSessionWithAllocationFailures(allocator: std.mem.Allocator)
     defer session.deinit();
     try session.advance();
     var result = try session.finish();
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), result.graph.modules.items.len);
 }
 
@@ -4008,7 +4007,7 @@ test "semantic session appends modules and resumes with stable type identities" 
     try session.advance();
     const second_id = globalizer.globalType(session.relocation.offsets.items[1], @enumFromInt(0));
     var result = try session.finish();
-    defer result.graph.deinit(a);
+    defer result.deinit(a);
     try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[@intFromEnum(first_id)].builtin);
     try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[@intFromEnum(second_id)].builtin);
@@ -4068,7 +4067,7 @@ fn forkSemanticSession(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(saved_rounds, accepted.resolution.progress.profile_rounds);
     try accepted.advance();
     var result = try accepted.finish();
-    defer result.graph.deinit(a);
+    defer result.deinit(a);
     try std.testing.expectEqual(@as(usize, 2), result.graph.types.items.len);
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
 }
@@ -4101,7 +4100,7 @@ test "semantic session forks prepare independent module additions" {
     try std.testing.expectEqual(@as(usize, 1), accepted.resolvers.core.modules.len);
     try std.testing.expectEqualDeep(saved, accepted.relocation.graph.checkpoint());
     var result = try candidate.finish();
-    defer result.graph.deinit(a);
+    defer result.deinit(a);
     try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
     try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[1].builtin);

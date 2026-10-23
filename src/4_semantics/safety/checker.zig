@@ -395,12 +395,10 @@ pub const SafetyChecker = struct {
         // retain inferred alias obligations at their actual arguments; erased
         // calls must be justified by the published interface alone.
         for (self.graph.contract_safety_conformances.items) |conformance| {
-            if (!conformance.safety_required) continue;
-            if (self.unit) |unit| if (!unit.operations.contains(conformance.selection) and !unit.cleanup_functions.contains(conformance.method)) continue;
+            if (self.unit) |unit| if (!unit.requiresConformance(self.graph, conformance)) continue;
             try self.validateContractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source, .concrete);
         }
         for (self.graph.virtualizes.items, 0..) |virtualize, raw| {
-            if (!virtualize.safety_required) continue;
             if (self.unit) |unit| if (!unit.virtualizes.contains(@enumFromInt(raw))) continue;
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
@@ -647,8 +645,9 @@ pub const SafetyChecker = struct {
                     try self.report(field.source, "CStruct field '{s}' has no supported C representation", .{self.graph.text(field.name)});
             }
         }
-        for (self.graph.functions.items, 0..) |function, raw| {
-            if (self.unit) |unit| if (!unit.contains(@enumFromInt(raw))) continue;
+        // Foreign declarations promise a valid ABI even when this unit does
+        // not execute them. Body reachability only limits body verification.
+        for (self.graph.functions.items) |function| {
             if (!function.flags.is_c_abi and (function.body != null or function.flags.has_declared_body)) continue;
             const declaration = self.graph.declaration(function.declaration);
             const name = self.graph.text(declaration.name);
