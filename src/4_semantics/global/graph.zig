@@ -199,9 +199,21 @@ pub const GlobalSemanticGraph = struct {
         type_resolution_len: usize,
         binding_type_resolution_len: usize,
         type_argument_rewrites_len: usize,
+        function_completions_len: usize,
+    };
+
+    pub const BindingInitialization = struct {
+        binding: GlobalBindingId,
+        value: GlobalNodeId,
+    };
+
+    const FunctionCompletion = union(enum) {
+        body: GlobalFunctionId,
+        initializer: struct { binding: GlobalBindingId, previous: ?GlobalNodeId },
     };
 
     const ConstructionState = struct {
+        function_completions: std.ArrayList(FunctionCompletion) = .empty,
         type_resolution: std.ArrayList(TypeResolutionState) = .empty,
         binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
         type_argument_rewrites: std.ArrayList(struct {
@@ -210,6 +222,7 @@ pub const GlobalSemanticGraph = struct {
         }) = .empty,
 
         fn deinit(self: *ConstructionState, allocator: std.mem.Allocator) void {
+            self.function_completions.deinit(allocator);
             self.type_resolution.deinit(allocator);
             self.binding_type_resolution.deinit(allocator);
             self.type_argument_rewrites.deinit(allocator);
@@ -385,6 +398,7 @@ pub const GlobalSemanticGraph = struct {
             .type_resolution_len = self.construction.type_resolution.items.len,
             .binding_type_resolution_len = self.construction.binding_type_resolution.items.len,
             .type_argument_rewrites_len = self.construction.type_argument_rewrites.items.len,
+            .function_completions_len = self.construction.function_completions.items.len,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
             .@"struct" => @hasField(pool.type, "items"),
@@ -397,10 +411,17 @@ pub const GlobalSemanticGraph = struct {
 
     /// Drop indexed IDs before truncating the append-only pools they reference.
     /// Canonical generic argument rewrites are restored before their pools shrink.
+    /// Function-body completions and staged defaults are restored as well.
     /// Other in-place mutations of pre-existing entries remain outside this checkpoint.
     pub fn rollback(self: *GlobalSemanticGraph, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         self.discardIndexedTail(saved.indexed_functions, saved.indexed_declarations);
+        while (self.construction.function_completions.items.len > saved.function_completions_len) {
+            switch (self.construction.function_completions.pop().?) {
+                .body => |id| self.functions.items[@intFromEnum(id)].body = null,
+                .initializer => |entry| self.bindings.items[@intFromEnum(entry.binding)].initialization = entry.previous,
+            }
+        }
         while (self.construction.type_argument_rewrites.items.len > saved.type_argument_rewrites_len) {
             const rewrite = self.construction.type_argument_rewrites.pop().?;
             self.types.items[@intFromEnum(rewrite.type_id)].generic.arguments = rewrite.previous;
@@ -645,10 +666,39 @@ pub const GlobalSemanticGraph = struct {
         self.construction.type_argument_rewrites = .empty;
     }
 
+    /// A successful outer publication no longer needs completion undo entries.
+    /// This invalidates checkpoints taken before publication.
+    pub fn commitFunctionCompletions(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
+        self.construction.function_completions.deinit(allocator);
+        self.construction.function_completions = .empty;
+    }
+
     fn ensureTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
         if (self.construction.type_resolution.items.len >= count) return;
         try self.construction.type_resolution.ensureTotalCapacity(allocator, count);
         while (self.construction.type_resolution.items.len < count) self.construction.type_resolution.appendAssumeCapacity(.resolved);
+    }
+
+    /// Complete a published signature once. Reserve the entire undo journal
+    /// before changing older slots so allocation failure leaves them intact.
+    /// IDs, not pool element pointers, survive growth and nested speculation.
+    pub fn completeFunctionBody(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalFunctionId, body: GlobalBlockId, defaults: []const BindingInitialization) !void {
+        const raw = @intFromEnum(id);
+        if (raw >= self.functions.items.len or @intFromEnum(body) >= self.blocks.items.len) return error.InvalidFunctionCompletion;
+        if (self.functions.items[raw].body != null) return error.FunctionBodyAlreadyCompleted;
+        for (defaults) |entry| {
+            if (@intFromEnum(entry.binding) >= self.bindings.items.len or @intFromEnum(entry.value) >= self.nodes.items.len)
+                return error.InvalidFunctionCompletion;
+        }
+        const count = std.math.add(usize, defaults.len, 1) catch return error.OutOfMemory;
+        try self.construction.function_completions.ensureUnusedCapacity(allocator, count);
+        for (defaults) |entry| {
+            const slot = &self.bindings.items[@intFromEnum(entry.binding)];
+            self.construction.function_completions.appendAssumeCapacity(.{ .initializer = .{ .binding = entry.binding, .previous = slot.initialization } });
+            slot.initialization = entry.value;
+        }
+        self.construction.function_completions.appendAssumeCapacity(.{ .body = id });
+        self.functions.items[raw].body = body;
     }
 
     pub fn function(self: *const GlobalSemanticGraph, id: GlobalFunctionId) Function {
@@ -1163,4 +1213,55 @@ test "snapshot capacity trimming preserves pool pointers and identities" {
     try std.testing.expectEqualStrings("retained", graph.strings.items);
     // A second trim is harmless, including empty graph columns.
     graph.trimPoolCapacity(a);
+}
+
+fn functionCompletionGraph(allocator: std.mem.Allocator) !GlobalSemanticGraph {
+    var graph: GlobalSemanticGraph = .{};
+    errdefer graph.deinit(allocator);
+    for (0..2) |_| {
+        try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+        try graph.blocks.append(allocator, .{ .nodes = .{ .start = 0, .len = 0 } });
+        try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .int_literal = 7 } });
+    }
+    try graph.bindings.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .mutability = .constant, .initialization = @enumFromInt(0) });
+    return graph;
+}
+
+test "function completions preserve published bodies across nested rollback and pool growth" {
+    const a = std.testing.allocator;
+    var graph = try functionCompletionGraph(a);
+    defer graph.deinit(a);
+    const outer = graph.checkpoint();
+    try graph.completeFunctionBody(a, @enumFromInt(0), @enumFromInt(0), &.{.{ .binding = @enumFromInt(0), .value = @enumFromInt(1) }});
+    const inner = graph.checkpoint();
+    try graph.completeFunctionBody(a, @enumFromInt(1), @enumFromInt(1), &.{.{ .binding = @enumFromInt(0), .value = @enumFromInt(0) }});
+    try std.testing.expectError(error.FunctionBodyAlreadyCompleted, graph.completeFunctionBody(a, @enumFromInt(0), @enumFromInt(1), &.{}));
+    for (0..64) |_| try graph.functions.append(a, graph.functions.items[0]);
+    graph.rollback(inner);
+    try std.testing.expectEqual(@as(usize, 2), graph.functions.items.len);
+    try std.testing.expectEqual(@as(?GlobalBlockId, @enumFromInt(0)), graph.functions.items[0].body);
+    try std.testing.expect(graph.functions.items[1].body == null);
+    try std.testing.expectEqual(@as(?GlobalNodeId, @enumFromInt(1)), graph.bindings.items[0].initialization);
+    graph.rollback(outer);
+    try std.testing.expect(graph.functions.items[0].body == null);
+    try std.testing.expectEqual(@as(?GlobalNodeId, @enumFromInt(0)), graph.bindings.items[0].initialization);
+    try std.testing.expectEqualDeep(outer, graph.checkpoint());
+}
+
+fn completeFunctionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    var graph = try functionCompletionGraph(allocator);
+    defer graph.deinit(allocator);
+    const saved = graph.checkpoint();
+    errdefer {
+        std.debug.assert(graph.function(@enumFromInt(0)).body == null);
+        std.debug.assert(graph.binding(@enumFromInt(0)).initialization.? == @as(GlobalNodeId, @enumFromInt(0)));
+        std.debug.assert(graph.construction.function_completions.items.len == saved.function_completions_len);
+    }
+    try graph.completeFunctionBody(allocator, @enumFromInt(0), @enumFromInt(0), &.{.{ .binding = @enumFromInt(0), .value = @enumFromInt(1) }});
+    graph.rollback(saved);
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+}
+
+test "function completions leave published slots intact on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, completeFunctionWithAllocationFailures, .{});
 }

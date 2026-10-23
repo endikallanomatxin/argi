@@ -1970,7 +1970,7 @@ pub const Resolver = struct {
             const instantiated_body = try context.instantiateBlock(body);
             if (self.profile_io) |io| self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
             try context.publishEntryCaptures();
-            self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
+            try self.graph.completeFunctionBody(self.allocator, function_id, instantiated_body, &.{});
         };
         self.stats.instances += 1;
         speculation.commit();
@@ -2040,7 +2040,7 @@ pub const Resolver = struct {
         // The signature keeps its published identities, including capabilities
         // completed while resolving this body. Stage only new output defaults;
         // incomplete work must not leave initializers pointing into rolled-back IR.
-        var defaults: std.ArrayList(struct { binding: global_sg.GlobalBindingId, value: global_sg.GlobalNodeId }) = .empty;
+        var defaults: std.ArrayList(global_sg.GlobalSemanticGraph.BindingInitialization) = .empty;
         defer defaults.deinit(self.allocator);
         if (located.parameterized.concrete_function != null) {
             const storage = &self.modules[located.module_index].semantic.parameterized_storage.ir;
@@ -2082,8 +2082,7 @@ pub const Resolver = struct {
             return err;
         };
         try context.publishEntryCaptures();
-        self.graph.functions.items[@intFromEnum(function_id)].body = instantiated;
-        for (defaults.items) |entry| self.graph.bindings.items[@intFromEnum(entry.binding)].initialization = entry.value;
+        try self.graph.completeFunctionBody(self.allocator, function_id, instantiated, defaults.items);
         speculation.commit();
         return true;
     }

@@ -1047,6 +1047,7 @@ pub const Session = struct {
             .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
             .verify_ns = @intCast(profile_end - profile_preverify),
         };
+        relocation.graph.commitFunctionCompletions(allocator);
         self.phase = .published;
         const unit = self.reachable;
         self.reachable = null;
