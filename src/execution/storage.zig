@@ -160,6 +160,7 @@ pub const Storage = struct {
         _ = try partial.Storage.validateLayout(value_layout);
         var view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index, .count = count };
         if (self.acquired_frames.contains(view)) return error.ExecutionInitializedStorage;
+        try self.requireUnreservedAcquiredSlots(view);
         try self.charge(1);
         errdefer self.cells -= 1;
         const Description = struct { owners: [1]b.Cleanup, values: partial.Layout };
@@ -169,6 +170,29 @@ pub const Storage = struct {
         view.value_layout = &description.values;
         const frame = try self.publishAcquiredFrame(view, &description.owners);
         return .{ .context = self.context, .frame = frame };
+    }
+
+    // Reservation is the publication boundary for ownership. Distinct batch
+    // shapes must not issue independent cleanup state for intersecting slots.
+    // This check rejects aliases; it never recovers a capability from an address.
+    fn requireUnreservedAcquiredSlots(self: *const Storage, proposed: AcquiredView) !void {
+        var entries = self.acquired_views.valueIterator();
+        while (entries.next()) |existing| {
+            if (!std.meta.eql(existing.handle, proposed.handle)) continue;
+            if (existing.logical_index) |previous| {
+                if (overlappingRanges(previous, existing.count, proposed.logical_index.?, proposed.count)) return error.ExecutionInitializedStorage;
+            }
+            const previous_bytes = std.math.mul(usize, existing.count, existing.layout.size) catch return error.ExecutionInvalidReference;
+            const proposed_bytes = std.math.mul(usize, proposed.count, proposed.layout.size) catch return error.ExecutionInvalidReference;
+            if (overlappingRanges(existing.offset, previous_bytes, proposed.offset, proposed_bytes)) return error.ExecutionInitializedStorage;
+        }
+    }
+
+    // Compare by subtraction so a valid last slot at maxInt needs no exclusive
+    // end value beyond the representable range. Empty ranges never intersect.
+    fn overlappingRanges(left: u64, left_count: u64, right: u64, right_count: u64) bool {
+        if (left_count == 0 or right_count == 0) return false;
+        return if (left <= right) right - left < left_count else left - right < right_count;
     }
 
     /// Project a previously reserved identity without allocating. The lowering
@@ -2195,4 +2219,67 @@ test "repeated acquired references retain one exact view without widening permis
     try storage.acquisitions.release(&storage, handle);
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.acquiredReference(handle, 0, &layout, .little, .read_only, 0));
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(first));
+}
+
+test "acquired cleanup reservations reject intersecting logical and physical owners" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 24, 4);
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const logical: partial.Layout = .{ .nodes = &.{.{}} };
+    const cleanup: cleanup_layout.Layout = .{};
+    _ = try storage.reserveAcquiredCleanupBatch(handle, 4, &layout, .little, 10, logical, &cleanup, 3);
+    const cells = storage.cells;
+    const frames = storage.frames.items.len;
+    var failing = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+    storage.allocator = failing.allocator();
+    // Partial containment, encompassing batches and aliases with a different
+    // logical index must not create another set of obligations for live bytes.
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanupBatch(handle, 8, &layout, .little, 11, logical, &cleanup, 2));
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 9, logical, &cleanup, 5));
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanupBatch(handle, 8, &layout, .little, 100, logical, &cleanup, 1));
+    // Even disjoint physical bytes cannot redefine an existing logical slot.
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanupBatch(handle, 20, &layout, .little, 11, logical, &cleanup, 1));
+    try std.testing.expectEqual(cells, storage.cells);
+    try std.testing.expectEqual(frames, storage.frames.items.len);
+    try std.testing.expectEqual(@as(usize, 0), failing.allocations);
+    storage.allocator = arena.allocator();
+    _ = try storage.reserveAcquiredCleanupBatch(handle, 16, &layout, .little, 13, logical, &cleanup, 2);
+}
+
+test "zero-sized cleanup batches intersect by logical index rather than address" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 0, 1);
+    const layout: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{} } };
+    const logical: partial.Layout = .{ .nodes = &.{.{}} };
+    const cleanup: cleanup_layout.Layout = .{ .is_record = true };
+    _ = try storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 10, logical, &cleanup, 3);
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 11, logical, &cleanup, 1));
+    const next = try storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 13, logical, &cleanup, 1);
+    _ = try storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, std.math.maxInt(u64), logical, &cleanup, 1);
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, std.math.maxInt(u64) - 1, logical, &cleanup, 2));
+    const last = try storage.borrowAcquiredCleanup(next, .read_write);
+    try storage.store(last, .{ .record = &.{} });
+    _ = try storage.cleanupSet(last, true);
+    try std.testing.expect(try storage.cleanupTest(last));
+}
+
+test "acquired cleanup reservation cannot upgrade a previously published numeric alias" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 4, 4);
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const logical: partial.Layout = .{ .nodes = &.{.{}} };
+    const cleanup: cleanup_layout.Layout = .{};
+    const previous = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, null);
+    const frames = storage.frames.items.len;
+    const cells = storage.cells;
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 0, logical, &cleanup, 1));
+    try std.testing.expectEqual(cells, storage.cells);
+    try std.testing.expectEqual(frames, storage.frames.items.len);
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(previous));
 }
