@@ -262,14 +262,26 @@ test "cleanup counts reject overflowing repeated aggregate layouts" {
 pub fn owningTypes(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) ![]bool {
     const standard_contracts = @import("../4_semantics/global/standard_contracts.zig");
     const cleanup_types = try allocator.alloc(bool, graph.types.items.len);
+    errdefer allocator.free(cleanup_types);
     @memset(cleanup_types, false);
+    var nominal: std.AutoHashMapUnmanaged(g.GlobalDeclId, void) = .empty;
+    defer nominal.deinit(allocator);
     if (standard_contracts.standardDeclaration(graph, "Deinit")) |deinit| {
         for (graph.contract_conformances.items) |conformance| {
             if (conformance.declaration != deinit or conformance.participants.len == 0) continue;
             const participant = graph.generic_arguments.items[conformance.participants.start].value;
-            if (participant == .type and graph.semanticType(participant.type) != .pointer)
+            if (participant == .type and graph.semanticType(participant.type) != .pointer) {
                 cleanup_types[@intFromEnum(participant.type)] = true;
+                if (graph.semanticType(participant.type) == .declared)
+                    try nominal.put(allocator, graph.semanticType(participant.type).declared, {});
+            }
         }
+    }
+    // Globalized modules can retain distinct type slots for the same nominal
+    // declaration. Selected evidence applies to that identity, not just the
+    // particular slot used when the conformance was recorded.
+    for (graph.types.items, cleanup_types) |ty, *owns| {
+        if (ty == .declared and nominal.contains(ty.declared)) owns.* = true;
     }
     // Read selected frontend evidence and structural ownership. This is
     // only a lowering boundary check, never another conformance resolver.
@@ -427,4 +439,30 @@ test "cleanup counts cache repeated array elements without per-element descripto
     try std.testing.expect(array.repetition.?.element == counts.retained(@enumFromInt(1)));
     try std.testing.expectError(error.Overflow, counts.count(a, &graph, @enumFromInt(3)));
     try std.testing.expectEqual(@as(usize, 3), counts.values.count());
+}
+
+test "selected cleanup evidence covers every slot of one nominal declaration" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "Deinit");
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source });
+    try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Resource"), .source = source });
+    try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Other"), .source = source });
+    try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 3 }, .is_bundled_core = true });
+    try graph.types.appendSlice(a, &.{
+        .{ .declared = @enumFromInt(1) },
+        .{ .declared = @enumFromInt(1) },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+        .{ .array = .{ .element = @enumFromInt(1), .length = 2 } },
+        .{ .declared = @enumFromInt(2) },
+    });
+    try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } });
+    try graph.contract_conformances.append(a, .{ .declaration = @enumFromInt(0), .participants = .{ .start = 0, .len = 1 }, .associated_arguments = .{ .start = 0, .len = 0 }, .source = source });
+    const owning = try owningTypes(a, &graph);
+    defer a.free(owning);
+    try std.testing.expect(types.equal(&graph, @enumFromInt(0), @enumFromInt(1)));
+    try std.testing.expect(owning[0] and owning[1] and owning[3]);
+    try std.testing.expect(!owning[2] and !owning[4]);
 }
