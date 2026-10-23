@@ -17,9 +17,9 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   borrowing must project that reservation rather than create it lazily.
   Lowering now carries verified receipt field descriptors and logical indices.
   Receipt bounds select a physical region, not a typed cleanup reservation.
-  Executor reservations reuse partial storage for occupancy independently of
-  cleanup, with allocation-free borrowing by capability. Connect them to lowering,
-  native companions and nonnumeric storage; raw addresses cannot recover them.
+  Executor reservations share layouts and dense per-batch buffers, separating
+  occupancy from cleanup with allocation-free indexed borrowing. Connect them to
+  lowering, native companions and nonnumeric storage; raw addresses cannot recover them.
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.
@@ -58,9 +58,10 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   scalar operations, storage projections, variants and host signatures already use
   prepared descriptors. Virtual compatibility still requires stable identities
   across semantic refinement: choosing the first equal type per snapshot is unsafe.
-- Complete native reference-evidence production for arrays, choices, propagation,
-  lifecycle wrappers and bulk copies. Bulk paths must carry destination companions
-  before accepting reference aggregates. Reuse semantic plans, without a universal IR.
+- Complete native reference-evidence production for checked offsets, arrays,
+  choices, propagation, lifecycle wrappers and bulk copies. Bulk paths must carry
+  destination companions before accepting reference aggregates. Reuse semantic
+  plans, without a universal IR.
 - Keep adapters on registered, signature-checked primitive identities; do not
   recognize user/core operations by incidental function names or paths.
 

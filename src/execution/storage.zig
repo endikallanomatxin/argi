@@ -48,7 +48,11 @@ pub const Slots = struct {
 
     fn cells(self: Slots) ![]?b.Value {
         if (self.context != self.storage.context) return error.ExecutionForeignReference;
-        return self.storage.frameValues(self.frame);
+        const values = try self.storage.frameValues(self.frame);
+        // Acquired buffers retain occupancy, not authoritative numeric values.
+        // Use Storage.read/store so accesses also observe physical bytes.
+        if (self.storage.frames.items[@intFromEnum(self.frame)].duration == .acquired) return error.ExecutionInvalidReference;
+        return values;
     }
 };
 
@@ -66,7 +70,7 @@ pub const WriteDestination = struct {
 // Executor capability, never a language address or a proof of a legal borrow.
 pub const AcquiredCleanup = struct { context: v.ContextId, frame: v.FrameId };
 
-const CleanupSelection = struct { owner: usize, offset: usize, layout: *const cleanup_layout.Layout };
+const CleanupSelection = struct { offset: usize, layout: *const cleanup_layout.Layout };
 
 // Context-local storage. Its allocator is an execution arena; references can neither
 // name another execution nor expose a native address. Dead frame IDs stay dead.
@@ -94,6 +98,10 @@ pub const Storage = struct {
         logical_index: ?u64 = null,
         layout: *const numeric.Layout,
         endian: std.builtin.Endian,
+        count: usize = 1,
+        // One immutable occupancy template for every slot in a reservation.
+        // This is metadata, not part of a raw byte view's lookup identity.
+        value_layout: ?*const partial.Layout = null,
     };
 
     const AcquiredViewContext = struct {
@@ -107,11 +115,12 @@ pub const Storage = struct {
             std.hash.autoHash(&hasher, view.endian);
             std.hash.autoHash(&hasher, view.layout.size);
             std.hash.autoHash(&hasher, view.layout.alignment);
+            std.hash.autoHash(&hasher, view.count);
             return hasher.final();
         }
 
         pub fn eql(_: @This(), left: AcquiredView, right: AcquiredView) bool {
-            return std.meta.eql(left.handle, right.handle) and left.offset == right.offset and
+            return std.meta.eql(left.handle, right.handle) and left.offset == right.offset and left.count == right.count and
                 left.logical_index == right.logical_index and left.endian == right.endian and
                 numeric.equal(left.layout, right.layout);
         }
@@ -137,30 +146,39 @@ pub const Storage = struct {
     /// The caller supplies a checked layout which must outlive the reservation.
     /// A previously published byte view cannot be upgraded into an owning slot.
     pub fn reserveAcquiredCleanup(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout) !AcquiredCleanup {
-        _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
+        return self.reserveAcquiredCleanupBatch(handle, offset, layout, endian, logical_index, value_layout, cleanup, 1);
+    }
+
+    /// A batch shares its descriptors and owns contiguous value/flag buffers.
+    /// Slots are independent owners, not children of an initialized array value.
+    pub fn reserveAcquiredCleanupBatch(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout, count: usize) !AcquiredCleanup {
+        if (count > std.math.maxInt(b.Slot)) return error.ExecutionMemoryLimit;
+        _ = std.math.add(u64, logical_index, count -| 1) catch return error.ExecutionMemoryLimit;
+        const extent = std.math.mul(usize, count, layout.size) catch return error.ExecutionMemoryLimit;
+        _ = try self.acquisitions.range(self, handle, offset, extent, layout.alignment);
         if (!@import("../5_codegen/bytecode/storage_layout.zig").matchesNumeric(value_layout, layout)) return error.ExecutionInvalidReference;
-        const view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index };
+        _ = try partial.Storage.validateLayout(value_layout);
+        var view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index, .count = count };
         if (self.acquired_frames.contains(view)) return error.ExecutionInitializedStorage;
-        const charge_count = std.math.add(usize, 1, value_layout.nodes[0].span) catch return error.ExecutionMemoryLimit;
-        try self.charge(charge_count);
-        errdefer self.cells -= charge_count;
-        const owners = try self.allocator.alloc(b.Cleanup, 1);
-        errdefer self.allocator.free(owners);
-        owners[0] = .{ .root = 0, .offset = 0, .layout = cleanup };
-        const values = try partial.Storage.init(self.allocator, value_layout);
-        errdefer self.allocator.free(values.values);
-        var partial_storage: std.AutoHashMapUnmanaged(b.Slot, partial.Storage) = .empty;
-        errdefer partial_storage.deinit(self.allocator);
-        try partial_storage.put(self.allocator, 0, values);
-        const frame = try self.publishAcquiredFrame(view, owners);
-        self.frames.items[@intFromEnum(frame)].partial_storage = partial_storage;
+        try self.charge(1);
+        errdefer self.cells -= 1;
+        const Description = struct { owners: [1]b.Cleanup, values: partial.Layout };
+        const description = try self.allocator.create(Description);
+        errdefer self.allocator.destroy(description);
+        description.* = .{ .owners = .{.{ .root = 0, .offset = 0, .layout = cleanup }}, .values = value_layout };
+        view.value_layout = &description.values;
+        const frame = try self.publishAcquiredFrame(view, &description.owners);
         return .{ .context = self.context, .frame = frame };
     }
 
     /// Project a previously reserved identity without allocating. The lowering
     /// must transport this capability; an address lookup cannot recover it.
     pub fn borrowAcquiredCleanup(self: *Storage, reservation: AcquiredCleanup, permission: p.PointerMutability) !v.Reference {
-        const reference: v.Reference = .{ .context = reservation.context, .frame = reservation.frame, .root = 0, .path = &.{}, .mutability = permission };
+        return self.borrowAcquiredElement(reservation, 0, permission);
+    }
+
+    pub fn borrowAcquiredElement(self: *Storage, reservation: AcquiredCleanup, index: usize, permission: p.PointerMutability) !v.Reference {
+        const reference: v.Reference = .{ .context = reservation.context, .frame = reservation.frame, .root = std.math.cast(b.Slot, index) orelse return error.ExecutionIndexOutOfBounds, .path = &.{}, .mutability = permission };
         try self.validateContext(reference);
         if (try self.acquiredView(reference) == null or self.frames.items[@intFromEnum(reservation.frame)].cleanup.len == 0) return error.ExecutionMissingCleanup;
         return reference;
@@ -171,7 +189,9 @@ pub const Storage = struct {
         // arena-owned, and every lookup checks acquisition liveness first.
         try self.acquired_views.ensureUnusedCapacity(self.allocator, 1);
         try self.acquired_frames.ensureUnusedCapacity(self.allocator, 1);
-        const frame = try self.enterCleanup(1, cleanup);
+        const values = if (view.value_layout) |logical| std.math.mul(usize, view.count, logical.nodes[0].span) catch return error.ExecutionMemoryLimit else 1;
+        const flags = std.math.mul(usize, view.count, b.cleanupFlagCount(cleanup) catch return error.ExecutionInvalidReference) catch return error.ExecutionMemoryLimit;
+        const frame = try self.enterBuffers(values, cleanup, flags);
         self.acquired_views.putAssumeCapacityNoClobber(frame, view);
         self.acquired_frames.putAssumeCapacityNoClobber(view, frame);
         self.frames.items[@intFromEnum(frame)].duration = .acquired;
@@ -182,7 +202,9 @@ pub const Storage = struct {
         _ = try self.frameValues(reference.frame);
         if (self.frames.items[@intFromEnum(reference.frame)].duration != .acquired) return null;
         var view = self.acquired_views.get(reference.frame) orelse return error.ExecutionInvalidReference;
-        if (reference.root != 0) return error.ExecutionInvalidReference;
+        if (reference.root >= view.count) return error.ExecutionIndexOutOfBounds;
+        view.offset = try std.math.add(usize, view.offset, try std.math.mul(usize, reference.root, view.layout.size));
+        if (view.logical_index) |index| view.logical_index = try std.math.add(u64, index, reference.root);
         for (reference.path) |projection| {
             switch (projection) {
                 .field => |index| {
@@ -203,6 +225,17 @@ pub const Storage = struct {
         }
         _ = try self.acquisitions.range(self, view.handle, view.offset, view.layout.size, view.layout.alignment);
         return view;
+    }
+
+    fn acquiredValues(self: *Storage, reference: v.Reference) !?partial.Storage {
+        const view = self.acquired_views.get(reference.frame) orelse return null;
+        const logical = view.value_layout orelse return null;
+        if (reference.root >= view.count) return error.ExecutionIndexOutOfBounds;
+        const values = try self.frameValues(reference.frame);
+        const span = logical.nodes[0].span;
+        const start = try std.math.mul(usize, reference.root, span);
+        if (start > values.len or span > values.len - start) return error.ExecutionInvalidReference;
+        return .{ .layout = logical.*, .values = values[start..][0..span] };
     }
 
     pub fn init(allocator: std.mem.Allocator, limit: usize) !Storage {
@@ -431,16 +464,27 @@ pub const Storage = struct {
     }
 
     fn offsetInto(self: *Storage, reference: v.Reference, elements: i128, path: *[64]v.Projection) !v.Reference {
-        _ = try self.read(reference);
+        try self.validateStorageAddress(reference);
         if (reference.byte_view) |view| {
             const amount = std.math.cast(usize, elements) orelse return error.ExecutionIndexOutOfBounds;
             var result = reference;
             result.byte_view.?.offset = std.math.add(usize, view.offset, amount) catch return error.ExecutionIndexOutOfBounds;
-            _ = try self.read(result);
+            try self.validateStorageAddress(result);
             return result;
         }
         if (elements < 0) return error.ExecutionIndexOutOfBounds;
         if (elements == 0) return reference;
+        if (reference.path.len == 0) {
+            if (self.acquired_views.get(reference.frame)) |view| {
+                if (view.value_layout != null) {
+                    const offset = std.math.cast(b.Slot, elements) orelse return error.ExecutionIndexOutOfBounds;
+                    var result = reference;
+                    result.root = std.math.add(b.Slot, reference.root, offset) catch return error.ExecutionIndexOutOfBounds;
+                    try self.validateStorageAddress(result);
+                    return result;
+                }
+            }
+        }
         if (reference.path.len == 0 or reference.path[reference.path.len - 1] != .element) return error.ExecutionIndexOutOfBounds;
         const offset = std.math.cast(usize, elements) orelse return error.ExecutionIndexOutOfBounds;
         const index = std.math.add(usize, reference.path[reference.path.len - 1].element, offset) catch return error.ExecutionIndexOutOfBounds;
@@ -449,7 +493,7 @@ pub const Storage = struct {
         path[reference.path.len - 1] = .{ .element = index };
         var result = reference;
         result.path = path[0..reference.path.len];
-        _ = try self.read(result);
+        try self.validateStorageAddress(result);
         return result;
     }
 
@@ -464,7 +508,7 @@ pub const Storage = struct {
     pub fn offsetReference(self: *Storage, reference: v.Reference, elements: i128) !v.Reference {
         var path: [64]v.Projection = undefined;
         var result = try self.offsetInto(reference, elements, &path);
-        if (elements == 0 or result.byte_view != null) return result;
+        if (elements == 0 or result.byte_view != null or result.path.len == 0) return result;
         result.path = try self.retainPath(result.path);
         return result;
     }
@@ -496,9 +540,13 @@ pub const Storage = struct {
         return self.enterCleanup(count, &.{});
     }
     pub fn enterCleanup(self: *Storage, count: usize, cleanup: []const b.Cleanup) !v.FrameId {
-        if (self.frames.items.len >= std.math.maxInt(u32)) return error.ExecutionMemoryLimit;
         for (cleanup) |entry| if (entry.root >= count) return error.ExecutionInvalidReference;
         const flag_count = b.cleanupFlagCount(cleanup) catch return error.ExecutionInvalidReference;
+        return self.enterBuffers(count, cleanup, flag_count);
+    }
+
+    fn enterBuffers(self: *Storage, count: usize, cleanup: []const b.Cleanup, flag_count: usize) !v.FrameId {
+        if (self.frames.items.len >= std.math.maxInt(u32)) return error.ExecutionMemoryLimit;
         // Reserve both buffers before publishing an identity or removing a
         // reusable frame. Failed allocations leave the pool and quota intact.
         const charge_count = std.math.add(usize, std.math.add(usize, count, flag_count) catch return error.ExecutionMemoryLimit, 1) catch return error.ExecutionMemoryLimit;
@@ -587,7 +635,7 @@ pub const Storage = struct {
             return .{ .integer = try @import("../5_codegen/bytecode/numeric_layout.zig").readByte(view.layout, try self.read(base), view.offset, view.endian) };
         }
         if (try self.acquiredView(reference)) |view| {
-            if (self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root)) |record|
+            if (try self.acquiredValues(reference)) |record|
                 _ = try record.materializationCells(reference.path);
             return @import("acquired_values.zig").read(self, view.handle, view.offset, view.layout, view.endian);
         }
@@ -685,8 +733,17 @@ pub const Storage = struct {
     fn validateStorageAddress(self: *Storage, reference: v.Reference) !void {
         try self.validateContext(reference);
         _ = try self.frameValues(reference.frame);
-        if (reference.byte_view != null or self.frames.items[@intFromEnum(reference.frame)].duration == .static) {
-            _ = try self.read(reference);
+        if (reference.byte_view) |view| {
+            if (view.offset >= view.layout.size) return error.ExecutionIndexOutOfBounds;
+            var base = reference;
+            base.byte_view = null;
+            try self.validateStorageAddress(base);
+            return;
+        }
+        const frame = self.frames.items[@intFromEnum(reference.frame)];
+        if (frame.duration == .static) {
+            if (reference.root != 0 or reference.path.len != 1 or reference.path[0] != .element) return error.ExecutionInvalidReference;
+            if (reference.path[0].element >= frame.bytes.len) return error.ExecutionIndexOutOfBounds;
             return;
         }
         if (try self.acquiredView(reference) != null) return;
@@ -718,43 +775,52 @@ pub const Storage = struct {
     }
 
     fn cleanupRootActive(self: *Storage, frame: v.FrameId, root: b.Slot) !bool {
-        _ = try self.slots(frame);
+        const selected = (try self.cleanupOwner(frame, root)) orelse return false;
         const record = self.frames.items[@intFromEnum(frame)];
-        for (record.cleanup) |owner| if (owner.root == root) {
-            const end = std.math.add(usize, owner.offset, owner.layout.count) catch return error.ExecutionInvalidReference;
-            if (end > record.cleanup_flags.len) return error.ExecutionInvalidReference;
-            return std.mem.indexOfScalar(bool, record.cleanup_flags[owner.offset..end], true) != null;
-        };
-        return false;
+        const end = std.math.add(usize, selected.offset, selected.layout.count) catch return error.ExecutionInvalidReference;
+        if (end > record.cleanup_flags.len) return error.ExecutionInvalidReference;
+        return std.mem.indexOfScalar(bool, record.cleanup_flags[selected.offset..end], true) != null;
+    }
+
+    fn cleanupOwner(self: *Storage, frame: v.FrameId, root: b.Slot) !?CleanupSelection {
+        _ = try self.frameValues(frame);
+        const record = self.frames.items[@intFromEnum(frame)];
+        if (record.duration == .acquired) {
+            const view = self.acquired_views.get(frame) orelse return error.ExecutionInvalidReference;
+            if (root >= view.count) return error.ExecutionIndexOutOfBounds;
+            if (record.cleanup.len == 0) return null;
+            const layout = record.cleanup[0].layout;
+            return .{ .offset = try std.math.mul(usize, root, layout.count), .layout = layout };
+        }
+        var start: usize = 0;
+        var end = record.cleanup.len;
+        while (start < end) {
+            const middle = start + (end - start) / 2;
+            switch (std.math.order(record.cleanup[middle].root, root)) {
+                .lt => start = middle + 1,
+                .gt => end = middle,
+                .eq => {
+                    const owner = record.cleanup[middle];
+                    return .{ .offset = owner.offset, .layout = owner.layout };
+                },
+            }
+        }
+        return null;
     }
 
     fn cleanupEntry(self: *Storage, reference: v.Reference) !CleanupSelection {
         if (reference.byte_view != null) return error.ExecutionInvalidReference;
         try self.validateContext(reference);
         _ = try self.acquiredView(reference);
-        _ = try self.slots(reference.frame);
+        var selected = (try self.cleanupOwner(reference.frame, reference.root)) orelse return error.ExecutionMissingCleanup;
         const record = self.frames.items[@intFromEnum(reference.frame)];
-        var start: usize = 0;
-        var end = record.cleanup.len;
-        while (start < end) {
-            const middle = start + (end - start) / 2;
-            switch (std.math.order(record.cleanup[middle].root, reference.root)) {
-                .lt => start = middle + 1,
-                .gt => end = middle,
-                .eq => {
-                    const owner = record.cleanup[middle];
-                    var selected: CleanupSelection = .{ .owner = middle, .offset = owner.offset, .layout = owner.layout };
-                    for (reference.path) |projection| {
-                        const span = selected.layout.project(projection) orelse return error.ExecutionMissingCleanup;
-                        selected.offset = std.math.add(usize, selected.offset, span.offset) catch return error.ExecutionInvalidReference;
-                        selected.layout = span.layout;
-                    }
-                    if (selected.offset >= record.cleanup_flags.len or selected.layout.count > record.cleanup_flags.len - selected.offset) return error.ExecutionInvalidReference;
-                    return selected;
-                },
-            }
+        for (reference.path) |projection| {
+            const span = selected.layout.project(projection) orelse return error.ExecutionMissingCleanup;
+            selected.offset = std.math.add(usize, selected.offset, span.offset) catch return error.ExecutionInvalidReference;
+            selected.layout = span.layout;
         }
-        return error.ExecutionMissingCleanup;
+        if (selected.offset >= record.cleanup_flags.len or selected.layout.count > record.cleanup_flags.len - selected.offset) return error.ExecutionInvalidReference;
+        return selected;
     }
     pub fn cleanupPresent(self: *Storage, reference: v.Reference) !bool {
         const selected = try self.cleanupEntry(reference);
@@ -776,7 +842,7 @@ pub const Storage = struct {
         var updated = selected.layout.count;
         const Ancestor = struct { offset: usize, layout: *const cleanup_layout.Layout };
         var parents: [64]Ancestor = undefined;
-        const owner = record.cleanup[selected.owner];
+        const owner = (try self.cleanupOwner(reference.frame, reference.root)) orelse return error.ExecutionMissingCleanup;
         var parent: Ancestor = .{ .offset = owner.offset, .layout = owner.layout };
         if (reference.path.len > parents.len) return error.ExecutionInvalidReference;
         for (reference.path, 0..) |projection, index| {
@@ -904,10 +970,10 @@ pub const Storage = struct {
             return self.store(base, updated);
         }
         if (try self.acquiredView(reference)) |view| {
-            const record = self.frames.items[@intFromEnum(reference.frame)].partial_storage.getPtr(reference.root);
-            if (record) |logical| try logical.validateWritePath(reference.path);
+            var record = try self.acquiredValues(reference);
+            if (record) |*logical| try logical.validateWritePath(reference.path);
             try @import("acquired_values.zig").write(self, view.handle, view.offset, view.layout, value, view.endian);
-            if (record) |logical| try logical.write(reference.path, value);
+            if (record) |*logical| try logical.write(reference.path, value);
             return;
         }
         const values = try self.slots(reference.frame);
@@ -1905,9 +1971,128 @@ test "reserved acquired arrays share templates and retain zero-sized element occ
     _ = try storage.cleanupSet(first, true);
     try std.testing.expect(!try storage.cleanupTest(last));
     try std.testing.expect(!try storage.cleanupTest(root));
-    const retained = storage.frames.items[@intFromEnum(root.frame)].partial_storage.get(0).?;
+    const retained = (try storage.acquiredValues(root)).?;
     try std.testing.expectEqual(@as(usize, 2), retained.layout.nodes.len);
     try std.testing.expectEqual(@as(usize, 1001), retained.values.len);
+}
+
+test "acquired reservation batches borrow indexed owners without allocating or reading values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 0, 1);
+    const layout: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{} } };
+    const cleanup: cleanup_layout.Layout = .{ .is_record = true };
+    const logical: partial.Layout = .{ .nodes = &.{.{}} };
+    const reservation = try storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 0, logical, &cleanup, 1000);
+    try std.testing.expectEqual(@as(usize, 1), storage.frames.items.len);
+    try std.testing.expectEqual(@as(u32, 1), storage.acquired_views.count());
+    try std.testing.expectEqual(@as(usize, 1), storage.frames.items[0].cleanup.len);
+    try std.testing.expectEqual(@as(usize, 1000), storage.frames.items[0].cleanup_flags.len);
+    try std.testing.expectEqual(@as(usize, 1000), storage.frames.items[0].values.len);
+    try std.testing.expectEqual(@as(u32, 0), storage.frames.items[0].partial_storage.count());
+    const cells = storage.cells;
+    var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+    storage.allocator = failure.allocator();
+    const first = try storage.borrowAcquiredElement(reservation, 0, .read_write);
+    const last = try storage.borrowAcquiredElement(reservation, 999, .read_write);
+    const offset = try storage.offsetReference(first, 999);
+    try std.testing.expectEqual(last.frame, offset.frame);
+    try std.testing.expectEqual(last.root, offset.root);
+    try std.testing.expectEqual(@as(usize, 0), offset.path.len);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.borrowAcquiredElement(reservation, 1000, .read_write));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.offsetReference(first, 1000));
+    try std.testing.expectEqual(@as(usize, 0), failure.allocations);
+    try std.testing.expectEqual(cells, storage.cells);
+    storage.allocator = arena.allocator();
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(last));
+    try storage.store(first, .{ .record = &.{} });
+    _ = try storage.cleanupSet(first, true);
+    try std.testing.expect(!try storage.cleanupTest(last));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(last));
+    try storage.store(last, .{ .record = &.{} });
+    const copied = try storage.cloneValues(&.{.{ .reference = last }});
+    try std.testing.expectEqual(last.root, copied[0].reference.root);
+    _ = try storage.cleanupSet(copied[0].reference, true);
+    _ = try storage.cleanupSet(first, false);
+    try std.testing.expect(try storage.cleanupTest(last));
+    const slots_ = try storage.slots(last.frame);
+    try std.testing.expectError(error.ExecutionInvalidReference, slots_.get(last.root));
+    try std.testing.expectError(error.ExecutionInvalidReference, slots_.put(last.root, .unit));
+    try storage.acquisitions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.borrowAcquiredElement(reservation, 999, .read_write));
+}
+
+test "empty acquired batches and oversized reservations publish no usable owners" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 20);
+    const handle = try storage.acquisitions.acquire(&storage, 0, 1);
+    const layout: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{} } };
+    const cleanup: cleanup_layout.Layout = .{ .is_record = true };
+    const logical: partial.Layout = .{ .nodes = &.{.{}} };
+    const empty = try storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 0, logical, &cleanup, 0);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.borrowAcquiredCleanup(empty, .read_write));
+    const cells = storage.cells;
+    const frames = storage.frames.items.len;
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, 0, logical, &cleanup, 1000));
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.reserveAcquiredCleanupBatch(handle, 0, &layout, .little, std.math.maxInt(u64), logical, &cleanup, 2));
+    try std.testing.expectEqual(cells, storage.cells);
+    try std.testing.expectEqual(frames, storage.frames.items.len);
+    try std.testing.expectEqual(@as(u32, 1), storage.acquired_views.count());
+}
+
+test "acquired batch projections use independent value and cleanup strides" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 16, 4);
+    const integer: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .fields = &.{.{ .offset = 0, .layout = &integer }} } };
+    const leaf_cleanup: cleanup_layout.Layout = .{};
+    const cleanup: cleanup_layout.Layout = .{ .count = 2, .is_record = true, .children = &.{.{ .offset = 1, .ty = @enumFromInt(0), .layout = &leaf_cleanup }} };
+    const logical: partial.Layout = .{ .nodes = &.{
+        .{ .kind = .record, .first = 1, .count = 1, .span = 2 },
+        .{ .offset = 1 },
+    } };
+    const reservation = try storage.reserveAcquiredCleanupBatch(handle, 4, &layout, .little, 0, logical, &cleanup, 3);
+    const first = try storage.borrowAcquiredElement(reservation, 0, .read_write);
+    const last = try storage.borrowAcquiredElement(reservation, 2, .read_write);
+    var field = last;
+    field.path = &.{.{ .field = 0 }};
+    const destination = try storage.captureResolvedWrite(field, true);
+    _ = try storage.checkWriteCleanup(destination);
+    try storage.write(destination, .{ .integer = 42 });
+    _ = try storage.activateWriteCleanup(destination);
+    try std.testing.expectEqual(@as(i128, 42), try storage.acquisitions.loadInteger(&storage, handle, 12, &integer, .little));
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read(last)).record[0].integer);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(first));
+    try std.testing.expect(!try storage.cleanupTest(first));
+    try std.testing.expect(try storage.cleanupTest(last));
+    try std.testing.expectEqualSlices(bool, &.{ false, false, false, false, true, true }, storage.frames.items[@intFromEnum(first.frame)].cleanup_flags);
+}
+
+test "acquired numeric byte offsets do not materialize snapshots" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 8, 4);
+    const integer: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const layout: numeric.Layout = .{ .size = 8, .alignment = 4, .shape = .{ .fields = &.{
+        .{ .offset = 0, .layout = &integer },
+        .{ .offset = 4, .layout = &integer },
+    } } };
+    const reference = try storage.acquiredReference(handle, 0, &layout, .little, .read_write, null);
+    try storage.store(reference, .{ .record = &.{ .{ .integer = 20 }, .{ .integer = 22 } } });
+    const bytes = try storage.numericBytes(reference, &layout, .little);
+    const cells = storage.cells;
+    var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+    storage.allocator = failure.allocator();
+    const last = try storage.offsetReference(bytes, 7);
+    try std.testing.expectEqual(@as(usize, 7), last.byte_view.?.offset);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.offsetReference(bytes, 8));
+    try std.testing.expectEqual(@as(usize, 0), failure.allocations);
+    try std.testing.expectEqual(cells, storage.cells);
 }
 
 test "acquired views reuse equivalent descriptors across compilation units" {

@@ -14919,3 +14919,9 @@ test "feature_tests/execution/245_indirect_record_defaults" {
     try runExpect("tests/feature_tests/execution/245_indirect_record_defaults", 42);
     try vmExpect("tests/feature_tests/execution/245_indirect_record_defaults", 42, null);
 }
+
+test "feature_tests/execution/246_vacant_reference_offset" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/246_vacant_reference_offset");
+    try runExpect("tests/feature_tests/execution/246_vacant_reference_offset", 42);
+    try vmExpect("tests/feature_tests/execution/246_vacant_reference_offset", 42, null);
+}

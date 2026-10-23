@@ -104,6 +104,8 @@ String literals use immutable UTF-8 backing owned by the execution context,
 shared across repeated literals and valid after calls return. `StringView` values
 can remain in interactive bindings; reset retires their backing with the context.
 Checked reference offsets retain storage identity and enforce concrete bounds.
+Computing an offset does not read or initialize its destination; values are
+required only when the resulting reference is read.
 Text operations that require tracing or other capabilities still require those
 capabilities and their bytecode operations to be supported.
 

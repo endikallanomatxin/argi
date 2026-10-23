@@ -10,6 +10,13 @@ pub const Storage = struct {
     values: []?b.Value,
 
     pub fn init(allocator: std.mem.Allocator, layout: Layout) !Storage {
+        const count = try validateLayout(layout);
+        const values = try allocator.alloc(?b.Value, count);
+        @memset(values, null);
+        return .{ .layout = layout, .values = values };
+    }
+
+    pub fn validateLayout(layout: Layout) !usize {
         if (layout.nodes.len == 0) return error.ExecutionInvalidReference;
         for (layout.nodes, 0..) |node, index| {
             if (node.kind == .leaf) {
@@ -29,9 +36,7 @@ pub const Storage = struct {
             }
             if (node.span != span) return error.ExecutionInvalidReference;
         }
-        const values = try allocator.alloc(?b.Value, layout.nodes[0].span);
-        @memset(values, null);
-        return .{ .layout = layout, .values = values };
+        return layout.nodes[0].span;
     }
 
     const Position = struct { node: u32 = 0, cell: u32 = 0 };
