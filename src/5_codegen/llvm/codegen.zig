@@ -317,7 +317,7 @@ pub const CodeGenerator = struct {
         };
 
         if (is_extern or function.flags.is_c_abi) {
-            const signature = try self.externSignature(function, name);
+            const signature = try self.externSignature(function);
             owned_plan = signature.plan;
             // Bundled memory bindings remain module-private in Argi while
             // resolving the platform's public C symbols at link time.
@@ -664,7 +664,7 @@ pub const CodeGenerator = struct {
         return c.LLVMStructType(&words, value.words, 0);
     }
 
-    fn externSignature(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) !ExternSignature {
+    fn externSignature(self: *CodeGenerator, function: graph_mod.Function) !ExternSignature {
         const plan = try self.allocator.create(c_abi.FunctionPlan);
         errdefer self.allocator.destroy(plan);
         plan.* = try c_abi.classifyFunction(self.allocator, self.graph, function, self.graph.target.stdTarget());
@@ -677,9 +677,9 @@ pub const CodeGenerator = struct {
                 for (0..input.words) |part| params[input.parameter_index + part] = cWordType(input, part);
             } else params[input.parameter_index] = try self.cCarrierType(input);
         }
-        // Bundled libc's legacy free binding expresses an address as UIntNative.
-        // Typed RawPointer bindings already adapt through the ordinary C path.
-        if (!function.flags.is_c_function_pointer and plan.inputs.len == 1 and std.mem.eql(u8, self.externSymbolName(function, name), "free") and types.isBuiltin(self.graph, plan.inputs[0].ty, .UIntNative))
+        // Registered core release primitives expose logical integer addresses.
+        // Other foreign functions retain their declared ABI regardless of name.
+        if (!function.flags.is_c_function_pointer and function.safety_primitive == .raw_released_storage and plan.inputs.len == 1 and types.isBuiltin(self.graph, plan.inputs[0].ty, .UIntNative))
             params[plan.inputs[0].parameter_index] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
         var ret = c.LLVMVoidType();
         if (!plan.uses_sret) if (plan.result) |result| {
@@ -2665,7 +2665,7 @@ pub const CodeGenerator = struct {
         const symbol = if (call.callee_value) |pointer| blk: {
             const address = (try self.visitNode(pointer)) orelse return CodegenError.ValueNotFound;
             try self.checkCallbackAddress(address.value_ref);
-            const signature = try self.externSignature(callee, "");
+            const signature = try self.externSignature(callee);
             indirect_signature = signature;
             break :blk FunctionSymbol{ .ref = address.value_ref, .abi = .{ .c = signature }, .is_extern = true };
         } else self.functions.get(call.callee) orelse return CodegenError.SymbolNotFound;
@@ -2697,11 +2697,9 @@ pub const CodeGenerator = struct {
             sret_storage = try self.cRecordStorage(plan.result.?);
             args[0] = sret_storage;
         }
-        const declaration = self.graph.declarations.items[@intFromEnum(callee.declaration)];
-        const name = self.graph.text(declaration.name);
         for (plan.inputs, 0..) |argument, index| {
             const raw = c.LLVMBuildExtractValue(self.builder, input.value_ref, @intCast(index), "extern.arg");
-            const carrier = if (call.callee_value == null and plan.inputs.len == 1 and std.mem.eql(u8, self.externSymbolName(callee, name), "free") and types.isBuiltin(self.graph, argument.ty, .UIntNative))
+            const carrier = if (call.callee_value == null and callee.safety_primitive == .raw_released_storage and plan.inputs.len == 1 and types.isBuiltin(self.graph, argument.ty, .UIntNative))
                 c.LLVMBuildIntToPtr(self.builder, raw, c.LLVMPointerType(c.LLVMInt8Type(), 0), "free.address")
             else
                 try self.encodeCRecord(raw, argument);
@@ -3635,4 +3633,41 @@ test "captured native writes commit reference evidence and reject mismatched com
     var message: [*c]u8 = null;
     defer if (message != null) c.LLVMDisposeMessage(message);
     try std.testing.expectEqual(@as(c_int, 0), c.LLVMVerifyModule(generator.module, c.LLVMReturnStatusAction, &message));
+}
+
+test "native foreign release ABI depends on registered identity rather than symbol spelling" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .UIntNative });
+    try graph.fields.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+    });
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
+    defer generator.deinit();
+    const function: graph_mod.Function = .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 1 },
+        .output = .{ .start = 0, .len = 0 },
+        .flags = .{ .is_c_abi = true },
+        .foreign_symbol = try graph.addString(allocator, "free"),
+    };
+    const ordinary = try generator.externSignature(function);
+    defer allocator.destroy(ordinary.plan);
+    defer ordinary.plan.deinit(allocator);
+    var parameters: [1]c.LLVMTypeRef = undefined;
+    c.LLVMGetParamTypes(ordinary.fn_type, &parameters);
+    try std.testing.expect(c.LLVMIntegerTypeKind == c.LLVMGetTypeKind(parameters[0]));
+    var release = function;
+    release.safety_primitive = .raw_released_storage;
+    release.foreign_symbol = try graph.addString(allocator, "unrelated_spelling");
+    const registered = try generator.externSignature(release);
+    defer allocator.destroy(registered.plan);
+    defer registered.plan.deinit(allocator);
+    c.LLVMGetParamTypes(registered.fn_type, &parameters);
+    try std.testing.expect(c.LLVMPointerTypeKind == c.LLVMGetTypeKind(parameters[0]));
 }
