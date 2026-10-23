@@ -201,8 +201,10 @@ release primitives use context-owned byte storage instead of native allocation;
 raw addresses remain virtual tokens. Checked core establishment can form references
 to integers, floats and numeric records/arrays in acquired storage. Allocation
 slots carry prepared receipt descriptors; selection stays within that receipt's
-authenticated extent even when other regions are live. Reads require initialized
-bytes and release invalidates every view. Erased anchor
+authenticated extent even when other regions are live. Numeric reference offsets
+retain the intersection of declared and authenticated byte extents; selecting an
+element does not read or initialize it. Reads require initialized bytes, and
+release invalidates every view. Erased anchor
 reads check the backing value but expose no concrete representation. Core
 `CAllocator` allocations execute ordinary `Allocation` cleanup and release their
 context-owned regions. Resource-bearing elements, references stored in acquired
@@ -227,9 +229,9 @@ divided by -1 wraps to itself, with remainder zero. Division by zero and `abort`
 produce source diagnostics. These failures stop execution without running user
 destructors; normal lexical cleanup is distinct from abort recovery.
 
-Explicit `#run function(...)` calls use the same executor during compilation,
-including native builds. Arguments must be constants; results freeze into compiler
-values. References and values requiring cleanup cannot be exported. Compile-time
+Anonymous `#run { ... }` entries use the same executor during compilation,
+including native builds. They can declare ordinary output signatures; captured
+values must be known at compile time, and results freeze into compiler values. References and values requiring cleanup cannot be exported. Compile-time
 integer results can supply type shapes and compile-time parameters through staged
 semantic resolution. Computed `#if` in function bodies uses the same evaluator;
 only the selected arm is materialized for each specialization. See [compile-time computation](../description/50_comptime.md).
