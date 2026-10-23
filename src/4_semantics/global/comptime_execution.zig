@@ -409,32 +409,37 @@ test "staged execution clones isolate recipes and retain frozen results" {
 }
 
 test "staged requests own transient type descriptions after selection rollback" {
-    const a = std.testing.allocator;
-    var graph: g.GlobalSemanticGraph = .{};
-    defer graph.deinit(a);
-    try graph.types.append(a, .{ .builtin = .Int32 });
-    var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
-    var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
-    defer generics.deinit();
-    var functions = Functions{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };
-    var scheduler = Scheduler{ .allocator = a, .functions = &functions, .stable_type_count = 1 };
-    defer scheduler.deinit();
-    const checkpoint_ = graph.checkpoint();
-    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
-    var binding_types = [_]?g.GlobalTypeId{@enumFromInt(1)};
-    const bindings = Generics.Bindings{ .types = &binding_types, .ints = &.{} };
-    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
-    try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
-    try std.testing.expectEqual(null, scheduler.requests.items[0].bindings.types[0]);
-    graph.rollback(checkpoint_);
-    try graph.types.append(a, .{ .array = .{ .length = 2, .element = @enumFromInt(0) } });
-    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
-    try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
-    graph.rollback(checkpoint_);
-    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
-    scheduler.requests.items[0].value = .{ .boolean = true };
-    try std.testing.expect(try Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+    for ([_]bool{ false, true }) |pending_errable| {
+        const a = std.testing.allocator;
+        var graph: g.GlobalSemanticGraph = .{};
+        defer graph.deinit(a);
+        try graph.types.append(a, .{ .builtin = .Int32 });
+        var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+        defer core.deinitReachedCalls();
+        var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+        defer generics.deinit();
+        var functions = Functions{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };
+        var scheduler = Scheduler{ .allocator = a, .functions = &functions, .stable_type_count = 1 };
+        defer scheduler.deinit();
+        const checkpoint_ = graph.checkpoint();
+        try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+        if (pending_errable) try graph.types.append(a, .{ .inferred_errable = @enumFromInt(1) });
+        var binding_types = [_]?g.GlobalTypeId{@enumFromInt(@as(u32, if (pending_errable) 2 else 1))};
+        const bindings = Generics.Bindings{ .types = &binding_types, .ints = &.{} };
+        try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+        try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
+        try std.testing.expectEqual(null, scheduler.requests.items[0].bindings.types[0]);
+        graph.rollback(checkpoint_);
+        try graph.types.append(a, .{ .array = .{ .length = 2, .element = @enumFromInt(0) } });
+        if (pending_errable) try graph.types.append(a, .{ .inferred_errable = @enumFromInt(1) });
+        try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+        try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
+        graph.rollback(checkpoint_);
+        try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+        if (pending_errable) try graph.types.append(a, .{ .inferred_errable = @enumFromInt(1) });
+        scheduler.requests.items[0].value = .{ .boolean = true };
+        try std.testing.expect(try Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+    }
 }
 
 fn transientRequestFailures(a: std.mem.Allocator) !void {

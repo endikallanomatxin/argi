@@ -48,8 +48,9 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   sharing the VM/REPL execution host boundary. Keep capabilities explicit. Define
   host effects and build dependencies before enabling filesystem, stdin, networking,
   processes or unrestricted FFI.
-- Extend temporary type recipes to inferred identities and transient declaration
-  origins. Preserve nominal identity and defaults across speculative rollback;
+- Extend temporary type recipes to inferred choice identities and transient
+  declaration origins. Pending Errable wrappers retain their value types and
+  unresolved reasons through rollback. Preserve nominal identity and defaults;
   validate branch selection in native builds and retained sessions.
 - Keep dependency readiness in the scheduler and execution in the VM. Preserve
   cycles, shared budgets, nested output restrictions and rejected-command rollback.
