@@ -121,7 +121,35 @@ pub const Storage = struct {
         };
     }
     pub fn write(self: *Storage, path: []const Projection, value: b.Value) !void {
+        try self.validateWritePath(path);
         return self.writeAt(.{}, path, value, 0);
+    }
+
+    // Preflight cached ancestors without unpacking them. A rejected projection
+    // must not change occupancy or turn a cached value into a partial tree.
+    pub fn validateWritePath(self: *const Storage, path: []const Projection) !void {
+        if (path.len > 64) return error.ExecutionValueDepthLimit;
+        var position: Position = .{};
+        var inherited: ?b.Value = null;
+        for (path) |projection| {
+            const node = self.layout.nodes[position.node];
+            const selected = try self.selectChild(position, projection);
+            if (inherited orelse self.values[position.cell]) |previous| {
+                const fields = switch (node.kind) {
+                    .record => if (previous == .record) previous.record else return error.ExecutionInvalidReference,
+                    .array => if (previous == .array) previous.array else return error.ExecutionInvalidReference,
+                    .leaf => return error.ExecutionInvalidReference,
+                };
+                if (fields.len != node.count) return error.ExecutionInvalidReference;
+                const index: usize = switch (projection) {
+                    .field => |index| index,
+                    .element => |index| index,
+                    .variant => return error.ExecutionInvalidReference,
+                };
+                inherited = fields[index];
+            } else inherited = null;
+            position = selected;
+        }
     }
     fn writeAt(self: *Storage, position: Position, path: []const Projection, value: b.Value, depth: usize) !void {
         if (depth > 64) return error.ExecutionValueDepthLimit;
@@ -265,4 +293,23 @@ test "vacant empty arrays retain bounds without manufacturing a value" {
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.write(&.{.{ .element = 0 }}, .unit));
     try storage.write(&.{}, .{ .array = &.{} });
     try std.testing.expectEqual(@as(usize, 0), (try storage.read(allocator, &.{})).array.len);
+}
+
+test "rejected nested writes preserve cached ancestors and vacant child cells" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var storage = try Storage.init(allocator, .{ .nodes = &.{
+        .{ .kind = .record, .first = 1, .count = 1, .span = 4 },
+        .{ .kind = .array, .first = 2, .count = 2, .span = 3, .offset = 1 },
+        .{ .offset = 1 },
+    } });
+    const value: b.Value = .{ .record = &.{.{ .array = &.{ .{ .integer = 20 }, .{ .integer = 22 } } }} };
+    try storage.write(&.{}, value);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.write(&.{ .{ .field = 0 }, .{ .element = 2 } }, .{ .integer = 99 }));
+    try std.testing.expect(storage.values[0] != null);
+    for (storage.values[1..]) |cell| try std.testing.expectEqual(@as(?b.Value, null), cell);
+    const retained = try storage.read(allocator, &.{});
+    try std.testing.expect(retained.record.ptr == value.record.ptr);
+    try std.testing.expectEqual(@as(u64, 22), retained.record[0].array[1].integer);
 }

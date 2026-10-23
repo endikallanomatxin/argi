@@ -17,9 +17,9 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   borrowing must project that reservation rather than create it lazily.
   Lowering now carries verified receipt field descriptors and logical indices.
   Receipt bounds select a physical region, not a typed cleanup reservation.
-  Executor reservations now hold inactive cleanup per logical slot and support
-  allocation-free borrowing by capability. Connect them to lowering, native
-  companions and nonnumeric storage; raw address lookup cannot recover them.
+  Executor reservations reuse partial storage for occupancy independently of
+  cleanup, with allocation-free borrowing by capability. Connect them to lowering,
+  native companions and nonnumeric storage; raw addresses cannot recover them.
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.

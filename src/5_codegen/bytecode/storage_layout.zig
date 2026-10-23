@@ -15,6 +15,28 @@ pub const Node = struct {
 };
 pub const Layout = struct { nodes: []const Node };
 
+// Acquired storage has both a physical byte layout and logical occupancy.
+// Check their projection geometry before publishing either representation.
+pub fn matchesNumeric(layout: Layout, physical: *const @import("numeric_layout.zig").Layout) bool {
+    return matchesNode(layout, 0, physical, 0);
+}
+
+fn matchesNode(layout: Layout, index: usize, physical: *const @import("numeric_layout.zig").Layout, depth: usize) bool {
+    if (depth > 64 or index >= layout.nodes.len) return false;
+    const node = layout.nodes[index];
+    return switch (physical.shape) {
+        .integer, .floating => node.kind == .leaf,
+        .fields => |fields| blk: {
+            if (fields.len == 0) break :blk node.kind == .leaf;
+            if (node.kind != .record or node.count != fields.len or node.first > layout.nodes.len or fields.len > layout.nodes.len - node.first) break :blk false;
+            for (fields, 0..) |field, child| if (!matchesNode(layout, node.first + child, field.layout, depth + 1)) break :blk false;
+            break :blk true;
+        },
+        .array => |array| node.kind == .array and node.count == array.length and
+            (array.length == 0 or matchesNode(layout, node.first, array.element, depth + 1)),
+    };
+}
+
 pub fn compile(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) !Layout {
     var nodes: std.ArrayList(Node) = .empty;
     errdefer nodes.deinit(allocator);
