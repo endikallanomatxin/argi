@@ -15,6 +15,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   Native opaque writes already forward reference companions, but address-based
   establishment supplies none. Reserve companions and cleanup ranges together;
   borrowing must project that reservation rather than create it lazily.
+  A registered type-specialized layout primitive now shares companion geometry
+  between LLVM and bytecode. Connect it to preparation and receipt transport.
   Lowering now carries verified receipt field descriptors and logical indices.
   Receipt bounds select a physical region, not a typed cleanup reservation.
   Numeric views retain the intersection of declared and authenticated byte extents

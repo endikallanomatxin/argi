@@ -19,6 +19,7 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
+    .{ .primitive = .allocation_metadata_layout, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_allocation_metadata_layout", .signatures = &.{"#(.t: Type)() -> (.layout: _AllocationMetadataLayout)"} },
     .{ .flags = .{ .is_source_location_id = true }, .path = "core/errors/source_location.rg", .name = "error_location_id", .signatures = &.{"() -> (.location: SourceLocationId)"} },
     .{ .flags = .{ .is_source_location_resolver = true }, .path = "core/errors/source_location.rg", .name = "source_location", .signatures = &.{"(.id: SourceLocationId) -> (.location: SourceLocation)"} },
     .{ .flags = .{ .is_error_context_view = true }, .path = "core/errors/error_tracer.rg", .name = "_add_error_context", .signatures = &.{"(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: StringView) -> ()"} },
@@ -213,7 +214,7 @@ pub const Transfer = struct {
 
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
-        .none, .float_math => .{ .value = .empty },
+        .none, .float_math, .allocation_metadata_layout => .{ .value = .empty },
         // Physical release identity selects an execution boundary. Language
         // consumption remains in checked allocation-owner cleanup, not raw ABI.
         .raw_released_storage => .{ .value = .empty },

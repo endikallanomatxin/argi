@@ -282,7 +282,17 @@ const FunctionLower = struct {
             const layout = try self.parent.partialLayout(source, ty);
             _ = try self.emit(source, .{ .reserve_storage = .{ .dst = slot.*, .layout = layout } });
         }
-        try self.block(f.body.?);
+        if (f.safety_primitive == .allocation_metadata_layout) {
+            const metadata = @import("../allocation_metadata.zig");
+            _ = try metadata.outputFields(self.parent.graph, f);
+            const ty = try metadata.participant(self.parent.graph, id);
+            var leaves: @import("../reference_layout.zig").Layout = .{};
+            defer leaves.deinit(a);
+            const shape = try metadata.describe(a, self.parent.graph, ty, self.parent.cleanup_types[@intFromEnum(ty)], &self.parent.cleanup_layouts, &leaves);
+            const words = try a.alloc(b.Value, 4);
+            for (words, shape.words()) |*word, number| word.* = .{ .integer = number };
+            _ = try self.emit(source, .{ .constant = .{ .dst = outputs[0], .value = .{ .record = words } } });
+        } else try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
         const cleanup = try self.finishCleanup();
         return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = cleanup, .write_destinations = try self.write_destinations.toOwnedSlice(a) };

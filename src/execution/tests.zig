@@ -3198,3 +3198,38 @@ test "interactive array record defaults retain separate backing between commands
     try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("values[0].data&[0]")).?.value.runtime.integer);
     try session.close();
 }
+
+test "registered core allocation metadata executes through ordinary generic specialization" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const metadata_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "core/memory/heap_allocation/allocation_metadata.rg", a, .limited(64 * 1024));
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = "main() -> (.result: UIntNative) := { result = metadata_probe#(.t: [3]&Int32)() }" },
+        .{ .path = "core/memory/heap_allocation/allocation_metadata.rg", .origin = .bundled_core, .code = metadata_source },
+        .{ .path = "core/memory/heap_allocation/probe.rg", .origin = .bundled_core, .code =
+        \\metadata_probe#(.t: Type)() -> (.count: UIntNative) := {
+        \\    count = _allocation_metadata_layout#(.t: t)().layout.reference_leaves
+        \\}
+        },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+        for (diagnostics.list.items) |entry| std.debug.print("{s}\n", .{entry.msg});
+        return err;
+    };
+    for (graph.functions.items, 0..) |function, index| {
+        if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
+        var compiler = try lower.Lower.init(a, graph);
+        const program = try compiler.compile(@enumFromInt(index));
+        var executor = try vm.Vm.init(a, program, .{});
+        defer executor.deinit();
+        const values = try executor.run(@enumFromInt(index), &.{});
+        try std.testing.expectEqual(@as(u64, 3), values[0].integer);
+        return;
+    }
+    return error.MissingEntry;
+}

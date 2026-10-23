@@ -166,6 +166,7 @@ pub const CodeGenerator = struct {
     cleanup_counts: cleanup_layout.Counts = .{},
     cleanup_refresh: cleanup_state.RefreshFunctions = .{},
     reference_layouts: reference_layout.Layout = .{},
+    metadata_owning_types: ?[]bool = null,
     cleanup_bindings: []const bool,
     default_location_source: ?primitives.SourceRef = null,
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
@@ -217,6 +218,7 @@ pub const CodeGenerator = struct {
         self.cleanup_counts.deinit(self.allocator);
         self.cleanup_refresh.deinit(self.allocator);
         self.reference_layouts.deinit(self.allocator);
+        if (self.metadata_owning_types) |owning| self.allocator.free(owning);
         self.allocator.free(self.cleanup_bindings);
     }
 
@@ -912,6 +914,18 @@ pub const CodeGenerator = struct {
 
         const entry = c.LLVMAppendBasicBlock(symbol.ref, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
+        if (function.safety_primitive == .allocation_metadata_layout) {
+            const metadata = @import("../allocation_metadata.zig");
+            _ = try metadata.outputFields(self.graph, function);
+            if (self.metadata_owning_types == null) self.metadata_owning_types = try cleanup_layout.owningTypes(self.allocator, self.graph);
+            const ty = try metadata.participant(self.graph, id);
+            const shape = try metadata.describe(self.allocator, self.graph, ty, self.metadata_owning_types.?[@intFromEnum(ty)], &self.cleanup_counts, &self.reference_layouts);
+            var words: [4]c.LLVMValueRef = undefined;
+            for (&words, shape.words()) |*word, number| word.* = c.LLVMConstInt(try self.nativeUIntType(), number, 0);
+            var outputs = [_]c.LLVMValueRef{c.LLVMConstStruct(&words, words.len, 0)};
+            try self.returnArgi(c.LLVMConstStruct(&outputs, outputs.len, 0), null);
+            return;
+        }
         const input_value = if (symbol.argiSignature()) |signature| signature.input(symbol.ref) else null;
         for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, index| {
             try self.allocateLocalBinding(binding, null);
@@ -3670,4 +3684,61 @@ test "native foreign release ABI depends on registered identity rather than symb
     defer registered.plan.deinit(allocator);
     c.LLVMGetParamTypes(registered.fn_type, &parameters);
     try std.testing.expect(c.LLVMPointerTypeKind == c.LLVMGetTypeKind(parameters[0]));
+}
+
+test "native and bytecode metadata primitives share selected type geometry" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const work = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UIntNative },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 4 } } },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+        .{ .array = .{ .element = @enumFromInt(2), .length = 3 } },
+    });
+    for ([_][]const u8{ "cleanup_flags", "reference_leaves", "reference_bytes", "alignment" }) |name|
+        try graph.fields.append(a, .{ .name = try graph.addString(a, name), .ty = @enumFromInt(0), .source = source });
+    try graph.fields.append(a, .{ .name = try graph.addString(a, "layout"), .ty = @enumFromInt(1), .source = source });
+    try graph.declarations.append(a, .{ .kind = .function, .name = try graph.addString(a, "geometry"), .source = source });
+    try graph.functions.append(a, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 4, .len = 1 },
+        .body = @enumFromInt(0),
+        .output_bindings = .{ .start = 0, .len = 1 },
+        .safety_primitive = .allocation_metadata_layout,
+    });
+    try graph.bindings.append(a, .{ .name = graph.fields.items[4].name, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    try graph.binding_refs.append(a, @enumFromInt(0));
+    try graph.generic_arguments.append(a, .{ .name = try graph.addString(a, "t"), .value = .{ .type = @enumFromInt(3) } });
+    try graph.generic_function_instances.append(a, .{ .function = @enumFromInt(0), .parameterized_declaration = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } });
+    var diagnostics = diagnostic.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    var generator = try CodeGenerator.init(a, std.testing.io, &graph, &diagnostics, .{});
+    defer generator.deinit();
+    const signature = argi_abi.Signature.init(c.LLVMStructType(null, 0, 0), try generator.fieldsLLVMType(graph.function(@enumFromInt(0)).output), false);
+    const function = c.LLVMAddFunction(generator.module, "geometry", signature.function_type);
+    try generator.functions.put(@enumFromInt(0), .{ .ref = function, .abi = .{ .argi = signature }, .is_extern = false });
+    try generator.generateFunctionBody(@enumFromInt(0));
+    const returned = c.LLVMGetOperand(c.LLVMGetBasicBlockTerminator(c.LLVMGetEntryBasicBlock(function)), 0);
+    const native = c.LLVMGetOperand(returned, 0);
+    const native_data = c.LLVMGetModuleDataLayout(generator.module);
+    try std.testing.expectEqual(@as(c_ulonglong, 40), c.LLVMABISizeOfType(native_data, reference_evidence.storageViewType()));
+    var compiler = try @import("../bytecode/lower.zig").Lower.init(work, &graph);
+    const program = try compiler.compile(@enumFromInt(0));
+    var executor = try @import("../../execution/vm.zig").Vm.init(work, program, .{});
+    defer executor.deinit();
+    const values = try executor.invoke(@enumFromInt(0), &.{});
+    const expected = [_]u64{ 0, 3, 40, 8 };
+    for (values[0].record, expected, 0..) |value, number, index| {
+        try std.testing.expectEqual(number, value.integer);
+        try std.testing.expectEqual(@as(c_ulonglong, number), c.LLVMConstIntGetZExtValue(c.LLVMGetOperand(native, @intCast(index))));
+    }
+    var message: [*c]u8 = null;
+    defer if (message != null) c.LLVMDisposeMessage(message);
+    try std.testing.expectEqual(@as(c_int, 0), c.LLVMVerifyModule(generator.module, c.LLVMReturnStatusAction, &message));
 }

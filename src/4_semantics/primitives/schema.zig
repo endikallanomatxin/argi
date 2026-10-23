@@ -167,6 +167,7 @@ pub const SafetyPrimitive = enum {
     relocate,
     float_math,
     raw_released_storage,
+    allocation_metadata_layout,
 };
 
 pub const FunctionFlags = packed struct(u16) {
