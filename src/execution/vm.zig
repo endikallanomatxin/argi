@@ -452,16 +452,19 @@ pub const Vm = struct {
                 .acquired_reference => |x| {
                     const address = std.math.cast(usize, (try slots.get(x.address)).integer) orelse return error.ExecutionInvalidAcquisition;
                     const storage = &self.context().storage;
+                    var element_count: usize = 1;
                     const range = if (x.receipt) |receipt| blk: {
                         const value = try storage.read((try slots.get(receipt.value)).reference);
-                        const bounds = try @import("../5_codegen/bytecode/acquired_receipt.zig").decode(receipt.layout, value);
-                        break :blk try storage.acquisitions.resolveReceipt(storage, bounds, address, x.layout.size, x.layout.alignment);
+                        const bounds = try @import("../5_codegen/bytecode/acquired_receipt.zig").decode(receipt.layout.*, value);
+                        const selected = try storage.acquisitions.resolveReceipt(storage, bounds, address, x.layout.size, x.layout.alignment);
+                        if (bounds.grant != null and x.layout.size != 0) element_count = (try bounds.remaining(address)) / x.layout.size;
+                        break :blk selected;
                     } else try storage.acquisitions.resolveAddress(storage, address, x.layout.size, x.layout.alignment);
                     const logical_index: ?u64 = if (x.logical_index) |selection| blk: {
                         const value = (try slots.get(selection.value)).choice;
                         break :blk if (value.variant == selection.some_ordinal) value.payload.?.record[0].integer else null;
                     } else null;
-                    const reference = try storage.acquiredReference(range.handle, range.offset, x.layout, x.endian, x.permission, logical_index);
+                    const reference = try storage.acquiredReferenceBatch(range.handle, range.offset, x.layout, x.endian, x.permission, logical_index, element_count);
                     try slots.put(x.dst, .{ .reference = reference });
                 },
                 .erase_reference => |x| {

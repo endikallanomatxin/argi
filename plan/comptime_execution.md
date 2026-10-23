@@ -17,6 +17,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   borrowing must project that reservation rather than create it lazily.
   Lowering now carries verified receipt field descriptors and logical indices.
   Receipt bounds select a physical region, not a typed cleanup reservation.
+  Numeric views retain the intersection of declared and authenticated byte extents
+  for offset traversal; this supplies neither typed occupancy nor cleanup.
   Executor reservations share layouts and dense per-batch buffers, separating
   occupancy from cleanup with allocation-free indexed borrowing. Connect them to
   lowering, native companions and nonnumeric storage; raw addresses cannot recover them.

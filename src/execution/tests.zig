@@ -2854,8 +2854,9 @@ test "acquired slot indices use verified inputs and survive execution" {
     });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 1, .len = 4 }, .output = .{ .start = 5, .len = 1 }, .safety_primitive = .establish_allocation_slot });
     const layout: @import("../5_codegen/bytecode/numeric_layout.zig").Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    var receipt_layout: @import("../5_codegen/bytecode/acquired_receipt.zig").Layout = .{ .address = 0, .size = 1, .alignment = 2 };
     var code = [_]b.Instruction{
-        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 4, .address = 0, .receipt = .{ .value = 5, .layout = .{ .address = 0, .size = 1, .alignment = 2 } }, .logical_index = .{ .value = 3, .some_ordinal = 1 }, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() } } },
+        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 4, .address = 0, .receipt = .{ .value = 5, .layout = &receipt_layout }, .logical_index = .{ .value = 3, .some_ordinal = 1 }, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() } } },
         .{ .source = source, .op = .{ .ret = &.{4} } },
     };
     const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(2), @enumFromInt(6) }, .inputs = &.{ 5, 0, 2, 3 }, .outputs = &.{4}, .code = &code }};
@@ -2888,8 +2889,12 @@ test "acquired slot indices use verified inputs and survive execution" {
     code[0].op.acquired_reference.receipt.?.value = 2;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[0] = original;
-    code[0].op.acquired_reference.receipt.?.layout.size = 0;
+    receipt_layout.size = 0;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    receipt_layout.size = 1;
+    receipt_layout.grant = .{ .data = 0, .address = 0, .size = 1 };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    receipt_layout.grant = null;
     code[0] = original;
     code[0].op.acquired_reference.receipt = null;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));

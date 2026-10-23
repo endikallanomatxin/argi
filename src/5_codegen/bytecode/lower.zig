@@ -1298,10 +1298,11 @@ const FunctionLower = struct {
                 if (self.parent.cleanup_types[@intFromEnum(target.pointer.child)]) return self.parent.reject(node.source, "acquired reference requiring cleanup evidence");
                 const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child) catch return self.parent.reject(node.source, "acquired reference to nonnumeric storage");
                 var instruction: @FieldType(@FieldType(b.Instruction, "op"), "acquired_reference") = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() };
-                if (self.allocation_receipt) |receipt| instruction.receipt = .{
-                    .value = receipt,
-                    .layout = try @import("acquired_receipt.zig").compile(self.parent.graph, self.slots.items[receipt]),
-                };
+                if (self.allocation_receipt) |receipt| {
+                    const description = try self.parent.allocator.create(@import("acquired_receipt.zig").Layout);
+                    description.* = try @import("acquired_receipt.zig").compile(self.parent.graph, self.slots.items[receipt]);
+                    instruction.receipt = .{ .value = receipt, .layout = description };
+                }
                 if (self.allocation_index) |index| {
                     const variants = types.variants(self.parent.graph, self.slots.items[index]) orelse return error.InvalidBytecode;
                     for (self.parent.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, ordinal| {

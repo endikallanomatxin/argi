@@ -130,9 +130,18 @@ pub const Storage = struct {
     /// provide the language authorization; a handle or integer is not that proof.
     /// Layout metadata must outlive this storage, like other compiled layouts.
     pub fn acquiredReference(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability, logical_index: ?u64) !v.Reference {
+        return self.acquiredReferenceBatch(handle, offset, layout, endian, permission, logical_index, 1);
+    }
+
+    // A checked receipt may grant repeated numeric storage. This is a byte
+    // view only: repeated occupancy and cleanup still require explicit reservation.
+    pub fn acquiredReferenceBatch(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, permission: p.PointerMutability, logical_index: ?u64, count: usize) !v.Reference {
         if (layout.alignment == 0 or !std.math.isPowerOfTwo(layout.alignment)) return error.ExecutionInvalidReference;
-        _ = try self.acquisitions.range(self, handle, offset, layout.size, layout.alignment);
-        const view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index };
+        if (count == 0 or count > std.math.maxInt(b.Slot)) return error.ExecutionIndexOutOfBounds;
+        if (logical_index) |index| _ = std.math.add(u64, index, count - 1) catch return error.ExecutionIndexOutOfBounds;
+        const extent = std.math.mul(usize, count, layout.size) catch return error.ExecutionIndexOutOfBounds;
+        _ = try self.acquisitions.range(self, handle, offset, extent, layout.alignment);
+        const view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index, .count = count };
         if (self.acquired_frames.get(view)) |frame| {
             if (self.frames.items[@intFromEnum(frame)].cleanup.len != 0) return error.ExecutionMissingCleanup;
             return .{ .context = self.context, .frame = frame, .root = 0, .path = &.{}, .mutability = permission };
@@ -499,14 +508,12 @@ pub const Storage = struct {
         if (elements < 0) return error.ExecutionIndexOutOfBounds;
         if (elements == 0) return reference;
         if (reference.path.len == 0) {
-            if (self.acquired_views.get(reference.frame)) |view| {
-                if (view.value_layout != null) {
-                    const offset = std.math.cast(b.Slot, elements) orelse return error.ExecutionIndexOutOfBounds;
-                    var result = reference;
-                    result.root = std.math.add(b.Slot, reference.root, offset) catch return error.ExecutionIndexOutOfBounds;
-                    try self.validateStorageAddress(result);
-                    return result;
-                }
+            if (self.acquired_views.contains(reference.frame)) {
+                const offset = std.math.cast(b.Slot, elements) orelse return error.ExecutionIndexOutOfBounds;
+                var result = reference;
+                result.root = std.math.add(b.Slot, reference.root, offset) catch return error.ExecutionIndexOutOfBounds;
+                try self.validateStorageAddress(result);
+                return result;
             }
         }
         if (reference.path.len == 0 or reference.path[reference.path.len - 1] != .element) return error.ExecutionIndexOutOfBounds;
@@ -2282,4 +2289,30 @@ test "acquired cleanup reservation cannot upgrade a previously published numeric
     try std.testing.expectEqual(cells, storage.cells);
     try std.testing.expectEqual(frames, storage.frames.items.len);
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(previous));
+}
+
+test "counted acquired numeric views advance through vacant elements without snapshots" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 16, 4);
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const first = try storage.acquiredReferenceBatch(handle, 4, &layout, .little, .read_write, 1, 3);
+    const cells = storage.cells;
+    var failing = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+    storage.allocator = failing.allocator();
+    const last = try storage.offsetReference(first, 2);
+    try std.testing.expectEqual(@as(b.Slot, 2), last.root);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(last));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.offsetReference(first, 3));
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(last));
+    try std.testing.expectEqual(cells, storage.cells);
+    try std.testing.expectEqual(@as(usize, 0), failing.allocations);
+    storage.allocator = arena.allocator();
+    try storage.store(last, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read(last)).integer);
+    try std.testing.expectEqual(@as(i128, 42), try storage.acquisitions.loadInteger(&storage, handle, 12, &layout, .little));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(first));
+    try storage.acquisitions.release(&storage, handle);
+    try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(last));
 }

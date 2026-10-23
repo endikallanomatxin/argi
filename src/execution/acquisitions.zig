@@ -97,9 +97,8 @@ pub const Regions = struct {
     /// cannot substitute for that acquisition. This grants no typed occupancy.
     pub fn resolveReceipt(self: *const Regions, storage: *const storage_mod.Storage, receipt: @import("../5_codegen/bytecode/acquired_receipt.zig").Bounds, address_: usize, length: usize, alignment: usize) !Range {
         const backing = try self.resolveAddress(storage, receipt.address, receipt.size, receipt.alignment);
-        if (address_ < receipt.address) return error.ExecutionIndexOutOfBounds;
+        if (length > try receipt.remaining(address_)) return error.ExecutionIndexOutOfBounds;
         const offset = address_ - receipt.address;
-        if (offset > receipt.size or length > receipt.size - offset) return error.ExecutionIndexOutOfBounds;
         return self.range(storage, backing.handle, try std.math.add(usize, backing.offset, offset), length, alignment);
     }
 
@@ -308,4 +307,28 @@ test "virtual acquisition addresses preserve offsets and never alias another con
     const fresh = try other_regions.acquire(&other, 16, 16);
     try std.testing.expect((try other_regions.address(&other, fresh, 0)) != base);
     try std.testing.expectError(error.ExecutionInvalidAcquisition, other_regions.resolveAddress(&other, base, 1, 1));
+}
+
+test "acquired receipts preserve public grant restrictions inside authenticated bounds" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try storage_mod.Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 32, 8);
+    const base = try storage.acquisitions.address(&storage, handle, 0);
+    var receipt: @import("../5_codegen/bytecode/acquired_receipt.zig").Bounds = .{
+        .address = base,
+        .size = 32,
+        .alignment = 8,
+        .grant = .{ .address = base + 8, .size = 8 },
+    };
+    const selected = try storage.acquisitions.resolveReceipt(&storage, receipt, base + 12, 4, 4);
+    try std.testing.expectEqual(@as(usize, 12), selected.offset);
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.resolveReceipt(&storage, receipt, base + 4, 4, 4));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.resolveReceipt(&storage, receipt, base + 16, 4, 4));
+    receipt.grant.?.size = 32;
+    _ = try storage.acquisitions.resolveReceipt(&storage, receipt, base + 12, 4, 4);
+    try std.testing.expectEqual(@as(usize, 20), try receipt.remaining(base + 12));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.resolveReceipt(&storage, receipt, base + 32, 4, 4));
+    receipt.grant = .{ .address = base - 1, .size = 1 };
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.acquisitions.resolveReceipt(&storage, receipt, base, 1, 1));
 }

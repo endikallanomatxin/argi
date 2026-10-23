@@ -14931,3 +14931,13 @@ test "feature_tests/execution/247_reference_offset_cleanup" {
     try runExpect("tests/feature_tests/execution/247_reference_offset_cleanup", 42);
     try vmExpect("tests/feature_tests/execution/247_reference_offset_cleanup", 42, null);
 }
+
+test "feature_tests/execution/248_acquired_numeric_offset" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/248_acquired_numeric_offset");
+    try runExpect("tests/feature_tests/execution/248_acquired_numeric_offset", 42);
+    try vmExpect("tests/feature_tests/execution/248_acquired_numeric_offset", 42, null);
+}
+
+test "feature_tests/execution/249X_acquired_offset_grant_boundary" {
+    try vmExpect("tests/feature_tests/execution/249X_acquired_offset_grant_boundary", 1, "ExecutionIndexOutOfBounds");
+}

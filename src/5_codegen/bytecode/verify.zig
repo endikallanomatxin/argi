@@ -118,7 +118,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (x.receipt) |receipt| {
                         if (primitive != .establish_allocation_slot or f.inputs.len != 4 or receipt.value != f.inputs[0]) return error.InvalidBytecode;
                         const expected_receipt = @import("acquired_receipt.zig").compile(program.graph, f.slots[receipt.value]) catch return error.InvalidBytecode;
-                        if (!std.meta.eql(expected_receipt, receipt.layout)) return error.InvalidBytecode;
+                        if (!std.meta.eql(expected_receipt, receipt.layout.*)) return error.InvalidBytecode;
                     } else if (primitive == .establish_allocation_slot) return error.InvalidBytecode;
                     if (x.logical_index) |selection| {
                         if (primitive != .establish_allocation_slot or f.inputs.len != 4 or selection.value != f.inputs[3]) return error.InvalidBytecode;
