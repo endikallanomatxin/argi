@@ -1433,7 +1433,7 @@ pub const SafetyChecker = struct {
                 if (!try self.validateSummaryRequiredOpaque(input_node.source, summary, values, state)) return .{};
             };
             if (self.collect_stats) self.stats.primitive_calls += 1;
-            return self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, state, input_node.source);
+            return self.evaluatePrimitive(caller, call.callee, callee.safety_primitive, argument_nodes, values, state, input_node.source);
         }
         if (callee.body == null) {
             // Argument evaluation is still part of the successful call and is
@@ -2114,7 +2114,8 @@ pub const SafetyChecker = struct {
 
     fn evaluatePrimitive(
         self: *SafetyChecker,
-        function: graph_mod.GlobalFunctionId,
+        caller: graph_mod.GlobalFunctionId,
+        callee: graph_mod.GlobalFunctionId,
         primitive: primitives.SafetyPrimitive,
         argument_ids: []const graph_mod.GlobalValueFieldId,
         values: []const facts.ValueFacts,
@@ -2144,7 +2145,7 @@ pub const SafetyChecker = struct {
                 const root = try state.tracker.establish(.fresh);
                 state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
                 const shape = primitive_transfer.AllocationTransfer;
-                const fields = try self.allocator.alloc(facts.FieldFacts, try shape.fieldCount(self.graph, function));
+                const fields = try self.allocator.alloc(facts.FieldFacts, try shape.fieldCount(self.graph, callee));
                 for (fields, 0..) |*field, index| {
                     const value = try self.allocator.create(facts.ValueFacts);
                     value.* = if (index == shape.data_field)
@@ -2177,7 +2178,7 @@ pub const SafetyChecker = struct {
             .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
             .relocate => try self.relocatePrimitive(source, values, state),
             .opaque_move => blk: {
-                try self.applyOpaqueMovePrimitive(function, primitive, source, argument_ids, values, state);
+                try self.applyOpaqueMovePrimitive(caller, primitive, source, argument_ids, values, state);
                 break :blk .{};
             },
             .opaque_move_out => try self.opaqueMoveOutPrimitive(argument_ids, values, state),
@@ -9075,6 +9076,9 @@ fn allocationPrimitiveTestGraph(allocator: std.mem.Allocator, count: u32) !graph
     try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = count } } });
     try graph.fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = .{ .file_index = 0, .offset = 0 } });
     try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = count, .len = 1 }, .safety_primitive = .establish_allocation });
+    // The caller deliberately has no outputs. Allocation shape belongs to
+    // the selected callee, independently of its enclosing function's signature.
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
     return graph;
 }
 
@@ -9104,7 +9108,7 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     defer infer.deinit();
     const effect = try infer.primitiveValueEffect(.establish_allocation, 1, @enumFromInt(0));
     const symbolic = try checker.instantiateOutput(effect, &arguments, &summary_state);
-    const direct = try checker.evaluatePrimitive(@enumFromInt(0), .establish_allocation, &.{}, &arguments, &direct_state, .{ .file_index = 0, .offset = 0 });
+    const direct = try checker.evaluatePrimitive(@enumFromInt(1), @enumFromInt(0), .establish_allocation, &.{}, &arguments, &direct_state, .{ .file_index = 0, .offset = 0 });
     try std.testing.expect(valueFactsEqual(direct, symbolic));
     try std.testing.expectEqual(@as(usize, 12), direct.fields.len);
     for (direct.fields[5..]) |field| {
@@ -9207,7 +9211,7 @@ test "storage capability consumption agrees between primitives and summaries" {
             &.{ address, anchor }
         else
             &.{ address, .{}, .{}, .{}, anchor };
-        _ = try checker.evaluatePrimitive(@enumFromInt(0), primitive, &.{}, arguments, &direct, .{ .file_index = 0, .offset = 0 });
+        _ = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), primitive, &.{}, arguments, &direct, .{ .file_index = 0, .offset = 0 });
         const index = primitive_transfer.forPrimitive(primitive).consumes_storage_input.?;
         try checker.applySummaryEffects(.{ .file_index = 0, .offset = 0 }, .{
             .storage_capability_uses = &.{.{ .target = .{ .input_index = index } }},
@@ -9238,7 +9242,7 @@ test "native acquisition and page trimming agree with symbolic transfers" {
     var symbolic = SafetyChecker.FunctionState.init(allocator);
     defer symbolic.deinit();
     const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
-    const acquired = try checker.evaluatePrimitive(@enumFromInt(0), .native_allocated_storage, &.{}, &.{}, &direct, source);
+    const acquired = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .native_allocated_storage, &.{}, &.{}, &direct, source);
     const acquired_effect = try inference.primitiveValueEffect(.native_allocated_storage, 1, null);
     const inferred = try checker.instantiateOutput(acquired_effect, &.{}, &symbolic);
     try std.testing.expectEqual(acquired.foreign_storage, inferred.foreign_storage);
@@ -9247,7 +9251,7 @@ test "native acquisition and page trimming agree with symbolic transfers" {
     inline for (.{ SafetyChecker.StorageCapabilityState.available, SafetyChecker.StorageCapabilityState.consumed }) |state| {
         direct.storage_capabilities.items[0] = state;
         symbolic.storage_capabilities.items[0] = state;
-        const trimmed = try checker.evaluatePrimitive(@enumFromInt(0), .acquisition_subaddress, &.{}, &.{ acquired, .{} }, &direct, source);
+        const trimmed = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .acquisition_subaddress, &.{}, &.{ acquired, .{} }, &direct, source);
         const inferred_trimmed = try checker.instantiateOutput(trimmed_effect, &.{ inferred, .{} }, &symbolic);
         try std.testing.expectEqualSlices(facts.StorageCapabilityId, acquired.storage_capabilities, trimmed.storage_capabilities);
         try std.testing.expectEqualSlices(facts.StorageCapabilityId, trimmed.storage_capabilities, inferred_trimmed.storage_capabilities);
