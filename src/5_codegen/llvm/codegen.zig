@@ -917,10 +917,9 @@ pub const CodeGenerator = struct {
         if (function.safety_primitive == .allocation_metadata_layout) {
             const metadata = @import("../allocation_metadata.zig");
             _ = try metadata.outputFields(self.graph, function);
-            if (self.metadata_owning_types == null) self.metadata_owning_types = try cleanup_layout.owningTypes(self.allocator, self.graph);
             const ty = try metadata.participant(self.graph, id);
-            const shape = try metadata.describe(self.allocator, self.graph, ty, self.metadata_owning_types.?[@intFromEnum(ty)], &self.cleanup_counts, &self.reference_layouts);
-            var words: [4]c.LLVMValueRef = undefined;
+            const shape = try self.allocationShape(ty);
+            var words: [5]c.LLVMValueRef = undefined;
             for (&words, shape.words()) |*word, number| word.* = c.LLVMConstInt(try self.nativeUIntType(), number, 0);
             var outputs = [_]c.LLVMValueRef{c.LLVMConstStruct(&words, words.len, 0)};
             try self.returnArgi(c.LLVMConstStruct(&outputs, outputs.len, 0), null);
@@ -946,6 +945,7 @@ pub const CodeGenerator = struct {
                 try self.storeReferenceView(binding, try self.fieldEvidence(function.input, index, evidence));
             };
         }
+        if (function.safety_primitive == .prepare_allocation_metadata) return self.prepareAllocationMetadata(id, function);
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len], 0..) |binding, index| {
             if (self.graph.binding(binding).initialization != null) return CodegenError.InvalidType;
             try self.allocateLocalBinding(binding, null);
@@ -2128,8 +2128,146 @@ pub const CodeGenerator = struct {
 
     // Only checked reference primitives may recover companions after their
     // address arithmetic. Ordinary integer-to-pointer casts grant no evidence.
+    fn allocationShape(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !@import("../allocation_metadata.zig").Shape {
+        if (self.metadata_owning_types == null) self.metadata_owning_types = try cleanup_layout.owningTypes(self.allocator, self.graph);
+        return @import("../allocation_metadata.zig").describe(self.allocator, self.graph, ty, self.metadata_owning_types.?[@intFromEnum(ty)], &self.cleanup_counts, &self.reference_layouts);
+    }
+
+    fn metadataCondition(self: *CodeGenerator, condition: c.LLVMValueRef) !void {
+        const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+        const valid = c.LLVMAppendBasicBlock(function, "metadata.valid");
+        const invalid = c.LLVMAppendBasicBlock(function, "metadata.invalid");
+        _ = c.LLVMBuildCondBr(self.builder, condition, valid, invalid);
+        c.LLVMPositionBuilderAtEnd(self.builder, invalid);
+        try self.runtimeFailure("invalid acquired slot metadata");
+        c.LLVMPositionBuilderAtEnd(self.builder, valid);
+    }
+
+    const MetadataInput = struct { receipt: c.LLVMValueRef, layout: @import("../bytecode/acquired_receipt.zig").Layout, state: [5]c.LLVMValueRef };
+
+    fn metadataInput(self: *CodeGenerator, binding: graph_mod.GlobalBindingId) !MetadataInput {
+        const pointer = try self.bindingValue(binding);
+        const ty = pointer.ty orelse return CodegenError.InvalidType;
+        const child = self.graph.semanticType(ty).pointer.child;
+        const record = c.LLVMBuildLoad2(self.builder, try self.toLLVMType(child), pointer.value_ref, "metadata.receipt");
+        const layout = try @import("../bytecode/acquired_receipt.zig").compile(self.graph, ty);
+        const description = layout.metadata orelse return CodegenError.InvalidType;
+        const word = try self.nativeUIntType();
+        const zero = c.LLVMConstInt(word, 0, 0);
+        const token = c.LLVMBuildExtractValue(self.builder, record, description.field, "metadata.handle");
+        const backing = c.LLVMBuildExtractValue(self.builder, record, layout.address, "metadata.backing");
+        try self.metadataCondition(c.LLVMBuildOr(self.builder, c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, token, zero, "metadata.absent"), c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, token, backing, "metadata.origin"), "metadata.valid.origin"));
+        const extent = c.LLVMBuildExtractValue(self.builder, record, description.extent, "metadata.extent");
+        const tag = c.LLVMBuildExtractValue(self.builder, extent, 0, "metadata.extent.tag");
+        const payload = c.LLVMBuildExtractValue(self.builder, extent, description.some_ordinal + 1, "metadata.extent.payload");
+        const extent_value = c.LLVMBuildExtractValue(self.builder, payload, description.value, "metadata.extent.value");
+        const present = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMTypeOf(tag), description.some_ordinal, 0), "metadata.extent.present");
+        var header_types = [_]c.LLVMTypeRef{ word, word };
+        const header = reference_evidence.loadOptionalValue(self.builder, c.LLVMBuildIntToPtr(self.builder, token, c.LLVMPointerType(c.LLVMInt8Type(), 0), "metadata.header.address"), c.LLVMStructType(&header_types, header_types.len, 0));
+        return .{ .receipt = record, .layout = layout, .state = .{
+            token,
+            c.LLVMBuildSelect(self.builder, present, c.LLVMBuildExtractValue(self.builder, extent_value, description.count, "metadata.count"), zero, "metadata.selected.count"),
+            c.LLVMBuildSelect(self.builder, present, c.LLVMBuildExtractValue(self.builder, extent_value, description.element_size, "metadata.element.size"), zero, "metadata.selected.size"),
+            c.LLVMBuildExtractValue(self.builder, header, 0, "metadata.flag.stride"),
+            c.LLVMBuildExtractValue(self.builder, header, 1, "metadata.reference.stride"),
+        } };
+    }
+
+    fn prepareAllocationMetadata(self: *CodeGenerator, id: graph_mod.GlobalFunctionId, function: graph_mod.Function) !void {
+        if (function.input_bindings.len != 1 or function.output.len != 1) return CodegenError.InvalidType;
+        const ty = try @import("../allocation_metadata.zig").participant(self.graph, id);
+        const shape = try self.allocationShape(ty);
+        if (shape.cleanup_flags == 0 and shape.reference_leaves == 0) {
+            try self.returnArgi(c.LLVMConstNull(try self.fieldsLLVMType(function.output)), null);
+            return;
+        }
+        const input = try self.metadataInput(self.graph.binding_refs.items[function.input_bindings.start]);
+        const word = try self.nativeUIntType();
+        const zero = c.LLVMConstInt(word, 0, 0);
+        const data = c.LLVMBuildExtractValue(self.builder, input.receipt, input.layout.grant.?.data, "metadata.data");
+        const address = c.LLVMBuildExtractValue(self.builder, data, input.layout.grant.?.address, "metadata.data.address");
+        const base = c.LLVMBuildExtractValue(self.builder, input.receipt, input.layout.address, "metadata.backing");
+        try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, c.LLVMBuildURem(self.builder, base, c.LLVMConstInt(word, shape.alignment, 0), "metadata.alignment"), zero, "metadata.aligned"));
+        try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, input.state[0], zero, "metadata.vacant"));
+        const representation = try types.layoutOf(self.graph, ty);
+        try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, input.state[2], c.LLVMConstInt(word, representation.size, 0), "metadata.shape"));
+        try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntUGE, address, base, "metadata.prefix"));
+        const prefix = c.LLVMBuildSub(self.builder, address, base, "metadata.bytes");
+        const extent = c.LLVMBuildExtractValue(self.builder, input.receipt, input.layout.size, "metadata.backing.size");
+        try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntULE, prefix, extent, "metadata.prefix.bounded"));
+        try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntUGE, prefix, c.LLVMConstInt(word, shape.header_bytes, 0), "metadata.header.bounded"));
+        const payload_prefix = c.LLVMBuildSub(self.builder, prefix, c.LLVMConstInt(word, shape.header_bytes, 0), "metadata.available.prefix");
+        const flags_bytes = c.LLVMBuildMul(self.builder, input.state[1], c.LLVMConstInt(word, shape.cleanup_flags, 0), "metadata.flag.bytes");
+        if (shape.cleanup_flags != 0) try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntULE, input.state[1], c.LLVMBuildUDiv(self.builder, payload_prefix, c.LLVMConstInt(word, shape.cleanup_flags, 0), "metadata.flag.capacity"), "metadata.flags.bounded"));
+        if (shape.reference_leaves != 0) {
+            const stride = try std.math.mul(u64, shape.reference_leaves, shape.reference_bytes);
+            const reference_start = c.LLVMBuildAnd(self.builder, c.LLVMBuildAdd(self.builder, flags_bytes, c.LLVMConstInt(word, 7, 0), "metadata.references.padding"), c.LLVMConstInt(word, @bitCast(@as(i64, -8)), 0), "metadata.references.start");
+            try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntULE, reference_start, payload_prefix, "metadata.references.prefix"));
+            const available = c.LLVMBuildSub(self.builder, payload_prefix, reference_start, "metadata.references.available");
+            try self.metadataCondition(c.LLVMBuildICmp(self.builder, c.LLVMIntULE, input.state[1], c.LLVMBuildUDiv(self.builder, available, c.LLVMConstInt(word, stride, 0), "metadata.reference.capacity"), "metadata.references.bounded"));
+        }
+        const pointer = c.LLVMBuildIntToPtr(self.builder, base, c.LLVMPointerType(c.LLVMInt8Type(), 0), "metadata.storage");
+        _ = c.LLVMBuildMemSet(self.builder, pointer, c.LLVMConstInt(c.LLVMInt8Type(), 0, 0), prefix, 1);
+        var header_words = [_]c.LLVMValueRef{ c.LLVMConstInt(word, shape.cleanup_flags, 0), c.LLVMConstInt(word, shape.reference_leaves, 0) };
+        _ = c.LLVMBuildStore(self.builder, c.LLVMConstStruct(&header_words, header_words.len, 0), pointer);
+        try self.returnArgi(c.LLVMBuildInsertValue(self.builder, c.LLVMGetUndef(try self.fieldsLLVMType(function.output)), base, 0, "metadata.result"), null);
+    }
+
+    fn allocationReferenceEvidence(self: *CodeGenerator, target: graph_mod.GlobalTypeId) !?c.LLVMValueRef {
+        const function = self.graph.function(self.current_function.?);
+        if (function.input_bindings.len != 4) return CodegenError.InvalidType;
+        const bindings = self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len];
+        const ty = self.graph.semanticType(target).pointer.child;
+        const shape = try self.allocationShape(ty);
+        if (shape.cleanup_flags == 0 and shape.reference_leaves == 0) return null;
+        const input = try self.metadataInput(bindings[0]);
+        const index_value = try self.bindingValue(bindings[3]);
+        const index_type = self.graph.binding(bindings[3]).ty;
+        const variants = types.variants(self.graph, index_type) orelse return CodegenError.InvalidType;
+        var some: ?u32 = null;
+        for (self.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, index| if (variant.payload_type != null) {
+            some = @intCast(index);
+        };
+        const ordinal = some orelse return CodegenError.InvalidType;
+        const tag = c.LLVMBuildExtractValue(self.builder, index_value.value_ref, 0, "metadata.index.tag");
+        const payload = c.LLVMBuildExtractValue(self.builder, index_value.value_ref, ordinal + 1, "metadata.index.payload");
+        const selected = c.LLVMBuildExtractValue(self.builder, payload, 0, "metadata.index");
+        const word = try self.nativeUIntType();
+        const present = c.LLVMBuildAnd(self.builder, c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMTypeOf(tag), ordinal, 0), "metadata.index.present"), c.LLVMBuildICmp(self.builder, c.LLVMIntNE, input.state[0], c.LLVMConstInt(word, 0, 0), "metadata.prepared"), "metadata.available");
+        for ([_]usize{ 2, 3, 4 }, [_]u64{ (try types.layoutOf(self.graph, ty)).size, shape.cleanup_flags, shape.reference_leaves }) |index, expected| {
+            const same = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, input.state[index], c.LLVMConstInt(word, expected, 0), "metadata.borrow.shape");
+            try self.metadataCondition(c.LLVMBuildOr(self.builder, c.LLVMBuildNot(self.builder, present, "metadata.unprepared"), same, "metadata.shape.compatible"));
+        }
+        try self.metadataCondition(c.LLVMBuildOr(self.builder, c.LLVMBuildNot(self.builder, present, "metadata.unprepared"), c.LLVMBuildICmp(self.builder, c.LLVMIntULT, selected, input.state[1], "metadata.index.bounded"), "metadata.borrow.bounded"));
+        // Unprepared raw establishment retains the existing native boundary.
+        // It cannot acquire a companion or infer an owner from its data address.
+        const safe_index = c.LLVMBuildSelect(self.builder, present, selected, c.LLVMConstInt(word, 0, 0), "metadata.selected.index");
+        const base = c.LLVMBuildIntToPtr(self.builder, input.state[0], c.LLVMPointerType(c.LLVMInt8Type(), 0), "metadata.base");
+        var header_index = [_]c.LLVMValueRef{c.LLVMConstInt(word, shape.header_bytes, 0)};
+        const flags_base = c.LLVMBuildGEP2(self.builder, c.LLVMInt8Type(), base, &header_index, 1, "metadata.flags.base");
+        const flag_offset = c.LLVMBuildMul(self.builder, safe_index, c.LLVMConstInt(word, shape.cleanup_flags, 0), "metadata.flags.offset");
+        var flag_indices = [_]c.LLVMValueRef{flag_offset};
+        const flag_pointer = c.LLVMBuildGEP2(self.builder, c.LLVMInt1Type(), flags_base, &flag_indices, 1, "metadata.flags");
+        const cleanup_pointer = if (shape.cleanup_flags != 0) c.LLVMBuildSelect(self.builder, present, flag_pointer, c.LLVMConstNull(c.LLVMTypeOf(base)), "metadata.cleanup") else c.LLVMConstNull(c.LLVMTypeOf(base));
+        const flags_size = c.LLVMBuildMul(self.builder, input.state[1], c.LLVMConstInt(word, shape.cleanup_flags, 0), "metadata.flags.size");
+        const padded = c.LLVMBuildAnd(self.builder, c.LLVMBuildAdd(self.builder, flags_size, c.LLVMConstInt(word, 7, 0), "metadata.padding"), c.LLVMConstInt(word, @bitCast(@as(i64, -8)), 0), "metadata.aligned");
+        const reference_offset = c.LLVMBuildAdd(self.builder, padded, c.LLVMBuildMul(self.builder, safe_index, c.LLVMConstInt(word, try std.math.mul(u64, shape.reference_leaves, shape.reference_bytes), 0), "metadata.references.stride"), "metadata.references.offset");
+        var reference_indices = [_]c.LLVMValueRef{reference_offset};
+        const reference_pointer = c.LLVMBuildGEP2(self.builder, c.LLVMInt8Type(), flags_base, &reference_indices, 1, "metadata.references");
+        return try reference_evidence.storageView(self.builder, .{
+            .cleanup = cleanup_pointer,
+            .references = if (shape.reference_leaves == 0) null else c.LLVMBuildSelect(self.builder, present, reference_pointer, c.LLVMConstNull(c.LLVMTypeOf(base)), "metadata.reference.storage"),
+            .owner = if (shape.cleanup_flags == 0) null else .{
+                .flags = c.LLVMBuildSelect(self.builder, present, flags_base, c.LLVMConstNull(c.LLVMTypeOf(base)), "metadata.owner"),
+                .refresh = if (shape.cleanup_flags > 1) try self.cleanup_refresh.getBatch(self.allocator, &self.cleanup_counts, self.module, ty) else c.LLVMConstNull(c.LLVMPointerType(c.LLVMInt8Type(), 0)),
+                .offset = flag_offset,
+            },
+        });
+    }
+
     fn castReferenceEvidence(self: *CodeGenerator, target: graph_mod.GlobalTypeId) !?c.LLVMValueRef {
         const function = self.graph.function(self.current_function orelse return null);
+        if (function.safety_primitive == .establish_allocation_slot) return self.allocationReferenceEvidence(target);
         const offset = switch (function.safety_primitive) {
             .reference_offset, .mutable_reference_offset => true,
             .read_reference => false,
@@ -2667,7 +2805,7 @@ pub const CodeGenerator = struct {
         const callee = self.graph.functions.items[@intFromEnum(call.callee)];
         if (callee.safety_primitive == .float_math) return try self.floatMath(call.input, callee);
         if (callee.safety_primitive == .relocate) return self.opaqueRelocate(call.input);
-        if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input, callee.safety_primitive == .trusted_opaque_move_in);
+        if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input, callee.safety_primitive);
         if (callee.safety_primitive == .trusted_opaque_move_out) return self.opaqueTake(call.input);
         if (callee.safety_primitive == .trusted_opaque_relocate) return self.opaqueRelocate(call.input);
         if (callee.safety_primitive == .trusted_opaque_drop) return self.opaqueDrop(call.input, callee);
@@ -2743,13 +2881,14 @@ pub const CodeGenerator = struct {
         c.LLVMPositionBuilderAtEnd(self.builder, valid);
     }
 
-    fn opaqueStore(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId, has_storage: bool) !?TypedValue {
+    fn opaqueStore(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId, primitive: primitives.SafetyPrimitive) !?TypedValue {
         // Owning argument preparation may wrap the record in a value sequence.
         // Consume its evaluated ABI record rather than requiring literal syntax.
         const input = (try self.visitNode(input_id)) orelse return CodegenError.ValueNotFound;
         if (c.LLVMGetTypeKind(input.type_ref) != c.LLVMStructTypeKind) return CodegenError.InvalidType;
         // Explicit primitive inputs precede any completed capability inputs.
-        const destination_index: u32 = if (has_storage) 1 else 0;
+        const transition = @import("../../4_semantics/primitives/registry.zig").opaqueCleanupTransition(primitive) orelse return CodegenError.InvalidType;
+        const destination_index = transition.input;
         const source_index = destination_index + 1;
         if (c.LLVMCountStructElementTypes(input.type_ref) <= source_index)
             return CodegenError.InvalidType;
@@ -2773,6 +2912,7 @@ pub const CodeGenerator = struct {
             .reference_type = try self.optionalReferenceValueType(ty),
         };
         try target.commit(self, .{ .value_ref = source, .type_ref = target.type_ref, .ty = ty, .reference_view = source_evidence });
+        if (view) |evidence| try self.setReferentCleanup(evidence, ty, transition.enabled);
         return null;
     }
 
@@ -2792,7 +2932,9 @@ pub const CodeGenerator = struct {
         };
         const type_ref = try self.toLLVMType(child);
         const references: ?c.LLVMValueRef = if (slot.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else null;
-        return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, slot.value_ref, "opaque.take"), .type_ref = type_ref, .ty = child, .reference_view = try self.loadReferenceView(child, references) };
+        const value: TypedValue = .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, slot.value_ref, "opaque.take"), .type_ref = type_ref, .ty = child, .reference_view = try self.loadReferenceView(child, references) };
+        if (slot.reference_view) |view| try self.setReferentCleanup(view, child, @import("../../4_semantics/primitives/registry.zig").opaqueCleanupTransition(.trusted_opaque_move_out).?.enabled);
+        return value;
     }
 
     fn opaqueRelocate(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) !?TypedValue {
@@ -2855,13 +2997,13 @@ pub const CodeGenerator = struct {
                 break;
             }
         }
-        for (self.graph.value_fields.items[input.fields.start..][0..input.fields.len]) |field| {
-            if (!std.mem.eql(u8, self.graph.text(field.name), "slot")) continue;
-            const slot = (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
-            try self.callDeinit(destructor, input_id, self_index orelse return CodegenError.InvalidType, slot.value_ref, slot.reference_view);
-            return null;
-        }
-        return CodegenError.InvalidType;
+        const transition = @import("../../4_semantics/primitives/registry.zig").opaqueCleanupTransition(primitive.safety_primitive) orelse return CodegenError.InvalidType;
+        if (transition.input >= input.fields.len) return CodegenError.InvalidType;
+        const field = self.graph.value_fields.items[input.fields.start + transition.input];
+        const slot = (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
+        try self.callDeinit(destructor, input_id, self_index orelse return CodegenError.InvalidType, slot.value_ref, slot.reference_view);
+        if (slot.reference_view) |view| try self.setReferentCleanup(view, child, transition.enabled);
+        return null;
     }
 
     fn buildDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, entry_builder: llvm.c.LLVMBuilderRef) !DropState {
@@ -3696,23 +3838,23 @@ test "native and bytecode metadata primitives share selected type geometry" {
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
     try graph.types.appendSlice(a, &.{
         .{ .builtin = .UIntNative },
-        .{ .structural = .{ .fields = .{ .start = 0, .len = 4 } } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 5 } } },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
         .{ .array = .{ .element = @enumFromInt(2), .length = 3 } },
     });
-    for ([_][]const u8{ "cleanup_flags", "reference_leaves", "reference_bytes", "alignment" }) |name|
+    for ([_][]const u8{ "cleanup_flags", "reference_leaves", "reference_bytes", "alignment", "header_bytes" }) |name|
         try graph.fields.append(a, .{ .name = try graph.addString(a, name), .ty = @enumFromInt(0), .source = source });
     try graph.fields.append(a, .{ .name = try graph.addString(a, "layout"), .ty = @enumFromInt(1), .source = source });
     try graph.declarations.append(a, .{ .kind = .function, .name = try graph.addString(a, "geometry"), .source = source });
     try graph.functions.append(a, .{
         .declaration = @enumFromInt(0),
         .input = .{ .start = 0, .len = 0 },
-        .output = .{ .start = 4, .len = 1 },
+        .output = .{ .start = 5, .len = 1 },
         .body = @enumFromInt(0),
         .output_bindings = .{ .start = 0, .len = 1 },
         .safety_primitive = .allocation_metadata_layout,
     });
-    try graph.bindings.append(a, .{ .name = graph.fields.items[4].name, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    try graph.bindings.append(a, .{ .name = graph.fields.items[5].name, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
     try graph.binding_refs.append(a, @enumFromInt(0));
     try graph.generic_arguments.append(a, .{ .name = try graph.addString(a, "t"), .value = .{ .type = @enumFromInt(3) } });
     try graph.generic_function_instances.append(a, .{ .function = @enumFromInt(0), .parameterized_declaration = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } });
@@ -3733,7 +3875,7 @@ test "native and bytecode metadata primitives share selected type geometry" {
     var executor = try @import("../../execution/vm.zig").Vm.init(work, program, .{});
     defer executor.deinit();
     const values = try executor.invoke(@enumFromInt(0), &.{});
-    const expected = [_]u64{ 0, 3, 40, 8 };
+    const expected = [_]u64{ 0, 3, 40, 8, 16 };
     for (values[0].record, expected, 0..) |value, number, index| {
         try std.testing.expectEqual(number, value.integer);
         try std.testing.expectEqual(@as(c_ulonglong, number), c.LLVMConstIntGetZExtValue(c.LLVMGetOperand(native, @intCast(index))));

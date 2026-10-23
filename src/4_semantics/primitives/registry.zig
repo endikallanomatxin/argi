@@ -19,6 +19,7 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
+    .{ .primitive = .prepare_allocation_metadata, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_prepare_allocation_metadata", .signatures = &.{"#(.t: Type)(.allocation: &Allocation) -> (.state: UIntNative)"} },
     .{ .primitive = .allocation_metadata_layout, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_allocation_metadata_layout", .signatures = &.{"#(.t: Type)() -> (.layout: _AllocationMetadataLayout)"} },
     .{ .flags = .{ .is_source_location_id = true }, .path = "core/errors/source_location.rg", .name = "error_location_id", .signatures = &.{"() -> (.location: SourceLocationId)"} },
     .{ .flags = .{ .is_source_location_resolver = true }, .path = "core/errors/source_location.rg", .name = "source_location", .signatures = &.{"(.id: SourceLocationId) -> (.location: SourceLocation)"} },
@@ -214,7 +215,7 @@ pub const Transfer = struct {
 
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
-        .none, .float_math, .allocation_metadata_layout => .{ .value = .empty },
+        .none, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata => .{ .value = .empty },
         // Physical release identity selects an execution boundary. Language
         // consumption remains in checked allocation-owner cleanup, not raw ABI.
         .raw_released_storage => .{ .value = .empty },
@@ -267,6 +268,18 @@ pub const AllocationTransfer = struct {
         .{ .field = 4, .input = 3 }, // deallocator
     };
 };
+
+// Successful opaque transfers change obligations on the evaluated referent,
+// never on the slot holding its reference. Data initialization remains separate.
+pub fn opaqueCleanupTransition(primitive: primitives.SafetyPrimitive) ?struct { input: u32, enabled: bool } {
+    return switch (primitive) {
+        .trusted_opaque_move => .{ .input = 0, .enabled = true },
+        .trusted_opaque_move_in => .{ .input = 1, .enabled = true },
+        .trusted_opaque_move_out => .{ .input = 1, .enabled = false },
+        .trusted_opaque_drop => .{ .input = 0, .enabled = false },
+        else => null,
+    };
+}
 
 /// Operand positions come from primitive identity, not completed arity.
 /// Reached capabilities may follow the explicit inputs.

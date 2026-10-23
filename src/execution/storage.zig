@@ -96,6 +96,7 @@ pub const Storage = struct {
         handle: acquired.Handle,
         offset: usize,
         logical_index: ?u64 = null,
+        receipt_origin: ?usize = null,
         layout: *const numeric.Layout,
         endian: std.builtin.Endian,
         count: usize = 1,
@@ -112,6 +113,7 @@ pub const Storage = struct {
             std.hash.autoHash(&hasher, view.handle);
             std.hash.autoHash(&hasher, view.offset);
             std.hash.autoHash(&hasher, view.logical_index);
+            std.hash.autoHash(&hasher, view.receipt_origin);
             std.hash.autoHash(&hasher, view.endian);
             std.hash.autoHash(&hasher, view.layout.size);
             std.hash.autoHash(&hasher, view.layout.alignment);
@@ -121,7 +123,7 @@ pub const Storage = struct {
 
         pub fn eql(_: @This(), left: AcquiredView, right: AcquiredView) bool {
             return std.meta.eql(left.handle, right.handle) and left.offset == right.offset and left.count == right.count and
-                left.logical_index == right.logical_index and left.endian == right.endian and
+                left.logical_index == right.logical_index and left.receipt_origin == right.receipt_origin and left.endian == right.endian and
                 numeric.equal(left.layout, right.layout);
         }
     };
@@ -161,13 +163,25 @@ pub const Storage = struct {
     /// A batch shares its descriptors and owns contiguous value/flag buffers.
     /// Slots are independent owners, not children of an initialized array value.
     pub fn reserveAcquiredCleanupBatch(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout, count: usize) !AcquiredCleanup {
+        return self.reserveAcquiredBatch(handle, offset, layout, endian, logical_index, value_layout, cleanup, count, null);
+    }
+
+    // Region allocators can issue distinct receipts from one physical region.
+    // Their private origins delimit logical index namespaces, not owner handles.
+    pub fn reserveAcquiredReceipt(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout, count: usize, receipt_origin: usize) !AcquiredCleanup {
+        if (receipt_origin > offset) return error.ExecutionInvalidReference;
+        _ = try self.acquisitions.range(self, handle, receipt_origin, offset - receipt_origin, 1);
+        return self.reserveAcquiredBatch(handle, offset, layout, endian, 0, value_layout, cleanup, count, receipt_origin);
+    }
+
+    fn reserveAcquiredBatch(self: *Storage, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, endian: std.builtin.Endian, logical_index: u64, value_layout: partial.Layout, cleanup: *const cleanup_layout.Layout, count: usize, receipt_origin: ?usize) !AcquiredCleanup {
         if (count > std.math.maxInt(b.Slot)) return error.ExecutionMemoryLimit;
         _ = std.math.add(u64, logical_index, count -| 1) catch return error.ExecutionMemoryLimit;
         const extent = std.math.mul(usize, count, layout.size) catch return error.ExecutionMemoryLimit;
         _ = try self.acquisitions.range(self, handle, offset, extent, layout.alignment);
         if (!@import("../5_codegen/bytecode/storage_layout.zig").matchesNumeric(value_layout, layout)) return error.ExecutionInvalidReference;
         _ = try partial.Storage.validateLayout(value_layout);
-        var view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index, .count = count };
+        var view: AcquiredView = .{ .handle = handle, .offset = offset, .layout = layout, .endian = endian, .logical_index = logical_index, .count = count, .receipt_origin = receipt_origin };
         if (self.acquired_frames.contains(view)) return error.ExecutionInitializedStorage;
         try self.requireUnreservedAcquiredSlots(view);
         try self.charge(1);
@@ -189,7 +203,7 @@ pub const Storage = struct {
         while (entries.next()) |existing| {
             if (!std.meta.eql(existing.handle, proposed.handle)) continue;
             if (existing.logical_index) |previous| {
-                if (overlappingRanges(previous, existing.count, proposed.logical_index.?, proposed.count)) return error.ExecutionInitializedStorage;
+                if (existing.receipt_origin == proposed.receipt_origin and overlappingRanges(previous, existing.count, proposed.logical_index.?, proposed.count)) return error.ExecutionInitializedStorage;
             }
             const previous_bytes = std.math.mul(usize, existing.count, existing.layout.size) catch return error.ExecutionInvalidReference;
             const proposed_bytes = std.math.mul(usize, proposed.count, proposed.layout.size) catch return error.ExecutionInvalidReference;
@@ -214,6 +228,16 @@ pub const Storage = struct {
         const reference: v.Reference = .{ .context = reservation.context, .frame = reservation.frame, .root = std.math.cast(b.Slot, index) orelse return error.ExecutionIndexOutOfBounds, .path = &.{}, .mutability = permission };
         try self.validateContext(reference);
         if (try self.acquiredView(reference) == null or self.frames.items[@intFromEnum(reservation.frame)].cleanup.len == 0) return error.ExecutionMissingCleanup;
+        return reference;
+    }
+
+    pub fn borrowPreparedAcquired(self: *Storage, state: @import("../5_codegen/bytecode/acquired_receipt.zig").State, index: u64, handle: acquired.Handle, offset: usize, layout: *const numeric.Layout, permission: p.PointerMutability) !v.Reference {
+        if (state.token == 0 or state.element_size != layout.size or index >= state.count) return error.ExecutionMissingCleanup;
+        const frame = std.math.cast(u32, state.token - 1) orelse return error.ExecutionInvalidReference;
+        const reference = try self.borrowAcquiredElement(.{ .context = self.context, .frame = @enumFromInt(frame) }, @intCast(index), permission);
+        const original = self.acquired_views.get(reference.frame) orelse return error.ExecutionMissingCleanup;
+        const selected = (try self.acquiredView(reference)).?;
+        if (original.count != state.count or !std.meta.eql(selected.handle, handle) or selected.offset != offset or !numeric.equal(selected.layout, layout)) return error.ExecutionInvalidReference;
         return reference;
     }
 
@@ -2315,4 +2339,25 @@ test "counted acquired numeric views advance through vacant elements without sna
     try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(first));
     try storage.acquisitions.release(&storage, handle);
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(last));
+}
+
+test "distinct acquired receipts retain independent zero-sized slot namespaces" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const handle = try storage.acquisitions.acquire(&storage, 16, 8);
+    const physical: numeric.Layout = .{ .size = 0, .alignment = 1, .shape = .{ .fields = &.{} } };
+    const logical: partial.Layout = .{ .nodes = &.{.{}} };
+    const cleanup: cleanup_layout.Layout = .{ .is_record = true };
+    const first = try storage.reserveAcquiredReceipt(handle, 8, &physical, .little, logical, &cleanup, 2, 0);
+    const second = try storage.reserveAcquiredReceipt(handle, 16, &physical, .little, logical, &cleanup, 2, 8);
+    try std.testing.expect(first.frame != second.frame);
+    const left = try storage.borrowAcquiredElement(first, 0, .read_write);
+    const right = try storage.borrowAcquiredElement(second, 0, .read_write);
+    try storage.store(left, .{ .record = &.{} });
+    _ = try storage.cleanupSet(left, true);
+    try std.testing.expect(!try storage.cleanupTest(right));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(right));
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.reserveAcquiredReceipt(handle, 8, &physical, .little, logical, &cleanup, 1, 0));
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.reserveAcquiredReceipt(handle, 8, &physical, .little, logical, &cleanup, 1, 9));
 }

@@ -449,6 +449,22 @@ pub const Vm = struct {
                     }
                     try frames.append(self.allocator, try self.frame(&virtual.program, callee, values, x.outputs));
                 },
+                .prepare_acquired => |x| {
+                    const storage = &self.context().storage;
+                    const receipt = @import("../5_codegen/bytecode/acquired_receipt.zig");
+                    const value = try storage.read((try slots.get(x.receipt)).reference);
+                    const bounds = try receipt.decode(x.layout.receipt, value);
+                    const state = (try receipt.decodeState(x.layout.receipt, value)) orelse return error.ExecutionInvalidAcquisition;
+                    if (state.token != 0 or state.element_size != x.layout.physical.size) return error.ExecutionInvalidAcquisition;
+                    if (bounds.address % 8 != 0) return error.ExecutionInvalidAlignment;
+                    const bytes = std.math.mul(usize, state.count, state.element_size) catch return error.ExecutionMemoryLimit;
+                    const flags = std.math.mul(usize, state.count, x.layout.cleanup.count) catch return error.ExecutionMemoryLimit;
+                    const grant = bounds.grant orelse return error.ExecutionInvalidAcquisition;
+                    if (grant.address < bounds.address or grant.address - bounds.address < (std.math.add(usize, @import("../5_codegen/allocation_metadata.zig").header_bytes, flags) catch return error.ExecutionMemoryLimit)) return error.ExecutionInvalidAcquisition;
+                    const range = try storage.acquisitions.resolveReceipt(storage, bounds, grant.address, bytes, x.layout.physical.alignment);
+                    const reservation = try storage.reserveAcquiredReceipt(range.handle, range.offset, x.layout.physical, x.layout.endian, x.layout.values, x.layout.cleanup, state.count, range.offset - (grant.address - bounds.address));
+                    try slots.put(x.dst, .{ .integer = @as(u64, @intFromEnum(reservation.frame)) + 1 });
+                },
                 .acquired_reference => |x| {
                     const address = std.math.cast(usize, (try slots.get(x.address)).integer) orelse return error.ExecutionInvalidAcquisition;
                     const storage = &self.context().storage;
@@ -464,7 +480,12 @@ pub const Vm = struct {
                         const value = (try slots.get(selection.value)).choice;
                         break :blk if (value.variant == selection.some_ordinal) value.payload.?.record[0].integer else null;
                     } else null;
-                    const reference = try storage.acquiredReferenceBatch(range.handle, range.offset, x.layout, x.endian, x.permission, logical_index, element_count);
+                    const reference = if (x.cleanup != null) blk: {
+                        const receipt = x.receipt orelse return error.ExecutionMissingCleanup;
+                        const value = try storage.read((try slots.get(receipt.value)).reference);
+                        const state = (try @import("../5_codegen/bytecode/acquired_receipt.zig").decodeState(receipt.layout.*, value)) orelse return error.ExecutionMissingCleanup;
+                        break :blk try storage.borrowPreparedAcquired(state, logical_index orelse return error.ExecutionMissingCleanup, range.handle, range.offset, x.layout, x.permission);
+                    } else try storage.acquiredReferenceBatch(range.handle, range.offset, x.layout, x.endian, x.permission, logical_index, element_count);
                     try slots.put(x.dst, .{ .reference = reference });
                 },
                 .erase_reference => |x| {

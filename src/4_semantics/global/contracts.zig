@@ -2364,6 +2364,40 @@ pub const Resolver = struct {
         };
     }
 
+    // Acquired storage can outlive the command which allocates it. Retain the
+    // selected cleanup conformances before lowering its immutable metadata,
+    // even when no value of the participant has been constructed yet. This
+    // selects evidence only; operation bodies keep their ordinary lazy checks.
+    pub fn prepareStorageCleanupEvidence(self: *Resolver, ty: global_sg.GlobalTypeId) !void {
+        const declaration = @import("standard_contracts.zig").standardDeclaration(self.graph, "Deinit") orelse return;
+        var seen: std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void) = .empty;
+        defer seen.deinit(self.allocator);
+        try self.prepareStorageCleanupType(ty, declaration, &seen, 0);
+    }
+
+    fn prepareStorageCleanupType(self: *Resolver, ty: global_sg.GlobalTypeId, declaration: global_sg.GlobalDeclId, seen: *std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void), depth: usize) anyerror!void {
+        if (depth > 256) return error.InvalidStorageCleanupType;
+        if (seen.contains(ty)) return;
+        try seen.put(self.allocator, ty, {});
+        if (self.graph.semanticType(ty) == .pointer) return;
+        _ = try self.implements(ty, declaration);
+        // Selection may grow graph pools. Keep ranges and reload each child
+        // instead of retaining a slice across recursive conformance resolution.
+        if (global_types.arrayElement(self.graph, ty)) |element| {
+            try self.prepareStorageCleanupType(element, declaration, seen, depth + 1);
+        } else if (global_types.fields(self.graph, ty)) |fields| {
+            for (0..fields.len) |index| {
+                const child = self.graph.fields.items[fields.start + index].ty;
+                try self.prepareStorageCleanupType(child, declaration, seen, depth + 1);
+            }
+        } else if (global_types.variants(self.graph, ty)) |variants| {
+            for (0..variants.len) |index| {
+                if (self.graph.variants.items[variants.start + index].payload_type) |child|
+                    try self.prepareStorageCleanupType(child, declaration, seen, depth + 1);
+            }
+        }
+    }
+
     pub fn implements(
         self: *Resolver,
         concrete: global_sg.GlobalTypeId,

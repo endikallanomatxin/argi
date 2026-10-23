@@ -6,24 +6,13 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 ## Memory and cleanup
 
-- Support acquired aggregates containing resources and references. Connect the
-  acquisition receipt, logical slot index, shared cleanup identity and native
-  reference companions. Byte addresses cannot identify owners or zero-sized slots.
-  Typed `allocate` retains element size and count, and zero-sized slot selection
-  checks that logical bound. Connect explicit evidence reservation before enabling
-  resource borrows, without allocation during borrowing.
-  Native opaque writes already forward reference companions, but address-based
-  establishment supplies none. Reserve companions and cleanup ranges together;
-  borrowing must project that reservation rather than create it lazily.
-  A registered type-specialized layout primitive now shares companion geometry
-  between LLVM and bytecode. Connect it to preparation and receipt transport.
-  Lowering now carries verified receipt field descriptors and logical indices.
-  Receipt bounds select a physical region, not a typed cleanup reservation.
-  Numeric views retain the intersection of declared and authenticated byte extents
-  for offset traversal; this supplies neither typed occupancy nor cleanup.
-  Executor reservations share layouts and dense per-batch buffers, separating
-  occupancy from cleanup with allocation-free indexed borrowing. Connect them to
-  lowering, native companions and nonnumeric storage; raw addresses cannot recover them.
+- Extend prepared acquired slots beyond numeric resource representations to
+  stored references and choices. Typed `allocate` now reserves companion ranges
+  in the same acquisition and transports a private handle through `Allocation`.
+  LLVM and bytecode share geometry; numeric resource initialization, extraction,
+  reuse and zero-sized slots use independent per-receipt identities. Borrowing
+  projects a reservation without allocating metadata or recovering owners from
+  data addresses. Raw/inherited resource storage still needs explicit preparation.
 - Represent construction of vacant choice payloads separately from discriminant
   presence and whole-value readiness. Incomplete records/choices must clean live
   children without invoking a whole-value destructor or reviving moved payloads.

@@ -7,8 +7,8 @@ const Layout = @import("../5_codegen/bytecode/numeric_layout.zig").Layout;
 const Value = @import("../5_codegen/bytecode/value.zig").Value;
 
 // Typed numeric access uses compiler-selected physical layouts. Padding is not
-// a value and need not be initialized. References/resources cannot be decoded
-// from bytes; their eventual representation requires explicit evidence storage.
+// a value and need not be initialized. Bytes cannot reconstruct reference or
+// cleanup evidence; prepared storage retains those obligations independently.
 pub fn read(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) anyerror!Value {
     var empty: []Value = &.{};
     switch (layout.shape) {

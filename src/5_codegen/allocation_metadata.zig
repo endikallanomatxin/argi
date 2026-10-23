@@ -4,6 +4,8 @@ const types = @import("../4_semantics/global/types.zig");
 const cleanup = @import("cleanup_layout.zig");
 const references = @import("reference_layout.zig");
 
+pub const header_bytes: usize = 16;
+
 // Compiler-owned geometry for a typed acquisition. Counts describe independent
 // per-element ranges; bytes neither identify owners nor certify initialization.
 pub const Shape = struct {
@@ -11,9 +13,10 @@ pub const Shape = struct {
     reference_leaves: u64,
     reference_bytes: u64,
     alignment: u64,
+    header_bytes: u64,
 
-    pub fn words(self: Shape) [4]u64 {
-        return .{ self.cleanup_flags, self.reference_leaves, self.reference_bytes, self.alignment };
+    pub fn words(self: Shape) [5]u64 {
+        return .{ self.cleanup_flags, self.reference_leaves, self.reference_bytes, self.alignment, self.header_bytes };
     }
 };
 
@@ -26,7 +29,34 @@ pub fn describe(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
         .reference_leaves = try leaves.count(allocator, graph, ty),
         .reference_bytes = 40,
         .alignment = 8,
+        .header_bytes = header_bytes,
     };
+}
+
+// A prepared executor reservation retains both byte representation and logical
+// occupancy. These descriptors outlive execution and contain no graph pointers.
+pub const Reservation = struct {
+    endian: std.builtin.Endian,
+    receipt: @import("bytecode/acquired_receipt.zig").Layout,
+    physical: *const @import("bytecode/numeric_layout.zig").Layout,
+    values: @import("bytecode/storage_layout.zig").Layout,
+    cleanup: *const cleanup.Layout,
+};
+
+pub fn reservation(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, receipt_type: g.GlobalTypeId, counts: *cleanup.Counts) !*const Reservation {
+    const physical = try @import("bytecode/numeric_layout.zig").compile(allocator, graph, ty);
+    const result = try allocator.create(Reservation);
+    _ = try counts.count(allocator, graph, ty);
+    const receipt = try @import("bytecode/acquired_receipt.zig").compile(graph, receipt_type);
+    if (receipt.metadata == null or receipt.grant == null) return error.InvalidAllocationMetadataPrimitive;
+    result.* = .{
+        .endian = graph.target.stdTarget().cpu.arch.endian(),
+        .receipt = receipt,
+        .physical = physical,
+        .values = try @import("bytecode/storage_layout.zig").compile(allocator, graph, ty),
+        .cleanup = counts.retained(ty),
+    };
+    return result;
 }
 
 // A registered generic primitive selects its one type participant during
@@ -45,7 +75,7 @@ pub fn participant(graph: *const g.GlobalSemanticGraph, function: g.GlobalFuncti
 pub fn outputFields(graph: *const g.GlobalSemanticGraph, function: g.Function) !g.FieldRange {
     if (function.input.len != 0 or function.output.len != 1) return error.InvalidAllocationMetadataPrimitive;
     const fields = types.fields(graph, graph.fields.items[function.output.start].ty) orelse return error.InvalidAllocationMetadataPrimitive;
-    const names = [_][]const u8{ "cleanup_flags", "reference_leaves", "reference_bytes", "alignment" };
+    const names = [_][]const u8{ "cleanup_flags", "reference_leaves", "reference_bytes", "alignment", "header_bytes" };
     if (fields.len != names.len) return error.InvalidAllocationMetadataPrimitive;
     for (graph.fields.items[fields.start..][0..fields.len], names) |field, name| {
         if (!types.isBuiltin(graph, field.ty, .UIntNative) or !std.mem.eql(u8, graph.text(field.name), name)) return error.InvalidAllocationMetadataPrimitive;

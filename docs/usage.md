@@ -207,8 +207,11 @@ element does not read or initialize it. Reads require initialized bytes, and
 release invalidates every view. Erased anchor
 reads check the backing value but expose no concrete representation. Core
 `CAllocator` allocations execute ordinary `Allocation` cleanup and release their
-context-owned regions. Resource-bearing elements, references stored in acquired
-memory and choices still require additional establishment lowering. Compile-time
+context-owned regions. Typed allocations prepare independent slot state for
+resource-bearing numeric records and arrays, including zero-sized elements.
+Opaque initialization, extraction and destruction preserve those obligations
+across calls and REPL submissions. Stored references and choices still require
+additional acquired-storage lowering. Compile-time
 evaluation continues to reject foreign calls.
 
 Floating values preserve Float16, Float32 and Float64 precision in literals,

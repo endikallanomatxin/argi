@@ -106,6 +106,20 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const bounds = integerBounds(program.graph, pointer.pointer.child) orelse return error.InvalidBytecode;
                     if (bounds.maximum - bounds.minimum != 255) return error.InvalidBytecode;
                 },
+                .prepare_acquired => |x| {
+                    if (fi >= program.graph.functions.items.len) return error.InvalidBytecode;
+                    const id: g.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(fi)));
+                    if (program.graph.function(id).safety_primitive != .prepare_allocation_metadata or f.inputs.len != 1 or f.outputs.len != 1 or x.receipt != f.inputs[0] or x.dst != f.outputs[0] or !types.isBuiltin(program.graph, f.slots[x.dst], .UIntNative)) return error.InvalidBytecode;
+                    var arena = std.heap.ArenaAllocator.init(allocator);
+                    defer arena.deinit();
+                    const metadata = @import("../allocation_metadata.zig");
+                    const ty = metadata.participant(program.graph, id) catch return error.InvalidBytecode;
+                    _ = try cleanup_counts.count(allocator, program.graph, ty);
+                    const expected = metadata.reservation(arena.allocator(), program.graph, ty, f.slots[x.receipt], &cleanup_counts) catch return error.InvalidBytecode;
+                    if (expected.endian != x.layout.endian or !std.meta.eql(expected.receipt, x.layout.receipt) or !@import("numeric_layout.zig").equal(expected.physical, x.layout.physical) or expected.values.nodes.len != x.layout.values.nodes.len) return error.InvalidBytecode;
+                    for (expected.values.nodes, x.layout.values.nodes) |left, right| if (!std.meta.eql(left, right)) return error.InvalidBytecode;
+                    if (!try cleanup_equal.compare(expected.cleanup, x.layout.cleanup, 0)) return error.InvalidBytecode;
+                },
                 .acquired_reference => |x| {
                     if (fi >= program.graph.functions.items.len) return error.InvalidBytecode;
                     const primitive = program.graph.function(@enumFromInt(@as(u32, @intCast(fi)))).safety_primitive;
@@ -134,7 +148,12 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                             if (fields.len != 1 or !types.isBuiltin(program.graph, program.graph.fields.items[fields.start].ty, .UIntNative)) return error.InvalidBytecode;
                         }
                     } else if (primitive == .establish_allocation_slot) return error.InvalidBytecode;
-                    if (owning_types[@intFromEnum(target.pointer.child)]) return error.InvalidBytecode;
+                    if (owning_types[@intFromEnum(target.pointer.child)] != (x.cleanup != null)) return error.InvalidBytecode;
+                    if (x.cleanup) |layout| {
+                        if (x.receipt == null or x.receipt.?.layout.metadata == null) return error.InvalidBytecode;
+                        _ = try cleanup_counts.count(allocator, program.graph, target.pointer.child);
+                        if (!try cleanup_equal.compare(cleanup_counts.retained(target.pointer.child), layout, 0)) return error.InvalidBytecode;
+                    }
                     const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, target.pointer.child) catch return error.InvalidBytecode;
                     if (!@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;
                 },
@@ -501,6 +520,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
         .reserve_storage => |x| x.dst,
+        .prepare_acquired => |x| x.dst,
         .borrow_storage => |x| x.dst,
         .static_bytes => |x| x.dst,
         .trace_location => |x| x.dst,
@@ -535,6 +555,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
 }
 fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !void {
     switch (i.op) {
+        .prepare_acquired => |x| try out.append(a, x.receipt),
         .integer_cast => |x| try out.append(a, x.src),
         .copy => |x| try out.append(a, x.src),
         .resolve_location => |x| try out.append(a, x.id),

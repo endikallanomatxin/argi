@@ -34,7 +34,7 @@ slot. The allocation may still be released normally.
 
 ## Raw storage and typed slots
 
-`Allocation.data` is a non-dereferenceable `RawPointer<UInt8>`. An
+`Allocation.data` is a non-dereferenceable `RawPointer#(UInt8)`. An
 `Allocation` records size, alignment, a temporal anchor, and the means to
 release its storage. Its type alone does not determine whether the allocation
 has an independent lifetime or inherits one from an arena.
@@ -52,8 +52,20 @@ Allocation : Type = (
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative
     ._release_size: UIntNative
+    ._slot_extent: ?_AllocationSlotExtent
+    ._slot_state: UIntNative = 0
 )
 ```
+
+Typed allocation requests retain their element size and count. When the selected
+representation needs cleanup or reference companions, the allocator request also
+reserves a private prefix for them. Public data and size describe only the payload;
+physical cleanup releases the original acquisition, including that prefix.
+The private slot-state handle travels with the receipt. Preparing it does not
+initialize elements or activate destruction. Borrowing selects an existing slot
+identity and requires no additional metadata allocation. Cleanup conformance
+selection precedes preparation, including generic types allocated before their
+first value is constructed in a later REPL command.
 
 The private storage fields retain the address, extent, and alignment certified
 by the allocator at establishment. Public receipt fields describe a requested

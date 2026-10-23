@@ -1909,6 +1909,14 @@ pub const Resolver = struct {
         if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions))
             return error.GenericContractConstraintNotSatisfied;
 
+        if (located.parameterized.safety_primitive == .allocation_metadata_layout or located.parameterized.safety_primitive == .prepare_allocation_metadata) {
+            if (arguments.len != 1) return error.InvalidAllocationMetadataPrimitive;
+            const participant = self.graph.generic_arguments.items[arguments.start].value;
+            if (participant != .type) return error.InvalidAllocationMetadataPrimitive;
+            const contracts = self.nested_call_context orelse return error.MissingOwnershipDispatch;
+            try contracts.prepareStorageCleanupEvidence(participant.type);
+        }
+
         const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
         const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
         const input_shape = try self.interfaceFields(input_ty);

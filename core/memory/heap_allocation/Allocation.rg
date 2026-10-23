@@ -37,6 +37,7 @@ Allocation: Type = (
     -- A granted prefix may be smaller than the acquisition being released.
     ._release_size : UIntNative
     ._slot_extent  : ?_AllocationSlotExtent
+    ._slot_state   : UIntNative = 0
 )
 
 -- Compiler-owned temporal boundary used after a physical allocator has
@@ -120,7 +121,9 @@ implement Deinit#(Allocation) (
 _typed_allocation_result(
     .allocated    : Errable#(Allocation, (..out_of_memory)),
     .element_size : UIntNative,
-    .count        : UIntNative
+    .count        : UIntNative,
+    .prefix       : UIntNative,
+    .payload_size : UIntNative
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) := {
     match allocated {
         ..ok ~payload {
@@ -128,6 +131,8 @@ _typed_allocation_result(
             allocation._slot_extent = ..some(
                 .value = _AllocationSlotExtent(.element_size = element_size, .count = count)
             )
+            allocation.data.address = allocation.data.address + prefix
+            allocation.size = payload_size
             result = ..ok ~allocation
         }
         ..error ~failure { result = ..error ~failure }

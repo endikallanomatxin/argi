@@ -14941,3 +14941,39 @@ test "feature_tests/execution/248_acquired_numeric_offset" {
 test "feature_tests/execution/249X_acquired_offset_grant_boundary" {
     try vmExpect("tests/feature_tests/execution/249X_acquired_offset_grant_boundary", 1, "ExecutionIndexOutOfBounds");
 }
+
+test "feature_tests/execution/250_prepared_acquired_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/250_prepared_acquired_resources");
+    try runExpect("tests/feature_tests/execution/250_prepared_acquired_resources", 42);
+    try vmExpect("tests/feature_tests/execution/250_prepared_acquired_resources", 42, null);
+}
+
+test "feature_tests/execution/251_prepared_zero_sized_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/251_prepared_zero_sized_resources");
+    try runExpect("tests/feature_tests/execution/251_prepared_zero_sized_resources", 42);
+    try vmExpect("tests/feature_tests/execution/251_prepared_zero_sized_resources", 42, null);
+}
+
+test "argi repl retains prepared generic resource slots across submissions" {
+    const commands =
+        \\Box#(.T: Type): Type = (.value: T)
+        \\implement#(.T: Type) Deinit#(Box#(T)) (
+        \\    .deinit = (.self: $&Box#(T)) -> () {}
+        \\)
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Box#(Int32))(.self = allocator, .count = 1))
+        \\raw ::= raw_pointer#(.t: Box#(Int32))(.address = memory.data.address).raw
+        \\first ::= trusted_establish_allocation_slot#(.t: Box#(Int32))(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = first, .source = Box#(Int32)(.value = 42))
+        \\first&.value
+        \\trusted_opaque_drop(.slot = first)
+        \\trusted_opaque_mark_empty(.storage = $&memory)
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = ()\n_1 = 42\n_2 = ()\n_3 = ()\n");
+}
+
+test "feature_tests/execution/252_metadata_free_typed_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/252_metadata_free_typed_allocation");
+    try runExpect("tests/feature_tests/execution/252_metadata_free_typed_allocation", 42);
+    try vmExpect("tests/feature_tests/execution/252_metadata_free_typed_allocation", 42, null);
+}

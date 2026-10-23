@@ -289,9 +289,26 @@ const FunctionLower = struct {
             var leaves: @import("../reference_layout.zig").Layout = .{};
             defer leaves.deinit(a);
             const shape = try metadata.describe(a, self.parent.graph, ty, self.parent.cleanup_types[@intFromEnum(ty)], &self.parent.cleanup_layouts, &leaves);
-            const words = try a.alloc(b.Value, 4);
+            const words = try a.alloc(b.Value, 5);
             for (words, shape.words()) |*word, number| word.* = .{ .integer = number };
             _ = try self.emit(source, .{ .constant = .{ .dst = outputs[0], .value = .{ .record = words } } });
+        } else if (f.safety_primitive == .prepare_allocation_metadata) {
+            if (inputs.len != 1 or outputs.len != 1) return error.InvalidBytecode;
+            const metadata = @import("../allocation_metadata.zig");
+            const ty = try metadata.participant(self.parent.graph, id);
+            var leaves: @import("../reference_layout.zig").Layout = .{};
+            defer leaves.deinit(a);
+            const shape = try metadata.describe(a, self.parent.graph, ty, self.parent.cleanup_types[@intFromEnum(ty)], &self.parent.cleanup_layouts, &leaves);
+            if (shape.cleanup_flags == 0 and shape.reference_leaves == 0) {
+                _ = try self.emit(source, .{ .constant = .{ .dst = outputs[0], .value = .{ .integer = 0 } } });
+            } else {
+                if (self.parent.mode != .runtime) return self.parent.reject(source, "acquired metadata preparation during compile-time execution");
+                const layout = metadata.reservation(a, self.parent.graph, ty, self.slots.items[inputs[0]], &self.parent.cleanup_layouts) catch |err| switch (err) {
+                    error.UnsupportedNumericLayout => return self.parent.reject(source, "acquired reference metadata for nonnumeric storage"),
+                    else => return err,
+                };
+                _ = try self.emit(source, .{ .prepare_acquired = .{ .dst = outputs[0], .receipt = inputs[0], .layout = layout } });
+            }
         } else try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
         const cleanup = try self.finishCleanup();
@@ -1090,6 +1107,16 @@ const FunctionLower = struct {
             try self.parent.pending.append(self.parent.scratch(), x.callee);
             _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
         }
+        if (@import("../../4_semantics/primitives/registry.zig").opaqueCleanupTransition(f.safety_primitive)) |transition| {
+            if (transition.input >= args.len) return error.InvalidBytecode;
+            const argument = args[transition.input];
+            const pointer = self.parent.graph.semanticType(self.slots.items[argument]);
+            if (pointer != .pointer) return error.InvalidBytecode;
+            if (self.parent.cleanup_types[@intFromEnum(pointer.pointer.child)]) {
+                const target = try self.project(.{ .root = argument, .path = &.{} }, .dereference);
+                _ = try self.emit(node.source, .{ .cleanup_set = .{ .place = target, .enabled = transition.enabled } });
+            }
+        }
         try self.updateCallCleanups(node.source, f.output, fields, args, outputs, x.consumes_auto_deinit, x.consumed_auto_deinits, x.initialized_auto_deinits, x.outcome_cleanups);
         if (x.initializes_auto_deinit) |value| try self.updateCallCleanup(value, true, fields, args);
         if (outputs.len == 0) return null;
@@ -1305,13 +1332,19 @@ const FunctionLower = struct {
                 if (self.parent.mode != .runtime or target != .pointer or !types.isBuiltin(self.parent.graph, from, .UIntNative) or
                     (self.safety_primitive != .establish_inherited_reference and self.safety_primitive != .establish_allocation_slot))
                     return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
-                if (self.parent.cleanup_types[@intFromEnum(target.pointer.child)]) return self.parent.reject(node.source, "acquired reference requiring cleanup evidence");
+                const needs_cleanup = self.parent.cleanup_types[@intFromEnum(target.pointer.child)];
+                if (needs_cleanup and self.allocation_receipt == null) return self.parent.reject(node.source, "acquired reference requiring a prepared allocation receipt");
                 const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child) catch return self.parent.reject(node.source, "acquired reference to nonnumeric storage");
-                var instruction: @FieldType(@FieldType(b.Instruction, "op"), "acquired_reference") = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() };
+                const instruction = try self.parent.allocator.create(b.AcquiredReference);
+                instruction.* = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() };
                 if (self.allocation_receipt) |receipt| {
                     const description = try self.parent.allocator.create(@import("acquired_receipt.zig").Layout);
                     description.* = try @import("acquired_receipt.zig").compile(self.parent.graph, self.slots.items[receipt]);
                     instruction.receipt = .{ .value = receipt, .layout = description };
+                }
+                if (needs_cleanup) {
+                    _ = try self.parent.cleanup_layouts.count(self.parent.allocator, self.parent.graph, target.pointer.child);
+                    instruction.cleanup = self.parent.cleanup_layouts.retained(target.pointer.child);
                 }
                 if (self.allocation_index) |index| {
                     const variants = types.variants(self.parent.graph, self.slots.items[index]) orelse return error.InvalidBytecode;

@@ -2569,8 +2569,9 @@ test "bytecode acquired establishment requires a checked primitive and matching 
     });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 1, .len = 1 } });
     var layout: @import("../5_codegen/bytecode/numeric_layout.zig").Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
-    var code = [_]b.Instruction{
-        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 1, .address = 0, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() } } },
+    var acquired_instruction: b.AcquiredReference = .{ .dst = 1, .address = 0, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() };
+    const code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .acquired_reference = &acquired_instruction } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
     const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(2) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code }};
@@ -2581,10 +2582,10 @@ test "bytecode acquired establishment requires a checked primitive and matching 
     layout.size = 8;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     layout.size = 4;
-    code[0].op.acquired_reference.permission = .read_only;
+    acquired_instruction.permission = .read_only;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[0].op.acquired_reference.permission = .read_write;
-    code[0].op.acquired_reference.endian = if (graph.target.stdTarget().cpu.arch.endian() == .little) .big else .little;
+    acquired_instruction.permission = .read_write;
+    acquired_instruction.endian = if (graph.target.stdTarget().cpu.arch.endian() == .little) .big else .little;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
 
@@ -2855,8 +2856,9 @@ test "acquired slot indices use verified inputs and survive execution" {
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 1, .len = 4 }, .output = .{ .start = 5, .len = 1 }, .safety_primitive = .establish_allocation_slot });
     const layout: @import("../5_codegen/bytecode/numeric_layout.zig").Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
     var receipt_layout: @import("../5_codegen/bytecode/acquired_receipt.zig").Layout = .{ .address = 0, .size = 1, .alignment = 2 };
-    var code = [_]b.Instruction{
-        .{ .source = source, .op = .{ .acquired_reference = .{ .dst = 4, .address = 0, .receipt = .{ .value = 5, .layout = &receipt_layout }, .logical_index = .{ .value = 3, .some_ordinal = 1 }, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() } } },
+    var acquired_instruction: b.AcquiredReference = .{ .dst = 4, .address = 0, .receipt = .{ .value = 5, .layout = &receipt_layout }, .logical_index = .{ .value = 3, .some_ordinal = 1 }, .layout = &layout, .permission = .read_write, .endian = graph.target.stdTarget().cpu.arch.endian() };
+    const code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .acquired_reference = &acquired_instruction } },
         .{ .source = source, .op = .{ .ret = &.{4} } },
     };
     const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(2), @enumFromInt(6) }, .inputs = &.{ 5, 0, 2, 3 }, .outputs = &.{4}, .code = &code }};
@@ -2885,27 +2887,27 @@ test "acquired slot indices use verified inputs and survive execution" {
     const view = storage.acquired_views.get(result[0].reference.frame).?;
     try std.testing.expectEqual(@as(?u64, 11), view.logical_index);
     try std.testing.expectEqual(@as(usize, 44), view.offset);
-    const original = code[0];
-    code[0].op.acquired_reference.receipt.?.value = 2;
+    const original = acquired_instruction;
+    acquired_instruction.receipt.?.value = 2;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[0] = original;
+    acquired_instruction = original;
     receipt_layout.size = 0;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     receipt_layout.size = 1;
     receipt_layout.grant = .{ .data = 0, .address = 0, .size = 1 };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     receipt_layout.grant = null;
-    code[0] = original;
-    code[0].op.acquired_reference.receipt = null;
+    acquired_instruction = original;
+    acquired_instruction.receipt = null;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[0] = original;
-    code[0].op.acquired_reference.logical_index.?.some_ordinal = 0;
+    acquired_instruction = original;
+    acquired_instruction.logical_index.?.some_ordinal = 0;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[0].op.acquired_reference.logical_index = .{ .value = 2, .some_ordinal = 1 };
+    acquired_instruction.logical_index = .{ .value = 2, .some_ordinal = 1 };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[0].op.acquired_reference.logical_index = null;
+    acquired_instruction.logical_index = null;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[0] = original;
+    acquired_instruction = original;
     const other = try executor.context().acquireRegion(64, 4);
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, executor.invokeExpression(&.{
         .{ .integer = try storage.acquisitions.address(storage, other, 0) },
@@ -3230,6 +3232,121 @@ test "registered core allocation metadata executes through ordinary generic spec
         const values = try executor.run(@enumFromInt(index), &.{});
         try std.testing.expectEqual(@as(u64, 3), values[0].integer);
         return;
+    }
+    return error.MissingEntry;
+}
+
+test "allocation metadata retains generic cleanup evidence without checking unused destructor bodies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const metadata_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "core/memory/heap_allocation/allocation_metadata.rg", a, .limited(64 * 1024));
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = "Box#(.T: Type): Type = (.value: T)\nimplement#(.T: Type) Deinit#(Box#(T)) (.deinit = (.self: $&Box#(T)) -> () { unknown_unused_destructor_body() })\nmain() -> (.result: UIntNative) := { result = metadata_probe#(.t: Box#(Int32))() }" },
+        .{ .path = "core/memory/Deinit.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> () where consumes(self))" },
+        .{ .path = "core/memory/heap_allocation/allocation_metadata.rg", .origin = .bundled_core, .code = metadata_source },
+        .{ .path = "core/memory/heap_allocation/probe.rg", .origin = .bundled_core, .code =
+        \\metadata_probe#(.t: Type)() -> (.count: UIntNative) := {
+        \\    count = _allocation_metadata_layout#(.t: t)().layout.cleanup_flags
+        \\}
+        },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .semantizing = .{ .exhaustive_function_bodies = false } });
+    defer pipeline.deinit();
+    const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+        for (diagnostics.list.items) |entry| std.debug.print("{s}\n", .{entry.msg});
+        return err;
+    };
+    for (graph.functions.items, 0..) |function, index| {
+        if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
+        var compiler = try lower.Lower.init(a, graph);
+        const program = try compiler.compile(@enumFromInt(index));
+        var executor = try vm.Vm.init(a, program, .{});
+        defer executor.deinit();
+        const values = try executor.run(@enumFromInt(index), &.{});
+        try std.testing.expectEqual(@as(u64, 2), values[0].integer);
+        return;
+    }
+    return error.MissingEntry;
+}
+
+test "prepared acquisition bytecode rejects altered receipt value and cleanup descriptors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const metadata_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "core/memory/heap_allocation/allocation_metadata.rg", a, .limited(64 * 1024));
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = "main() -> (.result: UIntNative) := { result = reserve_probe() }" },
+        .{ .path = "core/memory/Deinit.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> () where consumes(self))" },
+        .{ .path = "core/memory/heap_allocation/allocation_metadata.rg", .origin = .bundled_core, .code = metadata_source },
+        .{ .path = "core/memory/heap_allocation/probe.rg", .origin = .bundled_core, .code =
+        \\ProbeElement: Type = (.id: UIntNative)
+        \\implement Deinit#(ProbeElement) (.deinit = (.self: $&ProbeElement) -> () {})
+        \\SlotExtent: Type = (.element_size: UIntNative, .count: UIntNative)
+        \\OptionalExtent: Type = (..none, ..some(.value: SlotExtent))
+        \\Allocation: Type = (
+        \\    .data: (.address: UIntNative)
+        \\    .size: UIntNative
+        \\    ._storage_address: UIntNative
+        \\    ._storage_size: UIntNative
+        \\    ._storage_alignment: UIntNative
+        \\    ._slot_state: UIntNative
+        \\    ._slot_extent: OptionalExtent
+        \\)
+        \\reserve_probe() -> (.state: UIntNative) := {
+        \\    value: Allocation = (
+        \\        .data = (.address = 0), .size = 0,
+        \\        ._storage_address = 0, ._storage_size = 0, ._storage_alignment = 8,
+        \\        ._slot_state = 0, ._slot_extent = ..none
+        \\    )
+        \\    state = _prepare_allocation_metadata#(.t: ProbeElement)(.allocation = &value).state
+        \\}
+        },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+        for (diagnostics.list.items) |entry| std.debug.print("{s}\n", .{entry.msg});
+        return err;
+    };
+    for (graph.functions.items, 0..) |function, index| {
+        if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
+        var compiler = try lower.Lower.init(a, graph);
+        compiler.mode = .runtime;
+        const program = try compiler.compile(@enumFromInt(index));
+        try b.verify(a, program);
+        for (program.functions) |maybe_body| {
+            const body = maybe_body orelse continue;
+            for (@constCast(body.code)) |*instruction| {
+                if (instruction.op != .prepare_acquired) continue;
+                const original = instruction.op.prepare_acquired.layout;
+                var altered = original.*;
+                instruction.op.prepare_acquired.layout = &altered;
+                altered.receipt.address = altered.receipt.size;
+                try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+                altered = original.*;
+                altered.endian = if (altered.endian == .little) .big else .little;
+                try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+                altered = original.*;
+                var bad_cleanup = original.cleanup.*;
+                bad_cleanup.count += 1;
+                altered.cleanup = &bad_cleanup;
+                try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+                altered = original.*;
+                const bad_nodes = try a.dupe(@import("../5_codegen/bytecode/storage_layout.zig").Node, original.values.nodes);
+                bad_nodes[0].span += 1;
+                altered.values.nodes = bad_nodes;
+                try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+                instruction.op.prepare_acquired.layout = original;
+                try b.verify(a, program);
+                return;
+            }
+        }
+        return error.MissingPreparedAcquisition;
     }
     return error.MissingEntry;
 }

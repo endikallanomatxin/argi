@@ -7,14 +7,37 @@ const layout = @import("../cleanup_layout.zig");
 // Types and offsets select logical flag ranges; value addresses play no role.
 pub const RefreshFunctions = struct {
     functions: std.AutoHashMapUnmanaged(g.GlobalTypeId, c.LLVMValueRef) = .empty,
+    batches: std.AutoHashMapUnmanaged(g.GlobalTypeId, c.LLVMValueRef) = .empty,
 
     pub fn deinit(self: *RefreshFunctions, allocator: std.mem.Allocator) void {
         self.functions.deinit(allocator);
+        self.batches.deinit(allocator);
     }
 
     pub fn functionType() c.LLVMTypeRef {
         var parameters = [_]c.LLVMTypeRef{ c.LLVMPointerType(c.LLVMInt1Type(), 0), c.LLVMInt64Type() };
         return c.LLVMFunctionType(c.LLVMVoidType(), &parameters, parameters.len, 0);
+    }
+
+    // Flat acquired batches have independent owners, without an enclosing
+    // array flag. Refresh only the selected element and its own descendants.
+    pub fn getBatch(self: *RefreshFunctions, allocator: std.mem.Allocator, counts: *const layout.Counts, module: c.LLVMModuleRef, ty: g.GlobalTypeId) error{OutOfMemory}!c.LLVMValueRef {
+        if (self.batches.get(ty)) |function| return function;
+        const nested = try self.get(allocator, counts, module, ty);
+        const function = c.LLVMAddFunction(module, "cleanup.refresh.batch", functionType());
+        c.LLVMSetLinkage(function, c.LLVMInternalLinkage);
+        try self.batches.put(allocator, ty, function);
+        const builder = c.LLVMCreateBuilder();
+        defer c.LLVMDisposeBuilder(builder);
+        c.LLVMPositionBuilderAtEnd(builder, c.LLVMAppendBasicBlock(function, "entry"));
+        const flags = c.LLVMGetParam(function, 0);
+        const offset = c.LLVMGetParam(function, 1);
+        const relative = c.LLVMBuildURem(builder, offset, c.LLVMConstInt(c.LLVMInt64Type(), counts.description(ty).count, 0), "cleanup.batch.relative");
+        var indices = [_]c.LLVMValueRef{c.LLVMBuildSub(builder, offset, relative, "cleanup.batch.start")};
+        var arguments = [_]c.LLVMValueRef{ c.LLVMBuildGEP2(builder, c.LLVMInt1Type(), flags, &indices, 1, "cleanup.batch.flags"), relative };
+        _ = c.LLVMBuildCall2(builder, functionType(), nested, &arguments, arguments.len, "");
+        _ = c.LLVMBuildRetVoid(builder);
+        return function;
     }
 
     pub fn get(self: *RefreshFunctions, allocator: std.mem.Allocator, counts: *const layout.Counts, module: c.LLVMModuleRef, ty: g.GlobalTypeId) error{OutOfMemory}!c.LLVMValueRef {

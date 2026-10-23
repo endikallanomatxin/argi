@@ -149,16 +149,21 @@ pub const TraceLocation = struct {
     source_line: []const u8,
 };
 
+// Acquisition descriptors grow independently of the hot instruction union.
+// Lowering owns them immutably alongside layouts and selected cleanup plans.
+pub const AcquiredReference = struct { dst: Slot, address: Slot, receipt: ?struct { value: Slot, layout: *const @import("acquired_receipt.zig").Layout } = null, logical_index: ?struct { value: Slot, some_ordinal: u32 } = null, layout: *const @import("numeric_layout.zig").Layout, cleanup: ?*const @import("../cleanup_layout.zig").Layout = null, permission: p.PointerMutability, endian: std.builtin.Endian };
+
 pub const Instruction = struct {
     source: p.SourceRef,
     op: union(enum) {
+        prepare_acquired: struct { dst: Slot, receipt: Slot, layout: *const @import("../allocation_metadata.zig").Reservation },
         reserve_storage: struct { dst: Slot, layout: @import("storage_layout.zig").Layout, reset: bool = false },
         borrow_storage: struct { dst: Slot, place: Place, permission: p.PointerMutability },
         constant: struct { dst: Slot, value: Value },
         resolve_location: struct { dst: Slot, id: Slot },
         trace_location: struct { dst: Slot, location: *const TraceLocation },
         static_bytes: struct { dst: Slot, bytes: []const u8 },
-        acquired_reference: struct { dst: Slot, address: Slot, receipt: ?struct { value: Slot, layout: *const @import("acquired_receipt.zig").Layout } = null, logical_index: ?struct { value: Slot, some_ordinal: u32 } = null, layout: *const @import("numeric_layout.zig").Layout, permission: p.PointerMutability, endian: std.builtin.Endian },
+        acquired_reference: *const AcquiredReference,
         erase_reference: struct { dst: Slot, src: Slot },
         numeric_bytes: struct { dst: Slot, src: Slot, layout: *const @import("numeric_layout.zig").Layout, permission: p.PointerMutability, endian: std.builtin.Endian },
         offset_reference: struct { dst: Slot, src: Slot, elements: Slot },

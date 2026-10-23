@@ -9,6 +9,7 @@ pub const Layout = struct {
     size: u32,
     alignment: u32,
     grant: ?struct { data: u32, address: u32, size: u32 } = null,
+    metadata: ?struct { field: u32, extent: u32, some_ordinal: u32, value: u32, element_size: u32, count: u32 } = null,
 };
 
 pub const Bounds = struct {
@@ -43,6 +44,20 @@ pub fn decode(layout: Layout, value: @import("value.zig").Value) !Bounds {
             };
         } else null,
     };
+}
+
+pub const State = struct { token: usize, count: usize, element_size: usize };
+
+pub fn decodeState(layout: Layout, value: @import("value.zig").Value) !?State {
+    const metadata = layout.metadata orelse return null;
+    const token = try word(value, metadata.field);
+    if (value != .record or metadata.extent >= value.record.len) return error.ExecutionInvalidAcquisition;
+    const extent = value.record[metadata.extent];
+    if (extent != .choice) return error.ExecutionInvalidAcquisition;
+    if (extent.choice.variant != metadata.some_ordinal) return .{ .token = token, .count = 0, .element_size = 0 };
+    const payload = extent.choice.payload orelse return error.ExecutionInvalidAcquisition;
+    if (payload.* != .record or metadata.value >= payload.record.len) return error.ExecutionInvalidAcquisition;
+    return .{ .token = token, .count = try word(payload.record[metadata.value], metadata.count), .element_size = try word(payload.record[metadata.value], metadata.element_size) };
 }
 
 fn word(value: @import("value.zig").Value, index: u32) !usize {
@@ -82,7 +97,37 @@ pub fn compile(graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) !Layout 
         }
     }
     if ((grant_data != null or grant_size != null) and (grant_data == null or grant_size == null or grant_address == null)) return error.InvalidAcquiredReceipt;
+    var metadata: @FieldType(Layout, "metadata") = null;
+    var state_field: ?u32 = null;
+    var extent_field: ?u32 = null;
+    for (graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+        if (std.mem.eql(u8, graph.text(field.name), "_slot_state")) {
+            if (!types.isBuiltin(graph, field.ty, .UIntNative)) return error.InvalidAcquiredReceipt;
+            state_field = @intCast(index);
+        }
+        if (std.mem.eql(u8, graph.text(field.name), "_slot_extent")) extent_field = @intCast(index);
+    }
+    if (state_field) |state| {
+        const extent = extent_field orelse return error.InvalidAcquiredReceipt;
+        const variants = types.variants(graph, graph.fields.items[fields.start + extent].ty) orelse return error.InvalidAcquiredReceipt;
+        for (graph.variants.items[variants.start..][0..variants.len], 0..) |variant, ordinal| {
+            const payload = variant.payload_type orelse continue;
+            const members = types.fields(graph, payload) orelse return error.InvalidAcquiredReceipt;
+            if (members.len != 1) return error.InvalidAcquiredReceipt;
+            const shape = types.fields(graph, graph.fields.items[members.start].ty) orelse return error.InvalidAcquiredReceipt;
+            var size_field: ?u32 = null;
+            var count_field: ?u32 = null;
+            for (graph.fields.items[shape.start..][0..shape.len], 0..) |member, index| {
+                if (!types.isBuiltin(graph, member.ty, .UIntNative)) return error.InvalidAcquiredReceipt;
+                if (std.mem.eql(u8, graph.text(member.name), "element_size")) size_field = @intCast(index);
+                if (std.mem.eql(u8, graph.text(member.name), "count")) count_field = @intCast(index);
+            }
+            metadata = .{ .field = state, .extent = extent, .some_ordinal = @intCast(ordinal), .value = 0, .element_size = size_field orelse return error.InvalidAcquiredReceipt, .count = count_field orelse return error.InvalidAcquiredReceipt };
+        }
+        if (metadata == null) return error.InvalidAcquiredReceipt;
+    }
     return .{
+        .metadata = metadata,
         .grant = if (grant_data) |data| .{ .data = data, .address = grant_address.?, .size = grant_size.? } else null,
         .address = indices[0] orelse return error.InvalidAcquiredReceipt,
         .size = indices[1] orelse return error.InvalidAcquiredReceipt,
