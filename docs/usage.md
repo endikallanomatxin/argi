@@ -244,6 +244,9 @@ bytecode instructions; blocking host adapters require their own interruption.
 Cancelled execution preserves completed writes and host effects, poisons its
 context until reset, and does not run user cleanup. Clear the host-owned token
 while idle before executing again; context reset does not clear that token.
+During bytecode execution, Ctrl-C requests cooperative cancellation in both CLI
+commands. `argi run --vm` reports cancellation and exits with status 130. In the
+REPL, use `:reset` to clear the CLI token and rebuild the cancelled session.
 These limits are not a general sandbox or a stable resource policy. Compile-time
 evaluation exposes no host I/O or native handles.
 `--vm` selects runtime execution; `#run` and computed conditions execute during
@@ -263,7 +266,7 @@ healthy exit and reset run their checked cleanup before releasing the context.
 Allocation uses VM regions rather than native pointers; the supported value and
 storage restrictions still apply.
 In a terminal, Up/Down recall earlier lines and restore the unfinished draft.
-Recalled lines can be edited before submission; Ctrl-C cancels the current line
+Recalled lines can be edited before submission; Ctrl-C discards the current line
 and Ctrl-D on an empty line exits. History lasts for the current REPL process.
 
 `once` consumption is checked across accepted submissions, including calls through

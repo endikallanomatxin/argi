@@ -21,7 +21,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--vm")) continue;
         if (std.mem.eql(u8, arg, "--help")) {
-            std.debug.print("Usage: argi run --vm <directory> [--frontend-jobs N] [execution limits]\nLimits: {s}\n", .{@import("execution_options.zig").help});
+            std.debug.print("Usage: argi run --vm <directory> [--frontend-jobs N] [execution limits]\nLimits: {s}\nCtrl+C requests cooperative cancellation (exit status 130).\n", .{@import("execution_options.zig").help});
             return 0;
         }
         if (try @import("execution_options.zig").consume(&limits, args, &index)) continue;
@@ -80,6 +80,9 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
         try report(&diagnostics, graph, compiler.source, message);
         return error.CompilationFailed;
     };
+    const interrupts = try @import("execution_interrupt.zig").Guard.init();
+    defer interrupts.deinit();
+    limits.cancellation = interrupts.token();
     var executor = vm.Vm.init(allocator, program, limits) catch |err| {
         if (err == error.MissingHostBinding or err == error.IncompatibleHostBinding or err == error.AmbiguousHostBinding) {
             const host = @import("../execution/host.zig");
@@ -97,6 +100,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     const result = executor.run(id, &.{}) catch |err| {
         try @import("../execution/failure.zig").report(allocator, &diagnostics, &executor, graph, "VM execution failed", err);
         try diagnostics.dump();
+        if (err == error.ExecutionCancelled) return 130;
         return error.CompilationFailed;
     };
     if (result.len == 0) return 0;

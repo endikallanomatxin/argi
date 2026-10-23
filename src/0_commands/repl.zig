@@ -3,6 +3,7 @@ const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
 const interactive = @import("../execution/interactive.zig");
+const vm = @import("../execution/vm.zig");
 const repl_input = @import("repl_input.zig");
 const value = @import("../5_codegen/bytecode/value.zig");
 
@@ -12,6 +13,7 @@ const help =
     \\Enter definitions, statements or expressions. Open delimiters continue on the next line.
     \\Expression results remain available as _0, _1, ... until reset or exit.
     \\Up / Down      Recall previous input lines (terminal only)
+    \\Ctrl+C         Discard pending input or cancel execution (then use :reset)
     \\:begin / :end  Submit a multiline definition or statement block
     \\:cancel        Discard the pending submission
     \\:reset         Clean up and start a fresh session
@@ -26,7 +28,7 @@ pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const st
         return;
     }
     var options: sf.CoreResolutionOptions = .{ .environ_map = environ };
-    var limits: @import("../execution/vm.zig").Limits = .{};
+    var limits: vm.Limits = .{};
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         if (try @import("execution_options.zig").consume(&limits, args, &index)) continue;
@@ -50,6 +52,9 @@ pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const st
         return err;
     };
     var session: interactive.Interactive = undefined;
+    const interrupts = try @import("execution_interrupt.zig").Guard.init();
+    defer interrupts.deinit();
+    limits.cancellation = interrupts.token();
     try session.initPrepared(backing_allocator, diagnostics.source_files, prepared, limits);
     defer session.deinit();
     try session.enableImports(io, ".");
@@ -67,22 +72,23 @@ pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const st
         if (session.diagnostics.hasErrors()) try session.diagnostics.dump();
         return err;
     };
-    try interact(&session, &input.interface, &output.interface, terminal);
+    try interact(&session, &input.interface, &output.interface, terminal, interrupts.token());
 }
 
 /// Transport loop only. Parsing, resolution, safety, publication and execution
 /// stay in the shared interactive controller, independent of terminal I/O.
-fn interact(session: *interactive.Interactive, input: *std.Io.Reader, output: *std.Io.Writer, terminal: bool) !void {
-    const read_result = readSubmissions(session, input, output, terminal);
+fn interact(session: *interactive.Interactive, input: *std.Io.Reader, output: *std.Io.Writer, terminal: bool, cancellation: ?*vm.Cancellation) !void {
+    const read_result = readSubmissions(session, input, output, terminal, cancellation);
     // Trapped execution cannot safely unwind user code. Retire its poisoned
     // context before closing. Healthy sessions also clean up on transport error.
+    if (cancellation) |token| token.reset();
     if (session.runtime.context.state == .poisoned) try session.reset();
     try session.close();
     try read_result;
     try output.flush();
 }
 
-fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, output: *std.Io.Writer, terminal: bool) !void {
+fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, output: *std.Io.Writer, terminal: bool, cancellation: ?*vm.Cancellation) !void {
     var block: std.ArrayList(u8) = .empty;
     defer block.deinit(session.allocator);
     var editor: repl_input.Editor = .{ .allocator = session.allocator };
@@ -138,6 +144,7 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
             multiline = true;
             automatic = false;
         } else if (std.mem.eql(u8, text, ":reset")) {
+            if (cancellation) |token| token.reset();
             session.reset() catch |err| {
                 try report(session, output, err);
                 continue;
@@ -270,8 +277,25 @@ test "REPL transport executes multiline definitions expressions and checked rese
     );
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
-    try interact(&session, &input, &output.writer, false);
+    try interact(&session, &input, &output.writer, false, null);
     try std.testing.expectEqualStrings("_0 = 42\n_0 = 7\n", output.written());
+    try std.testing.expect(session.closed);
+    try std.testing.expectEqual(.fresh, session.runtime.context.state);
+}
+
+test "REPL transport clears cancellation before explicit reset and exit" {
+    var cancellation: vm.Cancellation = .{};
+    var session: interactive.Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{ .cancellation = &cancellation });
+    defer session.deinit();
+    cancellation.cancel();
+    var input = std.Io.Reader.fixed("1\n:reset\n2\n:quit\n");
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try interact(&session, &input, &output.writer, false, &cancellation);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "_0 = 2\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "_0 = 1\n") == null);
+    try std.testing.expect(!cancellation.isCancelled());
     try std.testing.expect(session.closed);
     try std.testing.expectEqual(.fresh, session.runtime.context.state);
 }
@@ -289,7 +313,7 @@ test "REPL integer presentation uses slot and aggregate field types" {
     );
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
-    try interact(&session, &input, &output.writer, false);
+    try interact(&session, &input, &output.writer, false, null);
     try std.testing.expectEqualStrings("_0 = -1\n_1 = 18446744073709551615\n_2 = (-1, 18446744073709551615)\n", output.written());
 }
 
@@ -300,7 +324,7 @@ test "REPL transport requires reset after a runtime trap" {
     var input = std.Io.Reader.fixed("abort\n1\n:reset\n2\n:quit\n");
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
-    try interact(&session, &input, &output.writer, false);
+    try interact(&session, &input, &output.writer, false, null);
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "ExecutionContextPoisoned") != null);
     try std.testing.expect(std.mem.endsWith(u8, output.written(), "_0 = 2\n"));
     try std.testing.expect(session.closed);
@@ -321,7 +345,7 @@ test "REPL presents persistent string literals as escaped text" {
     var input = std.Io.Reader.fixed("\"hello\"\n_0\n\"ñ€\"\n\"\"\n:reset\n:quit\n");
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
-    try interact(&session, &input, &output.writer, false);
+    try interact(&session, &input, &output.writer, false, null);
     try std.testing.expectEqualStrings("_0 = \"hello\"\n_1 = \"hello\"\n_2 = \"ñ€\"\n_3 = \"\"\n", output.written());
 }
 
@@ -449,7 +473,7 @@ test "REPL presents compiler types and reuses them in layout queries" {
     var input = std.Io.Reader.fixed("a :: Int32 = 42\ntype_of(a)\nsize_of(a)\nsize_of(.type = _0)\n:quit\n");
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
-    try interact(&session, &input, &output.writer, false);
+    try interact(&session, &input, &output.writer, false, null);
     try std.testing.expectEqualStrings("_0 = Int32\n_1 = 4\n_2 = 4\n", output.written());
 }
 
@@ -469,7 +493,7 @@ test "REPL automatically completes open function and call delimiters" {
     );
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
-    try interact(&session, &input, &output.writer, false);
+    try interact(&session, &input, &output.writer, false, null);
     try std.testing.expectEqualStrings("_0 = 42\n", output.written());
     try std.testing.expect(session.closed);
 }
@@ -485,7 +509,7 @@ test "REPL cancels pending input without publishing or resetting accepted state"
     );
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
-    try interact(&session, &input, &output.writer, false);
+    try interact(&session, &input, &output.writer, false, null);
     try std.testing.expectEqualStrings("_0 = 42\n_1 = 42\n", output.written());
     try std.testing.expect(session.closed);
 }
