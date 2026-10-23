@@ -251,7 +251,15 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
 /// anchor and virtual deallocator. Both interpreters use this field mapping;
 /// raw byte ownership must not erase the deallocator's receiver lifetime.
 pub const AllocationTransfer = struct {
-    pub const field_count = 9;
+    pub fn fieldCount(graph: *const @import("../global/graph.zig").GlobalSemanticGraph, callee: @import("../global/graph.zig").GlobalFunctionId) !u32 {
+        const function = graph.function(callee);
+        if (function.output.len != 1) return error.InvalidAllocationPrimitive;
+        const output = graph.fields.items[function.output.start].ty;
+        const fields = @import("../global/types.zig").fields(graph, output) orelse return error.InvalidAllocationPrimitive;
+        if (fields.len <= data_field) return error.InvalidAllocationPrimitive;
+        for (borrowed_fields) |borrowed| if (fields.len <= borrowed.field) return error.InvalidAllocationPrimitive;
+        return fields.len;
+    }
     pub const data_field = 0;
     pub const borrowed_fields = [_]struct { field: u32, input: u32 }{
         .{ .field = 3, .input = 4 }, // anchor

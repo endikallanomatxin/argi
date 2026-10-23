@@ -2144,7 +2144,7 @@ pub const SafetyChecker = struct {
                 const root = try state.tracker.establish(.fresh);
                 state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
                 const shape = primitive_transfer.AllocationTransfer;
-                const fields = try self.allocator.alloc(facts.FieldFacts, shape.field_count);
+                const fields = try self.allocator.alloc(facts.FieldFacts, try shape.fieldCount(self.graph, function));
                 for (fields, 0..) |*field, index| {
                     const value = try self.allocator.create(facts.ValueFacts);
                     value.* = if (index == shape.data_field)
@@ -9063,11 +9063,26 @@ test "choice outputs keep lazily materialized input storage alive" {
     try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(owned)].state);
 }
 
+fn allocationPrimitiveTestGraph(allocator: std.mem.Allocator, count: u32) !graph_mod.GlobalSemanticGraph {
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    errdefer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .UIntNative });
+    for (0..count) |_| try graph.fields.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .ty = @enumFromInt(0),
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = count } } });
+    try graph.fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = count, .len = 1 }, .safety_primitive = .establish_allocation });
+    return graph;
+}
+
 test "allocation primitive agrees with instantiated symbolic transfer" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var graph = try allocationPrimitiveTestGraph(allocator, 12);
     defer graph.deinit(allocator);
     var checker = SafetyChecker.init(allocator, undefined, &graph);
     defer checker.deinit();
@@ -9087,15 +9102,24 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     defer engine.deinit();
     var infer = summary_infer.Infer.init(allocator, &graph, &engine);
     defer infer.deinit();
-    const effect = try infer.primitiveValueEffect(.establish_allocation, 1);
+    const effect = try infer.primitiveValueEffect(.establish_allocation, 1, @enumFromInt(0));
     const symbolic = try checker.instantiateOutput(effect, &arguments, &summary_state);
     const direct = try checker.evaluatePrimitive(@enumFromInt(0), .establish_allocation, &.{}, &arguments, &direct_state, .{ .file_index = 0, .offset = 0 });
     try std.testing.expect(valueFactsEqual(direct, symbolic));
+    try std.testing.expectEqual(@as(usize, 12), direct.fields.len);
+    for (direct.fields[5..]) |field| {
+        try std.testing.expectEqual(@as(usize, 0), field.value.dependencies.len);
+        try std.testing.expectEqual(@as(usize, 0), field.value.owned_roots.len);
+    }
     try std.testing.expectEqual(@as(usize, 1), direct.owned_roots.len);
     try std.testing.expect(valueDependsOnRoot(direct, deallocator_root));
     try std.testing.expect(valueDependsOnRoot(direct, anchor_root));
     const deallocator = try checker.projectValueFacts(direct, &.{.{ .field = 4 }});
     try std.testing.expect(valueDependsOnRoot(deallocator, deallocator_root));
+    const metadata = try checker.projectValueFacts(direct, &.{.{ .field = 11 }});
+    try std.testing.expectEqual(@as(usize, 0), metadata.owned_roots.len);
+    try std.testing.expect(!valueDependsOnRoot(metadata, anchor_root));
+    try std.testing.expect(!valueDependsOnRoot(metadata, deallocator_root));
 }
 
 test "new borrows after joined reinitialization do not revive old generations" {
@@ -9149,7 +9173,7 @@ test "dependency primitives preserve the value referent and borrow only anchor v
     };
     inline for (.{ primitives.SafetyPrimitive.depend_on, primitives.SafetyPrimitive.restrict_reference }) |primitive| {
         const direct = try checker.dependencyPrimitive(&arguments, primitive_transfer.forPrimitive(primitive).value);
-        const effect = try inference.primitiveValueEffect(primitive, 0);
+        const effect = try inference.primitiveValueEffect(primitive, 0, null);
         const symbolic = try checker.instantiateOutput(effect, &arguments, &state);
         try std.testing.expect(symbolic.referenced_place.?.eql(direct.referenced_place.?));
         try std.testing.expectEqual(direct.explicit_dependency, symbolic.explicit_dependency);
@@ -9166,7 +9190,9 @@ test "storage capability consumption agrees between primitives and summaries" {
     const allocator = arena.allocator();
     var diags = diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
-    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    var graph = try allocationPrimitiveTestGraph(allocator, 12);
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
     inline for (.{ primitives.SafetyPrimitive.establish_inherited_storage, primitives.SafetyPrimitive.establish_allocation }) |primitive| {
         var direct = SafetyChecker.FunctionState.init(allocator);
@@ -9213,11 +9239,11 @@ test "native acquisition and page trimming agree with symbolic transfers" {
     defer symbolic.deinit();
     const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
     const acquired = try checker.evaluatePrimitive(@enumFromInt(0), .native_allocated_storage, &.{}, &.{}, &direct, source);
-    const acquired_effect = try inference.primitiveValueEffect(.native_allocated_storage, 1);
+    const acquired_effect = try inference.primitiveValueEffect(.native_allocated_storage, 1, null);
     const inferred = try checker.instantiateOutput(acquired_effect, &.{}, &symbolic);
     try std.testing.expectEqual(acquired.foreign_storage, inferred.foreign_storage);
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, acquired.storage_capabilities, inferred.storage_capabilities);
-    const trimmed_effect = try inference.primitiveValueEffect(.acquisition_subaddress, 2);
+    const trimmed_effect = try inference.primitiveValueEffect(.acquisition_subaddress, 2, null);
     inline for (.{ SafetyChecker.StorageCapabilityState.available, SafetyChecker.StorageCapabilityState.consumed }) |state| {
         direct.storage_capabilities.items[0] = state;
         symbolic.storage_capabilities.items[0] = state;

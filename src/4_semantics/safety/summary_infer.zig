@@ -4494,7 +4494,7 @@ pub const Infer = struct {
         const callee_function = self.graph.function(callee);
         const arguments = self.structArguments(input) orelse return .{};
         if (callee_function.safety_primitive != .none) {
-            const effect = try self.primitiveValueEffect(callee_function.safety_primitive, self.freshSource(call_node, 0));
+            const effect = try self.primitiveValueEffect(callee_function.safety_primitive, self.freshSource(call_node, 0), callee);
             return self.substituteOutput(function_id, effect, arguments);
         }
         const summary = self.engine.summaryFor(callee) orelse return .{};
@@ -5471,7 +5471,7 @@ pub const Infer = struct {
     }
 
     /// Symbolic transfer for one primitive invocation, with call-site identity.
-    pub fn primitiveValueEffect(self: *Infer, primitive: primitives.SafetyPrimitive, source: facts.FreshEffectSource) !facts.ValueEffect {
+    pub fn primitiveValueEffect(self: *Infer, primitive: primitives.SafetyPrimitive, source: facts.FreshEffectSource, callee: ?graph_mod.GlobalFunctionId) !facts.ValueEffect {
         return switch (primitive_transfer.forPrimitive(primitive).value) {
             .reference_copy => self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
             .allocation_slot => blk: {
@@ -5492,7 +5492,7 @@ pub const Infer = struct {
             },
             .empty, .relocate, .opaque_move, .opaque_relocate, .opaque_drop, .opaque_mark_empty => .{},
             .inherited_reference, .inherited_storage => self.validityOnlyEffect(try self.inputValueEffect(1, &.{})),
-            .allocation => self.ownedAllocationEffect(source),
+            .allocation => self.ownedAllocationEffect(source, callee orelse return error.InvalidAllocationPrimitive),
             .raw_storage => .{ .foreign_storage = true, .fresh_storage_capabilities = try self.oneFresh(source) },
             .opaque_move_out => .{
                 .opaque_storage_dependencies = try self.oneInputPath(0, &.{}),
@@ -5501,12 +5501,12 @@ pub const Infer = struct {
         };
     }
 
-    fn ownedAllocationEffect(self: *Infer, source: facts.FreshEffectSource) !facts.ValueEffect {
+    fn ownedAllocationEffect(self: *Infer, source: facts.FreshEffectSource, callee: graph_mod.GlobalFunctionId) !facts.ValueEffect {
         // Keep this structural effect in the same order as Allocation. Raw
         // data carries the fresh lifetime. A backing-region anchor is copied
         // from the input without transferring ownership from the allocator.
         const shape = primitive_transfer.AllocationTransfer;
-        const fields = try self.allocator.alloc(facts.OutputFieldEffect, shape.field_count);
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, try shape.fieldCount(self.graph, callee));
         const empty = try self.allocator.create(facts.ValueEffect);
         empty.* = .{};
         for (fields, 0..) |*field, index| field.* = .{ .index = @intCast(index), .value = empty };
