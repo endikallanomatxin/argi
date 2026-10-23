@@ -771,7 +771,9 @@ pub const Session = struct {
         self.phase = .quiescent;
     }
 
-    pub fn finish(self: *Session) !Result {
+    /// Complete and validate this unit without consuming the shared graph or
+    /// its pending-slot metadata. Callers may extend resolution afterwards.
+    pub fn completeUnit(self: *Session) !Stats {
         if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
         errdefer self.phase = .failed;
         const allocator = self.allocator;
@@ -956,20 +958,12 @@ pub const Session = struct {
 
         try contracts.closeVirtualMethodRegistries();
 
-        // Construction-only resolution metadata must disappear before the graph is
-        // exposed to Safety, Codegen or editor consumers.
-        try relocation.graph.finishTypeResolution(allocator);
         contracts.validateParticipantConformances() catch |err| {
             try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
             try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
             return err;
         };
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        // Inactive bodies can retain pending binding types. Publication must
-        // not replace them with a language type merely to close this unit.
-        if (!relocation.graph.hasUnresolvedBindingTypes())
-            try relocation.graph.finishBindingTypeResolution(allocator);
-
         var generic_bodies_built: u64 = 0;
         var generic_bodies_unreachable: u64 = 0;
         if (options.profile_io != null) {
@@ -1047,11 +1041,22 @@ pub const Session = struct {
             .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
             .verify_ns = @intCast(profile_end - profile_preverify),
         };
-        relocation.graph.commitFunctionCompletions(allocator);
+        return stats;
+    }
+
+    /// Transfer ownership for one-shot consumers. Incremental owners use
+    /// completeUnit and keep their graph and construction metadata in place.
+    pub fn finish(self: *Session) !Result {
+        const stats = try self.completeUnit();
+        errdefer self.phase = .failed;
+        try self.relocation.graph.finishTypeResolution(self.allocator);
+        if (!self.relocation.graph.hasUnresolvedBindingTypes())
+            try self.relocation.graph.finishBindingTypeResolution(self.allocator);
+        self.relocation.graph.commitFunctionCompletions(self.allocator);
         self.phase = .published;
         const unit = self.reachable;
         self.reachable = null;
-        return .{ .graph = relocation.takeGraph(allocator), .stats = stats, .unit = unit };
+        return .{ .graph = self.relocation.takeGraph(self.allocator), .stats = stats, .unit = unit };
     }
 
     pub fn deinit(self: *Session) void {

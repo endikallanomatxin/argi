@@ -284,6 +284,9 @@ pub const CompilationSession = struct {
             return error.StaleCompilationCandidate;
         if (self.revision == std.math.maxInt(u64)) return error.CompilationRevisionLimit;
         if (snapshot == .retain) try self.versions.ensureUnusedCapacity(self.allocator, 1);
+        // Every fallible publication step has succeeded. Nested speculation
+        // is closed, so accepted bodies no longer need their undo entries.
+        candidate.semantic.?.relocation.graph.commitFunctionCompletions(self.allocator);
         const previous = self.semantic;
         self.semantic = candidate.semantic.?;
         if (snapshot == .retain) {
@@ -832,6 +835,9 @@ test "unit selection preserves pending binding types for later materialization" 
     try std.testing.expect(selected.checked.?.unit.?.contains(helper));
     try std.testing.expect(!selected.checked.?.graph.isBindingTypeUnresolved(pending.?));
     try std.testing.expect(checked.graph.isBindingTypeUnresolved(pending.?));
+    try std.testing.expect(selected.semantic.?.relocation.graph.checkpoint().function_completions_len != 0);
+    try session.accept(&selected);
+    try std.testing.expectEqual(@as(usize, 0), session.semantic.relocation.graph.checkpoint().function_completions_len);
     try std.testing.expect(!diagnostics.hasErrors());
 }
 
@@ -871,5 +877,46 @@ test "virtual signature completion is stable across repeated unit preparation" {
     try session.resolvers.contracts.closeVirtualMethodRegistries();
     try std.testing.expectEqualDeep(grown, graph.checkpoint());
     try std.testing.expectEqualDeep(signature, graph.virtual_registries.items[0]);
+    try std.testing.expect(!diagnostics.hasErrors());
+}
+
+test "semantic unit completion keeps the same graph open for later roots" {
+    const a = std.testing.allocator;
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    var module = try sourceModule(a,
+        \\identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }
+        \\helper := () -> (.result: Int32) {
+        \\    local ::= identity#(.T: Int32)(.value = 7)
+        \\    result = local
+        \\}
+        \\main := () -> (.status_code: Int32 = 0) {}
+    , &diagnostics);
+    defer module.deinit(a);
+    var session: sema.Session = undefined;
+    try session.init(a, &.{module}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try session.advance();
+    _ = try session.completeUnit();
+    const graph = &session.relocation.graph;
+    try std.testing.expect(graph.hasUnresolvedBindingTypes());
+    try std.testing.expect(!graph.constructionStateEmpty());
+    const saved = graph.checkpoint();
+    _ = try session.completeUnit();
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+    const helper: @import("../4_semantics/global/graph.zig").GlobalFunctionId = for (graph.functions.items, 0..) |function, raw| {
+        if (std.mem.eql(u8, graph.text(graph.declaration(function.declaration).name), "helper")) break @enumFromInt(raw);
+    } else return error.MissingHelper;
+    const body = graph.function(helper).body;
+    try session.includeExecutionRoot(helper);
+    try session.advance();
+    _ = try session.completeUnit();
+    try std.testing.expectEqual(body, graph.function(helper).body);
+    try std.testing.expect(!graph.hasUnresolvedBindingTypes());
+    try @import("../4_semantics/global/verify.zig").verifyGlobal(graph);
+    var result = try session.finish();
+    defer result.deinit(a);
+    try std.testing.expectEqual(body, result.graph.function(helper).body);
+    try std.testing.expect(result.graph.constructionStateEmpty());
     try std.testing.expect(!diagnostics.hasErrors());
 }

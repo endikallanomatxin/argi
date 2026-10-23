@@ -10,9 +10,9 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
 }
 
 pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @import("reachability.zig").FunctionSet) !void {
-    if (unit == null) {
-        try require(graph.constructionStateEmpty());
-    } else try require(!graph.hasUnresolvedTypes());
+    // Readiness is a property of the selected semantic data, not of whether
+    // an incremental owner has released its resolution bookkeeping.
+    try require(!graph.hasUnresolvedTypes());
     const bounds = makeBounds(graph);
     for (graph.comptime_requests.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
     try verifyModulePartitions(graph);

@@ -246,12 +246,10 @@ pub const FrontendPipeline = struct {
             try session.advance();
         }
         errdefer session.deinit();
-        // An unresolved condition must fail before interactive publication.
-        var publication: global_semantizer.Session = undefined;
-        try session.fork(&publication, self.allocator, self.diagnostics);
-        defer publication.deinit();
-        var checked = try publication.finish();
-        defer checked.deinit(self.allocator);
+        // Validate pending conditions directly. Completion keeps the session
+        // open, including dormant bindings needed by later submissions.
+        _ = try session.completeUnit();
+        session.relocation.graph.commitFunctionCompletions(self.allocator);
         self.prepared_session = session;
         return session;
     }
