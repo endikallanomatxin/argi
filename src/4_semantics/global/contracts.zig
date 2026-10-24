@@ -366,6 +366,8 @@ pub const Resolver = struct {
 
     fn resolveDomainPaths(self: *Resolver, module_index: usize, mappings: []const parameterized_storage.DomainMapping, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
         if (mappings.len != located.definition.domains.len) return self.domainFailure(source, "every Contract storage domain requires exactly one implementation mapping");
+        if (mappings.len == 0) return &.{};
+        const arena = try self.graph.safetyAllocator(self.allocator);
         var result: std.ArrayList(primitives.StorageDomainMapping) = .empty;
         defer result.deinit(self.allocator);
         for (mappings) |mapping| {
@@ -406,23 +408,26 @@ pub const Resolver = struct {
                     }
                     try fields.append(self.allocator, selected orelse return self.domainFailure(source, "storage domain mapping selects an unknown concrete field"));
                 }
-                try paths.append(self.allocator, .{ .fields = try fields.toOwnedSlice(self.allocator) });
+                try paths.append(self.allocator, .{ .fields = try arena.dupe(u32, fields.items) });
             }
-            try result.append(self.allocator, .{ .domain_index = index, .paths = try paths.toOwnedSlice(self.allocator) });
+            try result.append(self.allocator, .{ .domain_index = index, .paths = try arena.dupe(primitives.StorageDomainMapping.Path, paths.items) });
         }
+        var temporary = std.heap.ArenaAllocator.init(self.allocator);
+        defer temporary.deinit();
+        const scratch = temporary.allocator();
         var symbolic: std.ArrayList(@import("../safety/domains.zig").Mapping) = .empty;
-        defer symbolic.deinit(self.allocator);
+        defer symbolic.deinit(scratch);
         for (result.items) |mapping| {
-            const paths = try self.allocator.alloc(@import("../safety/safety_facts.zig").InputPath, mapping.paths.len);
+            const paths = try scratch.alloc(@import("../safety/safety_facts.zig").InputPath, mapping.paths.len);
             for (mapping.paths, paths) |path, *resolved| {
-                const projections = try self.allocator.alloc(@import("../safety/place.zig").Projection, path.fields.len);
+                const projections = try scratch.alloc(@import("../safety/place.zig").Projection, path.fields.len);
                 for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
                 resolved.* = .{ .input_index = 0, .projections = projections };
             }
-            try symbolic.append(self.allocator, .{ .domain = @enumFromInt(mapping.domain_index), .paths = paths });
+            try symbolic.append(scratch, .{ .domain = @enumFromInt(mapping.domain_index), .paths = paths });
         }
         if (@import("../safety/domains.zig").validate(symbolic.items, 0) != null) return self.domainFailure(source, "implementation storage domains overlap or have an invalid mapping");
-        return try result.toOwnedSlice(self.allocator);
+        return try arena.dupe(primitives.StorageDomainMapping, result.items);
     }
 
     fn inputFieldsSatisfyRequirement(
@@ -2521,11 +2526,7 @@ pub const Resolver = struct {
         const contract = try contract_safety.globalSafetyContract(self, located.module_index, declared, signature, instance.output);
         const input = try self.virtualInputType(instance.input, instance.output);
         const fields = global_types.fields(self.graph, input) orelse return error.InvalidContractRequirementInput;
-        // Reacquire the row after resolution, which may grow semantic pools.
-        const registry = &self.graph.virtual_registries.items[@intFromEnum(registry_id)];
-        registry.safety_contract = contract;
-        registry.contract_input_count = fields.len;
-        registry.contract_output_type = instance.output;
+        try self.graph.completeVirtualSignature(self.allocator, registry_id, contract, fields.len, instance.output);
     }
 
     fn isUnaryReceiverParticipantType(self: *const Resolver, located: LocatedContractDefinition, ty: @import("../module/parameterized/ir.zig").ParameterizedTypeId) bool {
@@ -2548,6 +2549,11 @@ pub const Resolver = struct {
             self.virtual_signature_failure = .{ .source = source, .method_name = self.modules[located.module_index].text(requirement.name), .reason = reason, .static_contract = true };
             return;
         }
+        // The selected proof is immutable. Revalidation must not allocate a
+        // second outcome tree that cannot add any information to that proof.
+        for (self.graph.contract_safety_conformances.items) |existing| {
+            if (std.meta.eql(existing.selection, selection)) return;
+        }
         const contract = contract_safety.globalSafetyContract(self, located.module_index, declared, function.input, output) catch |err| switch (err) {
             error.UnknownOutcomeContractVariant, error.DuplicateOutcomeContract, error.InvalidOutcomeContract => {
                 self.virtual_signature_failure = .{
@@ -2564,9 +2570,6 @@ pub const Resolver = struct {
             },
             else => return err,
         };
-        for (self.graph.contract_safety_conformances.items) |existing| {
-            if (std.meta.eql(existing.selection, selection)) return;
-        }
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         for (0..located.definition.parameters.len) |offset| {

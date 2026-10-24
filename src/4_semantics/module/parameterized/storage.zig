@@ -79,6 +79,11 @@ pub const DomainMapping = struct {
     name: primitives.StringRange,
     paths: []const Path,
     pub const Path = struct { fields: []const primitives.StringRange };
+
+    pub fn deinit(self: DomainMapping, allocator: std.mem.Allocator) void {
+        for (self.paths) |path| allocator.free(path.fields);
+        allocator.free(self.paths);
+    }
 };
 
 // Tuple evidence keeps selector arguments separate from associated outputs.
@@ -118,7 +123,12 @@ pub const Storage = struct {
         self.parameterized_functions.deinit(allocator);
         self.parameterized_types.deinit(allocator);
         self.contract_requirements.deinit(allocator);
+        for (self.contract_definitions.items) |definition| allocator.free(definition.domains);
         self.contract_definitions.deinit(allocator);
+        for (self.contract_conformances.items) |conformance| {
+            for (conformance.domains) |domain| domain.deinit(allocator);
+            allocator.free(conformance.domains);
+        }
         self.contract_conformances.deinit(allocator);
         self.contract_operations.deinit(allocator);
         self.* = .{};

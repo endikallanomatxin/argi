@@ -203,9 +203,11 @@ pub const GlobalSemanticGraph = struct {
         type_rewrites_len: usize,
         binding_rewrites_len: usize,
         function_completions_len: usize,
+        virtual_completions_len: usize,
+        safety_arena: ?*std.heap.ArenaAllocator,
     };
 
-    const MutationFrontier = struct { types: usize, bindings: usize, depth: usize };
+    const MutationFrontier = struct { types: usize, bindings: usize, virtual_registries: usize, depth: usize };
 
     /// Coordinates pool tails and type/binding completions. Other resolver
     /// mutations still require the resolver's side-effect checkpoint.
@@ -221,6 +223,7 @@ pub const GlobalSemanticGraph = struct {
             if (!self.active) return;
             std.debug.assert(std.meta.eql(self.graph.mutation_frontier.?, self.frontier));
             self.graph.mutation_frontier = self.parent;
+            self.graph.safety_arena = self.saved.safety_arena;
             self.active = false;
         }
 
@@ -239,9 +242,12 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn beginTransaction(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) Transaction {
         const parent = self.mutation_frontier;
-        const frontier: MutationFrontier = .{ .types = self.types.items.len, .bindings = self.bindings.items.len, .depth = if (parent) |value| value.depth + 1 else 1 };
+        const frontier: MutationFrontier = .{ .types = self.types.items.len, .bindings = self.bindings.items.len, .virtual_registries = self.virtual_registries.items.len, .depth = if (parent) |value| value.depth + 1 else 1 };
         const saved = self.checkpoint();
         self.mutation_frontier = frontier;
+        // New immutable metadata belongs to this scope. A child never appends
+        // to an older arena that its rollback would be unable to reclaim.
+        self.safety_arena = null;
         return .{ .graph = self, .allocator = allocator, .saved = saved, .parent = parent, .frontier = frontier };
     }
 
@@ -257,6 +263,7 @@ pub const GlobalSemanticGraph = struct {
 
     const ConstructionState = struct {
         function_completions: std.ArrayList(FunctionCompletion) = .empty,
+        virtual_completions: std.ArrayList(struct { id: GlobalVirtualRegistryId, previous: VirtualMethodRegistry }) = .empty,
         type_resolution: std.ArrayList(TypeResolutionState) = .empty,
         binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
         type_rewrites: std.ArrayList(struct {
@@ -272,6 +279,7 @@ pub const GlobalSemanticGraph = struct {
 
         fn deinit(self: *ConstructionState, allocator: std.mem.Allocator) void {
             self.function_completions.deinit(allocator);
+            self.virtual_completions.deinit(allocator);
             self.type_resolution.deinit(allocator);
             self.binding_type_resolution.deinit(allocator);
             self.type_rewrites.deinit(allocator);
@@ -363,10 +371,10 @@ pub const GlobalSemanticGraph = struct {
     strings: std.ArrayList(u8) = .empty,
     roots: std.ArrayList(GlobalNodeId) = .empty,
 
-    // Resolved safety selectors contain immutable nested slices. Their arena
-    // belongs to this graph and is copied on publication, never borrowed from
-    // a speculative graph that may be discarded.
+    // Immutable metadata is owned in transaction batches. The current arena
+    // is only an allocation cursor; committed child batches remain owned here.
     safety_arena: ?*std.heap.ArenaAllocator = null,
+    safety_batches: std.ArrayList(*std.heap.ArenaAllocator) = .empty,
 
     // Transient lookup state used while building/querying GlobalSema. The
     // append-only semantic pools remain the source of truth; these indexes are
@@ -381,7 +389,9 @@ pub const GlobalSemanticGraph = struct {
     pub fn safetyAllocator(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !std.mem.Allocator {
         if (self.safety_arena == null) {
             const arena = try allocator.create(std.heap.ArenaAllocator);
+            errdefer allocator.destroy(arena);
             arena.* = .init(allocator);
+            try self.safety_batches.append(allocator, arena);
             self.safety_arena = arena;
         }
         return self.safety_arena.?.allocator();
@@ -396,6 +406,16 @@ pub const GlobalSemanticGraph = struct {
         return result;
     }
 
+    fn copyStorageDomains(allocator: std.mem.Allocator, source: []const primitives.StorageDomainMapping) ![]const primitives.StorageDomainMapping {
+        const result = try allocator.dupe(primitives.StorageDomainMapping, source);
+        for (result) |*mapping| {
+            const paths = try allocator.dupe(primitives.StorageDomainMapping.Path, mapping.paths);
+            for (paths) |*path| path.fields = try allocator.dupe(u32, path.fields);
+            mapping.paths = paths;
+        }
+        return result;
+    }
+
     /// Copy mutable semantic pools while preserving every existing identity.
     /// Immutable source metadata keeps its original ModuleSG lifetime. Derived
     /// name indexes are rebuilt lazily in the copy. Ordinary compilation does
@@ -404,6 +424,7 @@ pub const GlobalSemanticGraph = struct {
         var result: GlobalSemanticGraph = .{ .target = self.target };
         errdefer result.deinit(allocator);
         inline for (@typeInfo(GlobalSemanticGraph).@"struct".fields) |field| {
+            if (comptime std.mem.eql(u8, field.name, "safety_batches")) continue;
             if (comptime switch (@typeInfo(field.type)) {
                 .@"struct" => @hasField(field.type, "items"),
                 else => false,
@@ -413,11 +434,19 @@ pub const GlobalSemanticGraph = struct {
             contract.outcomes = try copySafetyOutcomes(try result.safetyAllocator(allocator), contract.outcomes);
         };
         for (result.contract_safety_conformances.items) |*conformance| {
-            conformance.contract.outcomes = try copySafetyOutcomes(try result.safetyAllocator(allocator), conformance.contract.outcomes);
+            const arena = try result.safetyAllocator(allocator);
+            conformance.contract.outcomes = try copySafetyOutcomes(arena, conformance.contract.outcomes);
+            conformance.domains = try copyStorageDomains(arena, conformance.domains);
+        }
+        for (result.virtualizes.items) |*value| {
+            value.domains = try copyStorageDomains(try result.safetyAllocator(allocator), value.domains);
         }
         inline for (@typeInfo(ConstructionState).@"struct".fields) |field| {
             try @field(result.construction, field.name).appendSlice(allocator, @field(self.construction, field.name).items);
         }
+        for (result.construction.virtual_completions.items) |*entry| if (entry.previous.safety_contract) |*contract| {
+            contract.outcomes = try copySafetyOutcomes(try result.safetyAllocator(allocator), contract.outcomes);
+        };
         return result;
     }
 
@@ -453,6 +482,8 @@ pub const GlobalSemanticGraph = struct {
             .type_rewrites_len = self.construction.type_rewrites.items.len,
             .binding_rewrites_len = self.construction.binding_rewrites.items.len,
             .function_completions_len = self.construction.function_completions.items.len,
+            .virtual_completions_len = self.construction.virtual_completions.items.len,
+            .safety_arena = self.safety_arena,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
             .@"struct" => @hasField(pool.type, "items"),
@@ -472,6 +503,10 @@ pub const GlobalSemanticGraph = struct {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         self.discardIndexedTail(allocator, saved.indexed_functions, saved.indexed_declarations);
         self.discardParameterizedTail(allocator, saved.indexed_parameterized_modules, saved.indexed_module_functions);
+        while (self.construction.virtual_completions.items.len > saved.virtual_completions_len) {
+            const previous = self.construction.virtual_completions.pop().?;
+            self.virtual_registries.items[@intFromEnum(previous.id)] = previous.previous;
+        }
         while (self.construction.function_completions.items.len > saved.function_completions_len) {
             switch (self.construction.function_completions.pop().?) {
                 .body => |id| self.functions.items[@intFromEnum(id)].body = null,
@@ -494,21 +529,32 @@ pub const GlobalSemanticGraph = struct {
         }
         self.construction.type_resolution.shrinkRetainingCapacity(saved.type_resolution_len);
         self.construction.binding_type_resolution.shrinkRetainingCapacity(saved.binding_type_resolution_len);
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            @field(self, pool.name).shrinkRetainingCapacity(saved.pool_lengths[index]);
-        };
+        inline for (pools, 0..) |pool, index| {
+            if (comptime std.mem.eql(u8, pool.name, "safety_batches")) continue;
+            if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
+                @field(self, pool.name).shrinkRetainingCapacity(saved.pool_lengths[index]);
+            }
+        }
+        const batch_count = saved.pool_lengths[std.meta.fieldIndex(GlobalSemanticGraph, "safety_batches").?];
+        for (self.safety_batches.items[batch_count..]) |arena| {
+            arena.deinit();
+            allocator.destroy(arena);
+        }
+        self.safety_batches.shrinkRetainingCapacity(batch_count);
+        self.safety_arena = saved.safety_arena;
     }
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         self.lookup.deinit(allocator);
         self.construction.deinit(allocator);
-        if (self.safety_arena) |arena| {
+        for (self.safety_batches.items) |arena| {
             arena.deinit();
             allocator.destroy(arena);
         }
+        self.safety_batches.deinit(allocator);
         inline for (.{
             &self.modules,                     &self.module_aliases,             &self.files,                        &self.declarations,
             &self.symbols,                     &self.symbol_declarations,        &self.types,                        &self.generic_instances,
@@ -785,6 +831,8 @@ pub const GlobalSemanticGraph = struct {
         self.construction.binding_rewrites = .empty;
         self.construction.function_completions.deinit(allocator);
         self.construction.function_completions = .empty;
+        self.construction.virtual_completions.deinit(allocator);
+        self.construction.virtual_completions = .empty;
     }
 
     fn ensureTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
@@ -813,6 +861,25 @@ pub const GlobalSemanticGraph = struct {
         }
         self.construction.function_completions.appendAssumeCapacity(.{ .body = id });
         self.functions.items[raw].body = body;
+    }
+
+    /// Publish a complete erased interface once, preserving the receiver slot.
+    /// Older rows participate in rollback; new rows belong to the pool tail.
+    pub fn completeVirtualSignature(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalVirtualRegistryId, contract: primitives.MethodSafetyContract, input_count: u32, output: GlobalTypeId) !void {
+        const raw = @intFromEnum(id);
+        if (raw >= self.virtual_registries.items.len or @intFromEnum(output) >= self.types.items.len) return error.InvalidVirtualSignatureCompletion;
+        const previous = self.virtual_registries.items[raw];
+        if (previous.contract_input_count != null) return error.VirtualSignatureAlreadyCompleted;
+        if (previous.receiver_input_index >= input_count) return error.InvalidVirtualSignatureCompletion;
+        if (self.mutation_frontier) |frontier| if (raw < frontier.virtual_registries) {
+            try self.construction.virtual_completions.append(allocator, .{ .id = id, .previous = previous });
+        };
+        self.virtual_registries.items[raw] = .{
+            .receiver_input_index = previous.receiver_input_index,
+            .safety_contract = contract,
+            .contract_input_count = input_count,
+            .contract_output_type = output,
+        };
     }
 
     pub fn function(self: *const GlobalSemanticGraph, id: GlobalFunctionId) Function {
@@ -915,7 +982,8 @@ pub const GlobalSemanticGraph = struct {
     }
 
     pub fn storageBytes(self: *const GlobalSemanticGraph) usize {
-        return self.modules.items.len * @sizeOf(Module) +
+        return self.safety_batches.items.len * @sizeOf(*std.heap.ArenaAllocator) +
+            self.modules.items.len * @sizeOf(Module) +
             self.module_aliases.items.len * @sizeOf(ModuleAlias) +
             self.files.items.len * @sizeOf(File) +
             self.declarations.items.len * @sizeOf(Declaration) +
@@ -1294,17 +1362,32 @@ fn cloneSafetySelectors(allocator: std.mem.Allocator) !void {
     const location: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
     const outcomes = try arena.alloc(primitives.MethodSafetyContract.Outcome, 1);
     outcomes[0] = .{ .variant = .{ .start = 0, .len = 0 }, .parent_variants = try arena.dupe(u32, &.{3}), .source = location };
+    const domains = try arena.alloc(primitives.StorageDomainMapping, 1);
+    const paths = try arena.alloc(primitives.StorageDomainMapping.Path, 1);
+    paths[0] = .{ .fields = try arena.dupe(u32, &.{ 2, 5 }) };
+    domains[0] = .{ .domain_index = 1, .paths = paths };
+    try source.virtualizes.append(a, .{ .value = @enumFromInt(0), .concrete_type = @enumFromInt(0), .contract_decl = @enumFromInt(0), .virtual_type = @enumFromInt(0), .methods = .{ .start = 0, .len = 0 }, .safety_methods = .{ .start = 0, .len = 0 }, .source = location, .domains = domains });
     try source.contract_safety_conformances.append(a, .{
         .selection = .{ .conformance = 0, .index = 0 },
         .method = @enumFromInt(0),
         .contract = .{ .output_count = 1, .outcomes = outcomes, .source = location },
+        .domains = domains,
         .receiver_input_index = null,
         .source = location,
     });
+    try source.types.append(a, .{ .builtin = .Int32 });
+    try source.virtual_registries.append(a, .{ .receiver_input_index = 0, .safety_contract = .{ .output_count = 1, .outcomes = outcomes, .source = location } });
+    var transaction = source.beginTransaction(a);
+    defer transaction.deinit();
+    try source.completeVirtualSignature(a, @enumFromInt(0), .{ .output_count = 1, .outcomes = outcomes, .source = location }, 1, @enumFromInt(0));
+    transaction.commit();
     var copy = try source.clone(allocator);
     defer copy.deinit(allocator);
     source.deinit(a);
     try std.testing.expectEqual(@as(u32, 3), copy.contract_safety_conformances.items[0].contract.outcomes[0].parent_variants[0]);
+    try std.testing.expectEqual(@as(u32, 3), copy.construction.virtual_completions.items[0].previous.safety_contract.?.outcomes[0].parent_variants[0]);
+    try std.testing.expectEqual(@as(u32, 5), copy.contract_safety_conformances.items[0].domains[0].paths[0].fields[1]);
+    try std.testing.expectEqual(@as(u32, 5), copy.virtualizes.items[0].domains[0].paths[0].fields[1]);
 }
 
 test "semantic graph safety selectors survive source destruction and failed cloning" {
@@ -1594,4 +1677,117 @@ fn indexNamesWithAllocationFailures(allocator: std.mem.Allocator) !void {
 
 test "name indexes publish keys atomically under allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, indexNamesWithAllocationFailures, .{});
+}
+
+test "metadata batches bound memory across repeated rejected transactions" {
+    var memory = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const a = memory.allocator();
+    {
+        var graph: GlobalSemanticGraph = .{};
+        defer graph.deinit(a);
+        const accepted = try (try graph.safetyAllocator(a)).dupe(u8, "accepted");
+        const arena = graph.safety_arena;
+        var retained: ?usize = null;
+        for (0..1000) |_| {
+            var transaction = graph.beginTransaction(a);
+            defer transaction.deinit();
+            const scratch = try (try graph.safetyAllocator(a)).alloc(u8, 4096);
+            @memset(scratch, 42);
+            try std.testing.expect(graph.safety_arena != arena);
+            transaction.rollback();
+            try std.testing.expectEqual(arena, graph.safety_arena);
+            try std.testing.expectEqual(@as(usize, 1), graph.safety_batches.items.len);
+            try std.testing.expectEqualStrings("accepted", accepted);
+            const live = memory.allocated_bytes - memory.freed_bytes;
+            if (retained) |previous| try std.testing.expectEqual(previous, live) else retained = live;
+        }
+    }
+    try std.testing.expectEqual(memory.allocated_bytes, memory.freed_bytes);
+}
+
+test "metadata batches keep committed children until the enclosing decision" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const accepted = try (try graph.safetyAllocator(a)).dupe(u8, "accepted");
+    var outer = graph.beginTransaction(a);
+    defer outer.deinit();
+    const parent = try (try graph.safetyAllocator(a)).dupe(u8, "parent");
+    const parent_arena = graph.safety_arena;
+    var child = graph.beginTransaction(a);
+    defer child.deinit();
+    const nested = try (try graph.safetyAllocator(a)).dupe(u8, "child");
+    child.commit();
+    try std.testing.expectEqual(parent_arena, graph.safety_arena);
+    try std.testing.expectEqualStrings("child", nested);
+    try std.testing.expectEqualStrings("parent", parent);
+    try std.testing.expectEqual(@as(usize, 3), graph.safety_batches.items.len);
+    outer.rollback();
+    try std.testing.expectEqual(@as(usize, 1), graph.safety_batches.items.len);
+    try std.testing.expectEqualStrings("accepted", accepted);
+    var committed = graph.beginTransaction(a);
+    defer committed.deinit();
+    const published = try (try graph.safetyAllocator(a)).dupe(u8, "published");
+    committed.commit();
+    graph.commitCompletions(a);
+    var rejected = graph.beginTransaction(a);
+    defer rejected.deinit();
+    _ = try (try graph.safetyAllocator(a)).alloc(u8, 4096);
+    rejected.rollback();
+    try std.testing.expectEqual(@as(usize, 2), graph.safety_batches.items.len);
+    try std.testing.expectEqualStrings("published", published);
+    try std.testing.expectEqualStrings("accepted", accepted);
+}
+
+test "virtual signature completions restore prior metadata and allocation owners" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const old = try (try graph.safetyAllocator(a)).alloc(primitives.MethodSafetyContract.Outcome, 1);
+    old[0] = .{ .variant = .{ .start = 0, .len = 0 }, .parent_variants = &.{3}, .source = source };
+    try graph.virtual_registries.append(a, .{ .receiver_input_index = 0, .safety_contract = .{ .output_count = 1, .outcomes = old, .source = source } });
+    const saved = graph.checkpoint();
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    const fresh = try (try graph.safetyAllocator(a)).dupe(primitives.MethodSafetyContract.Outcome, old);
+    fresh[0].parent_variants = &.{7};
+    const declared: primitives.MethodSafetyContract = .{ .output_count = 1, .outcomes = fresh, .source = source };
+    try graph.completeVirtualSignature(a, @enumFromInt(0), declared, 1, @enumFromInt(0));
+    try std.testing.expectEqual(@as(u32, 7), graph.virtual_registries.items[0].safety_contract.?.outcomes[0].parent_variants[0]);
+    try std.testing.expectError(error.VirtualSignatureAlreadyCompleted, graph.completeVirtualSignature(a, @enumFromInt(0), declared, 1, @enumFromInt(0)));
+    transaction.rollback();
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+    try std.testing.expect(graph.virtual_registries.items[0].contract_input_count == null);
+    try std.testing.expectEqual(@as(u32, 3), graph.virtual_registries.items[0].safety_contract.?.outcomes[0].parent_variants[0]);
+}
+
+fn completeVirtualWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.virtual_registries.append(allocator, .{ .receiver_input_index = 0 });
+    const saved = graph.checkpoint();
+    const scope = struct {
+        fn attempt(a: std.mem.Allocator, target: *GlobalSemanticGraph) !void {
+            var transaction = target.beginTransaction(a);
+            defer transaction.deinit();
+            const arena = try target.safetyAllocator(a);
+            const outcomes = try arena.alloc(primitives.MethodSafetyContract.Outcome, 1);
+            outcomes[0] = .{ .variant = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 } };
+            try target.completeVirtualSignature(a, @enumFromInt(0), .{ .output_count = 1, .outcomes = outcomes, .source = outcomes[0].source }, 1, @enumFromInt(0));
+        }
+    };
+    errdefer {
+        std.debug.assert(graph.virtual_registries.items[0].contract_input_count == null);
+        std.debug.assert(graph.safety_batches.items.len == 0);
+        std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
+    }
+    try scope.attempt(allocator, &graph);
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+}
+
+test "virtual signature completions release staged metadata on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, completeVirtualWithAllocationFailures, .{});
 }

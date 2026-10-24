@@ -330,7 +330,8 @@ pub const Context = struct {
                             .safety_contract = safety_contract,
                         });
                     }
-                    try self.graph.semantic.parameterized_storage.contract_definitions.append(self.allocator, .{
+                    try self.graph.semantic.parameterized_storage.contract_definitions.ensureUnusedCapacity(self.allocator, 1);
+                    self.graph.semantic.parameterized_storage.contract_definitions.appendAssumeCapacity(.{
                         .declaration = decl_id,
                         .parameters = params,
                         .participants = participants,

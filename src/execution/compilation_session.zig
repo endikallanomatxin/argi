@@ -957,3 +957,36 @@ test "compilation units do not inherit preceding command roots" {
     try std.testing.expect(!checked.unit.?.contains(second));
     try std.testing.expect(!diagnostics.hasErrors());
 }
+
+test "semantic storage domain metadata is released with its graph owner" {
+    const a = std.testing.allocator;
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    var module = try sourceModule(a,
+        \\Readable#(.Source: Type): Contract = (
+        \\    domain contents
+        \\    .read: (.source: &Source) -> (.result: Int32) where {}
+        \\)
+        \\Box: Type = (.value: Int32)
+        \\implement Readable#(Box) (
+        \\    .read = (.source: &Box) -> (.result: Int32) { result = source&.value }
+        \\) where { contents(self.value) }
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    box :: Box = (.value = 42)
+        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
+        \\    status_code = Readable#().read(&erased).result
+        \\}
+    , &diagnostics);
+    defer module.deinit(a);
+    var session: sema.Session = undefined;
+    try session.init(a, &.{module}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try session.advance();
+    var checked = try session.finish();
+    defer checked.deinit(a);
+    try std.testing.expect(checked.graph.virtualizes.items.len != 0);
+    const mapping = checked.graph.virtualizes.items[0].domains;
+    try std.testing.expectEqual(@as(usize, 1), mapping.len);
+    try std.testing.expectEqual(@as(u32, 0), mapping[0].paths[0].fields[0]);
+    try std.testing.expect(!diagnostics.hasErrors());
+}
