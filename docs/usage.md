@@ -541,8 +541,8 @@ geometrically, the same 1,000 minimal updates retain 713.14 MiB: source arena
 13.45 MiB, diagnostic arena 0.87 MiB, checked graph payload 267.96 MiB and code
 arenas 261.90 MiB. The sample takes 2,328.1 ms (2,181.5 ms frontend/publication).
 Core at 100 commands retains 708.11 MiB. Retained memory is still not linear.
-Earlier snapshots and branched/rejected histories keep their original module
-headers; source IDs and original diagnostic buffers remain unchanged.
+That version preserved module headers for earlier snapshots and branched/rejected
+histories, along with source IDs and original diagnostic buffers.
 
 After verifier linear-state transfer, a 1,000-command minimal call sample
 retains 930.89 MiB (932.53 MiB peak) within a 1,536 MiB limit. Completed-frame
@@ -650,6 +650,14 @@ complete teardown. Verification/preparation took 512.3 ms versus 515.4 ms in
 the preceding sample; total command time was 4,326.6 versus 4,371.8 ms. These
 single observations show no material retained-memory change and do not establish
 a speedup. Input-free entries require no descriptor allocations.
+
+With coordinated candidate transactions, a Debug minimal-call run takes 62.6 ms,
+751.8 ms and 31,526.8 ms at 10, 100 and 1,000 commands. At 1,000 commands it
+retains 457.86 MiB: checked graph payload is 393.35 MiB, code arenas 8.94 MiB and
+source arenas 0.49 MiB. The earlier saved Debug binary takes 1,054.5 ms at 100
+commands in a separate run. These are single samples, not a general speedup claim.
+Candidate preparation no longer forks semantics, but checked publication still
+copies graphs and the retained-memory curve remains nonlinear.
 
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and

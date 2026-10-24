@@ -14,10 +14,9 @@ pub const Sources = struct {
     arena: std.heap.ArenaAllocator,
     modules: std.ArrayList(*module_sg.ModuleSemanticGraph) = .empty,
     sequence: u64 = 0,
-    // Published slices share initialized prefixes. Only the unpublished tail of
-    // the current buffer may be filled; branching starts a separate buffer.
-    snapshot_tail: []module_sg.ModuleSemanticGraph = &.{},
-    snapshot_len: usize = 0,
+    // A staging table only. Semantic sessions own their descriptor prefixes;
+    // no published code or retained session borrows this resizable array.
+    module_views: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
     selections: std.AutoHashMapUnmanaged(FileId, selection_mod.Prepared) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Sources {
@@ -29,6 +28,7 @@ pub const Sources = struct {
             self.allocator.destroy(module);
         }
         self.modules.deinit(self.allocator);
+        self.module_views.deinit(self.allocator);
         var selections = self.selections.valueIterator();
         while (selections.next()) |selection| selection.deinit(self.allocator);
         self.selections.deinit(self.allocator);
@@ -83,7 +83,7 @@ pub const Sources = struct {
 
     pub fn prepareCommandOrigin(self: *Sources, compiler: *const @import("compilation_session.zig").CompilationSession, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8, origin: ?SourceOrigin) !PreparedCommand {
         const command = try self.loadCommandOrigin(diagnostics, statements, origin);
-        const modules = try self.appendSnapshot(compiler.semantic.modules, command.module);
+        const modules = try self.appendModuleViews(compiler.semantic.modules, command.module);
         // Relocation appends module functions before creating any specialization.
         const base = compiler.semantic.relocation.graph.functions.items.len;
         const raw = std.math.add(usize, base, @intFromEnum(command.function)) catch return error.SubmissionIdentityLimit;
@@ -247,7 +247,7 @@ pub const Sources = struct {
             defer a.free(inputs);
             for (inputs, parsed) |*input, *file| input.* = .{ .diagnostics = diagnostics, .path = file.path, .tree = &file.tree, .source = file.code };
             const module = try self.finishModule(diagnostics, dir, inputs, target);
-            try session.appendModules(try self.appendSnapshot(session.modules, module));
+            try session.appendModules(try self.appendModuleViews(session.modules, module));
             start = end;
         }
     }
@@ -283,7 +283,7 @@ pub const Sources = struct {
             defer tree.deinit(sources.allocator);
             const input = module_sg.FileInput{ .diagnostics = self.diagnostics, .path = path, .tree = &tree, .source = self.diagnostics.source_files[@intFromEnum(file)].code, .is_bundled_core = module.is_bundled_core };
             const fragment = try sources.finishModule(self.diagnostics, module.module_dir, &.{input}, self.target);
-            try session.appendModuleFragment(try sources.appendSnapshot(session.modules, fragment), @enumFromInt(module_index));
+            try session.appendModuleFragment(try sources.appendModuleViews(session.modules, fragment), @enumFromInt(module_index));
         }
     };
 
@@ -299,24 +299,21 @@ pub const Sources = struct {
         }
     }
 
-    /// Extend an immutable prefix without copying every previous module header.
-    /// Geometric buffers never relocate: old slices keep their length and only
-    /// unused tail slots are written. Forking any older prefix allocates a new
-    /// buffer, preserving both accepted and rejected candidates' borrowed views.
-    pub fn appendSnapshot(self: *Sources, prefix: []const module_sg.ModuleSemanticGraph, module: *const module_sg.ModuleSemanticGraph) ![]const module_sg.ModuleSemanticGraph {
+    /// Build an input view valid until the next call. The session copies only
+    /// the newly appended descriptor suffix; module contents stay source-owned.
+    pub fn appendModuleViews(self: *Sources, prefix: []const module_sg.ModuleSemanticGraph, module: *const module_sg.ModuleSemanticGraph) ![]const module_sg.ModuleSemanticGraph {
         const count = std.math.add(usize, prefix.len, 1) catch return error.SubmissionIdentityLimit;
-        if (prefix.ptr == self.snapshot_tail.ptr and prefix.len == self.snapshot_len and count <= self.snapshot_tail.len) {
-            self.snapshot_tail[prefix.len] = module.*;
-            self.snapshot_len = count;
-            return self.snapshot_tail[0..count];
+        const appended = module.*;
+        const reusing = prefix.ptr == self.module_views.items.ptr;
+        try self.module_views.ensureTotalCapacity(self.allocator, count);
+        if (reusing) {
+            self.module_views.shrinkRetainingCapacity(prefix.len);
+        } else {
+            self.module_views.items.len = prefix.len;
+            @memcpy(self.module_views.items, prefix);
         }
-        const capacity = std.math.ceilPowerOfTwo(usize, @max(count, 4)) catch return error.SubmissionIdentityLimit;
-        const snapshot = try self.arena.allocator().alloc(module_sg.ModuleSemanticGraph, capacity);
-        @memcpy(snapshot[0..prefix.len], prefix);
-        snapshot[prefix.len] = module.*;
-        self.snapshot_tail = snapshot;
-        self.snapshot_len = count;
-        return snapshot[0..count];
+        self.module_views.appendAssumeCapacity(appended);
+        return self.module_views.items;
     }
 };
 
@@ -330,7 +327,7 @@ test "submission sources retain immutable modules and rejected source diagnostic
     var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
     defer diagnostics.deinit();
     const first = try sources.loadModule(&diagnostics, "first := () -> () {}\n");
-    const prefix = try sources.appendSnapshot(&.{}, first);
+    const prefix = try sources.appendModuleViews(&.{}, first);
     try std.testing.expect(first.semantic.local_semantics_complete);
     const original_dir = prefix[0].module_dir;
     _ = sources.loadModule(&diagnostics, "broken := () -> () {\n") catch {};
@@ -339,9 +336,9 @@ test "submission sources retain immutable modules and rejected source diagnostic
     try std.testing.expectEqual(@as(usize, 2), diagnostics.source_files.len);
     diagnostics.list.clearRetainingCapacity();
     const second = try sources.loadModule(&diagnostics, "second := () -> () {}\n");
-    const extended = try sources.appendSnapshot(prefix, second);
+    const extended = try sources.appendModuleViews(prefix, second);
     try std.testing.expectEqual(@as(usize, 1), prefix.len);
-    try std.testing.expectEqualStrings(original_dir, prefix[0].module_dir);
+    try std.testing.expectEqualStrings(original_dir, extended[0].module_dir);
     try std.testing.expect(!std.mem.eql(u8, extended[0].module_dir, extended[1].module_dir));
     try std.testing.expectEqual(@as(usize, 3), diagnostics.source_files.len);
     try std.testing.expectEqual(@as(usize, 0), diagnostics.source_maps.len);
@@ -378,30 +375,30 @@ test "source submissions compile and execute incrementally without history repla
     try std.testing.expectEqual(@as(u64, 2), compiler.revision);
 }
 
-test "submission snapshot growth shares prefixes without mutating earlier branches" {
-    var sources = Sources.init(std.testing.allocator);
+test "submission staging growth cannot change a retained session module prefix" {
+    const a = std.testing.allocator;
+    var sources = Sources.init(a);
     defer sources.deinit();
     const first: module_sg.ModuleSemanticGraph = .{ .module_dir = "first" };
     const second: module_sg.ModuleSemanticGraph = .{ .module_dir = "second" };
     const alternate: module_sg.ModuleSemanticGraph = .{ .module_dir = "alternate" };
-    const prefix = try sources.appendSnapshot(&.{}, &first);
-    const extended = try sources.appendSnapshot(prefix, &second);
-    try std.testing.expect(prefix.ptr == extended.ptr);
-    const branch = try sources.appendSnapshot(prefix, &alternate);
-    try std.testing.expect(branch.ptr != extended.ptr);
-    try std.testing.expectEqualStrings("second", extended[1].module_dir);
+    const prefix = try sources.appendModuleViews(&.{}, &first);
+    var retained: sema.Session = undefined;
+    try retained.init(a, prefix, .{ .exhaustive_function_bodies = false });
+    defer retained.deinit();
+    try retained.advance();
+    var transaction = try retained.beginTransaction();
+    defer transaction.deinit();
+    try retained.appendModules(try sources.appendModuleViews(retained.modules, &second));
+    try retained.advance();
+    transaction.commit();
+    const table = retained.modules.ptr;
+    const saved = retained.relocation.graph.checkpoint();
+    var branch = try sources.appendModuleViews(retained.modules[0..1], &alternate);
+    for (0..32) |_| branch = try sources.appendModuleViews(branch, &first);
+    try std.testing.expect(retained.modules.ptr == table);
+    try std.testing.expectEqual(@as(usize, 2), retained.modules.len);
+    try std.testing.expectEqualStrings("second", retained.modules[1].module_dir);
     try std.testing.expectEqualStrings("alternate", branch[1].module_dir);
-    var grown = branch;
-    for (0..8) |_| grown = try sources.appendSnapshot(grown, &first);
-    try std.testing.expect(grown.ptr != branch.ptr);
-    try std.testing.expectEqual(@as(usize, 1), prefix.len);
-    try std.testing.expectEqual(@as(usize, 2), branch.len);
-    try std.testing.expectEqualStrings("alternate", branch[1].module_dir);
-    try std.testing.expectEqualStrings("second", extended[1].module_dir);
-    // Appending a discarded branch after growth cannot overwrite the current
-    // history or its older prefix, even when a previous buffer has spare room.
-    const resumed = try sources.appendSnapshot(extended, &second);
-    try std.testing.expect(resumed.ptr != grown.ptr);
-    try std.testing.expectEqualStrings("alternate", grown[1].module_dir);
-    try std.testing.expectEqualStrings("second", resumed[1].module_dir);
+    try std.testing.expectEqualDeep(saved, retained.relocation.graph.checkpoint());
 }

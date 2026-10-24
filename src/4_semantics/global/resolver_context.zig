@@ -19,6 +19,37 @@ const execution = @import("comptime_execution.zig");
 /// Initialize in final storage; moving this value would invalidate callbacks.
 /// The graph, modules and offsets are borrowed and must outlive the context.
 pub const Context = struct {
+    const StatsSnapshot = struct {
+        core: @FieldType(core_mod.Resolver, "stats"),
+        expressions: @FieldType(expression_mod.Resolver, "stats"),
+        control: @FieldType(control_mod.Resolver, "stats"),
+        generics: @FieldType(generic_mod.Resolver, "stats"),
+        generic_functions: @FieldType(generic_functions_mod.Resolver, "stats"),
+        contracts: @FieldType(contract_mod.Resolver, "stats"),
+        errors: @FieldType(error_mod.Resolver, "stats"),
+        ownership: @FieldType(ownership_mod.Resolver, "stats"),
+    };
+    pub const StateCheckpoint = struct {
+        effects: generic_functions_mod.Resolver.SideEffectCheckpoint,
+        execution: execution.Scheduler.StateCheckpoint,
+        namespace: ?struct { modules: usize, declarations: usize, assumptions: usize },
+        bindings: usize,
+        continuation_bindings: usize,
+        expression_continuation: ?global_sg.GlobalFunctionId,
+        operation_owner: ?global_sg.GlobalFunctionId,
+        ownership_continuation: ?global_sg.GlobalFunctionId,
+        denied_copy: @FieldType(ownership_mod.Resolver, "denied_copy"),
+        loop_cleanup: @FieldType(ownership_mod.Resolver, "loop_cleanup_base"),
+        argument_failure: @FieldType(generic_mod.Resolver, "argument_failure"),
+        constraint_failure: @FieldType(generic_functions_mod.Resolver, "failed_constraint"),
+        virtual_failure: @FieldType(contract_mod.Resolver, "virtual_signature_failure"),
+        foreach_failure: @FieldType(control_mod.Resolver, "for_each_failure"),
+        diagnostics: ?*diagnostics_mod.Diagnostics,
+        stats: StatsSnapshot,
+        call_stages: @FieldType(dispatch_mod.Resolver, "pending_call_stages"),
+        selection_profile: @FieldType(generic_functions_mod.Resolver, "selection_profile"),
+    };
+
     core: core_mod.Resolver,
     expressions: expression_mod.Resolver,
     constructors: constructor_mod.Resolver,
@@ -155,6 +186,65 @@ pub const Context = struct {
         self.generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;
     }
 
+    pub fn checkpointState(self: *const Context) StateCheckpoint {
+        var saved: StateCheckpoint = .{
+            .effects = self.generic_functions.checkpointSideEffects(),
+            .execution = self.staged_execution.checkpointState(),
+            .namespace = if (self.core.session_namespace) |namespace| .{ .modules = namespace.modules.items.len, .declarations = namespace.declarations.items.len, .assumptions = namespace.assumptions.items.len } else null,
+            .bindings = self.expressions.session_bindings.items.len,
+            .continuation_bindings = self.ownership.continuation_bindings.items.len,
+            .expression_continuation = self.expressions.continuation_function,
+            .operation_owner = self.expressions.operation_owner,
+            .ownership_continuation = self.ownership.continuation_function,
+            .denied_copy = self.ownership.denied_copy,
+            .loop_cleanup = self.ownership.loop_cleanup_base,
+            .argument_failure = self.generics.argument_failure,
+            .constraint_failure = self.generic_functions.failed_constraint,
+            .virtual_failure = self.contracts.virtual_signature_failure,
+            .foreach_failure = self.control.for_each_failure,
+            .diagnostics = self.constructors.diagnostics,
+            .stats = undefined,
+            .call_stages = self.dispatch.pending_call_stages,
+            .selection_profile = self.generic_functions.selection_profile,
+        };
+        inline for (std.meta.fields(StatsSnapshot)) |field| @field(saved.stats, field.name) = @field(self, field.name).stats;
+        return saved;
+    }
+
+    /// Restore execution completions before the producer-only callback undo:
+    /// newly materialized requests may already contain executable node IDs.
+    pub fn rollbackState(self: *Context, saved: StateCheckpoint) void {
+        self.staged_execution.rollbackState(saved.execution);
+        self.generic_functions.rollbackSideEffects(saved.effects);
+        if (saved.namespace) |previous| {
+            const namespace = self.core.session_namespace.?;
+            namespace.modules.shrinkRetainingCapacity(previous.modules);
+            namespace.declarations.shrinkRetainingCapacity(previous.declarations);
+            namespace.assumptions.shrinkRetainingCapacity(previous.assumptions);
+        } else if (self.core.session_namespace) |namespace| {
+            namespace.modules.deinit(self.core.allocator);
+            namespace.declarations.deinit(self.core.allocator);
+            namespace.assumptions.deinit(self.core.allocator);
+            self.core.allocator.destroy(namespace);
+            self.core.session_namespace = null;
+        }
+        self.expressions.session_bindings.shrinkRetainingCapacity(saved.bindings);
+        self.ownership.continuation_bindings.shrinkRetainingCapacity(saved.continuation_bindings);
+        self.expressions.continuation_function = saved.expression_continuation;
+        self.expressions.operation_owner = saved.operation_owner;
+        self.ownership.continuation_function = saved.ownership_continuation;
+        self.ownership.denied_copy = saved.denied_copy;
+        self.ownership.loop_cleanup_base = saved.loop_cleanup;
+        self.generics.argument_failure = saved.argument_failure;
+        self.generic_functions.failed_constraint = saved.constraint_failure;
+        self.contracts.virtual_signature_failure = saved.virtual_failure;
+        self.control.for_each_failure = saved.foreach_failure;
+        self.constructors.diagnostics = saved.diagnostics;
+        inline for (std.meta.fields(StatsSnapshot)) |field| @field(self, field.name).stats = @field(saved.stats, field.name);
+        self.dispatch.pending_call_stages = saved.call_stages;
+        self.generic_functions.selection_profile = saved.selection_profile;
+    }
+
     /// Fork retained effects into resolvers wired to an identity-preserving
     /// graph copy. Callback targets always belong to the destination context.
     /// Source modules remain borrowed; all mutable caches and effects are owned.
@@ -223,6 +313,11 @@ pub const Context = struct {
     pub fn extendModuleViews(self: *Context, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !void {
         if (modules.len < self.core.modules.len or offsets.len != modules.len or self.core.graph.modules.items.len != modules.len)
             return error.InvalidSemanticModuleViews;
+        self.rebindModuleViews(modules, offsets);
+    }
+
+    pub fn rebindModuleViews(self: *Context, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) void {
+        std.debug.assert(offsets.len == modules.len and self.core.graph.modules.items.len == modules.len);
         inline for (.{ "core", "expressions", "constructors", "control", "generics", "generic_functions", "contracts", "errors", "ownership" }) |field| {
             const resolver = &@field(self, field);
             resolver.modules = modules;

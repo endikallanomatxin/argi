@@ -66,9 +66,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 ## Scalability
 
-- Replace session forks and historical checked graphs with shared append-only
-  GlobalSG pools and coordinated transactions. Journal completions of older slots;
-  cover resolvers, indexes, caches, staged requests and rejected allocation memory.
+- Remove the remaining checked-graph copies and retained historical versions.
+  Share GlobalSG identities with immutable Code Units as their pools grow.
 - Separate unit finalization and Safety proofs from persistent semantics. Reuse
   verified bodies only with stable hypotheses; check caller facts independently.
   Keep Code Units immutable without copying whole function/type tables per command.

@@ -108,6 +108,7 @@ pub const CompilationSession = struct {
         owner: *const CompilationSession,
         revision: u64,
         semantic: ?*sema.Session,
+        transaction: ?sema.Session.Transaction = null,
         checked: ?*Version,
         temporal: ?*TemporalProof = null,
         is_exit: bool = false,
@@ -119,10 +120,7 @@ pub const CompilationSession = struct {
                 checked.deinit(self.allocator);
                 self.allocator.destroy(checked);
             }
-            if (self.semantic) |semantic| {
-                semantic.deinit();
-                self.allocator.destroy(semantic);
-            }
+            if (self.transaction) |*transaction| transaction.deinit();
             self.* = undefined;
         }
     };
@@ -133,12 +131,10 @@ pub const CompilationSession = struct {
         owner: *const CompilationSession,
         revision: u64,
         semantic: ?*sema.Session,
+        transaction: ?sema.Session.Transaction = null,
 
         pub fn deinit(self: *Draft) void {
-            if (self.semantic) |semantic| {
-                semantic.deinit();
-                self.owner.allocator.destroy(semantic);
-            }
+            if (self.transaction) |*transaction| transaction.deinit();
             self.* = undefined;
         }
 
@@ -149,12 +145,11 @@ pub const CompilationSession = struct {
 
     pub fn beginPreparation(self: *const CompilationSession, diagnostics: *diagnostics_mod.Diagnostics) !Draft {
         if (diagnostics.hasErrors()) return error.Reported;
-        const semantic = try self.allocator.create(sema.Session);
-        errdefer self.allocator.destroy(semantic);
-        try self.semantic.fork(semantic, self.allocator, diagnostics);
-        errdefer semantic.deinit();
-        try semantic.beginUnit();
-        return .{ .owner = self, .revision = self.revision, .semantic = semantic };
+        var transaction = try self.semantic.beginTransaction();
+        errdefer transaction.deinit();
+        self.semantic.options.diagnostics = diagnostics;
+        self.semantic.resolvers.constructors.diagnostics = diagnostics;
+        return .{ .owner = self, .revision = self.revision, .semantic = self.semantic, .transaction = transaction };
     }
 
     pub fn init(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, options: sema.Options) !CompilationSession {
@@ -262,12 +257,14 @@ pub const CompilationSession = struct {
         errdefer checked.deinit(self.allocator);
         const version = try self.allocator.create(Version);
         version.* = checked;
+        const transaction = draft.transaction;
+        draft.transaction = null;
         draft.semantic = null;
-        return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .checked = version, .temporal = proof, .is_exit = exit_bindings != null, .entry = continuation };
+        return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .transaction = transaction, .checked = version, .temporal = proof, .is_exit = exit_bindings != null, .entry = continuation };
     }
 
-    /// Publish only a checked candidate based on the current accepted revision.
-    /// Reserve first: allocation failure leaves both owners unchanged. Retain
+    /// Publish the single checked transaction based on the accepted revision.
+    /// Reserve first: allocation failure leaves the transaction open. Retain
     /// older graphs because published bytecode can still borrow their metadata.
     pub fn accept(self: *CompilationSession, candidate: *Candidate) !void {
         return self.acceptChecked(candidate, .retain);
@@ -282,15 +279,14 @@ pub const CompilationSession = struct {
     }
 
     fn acceptChecked(self: *CompilationSession, candidate: *Candidate, snapshot: enum { retain, discard }) !void {
-        if (candidate.owner != self or candidate.revision != self.revision or candidate.semantic == null or candidate.checked == null)
+        if (candidate.owner != self or candidate.revision != self.revision or candidate.semantic != self.semantic or candidate.transaction == null or candidate.checked == null)
             return error.StaleCompilationCandidate;
         if (self.revision == std.math.maxInt(u64)) return error.CompilationRevisionLimit;
         if (snapshot == .retain) try self.versions.ensureUnusedCapacity(self.allocator, 1);
         // Every fallible publication step has succeeded. Nested speculation
         // is closed, so accepted bodies no longer need their undo entries.
-        candidate.semantic.?.commitCompletions();
-        const previous = self.semantic;
-        self.semantic = candidate.semantic.?;
+        candidate.transaction.?.commit();
+        candidate.transaction = null;
         if (snapshot == .retain) {
             self.versions.appendAssumeCapacity(candidate.checked.?);
         } else {
@@ -306,8 +302,6 @@ pub const CompilationSession = struct {
         }
         candidate.semantic = null;
         candidate.checked = null;
-        previous.deinit();
-        self.allocator.destroy(previous);
     }
 };
 
@@ -394,18 +388,14 @@ test "compilation session publishes checked candidates and rejects stale revisio
     try std.testing.expect(namespace != independent.namespace);
     var candidate = try session.prepare(&modules, &diagnostics);
     defer candidate.deinit();
-    var stale = try session.prepare(&modules, &diagnostics);
-    defer stale.deinit();
-    var stale_draft = try session.beginPreparation(&diagnostics);
-    defer stale_draft.deinit();
-    try std.testing.expectEqual(@as(usize, 1), session.semantic.modules.len);
+    try std.testing.expectError(error.ActiveSemanticTransaction, session.prepare(&modules, &diagnostics));
+    try std.testing.expectError(error.ActiveSemanticTransaction, session.beginPreparation(&diagnostics));
+    try std.testing.expectEqual(@as(usize, 2), session.semantic.modules.len);
     try std.testing.expectEqual(@as(u64, 0), session.revision);
     try session.accept(&candidate);
     try std.testing.expectEqual(@as(usize, 2), session.semantic.modules.len);
     try std.testing.expectEqual(@as(u64, 1), session.revision);
     try std.testing.expectEqual(@as(usize, 1), session.versions.items.len);
-    try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&stale));
-    try std.testing.expectError(error.StaleCompilationCandidate, stale_draft.finishDefinitions(&modules, &diagnostics));
     try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&candidate));
     var next = try session.prepare(&modules, &diagnostics);
     defer next.deinit();
@@ -471,7 +461,8 @@ fn prepareWithAllocationFailures(allocator: std.mem.Allocator) !void {
     session.accept(&candidate) catch |err| {
         try std.testing.expectEqual(@as(u64, 0), session.revision);
         try std.testing.expectEqual(@as(usize, 0), session.versions.items.len);
-        try std.testing.expectEqual(@as(usize, 0), session.semantic.modules.len);
+        try std.testing.expectEqual(@as(usize, 1), session.semantic.modules.len);
+        try std.testing.expect(session.semantic.transaction_active);
         try std.testing.expect(candidate.semantic != null and candidate.checked != null);
         return err;
     };
@@ -562,15 +553,19 @@ fn prepareContinuationsWithAllocationFailures(allocator: std.mem.Allocator) !voi
     defer candidate.deinit();
     try std.testing.expect(candidate.temporal.?.parent == null);
     try std.testing.expectEqual(@as(usize, 1), accepted.references);
-    var stale = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
-    defer stale.deinit();
+    try std.testing.expectError(error.ActiveSemanticTransaction, session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0)));
     const next_proof = candidate.temporal.?;
     try session.accept(&candidate);
     try std.testing.expect(session.temporal.? == next_proof);
     try std.testing.expect(session.temporal.?.parent == null);
-    try std.testing.expect(stale.temporal.?.parent == null);
     try std.testing.expectEqual(@as(usize, 1), session.temporal.?.references);
-    try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&stale));
+    var rejected = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
+    try std.testing.expect(rejected.temporal.?.parent == null);
+    rejected.deinit();
+    try std.testing.expect(session.temporal.? == next_proof);
+    try std.testing.expectEqual(@as(usize, 1), session.temporal.?.references);
+    try std.testing.expect(!session.semantic.transaction_active);
+    try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&candidate));
 }
 
 test "compilation session publishes temporal continuations and releases rejected proof tails" {
@@ -829,6 +824,18 @@ test "unit selection preserves pending binding types for later materialization" 
     try invalid_unit.bindings.put(pending.?, {});
     try std.testing.expectError(error.InvalidGlobalSemanticGraph, verify.verifyUnit(&checked.graph, &invalid_unit));
     try session.accept(&candidate);
+    const stable_semantic = session.semantic;
+    const saved_graph = session.semantic.relocation.graph.checkpoint();
+    var rejected_draft = try session.beginPreparation(&diagnostics);
+    defer rejected_draft.deinit();
+    try std.testing.expect(rejected_draft.semantic.? == stable_semantic);
+    try rejected_draft.semantic.?.includeExecutionRoot(helper);
+    var rejected = try rejected_draft.finishDefinitions(&.{module}, &diagnostics);
+    try std.testing.expect(!session.semantic.relocation.graph.isBindingTypeUnresolved(pending.?));
+    rejected.deinit();
+    try std.testing.expect(session.semantic == stable_semantic);
+    try std.testing.expect(session.semantic.relocation.graph.isBindingTypeUnresolved(pending.?));
+    try std.testing.expectEqualDeep(saved_graph, session.semantic.relocation.graph.checkpoint());
     var draft = try session.beginPreparation(&diagnostics);
     defer draft.deinit();
     try draft.semantic.?.includeExecutionRoot(helper);

@@ -309,15 +309,86 @@ const PendingWorklists = struct {
 // Resolution state outlives individual fixed-point passes. Dense status tables
 // use the same append-only operation identities as the phase queues.
 const ResolutionState = struct {
+    const SavedWork = struct { item: PendingWorkItem, resolved: bool, invalid: bool };
+    const Checkpoint = struct {
+        queues: [pending_phases.len][]SavedWork = @splat(&.{}),
+        resolved: usize,
+        invalid: usize,
+        modules: usize,
+        operations: u32,
+        finalized: usize,
+        progress: ResolutionProgress,
+        stats: PendingResolutionStats,
+
+        fn deinit(self: *Checkpoint, allocator: std.mem.Allocator) void {
+            for (self.queues) |queue| allocator.free(queue);
+            self.* = undefined;
+        }
+    };
+
     worklists: PendingWorklists = .{},
     resolved: std.ArrayList(bool) = .empty,
     invalid: std.ArrayList(bool) = .empty,
     finalized_functions: std.AutoHashMap(global_sg.GlobalFunctionId, void),
+    finalized_rewrites: std.ArrayList(global_sg.GlobalFunctionId) = .empty,
+    transaction_active: bool = false,
     progress: ResolutionProgress = .{},
     pending_stats: PendingResolutionStats = .{},
 
     fn init(allocator: std.mem.Allocator) ResolutionState {
         return .{ .finalized_functions = .init(allocator) };
+    }
+
+    /// Copy only pending scheduling work, never completed semantic entities or
+    /// the accumulated function table. Queue compaction is local to each pass.
+    fn checkpoint(self: *ResolutionState, allocator: std.mem.Allocator) !Checkpoint {
+        std.debug.assert(!self.transaction_active);
+        var saved: Checkpoint = .{ .resolved = self.resolved.items.len, .invalid = self.invalid.items.len, .modules = self.worklists.module_count, .operations = self.worklists.operation_count, .finalized = self.finalized_rewrites.items.len, .progress = self.progress, .stats = self.pending_stats };
+        errdefer saved.deinit(allocator);
+        for (pending_phases, 0..) |phase, index| {
+            const queue = self.worklists.forPhaseConst(phase).items;
+            const retained = try allocator.alloc(SavedWork, queue.len);
+            saved.queues[index] = retained;
+            for (queue, retained) |item, *out| out.* = .{ .item = item, .resolved = self.resolved.items[item.flat_index], .invalid = self.invalid.items[item.flat_index] };
+        }
+        self.transaction_active = true;
+        return saved;
+    }
+
+    fn rollback(self: *ResolutionState, saved: *const Checkpoint) void {
+        std.debug.assert(self.transaction_active);
+        for (pending_phases, saved.queues) |phase, queue| {
+            const destination = self.worklists.forPhase(phase);
+            std.debug.assert(destination.capacity >= queue.len);
+            destination.clearRetainingCapacity();
+            for (queue) |entry| {
+                destination.appendAssumeCapacity(entry.item);
+                self.resolved.items[entry.item.flat_index] = entry.resolved;
+                self.invalid.items[entry.item.flat_index] = entry.invalid;
+            }
+        }
+        self.resolved.shrinkRetainingCapacity(saved.resolved);
+        self.invalid.shrinkRetainingCapacity(saved.invalid);
+        self.worklists.module_count = saved.modules;
+        self.worklists.operation_count = saved.operations;
+        while (self.finalized_rewrites.items.len > saved.finalized)
+            std.debug.assert(self.finalized_functions.remove(self.finalized_rewrites.pop().?));
+        self.progress = saved.progress;
+        self.pending_stats = saved.stats;
+        self.transaction_active = false;
+    }
+
+    fn markFinalized(self: *ResolutionState, allocator: std.mem.Allocator, id: global_sg.GlobalFunctionId) !void {
+        if (self.finalized_functions.contains(id)) return;
+        if (self.transaction_active) try self.finalized_rewrites.ensureUnusedCapacity(allocator, 1);
+        try self.finalized_functions.put(id, {});
+        if (self.transaction_active) self.finalized_rewrites.appendAssumeCapacity(id);
+    }
+
+    fn commitCompletions(self: *ResolutionState, allocator: std.mem.Allocator) void {
+        std.debug.assert(!self.transaction_active);
+        self.finalized_rewrites.deinit(allocator);
+        self.finalized_rewrites = .empty;
     }
 
     fn clone(self: *const ResolutionState, allocator: std.mem.Allocator) !ResolutionState {
@@ -356,6 +427,7 @@ const ResolutionState = struct {
         self.resolved.deinit(allocator);
         self.invalid.deinit(allocator);
         self.finalized_functions.deinit();
+        self.finalized_rewrites.deinit(allocator);
         self.* = undefined;
     }
 };
@@ -380,13 +452,15 @@ pub fn semantizeWithOptions(
 }
 
 /// Retained semantic construction state, separate from graph publication.
-/// Initialize in final storage. Borrowed ModuleSGs and optional diagnostics
-/// must remain alive until deinit.
-/// Failed advancement poisons the session; callers must discard it rather than
-/// expose an incompletely checked graph. Published graphs transfer to Result.
+/// Initialize in final storage. Module descriptors are owned; their immutable
+/// source/semantic buffers and optional diagnostics must outlive the session.
+/// Failed advancement requires transaction rollback or session disposal.
+/// One-shot publication transfers the graph to Result.
 pub const Session = struct {
     allocator: std.mem.Allocator,
     modules: []const module_sg.ModuleSemanticGraph,
+    module_views: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
+    transaction_active: bool = false,
     options: Options,
     relocation: globalizer.Relocation = .{ .graph = .{} },
     resolvers: @import("resolver_context.zig").Context = undefined,
@@ -401,9 +475,99 @@ pub const Session = struct {
     profile_postloop: i96 = 0,
     fixed_point_ns: i96 = 0,
 
+    pub const Transaction = struct {
+        owner: *Session,
+        graph: global_sg.GlobalSemanticGraph.Transaction,
+        resolution: ResolutionState.Checkpoint,
+        resolvers: @import("resolver_context.zig").Context.StateCheckpoint,
+        modules: usize,
+        offsets: usize,
+        previous_unit: ?reachability_mod.FunctionSet,
+        options: Options,
+        timings: struct {
+            setup: [setup_stage_count]i96,
+            start: i96,
+            relocated: i96,
+            preloop: i96,
+            postloop: i96,
+            fixed_point: i96,
+        },
+        active: bool = true,
+
+        pub fn rollback(self: *Transaction) void {
+            if (!self.active) return;
+            const owner = self.owner;
+            self.graph.rollback();
+            owner.relocation.offsets.shrinkRetainingCapacity(self.offsets);
+            owner.module_views.shrinkRetainingCapacity(self.modules);
+            owner.modules = owner.module_views.items;
+            owner.resolvers.rebindModuleViews(owner.modules, owner.relocation.offsets.items);
+            owner.resolvers.rollbackState(self.resolvers);
+            owner.resolution.rollback(&self.resolution);
+            self.resolution.deinit(owner.allocator);
+            if (owner.reachable) |*unit| unit.deinit();
+            owner.reachable = self.previous_unit;
+            self.previous_unit = null;
+            owner.options = self.options;
+            owner.setup_stages = self.timings.setup;
+            owner.profile_start = self.timings.start;
+            owner.profile_relocated = self.timings.relocated;
+            owner.profile_preloop = self.timings.preloop;
+            owner.profile_postloop = self.timings.postloop;
+            owner.fixed_point_ns = self.timings.fixed_point;
+            owner.phase = .quiescent;
+            owner.transaction_active = false;
+            self.active = false;
+        }
+
+        pub fn commit(self: *Transaction) void {
+            if (!self.active) return;
+            const owner = self.owner;
+            std.debug.assert(owner.phase == .quiescent);
+            self.graph.commit();
+            owner.resolution.transaction_active = false;
+            self.resolution.deinit(owner.allocator);
+            if (self.previous_unit) |*unit| unit.deinit();
+            self.previous_unit = null;
+            owner.transaction_active = false;
+            owner.commitCompletions();
+            self.active = false;
+        }
+
+        pub fn deinit(self: *Transaction) void {
+            self.rollback();
+        }
+    };
+
+    /// Start one unpublished unit directly in the retained graph. Only pending
+    /// scheduling work is copied; semantic pools and resolver tables stay put.
+    pub fn beginTransaction(self: *Session) !Transaction {
+        if (self.transaction_active) return error.ActiveSemanticTransaction;
+        if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        const saved_resolution = try self.resolution.checkpoint(self.allocator);
+        var transaction: Transaction = .{
+            .owner = self,
+            .graph = self.relocation.graph.beginTransaction(self.allocator),
+            .resolution = saved_resolution,
+            .resolvers = self.resolvers.checkpointState(),
+            .modules = self.modules.len,
+            .offsets = self.relocation.offsets.items.len,
+            .previous_unit = self.reachable,
+            .options = self.options,
+            .timings = .{ .setup = self.setup_stages, .start = self.profile_start, .relocated = self.profile_relocated, .preloop = self.profile_preloop, .postloop = self.profile_postloop, .fixed_point = self.fixed_point_ns },
+        };
+        self.transaction_active = true;
+        self.reachable = null;
+        errdefer transaction.rollback();
+        try self.beginUnit();
+        return transaction;
+    }
+
     pub fn init(self: *Session, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, options: Options) !void {
-        self.* = .{ .allocator = allocator, .modules = modules, .options = options, .resolution = ResolutionState.init(allocator) };
+        self.* = .{ .allocator = allocator, .modules = &.{}, .options = options, .resolution = ResolutionState.init(allocator) };
         errdefer self.deinit();
+        try self.module_views.appendSlice(allocator, modules);
+        self.modules = self.module_views.items;
         self.profile_start = profileTimestamp(options.profile_io);
         self.relocation = try globalizer.relocate(allocator, modules, .allow_holes);
         const relocation = &self.relocation;
@@ -419,7 +583,7 @@ pub const Session = struct {
         try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
 
         const resolvers = &self.resolvers;
-        resolvers.init(allocator, &relocation.graph, modules, relocation.offsets.items, options.diagnostics, options.profile_io);
+        resolvers.init(allocator, &relocation.graph, self.modules, relocation.offsets.items, options.diagnostics, options.profile_io);
         self.resolvers_initialized = true;
         const core = &resolvers.core;
         const control = &resolvers.control;
@@ -513,12 +677,15 @@ pub const Session = struct {
         if (self == candidate or self.phase != .quiescent) return error.InvalidSemanticSessionState;
         var options = self.options;
         options.diagnostics = diagnostics;
-        candidate.* = .{ .allocator = allocator, .modules = self.modules, .options = options, .resolution = ResolutionState.init(allocator) };
+        candidate.* = .{ .allocator = allocator, .modules = &.{}, .options = options, .resolution = ResolutionState.init(allocator) };
         errdefer candidate.deinit();
+        try candidate.module_views.appendSlice(allocator, self.modules);
+        candidate.modules = candidate.module_views.items;
         candidate.relocation.graph = try self.relocation.graph.clone(allocator);
         candidate.relocation.offsets = try self.relocation.offsets.clone(allocator);
         try candidate.resolvers.cloneFrom(&self.resolvers, allocator, &candidate.relocation.graph, candidate.relocation.offsets.items, diagnostics);
         candidate.resolvers_initialized = true;
+        candidate.resolvers.rebindModuleViews(candidate.modules, candidate.relocation.offsets.items);
         candidate.resolution = try self.resolution.clone(allocator);
         if (self.reachable) |*set| candidate.reachable = try set.clone(allocator);
         candidate.setup_stages = self.setup_stages;
@@ -577,13 +744,14 @@ pub const Session = struct {
         if (modules.len == previous) return;
         errdefer self.phase = .failed;
         const allocator = self.allocator;
-        try self.relocation.append(allocator, modules[previous..], .allow_holes);
+        try self.module_views.appendSlice(allocator, modules[previous..]);
+        self.modules = self.module_views.items;
+        try self.relocation.append(allocator, self.modules[previous..], .allow_holes);
         if (namespace) |owner| {
             self.relocation.graph.modules.items[previous].namespace = owner;
             try self.validateFragmentFunctions(@enumFromInt(previous));
         }
-        self.modules = modules;
-        try self.resolvers.extendModuleViews(modules, self.relocation.offsets.items);
+        try self.resolvers.extendModuleViews(self.modules, self.relocation.offsets.items);
         try module_linker.append(allocator, &self.relocation.graph, modules, self.relocation.offsets.items, previous);
         try markUnresolvedTypeSlots(allocator, &self.relocation.graph, modules[previous..], self.relocation.offsets.items[previous..]);
         try c_abi.prepareForeignCapabilities(allocator, &self.relocation.graph);
@@ -1071,6 +1239,7 @@ pub const Session = struct {
     /// Transfer ownership for one-shot consumers. Incremental owners use
     /// completeUnit and keep their graph and construction metadata in place.
     pub fn finish(self: *Session) !Result {
+        if (self.transaction_active) return error.ActiveSemanticTransaction;
         const stats = try self.completeUnit();
         errdefer self.phase = .failed;
         try self.relocation.graph.finishTypeResolution(self.allocator);
@@ -1091,6 +1260,7 @@ pub const Session = struct {
         self.resolvers.contracts.commitCaches();
         self.resolvers.staged_execution.commitState();
         self.resolvers.ownership.commitReplacements();
+        self.resolution.commitCompletions(self.allocator);
     }
 
     pub fn deinit(self: *Session) void {
@@ -1098,6 +1268,7 @@ pub const Session = struct {
         self.resolution.deinit(self.allocator);
         if (self.resolvers_initialized) self.resolvers.deinit();
         self.relocation.deinit(self.allocator);
+        self.module_views.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -1277,7 +1448,7 @@ fn advanceResolution(
             if (options.profile_io) |io| progress.profile_finalize_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - finalize_start;
             progress.profile_finalize_count += 1;
             if (!did_finalize) continue;
-            try finalized_functions.put(id, {});
+            try state.markFinalized(allocator, id);
             finalized_any = true;
         }
         const reached_cleanup = if (reachable) |set|

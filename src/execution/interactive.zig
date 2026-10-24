@@ -183,7 +183,7 @@ pub const Interactive = struct {
             try self.sources.selectModules(&self.diagnostics, semantic, first_module, loader.io, self.options.target);
             try self.sources.resolveSubmissionImports(module, loader.io, loader.path);
         }
-        const prefix = try self.sources.appendSnapshot(semantic.modules, module);
+        const prefix = try self.sources.appendModuleViews(semantic.modules, module);
         var candidate = try draft.finishDefinitions(prefix, &self.diagnostics);
         defer candidate.deinit();
         try self.compiler.acceptDefinitions(&candidate);
@@ -202,7 +202,7 @@ pub const Interactive = struct {
     }
     fn cleanup(self: *Interactive) !void {
         const command = try self.sources.loadCommand(&self.diagnostics, "");
-        const prefix = try self.sources.appendSnapshot(self.compiler.semantic.modules, command.module);
+        const prefix = try self.sources.appendModuleViews(self.compiler.semantic.modules, command.module);
         const base = self.compiler.semantic.relocation.graph.functions.items.len;
         const raw = try std.math.add(usize, base, @intFromEnum(command.function));
         const entry: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(std.math.cast(u32, raw) orelse return error.SubmissionIdentityLimit);
@@ -302,25 +302,27 @@ test "interactive definitions remain visible to subsequent definitions and state
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectError(error.DuplicateSessionDeclaration, session.submitStatements("answer ::= 7"));
     try std.testing.expectEqual(revision, session.compiler.revision);
-    // Loading an ordinary module must not grant the interactive namespace.
-    const isolated = try session.sources.loadModule(&session.diagnostics, "outside := () -> (.result: Int32) { result = answer() }\n");
-    const prefix = try session.sources.appendSnapshot(session.compiler.semantic.modules, isolated);
-    var ordinary = try session.compiler.prepare(prefix, &session.diagnostics);
-    defer ordinary.deinit();
-    const core = &ordinary.semantic.?.resolvers.core;
-    try std.testing.expect(!core.sameDeclarationNamespace(0, core.modules.len - 1));
-    try std.testing.expect(core.sameDeclarationNamespace(0, 1));
-    const declaration = for (core.session_namespace.?.declarations.items) |decl| {
-        if (std.mem.eql(u8, core.graph.text(core.graph.declaration(decl).name), "answer")) break decl;
-    } else return error.MissingDeclaration;
-    try std.testing.expect(!core.declarationVisible(core.modules.len - 1, declaration, null));
-    const later = for (core.session_namespace.?.declarations.items) |decl| {
-        if (std.mem.eql(u8, core.graph.text(core.graph.declaration(decl).name), "later")) break decl;
-    } else return error.MissingDeclaration;
-    // Deferred specialization of an earlier definition cannot acquire names
-    // introduced by a future submission merely because it materializes later.
-    try std.testing.expect(!core.declarationVisible(0, later, null));
-    try std.testing.expectEqual(revision, session.compiler.revision);
+    {
+        // Loading an ordinary module must not grant the interactive namespace.
+        const isolated = try session.sources.loadModule(&session.diagnostics, "outside := () -> (.result: Int32) { result = answer() }\n");
+        const prefix = try session.sources.appendModuleViews(session.compiler.semantic.modules, isolated);
+        var ordinary = try session.compiler.prepare(prefix, &session.diagnostics);
+        defer ordinary.deinit();
+        const core = &ordinary.semantic.?.resolvers.core;
+        try std.testing.expect(!core.sameDeclarationNamespace(0, core.modules.len - 1));
+        try std.testing.expect(core.sameDeclarationNamespace(0, 1));
+        const declaration = for (core.session_namespace.?.declarations.items) |decl| {
+            if (std.mem.eql(u8, core.graph.text(core.graph.declaration(decl).name), "answer")) break decl;
+        } else return error.MissingDeclaration;
+        try std.testing.expect(!core.declarationVisible(core.modules.len - 1, declaration, null));
+        const later = for (core.session_namespace.?.declarations.items) |decl| {
+            if (std.mem.eql(u8, core.graph.text(core.graph.declaration(decl).name), "later")) break decl;
+        } else return error.MissingDeclaration;
+        // Deferred specialization of an earlier definition cannot acquire names
+        // introduced by a future submission merely because it materializes later.
+        try std.testing.expect(!core.declarationVisible(0, later, null));
+        try std.testing.expectEqual(revision, session.compiler.revision);
+    }
     try session.close();
 }
 
@@ -574,8 +576,8 @@ test "interactive definition batches keep dependency modules outside the session
     defer session.deinit();
     const dependency = try session.sources.loadModule(&session.diagnostics, "helper := () -> (.result: Int32) { result = 7 }");
     const submitted = try session.sources.loadModule(&session.diagnostics, "answer := () -> (.result: Int32) { result = 42 }");
-    const dependencies = try session.sources.appendSnapshot(session.compiler.semantic.modules, dependency);
-    const prefix = try session.sources.appendSnapshot(dependencies, submitted);
+    const dependencies = try session.sources.appendModuleViews(session.compiler.semantic.modules, dependency);
+    const prefix = try session.sources.appendModuleViews(dependencies, submitted);
     var candidate = try session.compiler.prepareDefinitions(prefix, &session.diagnostics);
     defer candidate.deinit();
     const resolver = &candidate.semantic.?.resolvers.core;
@@ -597,8 +599,8 @@ test "interactive imported aliases survive subsequent submissions without export
     const import_source = try std.fmt.allocPrint(std.testing.allocator, "library := import(\"{s}\")", .{dependency.module_dir});
     defer std.testing.allocator.free(import_source);
     const submitted = try session.sources.loadModule(&session.diagnostics, import_source);
-    const dependencies = try session.sources.appendSnapshot(session.compiler.semantic.modules, dependency);
-    const prefix = try session.sources.appendSnapshot(dependencies, submitted);
+    const dependencies = try session.sources.appendModuleViews(session.compiler.semantic.modules, dependency);
+    const prefix = try session.sources.appendModuleViews(dependencies, submitted);
     var candidate = try session.compiler.prepareDefinitions(prefix, &session.diagnostics);
     defer candidate.deinit();
     try session.compiler.acceptDefinitions(&candidate);
