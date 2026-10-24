@@ -63,6 +63,8 @@ pub const Resolver = struct {
     pub const ResolutionCheckpoint = struct {
         participant_failure: ?ParticipantConformanceFailure,
         registration: RegistrationCursor,
+        caches: [2]usize,
+        templates: usize,
     };
     const ConstraintKey = struct {
         module_index: u32,
@@ -75,6 +77,10 @@ pub const Resolver = struct {
     };
     const TemplateGroup = struct { declaration: global_sg.GlobalDeclId, arity: usize };
     const ImplementationTemplate = struct { module: usize, index: usize };
+    const TemplateRewrite = struct {
+        key: TemplateGroup,
+        previous: ?struct { entries: usize, modules: usize },
+    };
     const TemplateIndex = struct {
         entries: std.ArrayList(ImplementationTemplate) = .empty,
         module_count: usize = 0,
@@ -97,24 +103,46 @@ pub const Resolver = struct {
     stats: Stats = .{},
     profile_implementation_scans: bool = false,
     profile_io: ?std.Io = null,
-    constraint_declarations: std.AutoHashMapUnmanaged(ConstraintKey, global_sg.GlobalDeclId) = .empty,
-    resolved_contract_refs: std.AutoHashMapUnmanaged(ContractRefKey, global_sg.GlobalDeclId) = .empty,
+    constraint_declarations: @import("identity_cache.zig").IdentityCache(ConstraintKey, global_sg.GlobalDeclId) = .empty,
+    resolved_contract_refs: @import("identity_cache.zig").IdentityCache(ContractRefKey, global_sg.GlobalDeclId) = .empty,
     implementation_templates: std.AutoHashMapUnmanaged(TemplateGroup, TemplateIndex) = .empty,
+    template_rewrites: std.ArrayList(TemplateRewrite) = .empty,
     pub fn deinit(self: *Resolver) void {
         self.constraint_declarations.deinit(self.allocator);
         self.resolved_contract_refs.deinit(self.allocator);
         var templates = self.implementation_templates.valueIterator();
         while (templates.next()) |group| group.entries.deinit(self.allocator);
         self.implementation_templates.deinit(self.allocator);
+        self.template_rewrites.deinit(self.allocator);
     }
 
     pub fn checkpointResolution(self: *const Resolver) ResolutionCheckpoint {
-        return .{ .participant_failure = self.participant_conformance_failure, .registration = self.registration };
+        return .{ .participant_failure = self.participant_conformance_failure, .registration = self.registration, .caches = .{ self.constraint_declarations.checkpoint(), self.resolved_contract_refs.checkpoint() }, .templates = self.template_rewrites.items.len };
     }
 
     pub fn rollbackResolution(self: *Resolver, saved: ResolutionCheckpoint) void {
         self.participant_conformance_failure = saved.participant_failure;
         self.registration = saved.registration;
+        self.constraint_declarations.rollback(saved.caches[0]);
+        self.resolved_contract_refs.rollback(saved.caches[1]);
+        while (self.template_rewrites.items.len > saved.templates) {
+            const rewrite = self.template_rewrites.pop().?;
+            if (rewrite.previous) |previous| {
+                const group = self.implementation_templates.getPtr(rewrite.key).?;
+                group.entries.shrinkRetainingCapacity(previous.entries);
+                group.module_count = previous.modules;
+            } else {
+                var removed = self.implementation_templates.fetchRemove(rewrite.key).?.value;
+                removed.entries.deinit(self.allocator);
+            }
+        }
+    }
+
+    pub fn commitCaches(self: *Resolver) void {
+        self.constraint_declarations.commit(self.allocator);
+        self.resolved_contract_refs.commit(self.allocator);
+        self.template_rewrites.deinit(self.allocator);
+        self.template_rewrites = .empty;
     }
 
     pub fn tryResolve(
@@ -763,27 +791,37 @@ pub const Resolver = struct {
 
     pub const ConformanceSelection = struct { tuple: usize };
 
-    /// Index immutable source templates, never speculative selected evidence.
-    /// Successful reference lookup is stable across GlobalSG rollback.
+    /// Source-template indexes extend with module fragments. Their entries
+    /// retain source identities, while the resolver checkpoint owns each tail.
     fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalDeclId, arity: usize) ![]const ImplementationTemplate {
         const key: TemplateGroup = .{ .declaration = declaration, .arity = arity };
+        if (self.implementation_templates.get(key)) |group| {
+            if (self.modules.len < group.module_count) return error.InvalidContractModulePrefix;
+            if (self.modules.len == group.module_count) return group.entries.items;
+        }
+        try self.template_rewrites.ensureUnusedCapacity(self.allocator, 1);
         const indexed = try self.implementation_templates.getOrPut(self.allocator, key);
+        const previous: @FieldType(TemplateRewrite, "previous") = if (indexed.found_existing)
+            .{ .entries = indexed.value_ptr.entries.items.len, .modules = indexed.value_ptr.module_count }
+        else
+            null;
         if (!indexed.found_existing) indexed.value_ptr.* = .{};
-        const group = indexed.value_ptr;
-        if (self.modules.len < group.module_count) return error.InvalidContractModulePrefix;
-        const previous = group.entries.items.len;
-        errdefer group.entries.shrinkRetainingCapacity(previous);
-        // Source modules form an immutable prefix. Extend even previously empty
-        // groups when new modules arrive; selected evidence is not cached here.
-        for (self.modules[group.module_count..], group.module_count..) |module, owner| {
+        self.template_rewrites.appendAssumeCapacity(.{ .key = key, .previous = previous });
+        const start = indexed.value_ptr.module_count;
+        const count = indexed.value_ptr.entries.items.len;
+        errdefer self.implementation_templates.getPtr(key).?.entries.shrinkRetainingCapacity(count);
+        for (self.modules[start..], start..) |module, owner| {
             for (module.semantic.parameterized_storage.contract_conformances.items, 0..) |template, index| {
                 if (template.parameters.len == 0 or template.participants.len != arity) continue;
                 if (try self.resolveDeclarationRef(owner, template.contract_ref, .contract_type) != declaration) continue;
-                try group.entries.append(self.allocator, .{ .module = owner, .index = index });
+                // Declaration resolution may grow the index. Never keep a map
+                // entry pointer across that semantic operation.
+                try self.implementation_templates.getPtr(key).?.entries.append(self.allocator, .{ .module = owner, .index = index });
             }
         }
-        group.module_count = self.modules.len;
-        return group.entries.items;
+        const completed = self.implementation_templates.getPtr(key).?;
+        completed.module_count = self.modules.len;
+        return completed.entries.items;
     }
 
     /// Source forms differ only while matching candidates. A selected conformance
@@ -1312,11 +1350,13 @@ pub const Resolver = struct {
         };
         var checkpoint = self.graph.beginTransaction(self.allocator);
         const caches = self.checkpointResolution();
+        const type_caches = self.generics.checkpointCaches();
         const comptime_failure = self.generics.comptime_failure;
         const argument_failure = self.generics.argument_failure;
         defer {
             checkpoint.rollback();
             self.rollbackResolution(caches);
+            self.generics.rollbackCaches(type_caches);
             self.generics.comptime_failure = comptime_failure;
             self.generics.argument_failure = argument_failure;
         }
@@ -2793,6 +2833,7 @@ fn extendTemplateIndex(allocator: std.mem.Allocator) !void {
     defer resolver.deinit();
     const declaration: global_sg.GlobalDeclId = @enumFromInt(0);
     try std.testing.expectEqual(@as(usize, 0), (try resolver.implementationTemplates(declaration, 1)).len);
+    const saved = resolver.checkpointResolution();
     resolver.modules = &modules;
     resolver.offsets = &offsets;
     const entries = resolver.implementationTemplates(declaration, 1) catch |err| {
@@ -2809,6 +2850,10 @@ fn extendTemplateIndex(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(usize, 32), (try resolver.implementationTemplates(declaration, 1)).len);
     resolver.modules = modules[0..1];
     try std.testing.expectError(error.InvalidContractModulePrefix, resolver.implementationTemplates(declaration, 1));
+    _ = try resolver.implementationTemplates(@enumFromInt(1), 1);
+    resolver.rollbackResolution(saved);
+    try std.testing.expectEqual(@as(usize, 0), (try resolver.implementationTemplates(declaration, 1)).len);
+    try std.testing.expect(resolver.implementation_templates.get(.{ .declaration = @enumFromInt(1), .arity = 1 }) == null);
 }
 
 test "contract template indexes extend empty groups transactionally" {

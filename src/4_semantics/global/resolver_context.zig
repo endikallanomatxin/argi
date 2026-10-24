@@ -195,12 +195,14 @@ pub const Context = struct {
                 return err;
             };
         }
+        try self.contracts.template_rewrites.appendSlice(allocator, source.contracts.template_rewrites.items);
         self.contracts.rollbackResolution(source.contracts.checkpointResolution());
         self.contracts.virtual_signature_failure = source.contracts.virtual_signature_failure;
         try self.ownership.deferred.appendSlice(allocator, source.ownership.deferred.items);
         try self.ownership.auto_nodes.appendSlice(allocator, source.ownership.auto_nodes.items);
         try self.ownership.continuation_bindings.appendSlice(allocator, source.ownership.continuation_bindings.items);
         self.ownership.replacement_candidates = try source.ownership.replacement_candidates.clone(allocator);
+        try self.ownership.replacement_rewrites.appendSlice(allocator, source.ownership.replacement_rewrites.items);
         self.ownership.denied_copy = source.ownership.denied_copy;
         self.ownership.empty_block = source.ownership.empty_block;
         self.ownership.continuation_function = source.ownership.continuation_function;

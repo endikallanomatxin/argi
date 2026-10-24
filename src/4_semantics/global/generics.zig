@@ -57,8 +57,22 @@ pub const Resolver = struct {
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
     constant_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!i64 = null,
-    pointer_types: std.AutoHashMapUnmanaged(PointerKey, global_sg.GlobalTypeId) = .empty,
-    generic_types: std.AutoHashMapUnmanaged(GenericKey, global_sg.GlobalTypeId) = .empty,
+    pointer_types: @import("identity_cache.zig").IdentityCache(PointerKey, global_sg.GlobalTypeId) = .empty,
+    generic_types: @import("identity_cache.zig").IdentityCache(GenericKey, global_sg.GlobalTypeId) = .empty,
+
+    pub fn checkpointCaches(self: *const Resolver) [2]usize {
+        return .{ self.pointer_types.checkpoint(), self.generic_types.checkpoint() };
+    }
+
+    pub fn rollbackCaches(self: *Resolver, saved: [2]usize) void {
+        self.pointer_types.rollback(saved[0]);
+        self.generic_types.rollback(saved[1]);
+    }
+
+    pub fn commitCaches(self: *Resolver) void {
+        self.pointer_types.commit(self.allocator);
+        self.generic_types.commit(self.allocator);
+    }
 
     pub fn deinit(self: *Resolver) void {
         self.pointer_types.deinit(self.allocator);
@@ -893,7 +907,6 @@ pub const Resolver = struct {
         // fall back to the original recursive equivalence search.
         const raw: usize = @intFromEnum(id);
         if (raw < self.graph.types.items.len and sameShallowType(self.graph, self.graph.types.items[raw], .{ .generic = generic })) return id;
-        _ = self.generic_types.remove(key);
         return null;
     }
 
@@ -908,7 +921,6 @@ pub const Resolver = struct {
         if (raw < self.graph.types.items.len and sameShallowType(self.graph, self.graph.types.items[raw], .{ .pointer = pointer })) {
             return candidate_id;
         }
-        _ = self.pointer_types.remove(key);
         return null;
     }
 
@@ -1061,4 +1073,26 @@ test "generic type materialization has a dedicated resolver" {
     try std.testing.expectEqual(@as(u64, 0), stats.type_intern_calls);
     try std.testing.expectEqual(@as(u64, 0), stats.type_intern_candidates);
     try std.testing.expectEqual(@as(u64, 0), stats.type_intern_ns);
+}
+
+test "type cache rollback discards rejected keys before graph IDs are reused" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    const retained = try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    resolver.commitCaches();
+    const saved = resolver.checkpointCaches();
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    const rejected = try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
+    transaction.rollback();
+    resolver.rollbackCaches(saved);
+    try std.testing.expectEqual(@as(usize, 1), resolver.pointer_types.count());
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try std.testing.expectEqual(primitives.BuiltinType.Bool, graph.semanticType(rejected).builtin);
+    try std.testing.expectEqual(retained, try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } }));
+    try std.testing.expect(rejected != try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } }));
 }

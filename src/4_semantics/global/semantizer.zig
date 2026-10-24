@@ -651,8 +651,11 @@ pub const Session = struct {
         _ = try self.resolvers.core.builtin(.Bool);
         try self.includeExecutionRoot(function);
         self.resolvers.ownership.continuation_function = function;
-        self.resolvers.ownership.continuation_bindings.clearRetainingCapacity();
-        try self.resolvers.ownership.continuation_bindings.appendSlice(self.allocator, self.resolvers.expressions.session_bindings.items);
+        const visible = self.resolvers.expressions.session_bindings.items;
+        const retained = &self.resolvers.ownership.continuation_bindings;
+        if (retained.items.len > visible.len or !std.mem.eql(global_sg.GlobalBindingId, retained.items, visible[0..retained.items.len]))
+            return error.InvalidSafetyContinuation;
+        try retained.appendSlice(self.allocator, visible[retained.items.len..]);
         self.resolvers.expressions.continuation_function = function;
         try self.inheritContinuationAssumptions(function);
     }
@@ -1073,11 +1076,21 @@ pub const Session = struct {
         try self.relocation.graph.finishTypeResolution(self.allocator);
         if (!self.relocation.graph.hasUnresolvedBindingTypes())
             try self.relocation.graph.finishBindingTypeResolution(self.allocator);
-        self.relocation.graph.commitCompletions(self.allocator);
+        self.commitCompletions();
         self.phase = .published;
         const unit = self.reachable;
         self.reachable = null;
         return .{ .graph = self.relocation.takeGraph(self.allocator), .stats = stats, .unit = unit };
+    }
+
+    /// Close construction histories at semantic ownership transfer or accepted
+    /// incremental publication. Earlier checkpoints are no longer valid.
+    pub fn commitCompletions(self: *Session) void {
+        self.relocation.graph.commitCompletions(self.allocator);
+        self.resolvers.generics.commitCaches();
+        self.resolvers.contracts.commitCaches();
+        self.resolvers.staged_execution.commitState();
+        self.resolvers.ownership.commitReplacements();
     }
 
     pub fn deinit(self: *Session) void {

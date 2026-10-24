@@ -19,6 +19,17 @@ pub const Scheduler = struct {
     requests: std.ArrayList(Request) = .empty,
     // Sparse descriptions do not enlarge every ordinary request record.
     type_recipes: std.ArrayList(TypeRecipe) = .empty,
+    rewrites: std.ArrayList(RequestRewrite) = .empty,
+
+    const RequestRewrite = struct { index: usize, node: ?g.GlobalNodeId, value: ?Value, types_published: bool };
+    pub const StateCheckpoint = struct {
+        requests: usize,
+        recipes: usize,
+        rewrites: usize,
+        stable_types: usize,
+        stable_declarations: usize,
+        stable_nodes: usize,
+    };
 
     const Request = struct {
         module: usize,
@@ -55,6 +66,7 @@ pub const Scheduler = struct {
             retained.type_recipe = request.type_recipe;
             retained.types_published = request.types_published;
         }
+        try result.rewrites.appendSlice(allocator, self.rewrites.items);
         return result;
     }
 
@@ -63,6 +75,42 @@ pub const Scheduler = struct {
         self.requests.deinit(self.allocator);
         for (self.type_recipes.items) |*recipe| recipe.deinit(self.allocator);
         self.type_recipes.deinit(self.allocator);
+        self.rewrites.deinit(self.allocator);
+    }
+
+    /// A session checkpoint covers completions as well as appended requests.
+    /// Probe callbacks below intentionally retain their narrower enqueue boundary.
+    pub fn checkpointState(self: *const Scheduler) StateCheckpoint {
+        return .{ .requests = self.requests.items.len, .recipes = self.type_recipes.items.len, .rewrites = self.rewrites.items.len, .stable_types = self.stable_type_count, .stable_declarations = self.stable_declaration_count, .stable_nodes = self.stable_node_count };
+    }
+
+    pub fn rollbackState(self: *Scheduler, saved: StateCheckpoint) void {
+        while (self.rewrites.items.len > saved.rewrites) {
+            const previous = self.rewrites.pop().?;
+            const request = &self.requests.items[previous.index];
+            request.node = previous.node;
+            request.value = previous.value;
+            request.types_published = previous.types_published;
+            // An unpublished recipe has no retained transient type IDs.
+            if (!previous.types_published) @memset(request.bindings.types, null);
+        }
+        for (self.requests.items[saved.requests..]) |*request| request.bindings.deinit(self.allocator);
+        self.requests.shrinkRetainingCapacity(saved.requests);
+        for (self.type_recipes.items[saved.recipes..]) |*recipe| recipe.deinit(self.allocator);
+        self.type_recipes.shrinkRetainingCapacity(saved.recipes);
+        self.stable_type_count = saved.stable_types;
+        self.stable_declaration_count = saved.stable_declarations;
+        self.stable_node_count = saved.stable_nodes;
+    }
+
+    pub fn commitState(self: *Scheduler) void {
+        self.rewrites.deinit(self.allocator);
+        self.rewrites = .empty;
+    }
+
+    fn recordRequest(self: *Scheduler, index: usize) !void {
+        const request = self.requests.items[index];
+        try self.rewrites.append(self.allocator, .{ .index = index, .node = request.node, .value = request.value, .types_published = request.types_published });
     }
 
     pub fn checkpoint(context: *anyopaque) usize {
@@ -159,6 +207,7 @@ pub const Scheduler = struct {
                     error.ComptimeTypeRecipePending => continue,
                     else => return err,
                 };
+                try self.recordRequest(index);
                 publication.commit();
                 @memcpy(self.requests.items[index].bindings.types, published);
                 self.requests.items[index].types_published = true;
@@ -191,6 +240,7 @@ pub const Scheduler = struct {
             };
             if (!registered) try self.functions.graph.comptime_requests.append(self.allocator, node);
             try self.functions.graph.roots.append(self.allocator, node);
+            try self.recordRequest(index);
             self.requests.items[index].node = node;
             speculation.commit();
             changed = true;
@@ -240,7 +290,7 @@ pub const Scheduler = struct {
     fn evaluateReadyWithDiagnostics(self: *Scheduler, contracts: *@import("contracts.zig").Resolver, diagnostics: *@import("../../1_base/diagnostic.zig").Diagnostics, finalized: *const std.AutoHashMap(g.GlobalFunctionId, void), pending_bodies: *const std.AutoHashMap(g.GlobalFunctionId, void)) !bool {
         var changed = false;
         const graph = self.functions.graph;
-        for (self.requests.items) |*request| {
+        for (self.requests.items, 0..) |request, index| {
             if (request.value != null) continue;
             const node = request.node orelse continue;
             var unit = try reachability.expressionUnit(self.allocator, graph, node);
@@ -265,7 +315,7 @@ pub const Scheduler = struct {
             try contracts.closeVirtualMethodRegistriesInUnit(&unit);
             try @import("../../execution/comptime.zig").resolveRequest(self.allocator, graph, diagnostics, node);
             const result = graph.node(node);
-            request.value = switch (request.kind) {
+            const value: Value = switch (request.kind) {
                 .boolean => if (result.content == .bool_literal) .{ .boolean = result.content.bool_literal } else {
                     self.functions.generics.comptime_failure = .{ .source = result.source, .reason = "compile-time condition requires a Bool result" };
                     return error.CompileTimeBooleanRequired;
@@ -282,6 +332,8 @@ pub const Scheduler = struct {
                     break :blk .{ .integer = value };
                 },
             };
+            try self.recordRequest(index);
+            self.requests.items[index].value = value;
             changed = true;
         }
         return changed;
@@ -475,4 +527,43 @@ fn transientRequestFailures(a: std.mem.Allocator) !void {
 
 test "staged transient requests release failed capture cloning and rollback" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, transientRequestFailures, .{});
+}
+
+test "staged request session rollback restores completed requests types and stable boundaries" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var scheduler: Scheduler = .{ .allocator = a, .functions = undefined, .stable_type_count = 1, .stable_declaration_count = 2, .stable_node_count = 3 };
+            defer scheduler.deinit();
+            var bindings = try Generics.Bindings.init(a, 1);
+            defer bindings.deinit(a);
+            try scheduler.enqueue(0, @enumFromInt(0), &bindings, .integer);
+            scheduler.requests.items[0].types_published = false;
+            const saved = scheduler.checkpointState();
+            errdefer {
+                scheduler.rollbackState(saved);
+                std.debug.assert(std.meta.eql(saved, scheduler.checkpointState()));
+                std.debug.assert(scheduler.requests.items[0].node == null and scheduler.requests.items[0].value == null);
+                std.debug.assert(!scheduler.requests.items[0].types_published and scheduler.requests.items[0].bindings.types[0] == null);
+            }
+            try scheduler.recordRequest(0);
+            scheduler.requests.items[0].types_published = true;
+            scheduler.requests.items[0].bindings.types[0] = @enumFromInt(7);
+            scheduler.requests.items[0].node = @enumFromInt(8);
+            scheduler.requests.items[0].value = .{ .integer = 42 };
+            scheduler.stable_type_count = 10;
+            scheduler.stable_declaration_count = 11;
+            scheduler.stable_node_count = 12;
+            try scheduler.enqueue(0, @enumFromInt(1), &bindings, .boolean);
+            scheduler.requests.items[1].node = @enumFromInt(9);
+            scheduler.requests.items[1].value = .{ .boolean = true };
+            var copy = try scheduler.clone(a, undefined);
+            defer copy.deinit();
+            copy.rollbackState(saved);
+            scheduler.rollbackState(saved);
+            try std.testing.expectEqualDeep(saved, scheduler.checkpointState());
+            try std.testing.expectEqualDeep(saved, copy.checkpointState());
+            try std.testing.expect(scheduler.requests.items[0].value == null);
+            try std.testing.expect(copy.requests.items[0].bindings.types[0] == null);
+        }
+    }.run, .{});
 }

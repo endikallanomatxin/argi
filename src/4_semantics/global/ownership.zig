@@ -33,6 +33,14 @@ const ResolvedDestructor = struct {
 };
 
 pub const Resolver = struct {
+    pub const ParameterizedCheckpoint = struct {
+        deferred: usize,
+        defers: u32,
+        auto_nodes: usize,
+        replacements: usize,
+        empty_block: ?global_sg.GlobalBlockId,
+    };
+
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -43,6 +51,8 @@ pub const Resolver = struct {
     denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
     replacement_candidates: std.AutoHashMapUnmanaged(global_sg.GlobalNodeId, void) = .empty,
+    replacement_rewrites: std.ArrayList(global_sg.GlobalNodeId) = .empty,
+
     empty_block: ?global_sg.GlobalBlockId = null,
     // Only the designated command's direct declarations have session duration.
     // Nested blocks and initializer temporaries retain ordinary lexical cleanup.
@@ -66,6 +76,7 @@ pub const Resolver = struct {
         self.auto_nodes.deinit(self.allocator);
         self.continuation_bindings.deinit(self.allocator);
         self.replacement_candidates.deinit(self.allocator);
+        self.replacement_rewrites.deinit(self.allocator);
     }
 
     pub fn tryResolve(
@@ -104,7 +115,7 @@ pub const Resolver = struct {
         var activation = try cleanup_activation.collect(activation_arena.allocator(), self.graph, function_id);
         defer activation.deinit();
         var replacements = activation.replacements.keyIterator();
-        while (replacements.next()) |node| try self.replacement_candidates.put(self.allocator, node.*, {});
+        while (replacements.next()) |node| try self.markReplacement(node.*);
         var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer visible.deinit(self.allocator);
         if (self.continuation_function == function_id)
@@ -233,15 +244,31 @@ pub const Resolver = struct {
         try self.registerDefer(marker, deferred_value);
     }
 
-    pub fn parameterizedCheckpoint(context: *anyopaque) [2]usize {
+    pub fn parameterizedCheckpoint(context: *anyopaque) ParameterizedCheckpoint {
         const self: *Resolver = @ptrCast(@alignCast(context));
-        return .{ self.deferred.items.len, self.stats.defers };
+        return .{ .deferred = self.deferred.items.len, .defers = self.stats.defers, .auto_nodes = self.auto_nodes.items.len, .replacements = self.replacement_rewrites.items.len, .empty_block = self.empty_block };
     }
 
-    pub fn rollbackParameterizedCheckpoint(context: *anyopaque, saved: [2]usize) void {
+    pub fn rollbackParameterizedCheckpoint(context: *anyopaque, saved: ParameterizedCheckpoint) void {
         const self: *Resolver = @ptrCast(@alignCast(context));
-        self.deferred.shrinkRetainingCapacity(saved[0]);
-        self.stats.defers = @intCast(saved[1]);
+        self.deferred.shrinkRetainingCapacity(saved.deferred);
+        self.auto_nodes.shrinkRetainingCapacity(saved.auto_nodes);
+        while (self.replacement_rewrites.items.len > saved.replacements)
+            std.debug.assert(self.replacement_candidates.remove(self.replacement_rewrites.pop().?));
+        self.empty_block = saved.empty_block;
+        self.stats.defers = saved.defers;
+    }
+
+    fn markReplacement(self: *Resolver, node: global_sg.GlobalNodeId) !void {
+        if (self.replacement_candidates.contains(node)) return;
+        try self.replacement_rewrites.ensureUnusedCapacity(self.allocator, 1);
+        try self.replacement_candidates.put(self.allocator, node, {});
+        self.replacement_rewrites.appendAssumeCapacity(node);
+    }
+
+    pub fn commitReplacements(self: *Resolver) void {
+        self.replacement_rewrites.deinit(self.allocator);
+        self.replacement_rewrites = .empty;
     }
 
     fn registerDefer(self: *Resolver, marker: global_sg.GlobalNodeId, deferred_value: global_sg.GlobalNodeId) !void {
@@ -539,7 +566,7 @@ pub const Resolver = struct {
                 const pointer = try self.appendNode(source, try self.core.pointerType(store.element_type, .read_write), .{ .address_of = element });
                 const pointer_type = self.graph.node(pointer).ty.?;
                 const target = try self.appendNode(source, store.element_type, .{ .dereference = .{ .pointer = pointer, .pointer_type = pointer_type, .ty = store.element_type } });
-                try self.replacement_candidates.put(self.allocator, node_id, {});
+                try self.markReplacement(node_id);
                 const value = try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
                 if (value != store.value) {
                     try self.graph.setNodeContent(self.allocator, node_id, .{ .pointer_assignment = .{ .pointer = pointer, .value = value, .cleanup_target = target } });
@@ -1417,11 +1444,18 @@ test "parameterized defer checkpoint restores resolver side effects" {
 
     try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(1), .value = @enumFromInt(2) });
     resolver.stats.defers = 1;
+    resolver.empty_block = @enumFromInt(7);
     const saved = Resolver.parameterizedCheckpoint(&resolver);
 
     try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(3), .value = @enumFromInt(4) });
     resolver.stats.defers = 2;
+    resolver.empty_block = @enumFromInt(8);
+    try resolver.markReplacement(@enumFromInt(33));
+    try resolver.auto_nodes.append(allocator, .{ .binding = @enumFromInt(0), .node = @enumFromInt(34) });
     Resolver.rollbackParameterizedCheckpoint(&resolver, saved);
+    try std.testing.expectEqual(@as(global_sg.GlobalBlockId, @enumFromInt(7)), resolver.empty_block.?);
+    try std.testing.expectEqual(@as(usize, 0), resolver.auto_nodes.items.len);
+    try std.testing.expect(!resolver.replacement_candidates.contains(@enumFromInt(33)));
 
     try std.testing.expectEqual(@as(usize, 1), resolver.deferred.items.len);
     try std.testing.expectEqual(@as(u32, 1), resolver.stats.defers);

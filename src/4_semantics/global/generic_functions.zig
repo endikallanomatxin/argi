@@ -69,8 +69,8 @@ pub const Resolver = struct {
     nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, ReachInferenceContext, primitives.SourceRef) anyerror!?global_sg.Node = null,
     ownership_context: ?*anyopaque = null,
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
-    ownership_checkpoint: ?*const fn (*anyopaque) [2]usize = null,
-    rollback_ownership: ?*const fn (*anyopaque, [2]usize) void = null,
+    ownership_checkpoint: ?*const fn (*anyopaque) @import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
+    rollback_ownership: ?*const fn (*anyopaque, @import("ownership.zig").Resolver.ParameterizedCheckpoint) void = null,
     constraint_diagnostics: ?*std.ArrayList(ConstraintFailure) = null,
     reach_diagnostics: ?*std.array_list.Managed(u8) = null,
     failed_constraint: ?struct {
@@ -94,8 +94,9 @@ pub const Resolver = struct {
 
     pub const SideEffectCheckpoint = struct {
         execution_requests: ?usize = null,
-        ownership: ?[2]usize = null,
+        ownership: ?@import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
         reached_calls: usize = 0,
+        type_caches: [2]usize,
         contracts: ?contract_mod.Resolver.ResolutionCheckpoint = null,
         comptime_failure: ?generic_mod.ComptimeFailure = null,
     };
@@ -139,7 +140,7 @@ pub const Resolver = struct {
     }
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
-        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len };
+        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .type_caches = self.generics.checkpointCaches() };
         if (self.generics.checkpoint_execution) |checkpoint|
             saved.execution_requests = checkpoint(self.generics.execution_context.?);
         if (self.ownership_context) |context| {
@@ -157,6 +158,7 @@ pub const Resolver = struct {
                 rollback(self.generics.execution_context.?, count);
         }
         self.generics.comptime_failure = saved.comptime_failure;
+        self.generics.rollbackCaches(saved.type_caches);
         self.core.rollbackReachedCalls(saved.reached_calls);
         if (saved.contracts) |checkpoint|
             if (self.nested_call_context) |contracts|
