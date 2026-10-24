@@ -1273,11 +1273,19 @@ test "compile-time evaluation retains selected cleanup in its dependency unit" {
         var unit = try @import("../4_semantics/global/reachability.zig").dependencyUnit(a, graph, &.{id});
         defer unit.deinit();
         try std.testing.expect(unit.cleanup_functions.count() != 0);
+        const before = graph.checkpoint();
         const result = try evaluate(a, graph, &diagnostics, id, &.{}, source, .{});
         try std.testing.expectEqual(@as(i128, 42), graph.node(result[0]).content.int_literal);
+        var expected = before;
+        expected.pool_lengths[std.meta.fieldIndex(@import("../4_semantics/global/graph.zig").GlobalSemanticGraph, "nodes").?] += 1;
+        try std.testing.expectEqualDeep(expected, graph.checkpoint());
         // Checking again must remain valid after the evaluator storage ended.
         const again = try evaluate(a, graph, &diagnostics, id, &.{}, source, .{});
         try std.testing.expectEqual(@as(i128, 42), graph.node(again[0]).content.int_literal);
+        expected.pool_lengths[std.meta.fieldIndex(@import("../4_semantics/global/graph.zig").GlobalSemanticGraph, "nodes").?] += 1;
+        try std.testing.expectEqualDeep(expected, graph.checkpoint());
+        try std.testing.expectError(error.ExecutionInstructionLimit, evaluate(a, graph, &diagnostics, id, &.{}, source, .{ .instructions = 1 }));
+        try std.testing.expectEqualDeep(expected, graph.checkpoint());
     }
     try std.testing.expect(found);
 }

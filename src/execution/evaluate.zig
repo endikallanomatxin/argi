@@ -25,16 +25,16 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     var scratch = std.heap.ArenaAllocator.init(allocator);
     defer scratch.deinit();
     const temporary = scratch.allocator();
-    // Safety may append cleanup projection nodes while checking this unit.
-    // Keep those temporary nodes separate from the construction graph; derived
-    // execution annotations are owned independently by the checker.
-    var checked = graph.*;
-    checked.nodes = .empty;
-    try checked.nodes.appendSlice(temporary, graph.nodes.items);
-    var checker = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(temporary, diagnostics, &checked);
+    // Safety's cleanup projections belong to this evaluation, not the retained
+    // semantic body. Use the graph's ordinary nested transaction so every
+    // temporary pool allocation is discarded on success and failure alike.
+    var transaction = graph.beginTransaction(allocator);
+    defer transaction.deinit();
+    var checker = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(temporary, diagnostics, graph);
+    checker.graph_allocator = allocator;
     defer checker.deinit();
     try checker.analyzeUnit(&.{entry});
-    var lower = try Lower.init(temporary, &checked, .{});
+    var lower = try Lower.init(temporary, graph, .{});
     lower.annotations = &checker.annotations;
     lower.diagnostics = diagnostics;
     const function = graph.function(entry);
@@ -67,6 +67,9 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     for (values, graph.fields.items[function.output.start..][0..function.output.len]) |value, field| {
         if (!bytecode.valueFits(graph, field.ty, value)) return error.UnfreezableEvaluationResult;
     }
+    // Outputs contain only freezable values and stable semantic type IDs. End
+    // the temporary checking scope before publishing their constant nodes.
+    transaction.rollback();
     const node_start = graph.nodes.items.len;
     const field_start = graph.value_fields.items.len;
     const reference_start = graph.node_refs.items.len;

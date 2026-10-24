@@ -19,6 +19,8 @@ const primitive_transfer = @import("../primitives/registry.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    cache: ?*const @import("summary_cache.zig").Store = null,
+    cache_reused: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, void) = .empty,
     unit: ?*const @import("../global/reachability.zig").FunctionSet = null,
     cleanup: ?*const cleanup_activation.Activation = null,
     cleanup_activations: std.AutoHashMap(graph_mod.GlobalFunctionId, cleanup_activation.Activation),
@@ -94,6 +96,7 @@ pub const Infer = struct {
         while (activations.next()) |activation| activation.deinit();
         self.cleanup_activations.deinit();
         self.requested_selectors.deinit();
+        self.cache_reused.deinit(self.allocator);
         self.bindings.deinit();
         self.place_bindings.deinit();
         self.local_address_bindings.deinit();
@@ -109,6 +112,8 @@ pub const Infer = struct {
     /// the function's own approximation. Virtual effects come from fixed contracts,
     /// independently of implementation reachability and conformance checks.
     pub fn inferSafetySummariesFixedPoint(self: *Infer) !void {
+        if (self.cache) |cache| if (cache.graph != self.graph) return error.ForeignSafetySummaryCache;
+        self.engine.retain_dependencies = self.cache != null;
         var functions = std.array_list.Managed(graph_mod.GlobalFunctionId).init(self.allocator);
         defer functions.deinit();
 
@@ -158,8 +163,10 @@ pub const Infer = struct {
         }
         const order = try @import("../global/reachability.zig").dependencyOrder(self.allocator, self.graph, functions.items);
         defer self.allocator.free(order);
-        try self.engine.seed(order);
+        if (self.cache) |cache| self.cache_reused = try cache.restore(self.engine, &self.requested_selectors);
+        for (order) |function| if (!self.cache_reused.contains(function)) try self.engine.seed(&.{function});
         while (self.engine.nextDirty()) |function| {
+            _ = self.cache_reused.remove(function);
             self.evaluations += 1;
             self.engine.beginInference(function);
             const next = self.inferFunction(function) catch |err| {
@@ -177,6 +184,7 @@ pub const Infer = struct {
     ) !?facts.SafetySummary {
         const start = profile.timestamp(self.profile_io);
         defer profile.accumulate(self.profile_io, start, &self.virtual_summary_ns);
+        try self.engine.observeVirtual(registry_id);
         if (self.virtual_summaries.get(registry_id)) |summary| return summary;
         const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
         if (registry.contract_input_count) |input_count| {

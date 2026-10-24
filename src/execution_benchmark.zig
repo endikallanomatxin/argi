@@ -69,6 +69,9 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     const semantic_graph = session.compiler.semantic.relocation.graph.storageBytes();
     var code: usize = 0;
     for (session.runtime.units.items) |arena| code += arena.queryCapacity();
+    var summary_arenas: usize = 0;
+    var summary_entries = session.compiler.summary_cache.entries.valueIterator();
+    while (summary_entries.next()) |entry| summary_arenas += entry.*.arena.queryCapacity();
     var proofs: usize = 0;
     var proof = session.compiler.temporal;
     while (proof) |entry| : (proof = entry.parent) proofs += entry.arena.queryCapacity();
@@ -107,16 +110,18 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     }
     if (scenario == .resources and live_acquisitions != commands) return error.InvalidBenchmarkAcquisitions;
     const runtime = if (session.runtime.context.state == .fresh) 0 else session.runtime.context.arena.queryCapacity();
-    std.debug.print("{s},{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
-        @tagName(scenario),          @tagName(modules),                          commands,
-        ms(total_ns),                ms(total_ns -| backend_ns),                 ms(stats.lowering_ns),
-        ms(stats.verification_ns),   ms(stats.execution_ns),                     mib(memory.live),
-        mib(memory.peak),            mib(semantic_graph),                        mib(code),
-        mib(proofs),                 mib(session.sources.arena.queryCapacity()), mib(session.diagnostic_arena.queryCapacity()),
-        runtime,                     dead_frames,                                stats.compiled_functions,
-        stats.compiled_instructions, dead_frame_slot_bytes,                      live_frame_slot_bytes,
-        frame_identity_bytes,        live_acquisitions,                          live_acquired_bytes,
-        retained_acquired_bytes,     dead_cleanup_flag_bytes,                    live_cleanup_flag_bytes,
+    std.debug.print("{s},{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d:.3}\n", .{
+        @tagName(scenario),                   @tagName(modules),                          commands,
+        ms(total_ns),                         ms(total_ns -| backend_ns),                 ms(stats.lowering_ns),
+        ms(stats.verification_ns),            ms(stats.execution_ns),                     mib(memory.live),
+        mib(memory.peak),                     mib(semantic_graph),                        mib(code),
+        mib(proofs),                          mib(session.sources.arena.queryCapacity()), mib(session.diagnostic_arena.queryCapacity()),
+        runtime,                              dead_frames,                                stats.compiled_functions,
+        stats.compiled_instructions,          dead_frame_slot_bytes,                      live_frame_slot_bytes,
+        frame_identity_bytes,                 live_acquisitions,                          live_acquired_bytes,
+        retained_acquired_bytes,              dead_cleanup_flag_bytes,                    live_cleanup_flag_bytes,
+        session.compiler.summary_evaluations, session.compiler.summary_reuses,            session.compiler.summary_cache.entries.count(),
+        mib(summary_arenas),
     });
     // Check the actual retained value without adding a measurement submission.
     const bindings = session.compiler.semantic.resolvers.expressions.session_bindings.items;
@@ -179,6 +184,8 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
         try session.submitStatements("value :: Int32 = 42");
         session.runtime.profile_io = io;
         session.runtime.stats = .{};
+        session.compiler.summary_evaluations = 0;
+        session.compiler.summary_reuses = 0;
         var total_ns: u64 = 0;
         try report(&session, &memory, scenario, modules, 0, total_ns);
         for (1..count + 1) |index| {
@@ -275,6 +282,6 @@ pub fn main(init: std.process.Init) !void {
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
     std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions] [memory-limit-MiB=2048] [--graph-pools]\n", .{});
-    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes\n", .{});
+    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB\n", .{});
     try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools);
 }

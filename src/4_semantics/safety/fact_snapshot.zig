@@ -32,7 +32,7 @@ pub const Copy = struct {
             },
             .pointer => |pointer| result: {
                 if (!pointer.is_const or pointer.sentinel() != null) @compileError("Fact snapshots accept immutable unsentinelized buffers only");
-                if (pointer.size != .slice and !(pointer.size == .one and pointer.child == facts.ValueFacts))
+                if (pointer.size != .slice and !(pointer.size == .one and (pointer.child == facts.ValueFacts or pointer.child == facts.ValueEffect or pointer.child == facts.SafetySummary)))
                     @compileError("Unsupported pointer in published safety facts");
                 const length = if (pointer.size == .slice) source.len else 1;
                 if (length == 0) break :result &.{};

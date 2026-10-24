@@ -66,10 +66,12 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 ## Scalability
 
-- Remove the temporary evaluation node-column copy; keep cleanup projection
-  identities bounded when rechecking previously completed bodies.
-- Reuse verified Safety bodies only with stable hypotheses; check caller facts
-  independently. Reuse immutable helper bytecode across commands while keeping
+- Keep cleanup projection identities bounded when rechecking previously completed
+  bodies. Compile-time evaluation now discards its projections through nested
+  graph transactions before publishing constant outputs.
+- Reuse verified Safety bodies only with stable hypotheses; symbolic summaries
+  now retain selector, callee and virtual-contract dependencies in transactional
+  publications. Keep temporal caller checks independent. Reuse immutable helper bytecode across commands while keeping
   host bindings, globals and virtual dispatch linked to its originating Code Unit.
 - Keep definition lookup separate from instantiation evidence. Delayed body
   completion must preserve its selected context; new conformances must not
@@ -79,10 +81,6 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 - Continue measuring 10/100/1,000-command sessions, separating frontend, lowering,
   verification, execution and retained memory. Use `--graph-pools` for flat columns;
   account separately for nested metadata, safety proofs, bytecode and runtime storage.
-- Baseline [measurements](../docs/usage.md#measuring-retained-execution): 100 resource
-  commands retain 707 MiB with only 4,000 acquired bytes; graph payload is 418 MiB.
-  Nonmoving trimming reduced column capacity from 626 to 425 MiB. Duplication
-  remains. Minimal 1,000 updates retain about 436 MiB versus 19 MiB for definitions.
 - Verifier linear-flow allocation has been reduced; joins still retain vectors
   proportional to joins times slots. Establish their cost in real workloads before
   changing representation. Do not optimize from synthetic measurements alone.

@@ -40,6 +40,7 @@ pub const SafetyChecker = struct {
         virtual_summary_ns: u64 = 0,
         summary_evaluations: u64 = 0,
         summary_changes: u64 = 0,
+        summary_reused: usize = 0,
         functions: usize = 0,
         calls: usize = 0,
         state_clones: u64 = 0,
@@ -265,6 +266,8 @@ pub const SafetyChecker = struct {
     stats: Stats = .{},
     active_replacement: ?struct { plan: checked_replacement.Plan, pointer: ?facts.ValueFacts = null } = null,
     annotations: @import("annotations.zig").Annotations = .{},
+    summary_cache: ?*const @import("summary_cache.zig").Store = null,
+    summary_publication: ?*@import("summary_cache.zig").Batch = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -335,11 +338,13 @@ pub const SafetyChecker = struct {
         defer inference.deinit();
         inference.profile_io = self.profile_io;
         inference.unit = self.unit;
+        inference.cache = self.summary_cache;
         const inference_start = profile.timestamp(self.profile_io);
         try inference.inferSafetySummariesFixedPoint();
         profile.accumulate(self.profile_io, inference_start, &self.stats.summary_inference_ns);
+        self.stats.summary_evaluations = inference.evaluations;
+        self.stats.summary_reused = inference.cache_reused.count();
         if (self.collect_stats) {
-            self.stats.summary_evaluations = inference.evaluations;
             self.stats.summary_changes = inference.summary_changes;
             self.stats.summary_worklist_bytes = @intCast(engine.worklist.capacity * @sizeOf(graph_mod.GlobalFunctionId));
             self.stats.output_inference_ns = inference.output_ns;
@@ -363,7 +368,7 @@ pub const SafetyChecker = struct {
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (self.unit) |unit| if (!unit.contains(id)) continue;
             if (self.continuation) |continuation| if (continuation.function == id) {
-                // Candidate tables and namespace are already isolated by fork.
+                // Candidate temporal state is isolated from accepted caller facts.
                 // Use the same body visitor and converged call summaries.
                 try self.call_stack.append(id);
                 defer _ = self.call_stack.pop();
@@ -387,6 +392,10 @@ pub const SafetyChecker = struct {
             self.stats.virtual_summary_ns = inference.virtual_summary_ns;
         }
         if (self.diagnostics.list.items.len != before) return error.Reported;
+        if (self.summary_publication) |batch| {
+            const cache = self.summary_cache orelse return error.MissingSafetySummaryCache;
+            try cache.stage(batch, &engine, &inference.requested_selectors, &inference.cache_reused);
+        }
     }
 
     fn validateSelectedSafetyContracts(self: *SafetyChecker, inference: *summary_infer.Infer) !void {

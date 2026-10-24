@@ -16,17 +16,22 @@ pub const Engine = struct {
     allocator: std.mem.Allocator,
     summaries: std.AutoHashMap(graph.GlobalFunctionId, facts.SafetySummary),
     dependents: DependentMap,
+    dependencies: DependentMap,
+    virtual_dependencies: std.AutoHashMap(graph.GlobalFunctionId, std.array_list.Managed(graph.GlobalVirtualRegistryId)),
     worklist: std.array_list.Managed(graph.GlobalFunctionId),
     dirty: std.AutoHashMap(graph.GlobalFunctionId, void),
     next_work: usize = 0,
     current: ?graph.GlobalFunctionId = null,
     dependency_error: ?anyerror = null,
+    retain_dependencies: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Engine {
         return .{
             .allocator = allocator,
             .summaries = std.AutoHashMap(graph.GlobalFunctionId, facts.SafetySummary).init(allocator),
             .dependents = DependentMap.init(allocator),
+            .dependencies = DependentMap.init(allocator),
+            .virtual_dependencies = .init(allocator),
             .worklist = FunctionList.init(allocator),
             .dirty = std.AutoHashMap(graph.GlobalFunctionId, void).init(allocator),
         };
@@ -36,6 +41,12 @@ pub const Engine = struct {
         var values = self.dependents.valueIterator();
         while (values.next()) |list| list.deinit();
         self.dependents.deinit();
+        var dependencies = self.dependencies.valueIterator();
+        while (dependencies.next()) |list| list.deinit();
+        self.dependencies.deinit();
+        var virtuals = self.virtual_dependencies.valueIterator();
+        while (virtuals.next()) |list| list.deinit();
+        self.virtual_dependencies.deinit();
         self.summaries.deinit();
         self.worklist.deinit();
         self.dirty.deinit();
@@ -93,15 +104,30 @@ pub const Engine = struct {
         try self.worklist.append(function);
     }
 
+    pub fn addDependency(self: *Engine, dependent: graph.GlobalFunctionId, dependency: graph.GlobalFunctionId) !void {
+        const callers = try self.dependents.getOrPut(dependency);
+        if (!callers.found_existing) callers.value_ptr.* = FunctionList.init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalFunctionId, callers.value_ptr.items, dependent) == null) try callers.value_ptr.append(dependent);
+        if (!self.retain_dependencies) return;
+        const required = try self.dependencies.getOrPut(dependent);
+        if (!required.found_existing) required.value_ptr.* = FunctionList.init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalFunctionId, required.value_ptr.items, dependency) == null) try required.value_ptr.append(dependency);
+    }
+
+    pub fn addVirtualDependency(self: *Engine, dependent: graph.GlobalFunctionId, registry: graph.GlobalVirtualRegistryId) !void {
+        const required = try self.virtual_dependencies.getOrPut(dependent);
+        if (!required.found_existing) required.value_ptr.* = .init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalVirtualRegistryId, required.value_ptr.items, registry) == null) try required.value_ptr.append(registry);
+    }
+
+    pub fn observeVirtual(self: *Engine, registry: graph.GlobalVirtualRegistryId) !void {
+        if (!self.retain_dependencies) return;
+        if (self.current) |dependent| try self.addVirtualDependency(dependent, registry);
+    }
+
     fn recordDependency(self: *Engine, dependency: graph.GlobalFunctionId) void {
         const dependent = self.current orelse return;
-        const entry = self.dependents.getOrPut(dependency) catch |err| {
-            self.dependency_error = err;
-            return;
-        };
-        if (!entry.found_existing) entry.value_ptr.* = FunctionList.init(self.allocator);
-        for (entry.value_ptr.items) |existing| if (existing == dependent) return;
-        entry.value_ptr.append(dependent) catch |err| {
+        self.addDependency(dependent, dependency) catch |err| {
             self.dependency_error = err;
         };
     }

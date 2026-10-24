@@ -687,6 +687,15 @@ all tracked backing at teardown. The latest command time is 46,539.0 ms versus
 claim. Startup/core preparation and live owners remain included in retained
 memory, while old helper bodies and dead VM frames are still retained.
 
+Safety summary reuse is reported separately by `summary_evaluations`,
+`summary_reuses`, `summary_entries` and `summary_arenas_MiB`. Publications retain
+callee revisions, selector demands and virtual-contract hypotheses; rejected
+commands discard their candidates. Temporal body and caller checking remains
+fresh. In one Debug run, 100 resource commands reused 6,268 summaries and retained
+118 entries using 0.234 MiB of summary arenas. Total time was 43,527.5 ms and live
+backing 218.81 MiB. This is a single observation, not a controlled speedup claim;
+helper bytecode regeneration and repeated body checking still remain.
+
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and
 REPL submissions share this presentation. Compile-time failures retain these
