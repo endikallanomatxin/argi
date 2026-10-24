@@ -3368,6 +3368,12 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             if (post_state.initializedness != .initialized or post_state.opaque_ownership != .none) continue;
+            if (post_state.reference_refresh and post_state.initialization == .preserved) {
+                // A renewal observes this exact slot; it does not assign the
+                // summary's abstract value back into an unchanged reference.
+                if (post_targets[post_index]) |slot| post_values[post_index] = self.valueAtPlace(state, slot);
+                continue;
+            }
             post_values[post_index] = try self.instantiateOutputWithFresh(
                 post_state.value,
                 arguments,
@@ -3533,8 +3539,10 @@ pub const SafetyChecker = struct {
                 }
             }
 
-            const value = post_values[post_index] orelse facts.ValueFacts{};
-            try self.setPlace(state, target, initializedness, value);
+            if (!(post_state.reference_refresh and post_state.initialization == .preserved)) {
+                const value = post_values[post_index] orelse facts.ValueFacts{};
+                try self.setPlace(state, target, initializedness, value);
+            }
         }
         for (summary.input_post_states, 0..) |post, index| {
             if (!post.reference_refresh) continue;

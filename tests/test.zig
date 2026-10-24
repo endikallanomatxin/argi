@@ -13634,6 +13634,7 @@ test "feature_tests/execution/37X_record_reference_keeps_sibling_stale" {
 test "feature_tests/ownership/364_projected_call_reinitialization" {
     try expectSuccessfulBuild("tests/feature_tests/ownership/364_projected_call_reinitialization");
     try runExpect("tests/feature_tests/ownership/364_projected_call_reinitialization", 42);
+    try vmExpect("tests/feature_tests/ownership/364_projected_call_reinitialization", 42, null);
 }
 
 test "feature_tests/ownership/365X_projected_call_keeps_copy_stale" {
@@ -15117,9 +15118,10 @@ test "argi repl cleans fallible aggregate operands across submissions" {
         \\counter.drops
         \\discarded ::= discard_result(.value = ~succeeded)
         \\counter.drops
+        \\probe()
         \\
     ;
-    try expectReplFixture("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup/main.rg", commands, "_0 = 7\n_1 = 7\n_2 = 28\n");
+    try expectReplFixture("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup/main.rg", commands, "_0 = 7\n_1 = 7\n_2 = 28\n_3 = 112\n");
 }
 
 test "feature_tests/execution/263_comptime_fallible_operand_cleanup" {
@@ -15219,4 +15221,74 @@ test "argi repl retains partial acquired array cleanup across submissions" {
         \\
     ;
     try expectReplFixture("tests/feature_tests/execution/270_large_reference_aggregate_cleanup/main.rg", commands, "_0 = 10\n_1 = 32\n_2 = ()\n_3 = ()\n_4 = 2\n");
+}
+
+test "feature_tests/execution/272_acquired_partial_extraction_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/272_acquired_partial_extraction_cleanup");
+    try runExpect("tests/feature_tests/execution/272_acquired_partial_extraction_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/272_acquired_partial_extraction_cleanup", 42, null);
+}
+
+test "argi repl preserves indexed replacement destinations across submissions" {
+    const commands =
+        \\:begin
+        \\select_array_index(.selection: $&UIntNative, .counter: $&Counter) -> (.result: UIntNative) := {
+        \\    counter&.selections = counter&.selections + 1
+        \\    result = selection&
+        \\}
+        \\make_array_resource(.selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Resource, (..stop))) := {
+        \\    selection&= 1
+        \\    if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.counter = counter, .value = 9) }
+        \\}
+        \\replace_array(.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Int32, (..stop))) := {
+        \\    values&[select_array_index(.selection = selection, .counter = counter)] = make_array_resource(.selection = selection, .counter = counter, .fail = fail)!
+        \\    result = ..ok 42
+        \\}
+        \\:end
+        \\counter :: Counter = Counter()
+        \\values :: [2]Resource = (Resource(.counter = $&counter, .value = 1), Resource(.counter = $&counter, .value = 2))
+        \\selection :: UIntNative = 0
+        \\failed ::= replace_array(.values = $&values, .selection = $&selection, .counter = $&counter, .fail = true)
+        \\values[0].value
+        \\counter.drops
+        \\selection
+        \\counter.selections
+        \\selection = 0
+        \\succeeded ::= replace_array(.values = $&values, .selection = $&selection, .counter = $&counter, .fail = false)
+        \\values[0].value
+        \\values[1].value
+        \\counter.drops
+        \\counter.selections
+        \\closed_first ::= deinit(.self = $&values[0])
+        \\closed_second ::= deinit(.self = $&values[1])
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixture("tests/feature_tests/execution/265_fallible_retargeted_reference_replacement/main.rg", commands, "_0 = 1\n_1 = 0\n_2 = 1\n_3 = 1\n_4 = 9\n_5 = 2\n_6 = 1\n_7 = 2\n_8 = 3\n");
+}
+
+test "feature_tests/execution/273X_borrowed_call_keeps_copy_stale" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/273X_borrowed_call_keeps_copy_stale", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/274X_borrowed_call_keeps_sibling_stale" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/274X_borrowed_call_keeps_sibling_stale", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "argi repl renews borrowed argument references without renewing copies" {
+    const commands =
+        \\counter :: Counter = Counter()
+        \\owner :: Resource = Resource(.counter = $&counter)
+        \\args: Args = (.target = $&owner, .counter = $&counter)
+        \\historical ::= args.target
+        \\closed ::= deinit(.self = args.target)
+        \\initialize_borrowed(.args = &args)
+        \\args.target&.counter&.count
+        \\historical&.counter&.count
+        \\owner.counter&.count
+        \\closed_owner ::= deinit(.self = $&owner)
+        \\counter.count
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic("tests/feature_tests/ownership/364_projected_call_reinitialization/main.rg", commands, "_0 = ()\n_1 = 1\n_3 = 1\n_4 = 2\n", "reference depends on a root that has ended");
 }

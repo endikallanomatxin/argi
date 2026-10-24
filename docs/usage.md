@@ -154,6 +154,9 @@ Earlier copies retain their old lifetime and cannot be used again. Whole-value
 and record-field owning replacements also work through runtime-selected and
 retargetable references. Both backends capture the destination and its cleanup
 identity before evaluating the replacement; neighboring fields remain independent.
+Call summaries retain those entry-relative destinations even when the replacement
+retargets a reference field. Reinitialization renews only the selected reference;
+historical copies remain stale.
 Owning array elements use the same captured-reference replacement plan. The
 array and index are evaluated once before the new value; sibling cleanup remains
 independent, including for zero-sized elements. Partially initialized owning
@@ -201,10 +204,10 @@ Callbacks receive integer copies, and results are range-checked before publicati
 Callback failures poison execution. `argi repl` registers stdout/stderr adapters;
 `argi run --vm` currently registers none. Registered core heap acquisition and
 release primitives use context-owned byte storage instead of native allocation;
-raw addresses remain virtual tokens. Checked core establishment can form references
-to booleans, integers, floats and records/arrays of those scalars in acquired storage. Allocation
-slots carry prepared receipt descriptors; selection stays within that receipt's
-authenticated extent even when other regions are live. Numeric reference offsets
+raw addresses remain virtual tokens. Checked core establishment forms references
+to prepared values in acquired storage. Allocation slots carry receipt descriptors;
+selection stays within that receipt's authenticated extent even when other regions
+are live. Numeric reference offsets
 retain the intersection of declared and authenticated byte extents; selecting an
 element does not read or initialize it. Reads require initialized bytes, and
 release invalidates every view. Erased anchor
@@ -213,7 +216,9 @@ reads check the backing value but expose no concrete representation. Core
 context-owned regions. Typed allocations prepare independent slot state for
 supported records, arrays and regular choices, with or without cleanup, including zero-sized elements.
 Opaque initialization, extraction and destruction preserve those obligations
-across calls and REPL submissions. Acquired aggregates may also contain
+across calls and REPL submissions. Partially initialized or consumed aggregates
+clean only their remaining live children; an incomplete choice retains its active
+variant without requiring a complete payload. Acquired aggregates may also contain
 safe references and virtual values. Prepared slots retain reference evidence and
 the original selected virtual code unit and operation table. Physical writes revoke
 only reference leaves whose bytes they touch; touching a choice tag revokes all
