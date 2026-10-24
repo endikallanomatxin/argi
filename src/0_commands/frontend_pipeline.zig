@@ -389,7 +389,9 @@ pub const FrontendPipeline = struct {
         else
             try std.fmt.allocPrint(self.allocator, "__main_result ::= {s}({s})", .{ target, call_args });
         defer self.allocator.free(call);
-        const with_output = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_OUTPUT__", output);
+        const with_system = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_SYSTEM_SCOPE__", @embedFile("system_scope.rg"));
+        defer self.allocator.free(with_system);
+        const with_output = try std.mem.replaceOwned(u8, self.allocator, with_system, "__ARGI_OUTPUT__", output);
         defer self.allocator.free(with_output);
         const with_tracer = try std.mem.replaceOwned(u8, self.allocator, with_output, "__ARGI_TRACER_SETUP__", tracer);
         defer self.allocator.free(with_tracer);

@@ -28,6 +28,7 @@ pub const Context = struct {
     tree: *const syn.FileSyntaxTree,
     source: []const u8,
     module_aliases: []const LexicalModuleAlias = &.{},
+    generated_source: ?primitives.SourceRef = null,
 
     pub fn lower(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleTypeId {
         const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedTypeSyntax;
@@ -333,7 +334,7 @@ pub const Context = struct {
     }
 
     fn sourceRef(self: *const Context, node: syn.NodeIndex) @import("../primitives/schema.zig").SourceRef {
-        return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
+        return self.generated_source orelse .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
     }
 };
 

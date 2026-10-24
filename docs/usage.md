@@ -225,7 +225,7 @@ only reference leaves whose bytes they touch; touching a choice tag revokes all
 reference evidence for that choice. Only the selected payload must be initialized.
 Reference representation bytes are
 opaque in the VM: byte copies neither serialize nor reconstruct that evidence.
-Compile-time evaluation continues to reject foreign calls.
+Compile-time entries without `System` continue to reject foreign calls.
 
 Floating values preserve Float16, Float32 and Float64 precision in literals,
 arithmetic, comparisons and compile-time results. Byte views and acquired storage
@@ -250,6 +250,15 @@ values must be known at compile time, and results freeze into compiler values. R
 integer results can supply type shapes and compile-time parameters through staged
 semantic resolution. Computed `#if` in function bodies uses the same evaluator;
 only the selected arm is materialized for each specialization. See [compile-time computation](../description/50_comptime.md).
+
+Concrete `#run (.system: System)` entries construct and clean their resources in
+an ordinary checked scope. They enable stdout/stderr adapters and context-owned
+allocation; the entry must explicitly assume its writer, allocator and tracer.
+Each invocation has an independent acquisition scope. Host arguments are empty.
+Filesystem, environment, stdin, network, processes, clock and entropy calls are
+not enabled; unavailable adapters reject evaluation before any host operation runs.
+External reads require build-dependency tracking before they can be enabled.
+`System` entries in generic templates remain pending.
 
 Execution is limited to one million instructions, 128 nested calls, and one
 million cumulative value cells by default. `argi run --vm` and `argi repl` accept

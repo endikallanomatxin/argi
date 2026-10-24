@@ -42,7 +42,7 @@ pub const Lower = struct {
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
     unsupported: []const u8 = "",
     session: ?b.Session = null,
-    mode: enum { compile_time, runtime } = .compile_time,
+    mode: enum { compile_time, compile_time_host, runtime } = .compile_time,
     diagnostics: ?*const @import("../../1_base/diagnostic.zig").Diagnostics = null,
 
     pub fn init(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, options: Options) !Lower {
@@ -233,6 +233,16 @@ pub const Lower = struct {
         return false;
     }
 
+    fn allowsGlobalStorage(self: *const Lower, binding: g.GlobalBindingId) bool {
+        if (self.mode == .runtime or self.graph.binding(binding).mutability == .constant) return true;
+        if (self.mode != .compile_time_host) return false;
+        // Core runtime support (such as the noop tracer) gets private storage
+        // in this host invocation. User runtime globals are never captured.
+        const source = self.graph.binding(binding).source;
+        return source.file_index < self.graph.files.items.len and
+            self.graph.modules.items[@intFromEnum(self.graph.files.items[source.file_index].module)].is_bundled_core;
+    }
+
     fn requireGlobal(self: *Lower, binding: g.GlobalBindingId) anyerror!void {
         for (self.globals.items) |global| if (global.binding == binding) return;
         const plan = try @import("../global_initialization.zig").build(self.allocator, self.graph, &.{binding});
@@ -245,7 +255,7 @@ pub const Lower = struct {
             };
             if (found) continue;
             const record = self.graph.binding(id);
-            if (self.mode == .compile_time and record.mutability != .constant) {
+            if (!self.allowsGlobalStorage(id)) {
                 self.source = record.source;
                 return error.RuntimeStorageInCompileTime;
             }
@@ -370,7 +380,7 @@ const FunctionLower = struct {
             if (shape.cleanup_flags == 0 and shape.reference_leaves == 0) {
                 _ = try self.emit(source, .{ .constant = .{ .dst = outputs[0], .value = .{ .integer = 0 } } });
             } else {
-                if (self.parent.mode != .runtime) return self.parent.reject(source, "acquired metadata preparation during compile-time execution");
+                if (self.parent.mode == .compile_time) return self.parent.reject(source, "acquired metadata preparation during compile-time execution");
                 const layout = metadata.reservation(a, self.parent.graph, ty, self.slots.items[inputs[0]], &self.parent.cleanup_layouts, self.parent.cleanup_types[@intFromEnum(ty)]) catch |err| switch (err) {
                     error.UnsupportedNumericLayout => return self.parent.reject(source, "acquired metadata for unsupported storage representation"),
                     else => return err,
@@ -919,7 +929,7 @@ const FunctionLower = struct {
     }
     fn globalPlace(self: *FunctionLower, binding: g.GlobalBindingId, source: p.SourceRef) !b.Place {
         const record = self.parent.graph.binding(binding);
-        if (self.parent.mode == .compile_time and record.mutability != .constant) {
+        if (!self.parent.allowsGlobalStorage(binding)) {
             // Tables can retain operations that this evaluation never invokes.
             // Reject the access on its execution path without acquiring runtime storage.
             _ = try self.emit(source, .{ .trap = .runtime_storage });
@@ -1170,9 +1180,9 @@ const FunctionLower = struct {
         } else if (f.safety_primitive == .relocate or f.safety_primitive == .trusted_opaque_relocate) {
             if (args.len != 2 or outputs.len != 0) return error.InvalidBytecode;
             _ = try self.emit(node.source, .{ .relocate = .{ .source = args[0], .destination = args[1], .function = x.callee } });
-        } else if (self.parent.mode == .runtime and @import("memory_boundary.zig").classify(self.parent.graph, x.callee) != null) {
+        } else if (self.parent.mode != .compile_time and @import("memory_boundary.zig").classify(self.parent.graph, x.callee) != null) {
             _ = try self.emit(node.source, .{ .memory_call = .{ .outputs = outputs, .function = x.callee, .operation = @import("memory_boundary.zig").classify(self.parent.graph, x.callee).?, .args = args } });
-        } else if (f.flags.is_c_abi and self.parent.mode == .runtime) {
+        } else if (f.flags.is_c_abi and self.parent.mode != .compile_time) {
             @import("host_signature.zig").validate(self.parent.graph, x.callee) catch
                 return self.parent.reject(node.source, "foreign call outside the scalar host boundary");
             const host_index: u32 = for (self.parent.host_functions.items, 0..) |function, index| {
@@ -1410,7 +1420,7 @@ const FunctionLower = struct {
                     _ = try self.emit(node.source, .{ .integer_cast = .{ .dst = dst, .src = source_slot, .from = source_kind, .to = target_kind } });
                     return dst;
                 }
-                if (self.parent.mode != .runtime or target != .pointer or !types.isBuiltin(self.parent.graph, from, .UIntNative) or
+                if (self.parent.mode == .compile_time or target != .pointer or !types.isBuiltin(self.parent.graph, from, .UIntNative) or
                     (self.safety_primitive != .establish_inherited_reference and self.safety_primitive != .establish_allocation_slot))
                     return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
                 const needs_cleanup = self.parent.cleanup_types[@intFromEnum(target.pointer.child)];

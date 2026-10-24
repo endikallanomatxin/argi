@@ -38,6 +38,20 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     lower.annotations = &checker.annotations;
     lower.diagnostics = diagnostics;
     const function = graph.function(entry);
+    var dependencies = try @import("../4_semantics/global/reachability.zig").dependencyUnit(temporary, graph, &.{entry});
+    defer dependencies.deinit();
+    var host_entry = false;
+    var functions = dependencies.values.keyIterator();
+    while (functions.next()) |id| if (graph.function(id.*).flags.is_comptime_host_entry) {
+        host_entry = true;
+        break;
+    };
+    if (host_entry) {
+        lower.mode = .compile_time_host;
+        var uses = @import("../4_semantics/global/once_verify.zig").Uses.init(temporary);
+        defer uses.deinit();
+        try @import("../4_semantics/global/once_verify.zig").verifyContinuation(temporary, graph, diagnostics, entry, &uses);
+    }
     for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {
         if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationInput;
     }
@@ -53,7 +67,15 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
         for (graph.fields.items[nested.output.start..][0..nested.output.len]) |field|
             if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationResult;
     }
-    var executor = try Vm.init(temporary, program, budget.*);
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var output = std.Io.File.stdout().writerStreaming(io, &.{});
+    var errors = std.Io.File.stderr().writerStreaming(io, &.{});
+    var environment: @import("comptime_host.zig").Environment = .{ .output = .{ .writer = &output.interface, .error_writer = &errors.interface } };
+    const bindings = environment.bindings();
+    var executor = if (host_entry)
+        try Vm.initWithHost(temporary, program, budget.*, &bindings)
+    else
+        try Vm.init(temporary, program, budget.*);
     defer executor.deinit();
     defer {
         budget.instructions -|= executor.steps;

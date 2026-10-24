@@ -271,6 +271,18 @@ const State = struct {
 
     fn walkCall(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
+        if (function.flags.is_comptime_host_entry) {
+            // Every explicit host entry owns its acquisition scope, including
+            // nested entries executed within the same VM invocation.
+            const outer = self.seen_once;
+            self.seen_once = Uses.init(self.allocator);
+            defer {
+                self.seen_once.deinit();
+                self.seen_once = outer;
+            }
+            try self.walkFunction(callee);
+            return;
+        }
         if (function.flags.is_once and !try self.consumeOnce(call_node, callee)) return;
         try self.walkFunction(callee);
     }

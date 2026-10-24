@@ -91,8 +91,13 @@ external inputs must be tracked as build dependencies before enabling them.
 > specialization results, including across interactive submissions.
 > Entry results can supply integer specialization arguments; dependency readiness
 > and suspended generic materialization use the existing compile-time scheduler.
-> Capturing other local compile-time-known values and host `System` execution
-> remain incomplete.
+> Concrete `System` entries use a checked resource scope shared with native
+> entry construction, including nested entries, defaults and `#if`. They support
+> stdout/stderr and context-owned allocation. Each invocation has its own `once`
+> acquisition scope, independently of the REPL runtime scope. Arguments are empty;
+> filesystem, environment, stdin, network, process, clock and entropy operations
+> remain disabled. Register build dependencies before enabling external reads.
+> `System` entries in generic templates remain incomplete.
 > Persistent sessions retain successful entry results. Rejected runtime captures
 > and aborted compile-time entries publish no session revision and do not poison
 > the accepted runtime state; reset starts a fresh execution context.

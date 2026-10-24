@@ -4,14 +4,11 @@ Release: [0.4](0.4.md). Current behavior: [usage](../docs/usage.md#experimental-
 
 ## Compile-time host
 
-- Implement `#run (.system: System)` using the existing execution host boundary.
-  Define permitted host effects and build dependencies before enabling external I/O.
-  Use checked caller-owned resource storage: `system/68` proves initialization
-  and `system/69X` rejects escaping its lifetime. Keep user assumptions inside
-  the entry; resource construction must not install them in its lexical scope.
-  Verify once acquisitions separately for each compile-time invocation. The
-  evaluator currently rejects once/foreign bodies and nonconstant inputs, so
-  enabling System requires an explicit host-entry path, not relaxing all entries.
+- Extend `System` entries to generic templates through the existing staged
+  materialization path; preserve compile-time captures and branch selection.
+- Audit host-entry rollback and repeated evaluation in persistent sessions.
+- Keep external reads disabled until their build dependencies are recorded.
+  The initial host policy provides empty arguments, stdout/stderr and VM allocation.
 
 ## Later
 

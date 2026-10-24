@@ -358,11 +358,13 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
             try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(graph, diagnostics, source), .semantic, "interactive command requires input '.{s}'; pass it explicitly or bind the required capability with assume before the call", .{graph.text(field.name)});
             return error.Reported;
         }
-        try once_verify.verifyContinuation(proof_allocator, graph, diagnostics, function, &proof.?.once);
     }
     // Each evaluation proves its closed dependency unit. Freeze requests before
     // caching summaries so published bodies already have their final meaning.
     try @import("comptime.zig").resolve(allocator, graph, diagnostics);
+    // Compile-time invocations own separate once-acquisition scopes. Count
+    // only the frozen runtime continuation against the persistent session.
+    if (continuation) |function| try once_verify.verifyContinuation(proof_allocator, graph, diagnostics, function, &proof.?.once);
     if (continuation) |function| try safety.analyzeContinuation(function, &proof.?.state) else try safety.analyze();
     var annotations = try safety.annotations.clone(allocator);
     errdefer annotations.deinit(allocator);

@@ -15301,3 +15301,35 @@ test "feature_tests/system/68_system_storage_initialization" {
 test "feature_tests/system/69X_system_storage_escape" {
     try buildExpectFailWithoutNoise("tests/feature_tests/system/69X_system_storage_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
 }
+
+test "feature_tests/execution/275_comptime_system_entry" {
+    const built = try buildResult("tests/feature_tests/execution/275_comptime_system_entry");
+    defer std.testing.allocator.free(built.stdout);
+    defer std.testing.allocator.free(built.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    try expect(std.mem.count(u8, built.stdout, "compile-time host") == 1);
+    try runExpect("tests/feature_tests/execution/275_comptime_system_entry", 42);
+    try vmExpect("tests/feature_tests/execution/275_comptime_system_entry", 42, null);
+}
+
+test "feature_tests/execution/276X_comptime_system_host_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/276X_comptime_system_host_operation", "host operation that is not enabled for compile-time execution", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/277X_comptime_system_reference_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/277X_comptime_system_reference_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/278X_comptime_system_missing_dependency" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/278X_comptime_system_missing_dependency", "omitted inputs have unavailable reach defaults", "failed without a diagnostic");
+}
+
+test "argi repl evaluates independent System entries" {
+    const commands =
+        \\first ::= #run (.system: System) -> (.value: Int32) { value = 40 }
+        \\second ::= #run (.system: System) -> (.value: Int32) { value = 2 }
+        \\first + second
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n");
+}

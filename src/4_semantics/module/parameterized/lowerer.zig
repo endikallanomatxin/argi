@@ -85,7 +85,8 @@ pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer
     defer context.bindings.deinit();
     const entry = tree.comptimeEntry(node).?;
     const empty = try context.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
-    if (entry.input) |syntax| if (tree.structTypeLiteral(syntax).?.fields.len != 0) return error.UnsupportedParameterizedEntryInput;
+    const input = if (entry.input) |syntax| try context.lowerType(syntax, false) else empty;
+    const input_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.input) |syntax| try context.seedFunctionBindings(syntax, .constant) else .{ .start = 0, .len = 0 };
     const output = if (entry.output) |syntax| try context.lowerType(syntax, false) else empty;
     const output_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.output) |syntax| try context.seedFunctionBindings(syntax, .variable) else .{ .start = 0, .len = 0 };
     const body = try context.lowerBlock(entry.body);
@@ -94,7 +95,8 @@ pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer
         .is_comptime_entry = true,
         .concrete_function = function,
         .parameters = .{ .start = 0, .len = 0 },
-        .input = empty,
+        .input = input,
+        .input_bindings = input_bindings,
         .output = output,
         .body = body,
         .output_bindings = output_bindings,

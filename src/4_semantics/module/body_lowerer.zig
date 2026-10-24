@@ -114,6 +114,7 @@ const Context = struct {
     current_function: ?entities.ModuleFunctionId = null,
     temporary_declarations: ?*std.array_list.Managed(entities.ModuleNodeId) = null,
     entry_parent: ?*Context = null,
+    generated_source: ?primitives.SourceRef = null,
     entry_captures: std.ArrayList(struct { name: primitives.StringRange, ty: entities.ModuleTypeId, value: entities.ModuleNodeId, local: entities.ModuleBindingId }) = .empty,
 
     fn lowerFunctions(self: *Context) !Stats {
@@ -820,7 +821,6 @@ const Context = struct {
         if (input.len != 0) {
             if (input.len != 1 or !std.mem.eql(u8, self.graph.text((try views.fieldView(self.graph, @enumFromInt(input.start))).name), "system"))
                 return self.foreignOptionError(node, "compile-time entries accept no inputs or one '.system: System' input; pass ordinary arguments to functions inside the entry body");
-            return self.foreignOptionError(node, "compile-time System entry execution is not implemented yet");
         }
         const output = try self.entryFields(entry.output);
         const declaration_id: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
@@ -863,6 +863,9 @@ const Context = struct {
         defer body.scope_marks.deinit();
         try body.seedGlobalModuleAliases();
         try body.pushScope();
+        var entry_inputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
+        defer entry_inputs.deinit();
+        try body.bindInterface(input, .constant, &entry_inputs);
         var outputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
         defer outputs.deinit();
         try body.bindInterface(output, .variable, &outputs);
@@ -878,12 +881,17 @@ const Context = struct {
         defer captured_bindings.deinit();
         const captured_fields_start: u32 = @intCast(self.graph.fields.items.len + self.graph.structural_fields.items.len + self.graph.semantic.fields.items.len);
         const captured_values_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        for (0..input.len) |index| {
+            const field = try views.fieldView(self.graph, @enumFromInt(input.start + @as(u32, @intCast(index))));
+            _ = try self.writer.addField(field);
+            try captured_bindings.append(entry_inputs.items[index]);
+        }
         for (body.entry_captures.items) |capture| {
             _ = try self.writer.addField(.{ .name = capture.name, .source = self.sourceRef(node), .ty = capture.ty });
             try captured_bindings.append(capture.local);
             try self.graph.semantic.value_fields.append(self.allocator, .{ .name = capture.name, .value = capture.value });
         }
-        self.graph.functions.items[@intFromEnum(function_id)].input = .{ .start = captured_fields_start, .len = @intCast(body.entry_captures.items.len) };
+        self.graph.functions.items[@intFromEnum(function_id)].input = .{ .start = captured_fields_start, .len = input.len + @as(u32, @intCast(body.entry_captures.items.len)) };
         const input_bindings = try self.writer.appendBindingRefs(captured_bindings.items);
         try self.graph.semantic.function_semantics.append(self.allocator, .{
             .function = function_id,
@@ -896,6 +904,9 @@ const Context = struct {
             (try views.fieldView(self.graph, @enumFromInt(output.start))).ty
         else
             try self.writer.addResolvedType(.{ .structural = .{ .fields = .{ .start = output.start, .len = output.len } } });
+        if (input.len != 0) {
+            return self.lowerSystemEntryWrapper(node, function_id, output, result_type, body.entry_captures.items);
+        }
         const arguments = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = captured_values_start, .len = @intCast(body.entry_captures.items.len) } } });
         const result = try self.resolved(node, result_type, .{ .function_call = .{ .callee = function_id, .input = arguments.node } });
         if (staged) _ = try self.writer.addPendingOperation(.{ .resolve_entry_call = .{ .node = result.node, .callee = function_id } });
@@ -904,6 +915,118 @@ const Context = struct {
         // separately freezable request with no argument environment.
         if (self.entry_parent == null)
             try self.graph.semantic.comptime_requests.append(self.allocator, result.node);
+        return result;
+    }
+
+    // A System entry is called from an ordinary checked owner scope. Its
+    // resources are locals, never external VM inputs or compiler constants.
+    fn lowerSystemEntryWrapper(self: *Context, syntax: syn.NodeIndex, callee: entities.ModuleFunctionId, output: graph_mod.FieldRange, result_type: entities.ModuleTypeId, captures: anytype) !Lowered {
+        const source = self.sourceRef(syntax);
+        const declaration: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
+        const function: entities.ModuleFunctionId = @enumFromInt(self.graph.functions.items.len);
+        const spelling = try std.fmt.allocPrint(self.allocator, "_comptime_host_{d}_{d}", .{ self.file_index, source.offset });
+        defer self.allocator.free(spelling);
+        const name = try self.writer.addString(spelling);
+        try self.graph.declarations.append(self.allocator, .{ .kind = .function, .name = name, .source_offset = source.offset, .module_file_index = self.file_index, .function_id = function });
+        self.graph.generated_declaration_count += 1;
+        const input_start: u32 = @intCast(self.graph.fields.items.len + self.graph.structural_fields.items.len + self.graph.semantic.fields.items.len);
+        for (captures) |capture| _ = try self.writer.addField(.{ .name = capture.name, .source = source, .ty = capture.ty });
+        const input: graph_mod.FieldRange = .{ .start = input_start, .len = @intCast(captures.len) };
+        try self.graph.functions.append(self.allocator, .{ .declaration = declaration, .input = input, .output = output });
+
+        const text = "bootstrap() -> () := {\n" ++ @embedFile("../../0_commands/system_scope.rg") ++ "}\n";
+        var diagnostics = diagnostics_mod.Diagnostics.init(&self.allocator, &.{});
+        defer diagnostics.deinit();
+        var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(self.allocator, &diagnostics, text, @enumFromInt(0));
+        defer tokenizer.deinit();
+        _ = try tokenizer.tokenize();
+        const file = syn.FileSyntaxTree.initOwnedTokens(@enumFromInt(0), tokenizer.takeTokens());
+        var parser = @import("../../3_syntax/syntaxer.zig").Syntaxer.initFile(self.allocator, file, text, &diagnostics);
+        var tree = try parser.parse();
+        defer tree.deinit(self.allocator);
+        var body: Context = .{
+            .allocator = self.allocator,
+            .graph = self.graph,
+            .files = self.files,
+            .diagnostics = self.diagnostics,
+            .writer = writer_mod.Writer.init(self.allocator, self.graph),
+            .bindings = std.array_list.Managed(NamedBinding).init(self.allocator),
+            .refinements = std.array_list.Managed(RefinedValue).init(self.allocator),
+            .module_aliases = std.array_list.Managed(type_lowerer.LexicalModuleAlias).init(self.allocator),
+            .scope_marks = std.array_list.Managed(ScopeMark).init(self.allocator),
+            .file_index = self.file_index,
+            .tree = &tree,
+            .source = text,
+            .current_function = function,
+            .generated_source = source,
+        };
+        defer body.bindings.deinit();
+        defer body.refinements.deinit();
+        defer body.module_aliases.deinit();
+        defer body.scope_marks.deinit();
+        body.writer.pending_owner_function = function;
+        var inputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
+        defer inputs.deinit();
+        var outputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
+        defer outputs.deinit();
+        try body.bindInterface(input, .constant, &inputs);
+        try body.bindInterface(output, .variable, &outputs);
+        const block = try body.lowerBlock(tree.functionDeclaration(tree.roots[0]).?.body.?);
+        const original = self.graph.semantic.blocks.items[@intFromEnum(block)];
+        var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
+        defer nodes.deinit();
+        try nodes.appendSlice(self.graph.semantic.node_refs.items[original.nodes.start..][0..original.nodes.len]);
+        var system: ?entities.ModuleBindingId = null;
+        for (nodes.items) |id| {
+            const node = self.graph.semantic.nodes.items[@intFromEnum(id)];
+            if (node != .resolved or node.resolved.content != .binding_declaration) continue;
+            const binding = node.resolved.content.binding_declaration;
+            if (std.mem.eql(u8, self.graph.text(self.graph.semantic.bindings.items[@intFromEnum(binding)].name), "system")) system = binding;
+        }
+        const system_binding = system orelse return error.MissingSystemEntryStorage;
+        var values = std.array_list.Managed(entities.ValueField).init(self.allocator);
+        defer values.deinit();
+        const system_value = try body.resolved(syntax, self.graph.semantic.bindings.items[@intFromEnum(system_binding)].ty, .{ .binding_use = system_binding });
+        try values.append(.{ .name = try self.writer.addString("system"), .value = system_value.node });
+        for (captures, inputs.items) |capture, binding| {
+            const value = try body.resolved(syntax, capture.ty, .{ .binding_use = binding });
+            try values.append(.{ .name = capture.name, .value = value.node });
+        }
+        const value_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        try self.graph.semantic.value_fields.appendSlice(self.allocator, values.items);
+        const arguments = try body.resolved(syntax, null, .{ .struct_value_literal = .{ .fields = .{ .start = value_start, .len = @intCast(values.items.len) } } });
+        const call = try body.resolved(syntax, result_type, .{ .function_call = .{ .callee = callee, .input = arguments.node } });
+        _ = try body.writer.addPendingOperation(.{ .resolve_entry_call = .{ .node = call.node, .callee = callee } });
+        if (outputs.items.len <= 1) {
+            if (outputs.items.len == 1) {
+                const write = try body.resolved(syntax, result_type, .{ .assignment = .{ .binding = outputs.items[0], .value = call.node } });
+                try nodes.append(write.node);
+            } else try nodes.append(call.node);
+        } else {
+            // Evaluate multi-output bodies once, then project their results.
+            const temporary = try body.writer.addBinding(.{ .name = try self.writer.addString("#entry_result"), .source = source, .ty = result_type, .initialization = call.node, .mutability = .constant });
+            try nodes.append((try body.resolved(syntax, null, .{ .binding_declaration = temporary })).node);
+            const use = try body.resolved(syntax, result_type, .{ .binding_use = temporary });
+            for (outputs.items, 0..) |binding, index| {
+                const field = try views.fieldView(self.graph, @enumFromInt(output.start + @as(u32, @intCast(index))));
+                const value = try body.resolved(syntax, field.ty, .{ .struct_field_access = .{ .value = use.node, .field_name = field.name, .field_index = @intCast(index) } });
+                try nodes.append((try body.resolved(syntax, field.ty, .{ .assignment = .{ .binding = binding, .value = value.node } })).node);
+            }
+        }
+        self.graph.semantic.blocks.items[@intFromEnum(block)].nodes = try self.writer.appendNodeRefs(nodes.items);
+        self.graph.semantic.blocks.items[@intFromEnum(block)].ret_val = null;
+        try self.graph.semantic.function_semantics.append(self.allocator, .{
+            .function = function,
+            .body = block,
+            .input_bindings = try self.writer.appendBindingRefs(inputs.items),
+            .output_bindings = try self.writer.appendBindingRefs(outputs.items),
+            .flags = .{ .has_declared_body = true, .is_comptime_entry = true, .is_comptime_host_entry = true },
+        });
+        const outer_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        for (captures) |capture| try self.graph.semantic.value_fields.append(self.allocator, .{ .name = capture.name, .value = capture.value });
+        const outer_arguments = try self.resolved(syntax, null, .{ .struct_value_literal = .{ .fields = .{ .start = outer_start, .len = @intCast(captures.len) } } });
+        const result = try self.resolved(syntax, result_type, .{ .function_call = .{ .callee = function, .input = outer_arguments.node } });
+        if (self.entry_parent == null) try self.graph.semantic.comptime_requests.append(self.allocator, result.node);
         return result;
     }
 
@@ -1711,6 +1834,7 @@ const Context = struct {
             .tree = self.tree,
             .source = self.source,
             .module_aliases = self.module_aliases.items,
+            .generated_source = self.generated_source,
         };
     }
 
@@ -1734,7 +1858,7 @@ const Context = struct {
     }
 
     fn sourceRef(self: *const Context, node: syn.NodeIndex) primitives.SourceRef {
-        return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
+        return self.generated_source orelse .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
     }
 
     fn nextNodeId(self: *const Context) entities.ModuleNodeId {

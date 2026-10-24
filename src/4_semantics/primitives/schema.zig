@@ -171,7 +171,7 @@ pub const SafetyPrimitive = enum {
     prepare_allocation_metadata,
 };
 
-pub const FunctionFlags = packed struct(u16) {
+pub const FunctionFlags = packed struct(u32) {
     is_once: bool = false,
     is_test: bool = false,
     has_declared_body: bool = false,
@@ -184,6 +184,8 @@ pub const FunctionFlags = packed struct(u16) {
     has_foreign_capability: bool = false,
     is_c_function_pointer: bool = false,
     is_comptime_entry: bool = false,
+    is_comptime_host_entry: bool = false,
+    reserved: u15 = 0,
     // Trusted metadata identities retain ordinary function-body safety.
     is_source_location_id: bool = false,
     is_source_location_resolver: bool = false,
