@@ -290,6 +290,7 @@ pub const FrontendPipeline = struct {
         // silently turn #run into an ordinary runtime call. Staged type/value
         // resolution must eventually schedule these same requests earlier.
         try @import("../execution/comptime.zig").resolve(self.allocator, &self.global_graph.?, self.diagnostics);
+        self.global_graph.?.comptime_requests.clearRetainingCapacity();
         return &self.global_graph.?;
     }
 

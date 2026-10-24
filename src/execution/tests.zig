@@ -2002,6 +2002,14 @@ test "bytecode typed session bindings persist across verified program revisions"
     try std.testing.expectError(error.ExecutionForeignSession, foreign.invoke(@enumFromInt(1), &.{}));
     try std.testing.expectEqual(cells, context.storage.cells);
     try std.testing.expectEqual(@as(i128, 7), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
+    var foreign_graph = try graph.clone(a);
+    defer foreign_graph.deinit(a);
+    var impersonator = try vm.Vm.initShared(a, .{ .graph = &foreign_graph, .functions = &functionPointers(&read_functions), .session = interface }, limits, &context);
+    defer impersonator.deinit();
+    const impersonator_cells = context.storage.cells;
+    try std.testing.expectError(error.ExecutionForeignSession, impersonator.invoke(@enumFromInt(1), &.{}));
+    try std.testing.expectEqual(impersonator_cells, context.storage.cells);
+    try std.testing.expectEqual(@as(i128, 7), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
     var malformed = b.Program{ .graph = &graph, .functions = &functionPointers(&read_functions), .session = null };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
     const duplicates = [_]b.SessionBinding{ bindings[0], bindings[0] };
@@ -2049,6 +2057,7 @@ test "bytecode session moves update persistent cleanup rather than frame flags" 
     try context.storage.initializeSession(persistent, 0, .{ .integer = 42 });
     try context.bindings.put(context.arena.allocator(), @enumFromInt(0), persistent.frame);
     context.namespace = interface.namespace;
+    context.semantic_graph = &graph;
     const reference = @import("../5_codegen/bytecode/value.zig").Reference{ .context = context.storage.context, .frame = persistent.frame, .root = 0, .path = &.{}, .mutability = .read_write };
     _ = try context.storage.cleanupSet(reference, true);
     var executor = try vm.Vm.initShared(a, program, .{ .value_cells = 1000 }, &context);
@@ -2822,6 +2831,7 @@ test "bytecode repeated cleanup plans traverse indexed flags with bounded code" 
     try context.storage.prepareStorage(storage.frame, 0, vacant);
     try context.bindings.put(context.arena.allocator(), @enumFromInt(0), storage.frame);
     context.namespace = @enumFromInt(0);
+    context.semantic_graph = &graph;
     const reference: @import("../5_codegen/bytecode/value.zig").Reference = .{ .context = context.storage.context, .frame = storage.frame, .root = 0, .path = &.{}, .mutability = .read_write };
     _ = try context.storage.cleanupSet(reference, true);
     var executor = try vm.Vm.initShared(a, program, .{ .value_cells = 10000 }, &context);

@@ -23,7 +23,9 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     const owning_types = try @import("../cleanup_layout.zig").owningTypes(allocator, program.graph);
     defer allocator.free(owning_types);
     if (!program.graph.target.isNative()) return error.UnsupportedExecutionTarget;
-    if (program.functions.len != program.graph.functions.items.len) return error.InvalidBytecode;
+    // A published unit can predate later declarations in the shared graph.
+    // Its own function table and every call still have to verify independently.
+    if (program.functions.len > program.graph.functions.items.len) return error.InvalidBytecode;
     if (program.session) |session| {
         for (session.bindings, 0..) |binding, index| {
             if (@intFromEnum(binding.binding) >= program.graph.bindings.items.len or

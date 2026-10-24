@@ -1495,17 +1495,18 @@ test "interactive definitions preserve semantic identities without retaining exe
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitDefinitions("answer := () -> (.value: Int32) { value = 42 }");
-    try std.testing.expectEqual(@as(usize, 0), session.compiler.versions.items.len);
+    const shared_graph = &session.compiler.semantic.relocation.graph;
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.runtime.integer);
-    try std.testing.expectEqual(@as(usize, 1), session.compiler.versions.items.len);
-    const executable = session.compiler.versions.items[0];
+    try std.testing.expectEqual(@as(usize, 1), session.runtime.units.items.len);
+    const executable = session.runtime.units.items[0];
+    try std.testing.expect(shared_graph == &session.compiler.semantic.relocation.graph);
     try session.submitDefinitions("forward := () -> (.value: Int32) { value = answer() }");
-    try std.testing.expectEqual(@as(usize, 1), session.compiler.versions.items.len);
-    try std.testing.expect(session.compiler.versions.items[0] == executable);
+    try std.testing.expectEqual(@as(usize, 1), session.runtime.units.items.len);
+    try std.testing.expect(session.runtime.units.items[0] == executable);
     const revision = session.compiler.revision;
     try std.testing.expectError(error.DuplicateSessionDeclaration, session.submitDefinitions("answer := () -> (.value: Int32) { value = 7 }"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("forward()")).?.value.runtime.integer);
-    try std.testing.expectEqual(@as(usize, 2), session.compiler.versions.items.len);
+    try std.testing.expectEqual(@as(usize, 2), session.runtime.units.items.len);
     try session.close();
 }

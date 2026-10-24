@@ -22,7 +22,8 @@ pub fn resolve(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diag
             return error.Reported;
         };
     }
-    graph.comptime_requests.clearRetainingCapacity();
+    // The owner releases this queue only after semantic publication. Keeping
+    // its tail intact makes evaluation reversible by an enclosing transaction.
 }
 
 // The staged frontend evaluates one ready request without touching unrelated

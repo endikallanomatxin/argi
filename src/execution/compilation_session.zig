@@ -78,21 +78,20 @@ const TemporalProof = struct {
     }
 };
 
-pub const Version = struct {
+pub const CheckedUnit = struct {
     annotations: @import("../4_semantics/safety/annotations.zig").Annotations = .{},
-    graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph,
+    graph: *const @import("../4_semantics/global/graph.zig").GlobalSemanticGraph,
     stats: sema.Stats,
-    unit: ?@import("../4_semantics/global/reachability.zig").FunctionSet = null,
+    unit: ?*const @import("../4_semantics/global/reachability.zig").FunctionSet = null,
 
-    fn deinit(self: *Version, allocator: std.mem.Allocator) void {
-        if (self.unit) |*unit| unit.deinit();
+    fn deinit(self: *CheckedUnit, allocator: std.mem.Allocator) void {
         self.annotations.deinit(allocator);
-        self.graph.deinit(allocator);
         self.* = undefined;
     }
 };
 
-/// Retains accepted semantic construction and immutable checked graph versions.
+/// Owns one incremental semantic graph. Checked candidates borrow its stable
+/// identities; executable units never retain a historical graph snapshot.
 /// Initialize in final storage before preparing candidates. ModuleSG prefixes
 /// and their immutable source metadata are borrowed and must outlive this owner.
 /// VM storage and execution are separate: preparing a candidate executes no
@@ -100,7 +99,6 @@ pub const Version = struct {
 pub const CompilationSession = struct {
     allocator: std.mem.Allocator,
     semantic: *sema.Session,
-    versions: std.ArrayList(*Version) = .empty,
     revision: u64 = 0,
     namespace: bytecode.SessionNamespace,
     temporal: ?*TemporalProof = null,
@@ -111,7 +109,7 @@ pub const CompilationSession = struct {
         revision: u64,
         semantic: ?*sema.Session,
         transaction: ?sema.Session.Transaction = null,
-        checked: ?*Version,
+        checked: ?*CheckedUnit,
         temporal: ?*TemporalProof = null,
         is_exit: bool = false,
         entry: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId = null,
@@ -175,11 +173,6 @@ pub const CompilationSession = struct {
 
     pub fn deinit(self: *CompilationSession) void {
         if (self.temporal) |proof| proof.release();
-        for (self.versions.items) |version| {
-            version.deinit(self.allocator);
-            self.allocator.destroy(version);
-        }
-        self.versions.deinit(self.allocator);
         self.semantic.deinit();
         self.allocator.destroy(self.semantic);
         self.* = undefined;
@@ -255,47 +248,30 @@ pub const CompilationSession = struct {
         if (continuation) |function| try candidate.retainContinuationBindings(function);
         const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
         errdefer if (proof) |owned| owned.release();
-        var checked = try checkedSnapshot(candidate, self.allocator, diagnostics, continuation, proof);
+        var checked = try checkUnit(candidate, self.allocator, diagnostics, continuation, proof);
         errdefer checked.deinit(self.allocator);
-        const version = try self.allocator.create(Version);
-        version.* = checked;
+        const checked_unit = try self.allocator.create(CheckedUnit);
+        checked_unit.* = checked;
         const transaction = draft.transaction;
         draft.transaction = null;
         draft.semantic = null;
-        return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .transaction = transaction, .checked = version, .temporal = proof, .is_exit = exit_bindings != null, .entry = continuation };
+        return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .transaction = transaction, .checked = checked_unit, .temporal = proof, .is_exit = exit_bindings != null, .entry = continuation };
     }
 
-    /// Publish the single checked transaction based on the accepted revision.
-    /// Reserve first: allocation failure leaves the transaction open. Retain
-    /// older graphs because published bytecode can still borrow their metadata.
+    /// Publish only after every fallible preparation and lowering step succeeds.
+    /// Executable descriptors have already copied their required proofs. They
+    /// borrow the shared graph object, never this temporary checked candidate.
     pub fn accept(self: *CompilationSession, candidate: *Candidate) !void {
-        return self.acceptChecked(candidate, .retain);
-    }
-
-    /// Publish checked semantic definitions without retaining an executable
-    /// snapshot. No bytecode or external reader may borrow candidate.checked
-    /// after this call. Previously retained executable graphs stay unchanged.
-    pub fn acceptDefinitions(self: *CompilationSession, candidate: *Candidate) !void {
-        if (candidate.entry != null or candidate.temporal != null or candidate.is_exit) return error.InvalidDefinitionCandidate;
-        return self.acceptChecked(candidate, .discard);
-    }
-
-    fn acceptChecked(self: *CompilationSession, candidate: *Candidate, snapshot: enum { retain, discard }) !void {
         if (candidate.owner != self or candidate.revision != self.revision or candidate.semantic != self.semantic or candidate.transaction == null or candidate.checked == null)
             return error.StaleCompilationCandidate;
         if (self.revision == std.math.maxInt(u64)) return error.CompilationRevisionLimit;
-        if (snapshot == .retain) try self.versions.ensureUnusedCapacity(self.allocator, 1);
-        // Every fallible publication step has succeeded. Nested speculation
-        // is closed, so accepted bodies no longer need their undo entries.
         candidate.transaction.?.commit();
         candidate.transaction = null;
-        if (snapshot == .retain) {
-            self.versions.appendAssumeCapacity(candidate.checked.?);
-        } else {
-            const checked = candidate.checked.?;
-            checked.deinit(self.allocator);
-            self.allocator.destroy(checked);
-        }
+        // Evaluation preserves this work queue until its transaction commits.
+        self.semantic.relocation.graph.comptime_requests.clearRetainingCapacity();
+        const checked = candidate.checked.?;
+        checked.deinit(self.allocator);
+        self.allocator.destroy(checked);
         self.revision += 1;
         if (candidate.temporal) |proof| {
             if (self.temporal) |previous_proof| previous_proof.release();
@@ -305,17 +281,19 @@ pub const CompilationSession = struct {
         candidate.semantic = null;
         candidate.checked = null;
     }
+
+    pub fn acceptDefinitions(self: *CompilationSession, candidate: *Candidate) !void {
+        if (candidate.entry != null or candidate.temporal != null or candidate.is_exit) return error.InvalidDefinitionCandidate;
+        return self.accept(candidate);
+    }
 };
 
-// Keep mutable construction open for subsequent submissions. Finalization,
-// temporal safety annotations and frozen constants belong to this independent
-// executable snapshot, using the ordinary compiler's proof and evaluator.
-fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, proof: ?*TemporalProof) !Version {
-    var publication: sema.Session = undefined;
-    try semantic.fork(&publication, allocator, diagnostics);
-    defer publication.deinit();
-    var result = try publication.finish();
-    errdefer result.deinit(allocator);
+// Finalization and checking operate in the caller's coordinated transaction.
+// The graph stays owned by Session; only execution proofs belong to this unit.
+fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, proof: ?*TemporalProof) !CheckedUnit {
+    const stats = try semantic.completeUnit();
+    const graph = &semantic.relocation.graph;
+    const unit: ?*const @import("../4_semantics/global/reachability.zig").FunctionSet = if (semantic.reachable) |*selected| selected else null;
     var temporary = std.heap.ArenaAllocator.init(allocator);
     defer temporary.deinit();
     // Rejected analysis can leave its candidate tables in scratch storage.
@@ -335,29 +313,28 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
         owned.state = working;
         owned.state.rebindAllocator(proof_allocator);
     }
-    var safety = Safety.init(proof_allocator, diagnostics, &result.graph);
+    var safety = Safety.init(proof_allocator, diagnostics, graph);
     safety.graph_allocator = allocator;
-    safety.unit = if (result.unit) |*unit| unit else null;
+    safety.unit = unit;
     defer safety.deinit();
     if (continuation) |function| {
-        const command = result.graph.function(function);
+        const command = graph.function(function);
         // Ordinary helpers may forward an unresolved reached capability as a
         // logical input. A top-level command has no caller to supply it.
         if (command.input.len != 0) {
-            const field = result.graph.fields.items[command.input.start];
-            const source = result.graph.declaration(command.declaration).source;
-            try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(&result.graph, diagnostics, source), .semantic, "interactive command requires input '.{s}'; pass it explicitly or bind the required capability with assume before the call", .{result.graph.text(field.name)});
+            const field = graph.fields.items[command.input.start];
+            const source = graph.declaration(command.declaration).source;
+            try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(graph, diagnostics, source), .semantic, "interactive command requires input '.{s}'; pass it explicitly or bind the required capability with assume before the call", .{graph.text(field.name)});
             return error.Reported;
         }
         try safety.analyzeContinuation(function, &proof.?.state);
-        try once_verify.verifyContinuation(proof_allocator, &result.graph, diagnostics, function, &proof.?.once);
+        try once_verify.verifyContinuation(proof_allocator, graph, diagnostics, function, &proof.?.once);
     } else try safety.analyze();
-    try @import("comptime.zig").resolve(allocator, &result.graph, diagnostics);
+    try @import("comptime.zig").resolve(allocator, graph, diagnostics);
     var annotations = try safety.annotations.clone(allocator);
     errdefer annotations.deinit(allocator);
     if (proof) |owned| try owned.seal(temporary.allocator());
-    result.graph.trimPoolCapacity(allocator);
-    return .{ .graph = result.graph, .stats = result.stats, .unit = result.unit, .annotations = annotations };
+    return .{ .graph = graph, .stats = stats, .unit = unit, .annotations = annotations };
 }
 
 test "compilation session publishes checked candidates and rejects stale revisions" {
@@ -386,13 +363,11 @@ test "compilation session publishes checked candidates and rejects stale revisio
     try session.accept(&candidate);
     try std.testing.expectEqual(@as(usize, 2), session.semantic.modules.len);
     try std.testing.expectEqual(@as(u64, 1), session.revision);
-    try std.testing.expectEqual(@as(usize, 1), session.versions.items.len);
     try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&candidate));
     var next = try session.prepare(&modules, &diagnostics);
     defer next.deinit();
     try session.accept(&next);
-    try std.testing.expectEqual(@as(usize, 2), session.versions.items.len);
-    try std.testing.expectEqual(@as(usize, 2), session.versions.items[0].graph.modules.items.len);
+    try std.testing.expectEqual(@as(usize, 2), session.semantic.relocation.graph.modules.items.len);
     try std.testing.expectEqual(@as(u64, 2), session.revision);
     try std.testing.expectEqual(namespace, session.namespace);
 }
@@ -430,7 +405,6 @@ test "compilation session rejects unsafe source without publishing definitions" 
     try std.testing.expect(local_escape);
     try std.testing.expectEqualDeep(saved, session.semantic.relocation.graph.checkpoint());
     try std.testing.expectEqual(@as(u64, 0), session.revision);
-    try std.testing.expectEqual(@as(usize, 0), session.versions.items.len);
     diagnostics.list.clearRetainingCapacity();
     var retry = try session.prepare(&.{}, &diagnostics);
     defer retry.deinit();
@@ -451,14 +425,12 @@ fn prepareWithAllocationFailures(allocator: std.mem.Allocator) !void {
     defer candidate.deinit();
     session.accept(&candidate) catch |err| {
         try std.testing.expectEqual(@as(u64, 0), session.revision);
-        try std.testing.expectEqual(@as(usize, 0), session.versions.items.len);
         try std.testing.expectEqual(@as(usize, 1), session.semantic.modules.len);
         try std.testing.expect(session.semantic.transaction_active);
         try std.testing.expect(candidate.semantic != null and candidate.checked != null);
         return err;
     };
     try std.testing.expectEqual(@as(u64, 1), session.revision);
-    try std.testing.expectEqual(@as(usize, 1), session.versions.items.len);
     try std.testing.expect(candidate.semantic == null and candidate.checked == null);
 }
 
@@ -466,7 +438,7 @@ test "compilation session preparation and acceptance release allocation failures
     try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareWithAllocationFailures, .{});
 }
 
-test "compilation session retains executable graph addresses across publications" {
+test "compilation session shares one graph across executable publications" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -474,25 +446,35 @@ test "compilation session retains executable graph addresses across publications
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
-    var module = try sourceModule(a, source, &diagnostics);
-    defer module.deinit(a);
-    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var modules: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
+    defer {
+        for (modules.items) |*module| module.deinit(a);
+        modules.deinit(a);
+    }
+    try modules.append(a, try sourceModule(a, source, &diagnostics));
     var session = try CompilationSession.init(a, &.{}, .{});
     defer session.deinit();
-    var first = try session.prepare(&modules, &diagnostics);
+    var first = try session.prepare(modules.items, &diagnostics);
     defer first.deinit();
     try session.accept(&first);
-    const graph = &session.versions.items[0].graph;
+    const graph = &session.semantic.relocation.graph;
     var compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, graph);
-    compiler.annotations = &session.versions.items[0].annotations;
+    // This fixture has no ownership transitions to lower.
     const program = try compiler.compile(@enumFromInt(0));
-    // Force several version-table reallocations after bytecode captured graph.
-    for (0..12) |_| {
-        var next = try session.prepare(&modules, &diagnostics);
+    // Grow semantic pools after bytecode captured the graph. Old units must
+    // still verify and execute, even though their tables predate these IDs.
+    const function_capacity = graph.functions.capacity;
+    for (0..24) |index| {
+        const extra = try std.fmt.allocPrint(a, "extra_{d} := () -> (.result: Int32) {{ result = 7 }}", .{index});
+        try modules.append(a, try sourceModule(a, extra, &diagnostics));
+        var next = try session.prepare(modules.items, &diagnostics);
         defer next.deinit();
         try session.accept(&next);
     }
-    try std.testing.expect(graph == &session.versions.items[0].graph);
+    try std.testing.expect(graph == &session.semantic.relocation.graph);
+    try std.testing.expect(graph.functions.capacity > function_capacity);
+    try std.testing.expect(program.graph == graph);
+    try std.testing.expect(program.functions.len < graph.functions.items.len);
     const execution = @import("vm.zig");
     var context = execution.Context.init(a, 1_000_000);
     defer context.deinit();
@@ -500,8 +482,7 @@ test "compilation session retains executable graph addresses across publications
     defer old_vm.deinit();
     const previous = try old_vm.invoke(@enumFromInt(0), &.{.{ .integer = 42 }});
     const identity = context.storage.context;
-    var current_compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, &session.versions.items[session.versions.items.len - 1].graph);
-    current_compiler.annotations = &session.versions.items[session.versions.items.len - 1].annotations;
+    var current_compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, &session.semantic.relocation.graph);
     const current_program = try current_compiler.compile(@enumFromInt(0));
     var current_vm = try execution.Vm.initShared(a, current_program, .{}, &context);
     defer current_vm.deinit();
@@ -591,7 +572,7 @@ test "continuation scopes retain direct owners and clean nested owners" {
     } else return error.MissingCommand;
     var candidate = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(@intFromEnum(command)));
     defer candidate.deinit();
-    const graph = &candidate.checked.?.graph;
+    const graph = candidate.checked.?.graph;
     var persistent_cleanup: usize = 0;
     var temporary_cleanup: usize = 0;
     for (graph.blocks.items) |block| {
@@ -618,7 +599,7 @@ test "continuation scopes retain direct owners and clean nested owners" {
     try std.testing.expect(stored.cleanup_flags[0]);
     var exit = try session.prepareExit(&modules, &diagnostics, @enumFromInt(@intFromEnum(exit_function)), &.{binding});
     defer exit.deinit();
-    const exit_graph = &exit.checked.?.graph;
+    const exit_graph = exit.checked.?.graph;
     const exit_body = exit_graph.blocks.items[@intFromEnum(exit_graph.functions.items[@intFromEnum(exit_function)].body.?)];
     try std.testing.expect(exit_body.nodes.len != 0);
     const first = exit_graph.node_refs.items[exit_body.nodes.start];
@@ -646,7 +627,7 @@ test "execution session publishes commands and runs checked exit before reset" {
     defer runtime.deinit();
     var command = try compiler.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
     defer command.deinit();
-    const checked = &command.checked.?.graph;
+    const checked = command.checked.?.graph;
     const binding = for (checked.bindings.items, 0..) |record, index| {
         if (std.mem.eql(u8, checked.text(record.name), "retained")) break @as(@import("../4_semantics/global/graph.zig").GlobalBindingId, @enumFromInt(index));
     } else return error.MissingBinding;
@@ -696,7 +677,7 @@ test "execution session resolves accepted bindings in later command modules" {
     try std.testing.expectEqual(@as(i128, 7), (try stored.get(0)).integer);
 }
 
-fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator, retain: bool) !void {
+fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
     const a = std.testing.allocator;
     const source =
         "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
@@ -717,7 +698,7 @@ fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator, retain:
     var candidate = try session.prepare(&.{module}, &diagnostics);
     defer candidate.deinit();
     try std.testing.expect(candidate.checked != null);
-    const graph = &candidate.checked.?.graph;
+    const graph = candidate.checked.?.graph;
     var consumed: usize = 0;
     for (graph.nodes.items, 0..) |node, index| if (node.content == .function_call) {
         for (candidate.checked.?.annotations.call(@enumFromInt(index)).consumed_auto_deinits) |cleanup| {
@@ -726,18 +707,13 @@ fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator, retain:
         }
     };
     try std.testing.expect(consumed != 0);
-    if (retain) try session.accept(&candidate) else try session.acceptDefinitions(&candidate);
-    try std.testing.expectEqual(@as(usize, if (retain) 1 else 0), session.versions.items.len);
+    try session.acceptDefinitions(&candidate);
     try std.testing.expectEqual(@as(u64, 1), session.revision);
     try std.testing.expect(session.semantic.relocation.graph.functions.items.len != 0);
 }
 
 test "definition publication owns checked annotations and releases failure paths" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{true});
-}
-
-test "semantic-only definition publication releases checked graphs and failure paths" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{false});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{});
 }
 
 test "unit selection retains dormant bodies and checks them when selected later" {
@@ -776,7 +752,6 @@ test "unit selection retains dormant bodies and checks them when selected later"
     try std.testing.expectError(error.Reported, draft.finishDefinitions(&.{module}, &diagnostics));
     try std.testing.expect(diagnostics.hasErrors());
     try std.testing.expect(session.semantic.relocation.graph.function(dormant.?).body != null);
-    try std.testing.expect(!session.versions.items[0].unit.?.contains(dormant.?));
 }
 
 test "unit selection preserves pending binding types for later materialization" {
@@ -810,12 +785,12 @@ test "unit selection preserves pending binding types for later materialization" 
     }
     try std.testing.expect(pending != null);
     const verify = @import("../4_semantics/global/verify.zig");
-    try verify.verifyUnit(&checked.graph, &checked.unit.?);
-    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verify.verifyGlobal(&checked.graph));
+    try verify.verifyUnit(checked.graph, checked.unit.?);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verify.verifyGlobal(checked.graph));
     var invalid_unit = try checked.unit.?.clone(a);
     defer invalid_unit.deinit();
     try invalid_unit.bindings.put(pending.?, {});
-    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verify.verifyUnit(&checked.graph, &invalid_unit));
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verify.verifyUnit(checked.graph, &invalid_unit));
     try session.accept(&candidate);
     const stable_semantic = session.semantic;
     const saved_graph = session.semantic.relocation.graph.checkpoint();
@@ -836,7 +811,7 @@ test "unit selection preserves pending binding types for later materialization" 
     defer selected.deinit();
     try std.testing.expect(selected.checked.?.unit.?.contains(helper));
     try std.testing.expect(!selected.checked.?.graph.isBindingTypeUnresolved(pending.?));
-    try std.testing.expect(checked.graph.isBindingTypeUnresolved(pending.?));
+    try std.testing.expect(selected.checked.?.graph == &session.semantic.relocation.graph);
     try std.testing.expect(selected.semantic.?.relocation.graph.checkpoint().function_rewrites_len != 0);
     try session.accept(&selected);
     try std.testing.expectEqual(@as(usize, 0), session.semantic.relocation.graph.checkpoint().function_rewrites_len);
@@ -944,6 +919,7 @@ test "compilation units do not inherit preceding command roots" {
     var previous = try session.prepareContinuation(&.{module}, &diagnostics, first);
     defer previous.deinit();
     const checked = previous.checked.?;
+    const first_body = checked.graph.function(first).body;
     try std.testing.expect(checked.unit.?.contains(first));
     try std.testing.expect(!checked.unit.?.contains(second));
     try session.accept(&previous);
@@ -951,10 +927,9 @@ test "compilation units do not inherit preceding command roots" {
     defer current.deinit();
     try std.testing.expect(current.checked.?.unit.?.contains(second));
     try std.testing.expect(!current.checked.?.unit.?.contains(first));
-    try std.testing.expectEqual(checked.graph.function(first).body, current.checked.?.graph.function(first).body);
+    try std.testing.expectEqual(first_body, current.checked.?.graph.function(first).body);
     try std.testing.expect(current.checked.?.graph.function(first).body != null);
-    try std.testing.expect(checked.unit.?.contains(first));
-    try std.testing.expect(!checked.unit.?.contains(second));
+    try std.testing.expect(current.checked.?.graph == &session.semantic.relocation.graph);
     try std.testing.expect(!diagnostics.hasErrors());
 }
 
@@ -989,4 +964,43 @@ test "semantic storage domain metadata is released with its graph owner" {
     try std.testing.expectEqual(@as(usize, 1), mapping.len);
     try std.testing.expectEqual(@as(u32, 0), mapping[0].paths[0].fields[0]);
     try std.testing.expect(!diagnostics.hasErrors());
+}
+
+fn rejectEvaluatedCandidate(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var diagnostic_arena = std.heap.ArenaAllocator.init(a);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
+    defer diagnostics.deinit();
+    var module = try sourceModule(a,
+        \\answer := () -> (.result: Int32) {
+        \\    frozen ::= #run () -> (.value: (.answer: Int32)) { value = (.answer = 42) }
+        \\    result = frozen.answer
+        \\}
+    , &diagnostics);
+    defer module.deinit(a);
+    var session = try CompilationSession.init(allocator, &.{}, .{});
+    defer session.deinit();
+    const graph = &session.semantic.relocation.graph;
+    const saved = graph.checkpoint();
+    {
+        var rejected = try session.prepare(&.{module}, &diagnostics);
+        defer rejected.deinit();
+        try std.testing.expect(rejected.checked.?.graph == graph);
+        try std.testing.expect(graph.comptime_requests.items.len != 0);
+        for (graph.comptime_requests.items) |request|
+            try std.testing.expect(graph.node(request).content == .struct_value_literal);
+    }
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+    var accepted = try session.prepare(&.{module}, &diagnostics);
+    defer accepted.deinit();
+    try session.accept(&accepted);
+    try std.testing.expectEqual(@as(usize, 0), graph.comptime_requests.items.len);
+    try std.testing.expectEqual(@as(u64, 1), session.revision);
+    try std.testing.expect(!diagnostics.hasErrors());
+}
+
+test "compilation session rolls back evaluated aggregate requests and allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, rejectEvaluatedCandidate, .{});
 }

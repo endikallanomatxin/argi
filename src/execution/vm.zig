@@ -46,7 +46,7 @@ const Frame = struct {
 };
 
 /// Execution identity and memory outlive individual verified programs. Session
-/// owners can invoke several program versions against this context sequentially.
+/// owners invoke immutable code units against one shared semantic graph.
 /// Cleanup remains checked language code; reset discards storage after cleanup
 /// or a terminal trap and never attempts to synthesize an unwind.
 pub const Context = struct {
@@ -59,6 +59,7 @@ pub const Context = struct {
     state: enum { fresh, ready, poisoned } = .fresh,
     running: bool = false,
     namespace: ?b.SessionNamespace = null,
+    semantic_graph: ?*const g.GlobalSemanticGraph = null,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, runtime_value.FrameId) = .empty,
     globals: std.AutoHashMapUnmanaged(GlobalKey, runtime_value.FrameId) = .empty,
     literal_bytes: std.StringHashMapUnmanaged(runtime_value.Reference) = .empty,
@@ -116,6 +117,7 @@ pub const Context = struct {
         self.arena = .init(self.allocator);
         self.state = .fresh;
         self.namespace = null;
+        self.semantic_graph = null;
         self.bindings = .empty;
         self.globals = .empty;
         self.literal_bytes = .empty;
@@ -128,9 +130,10 @@ pub const Context = struct {
         previous.deinit();
     }
 
-    fn checkNamespace(self: *const Context, session: ?b.Session) !void {
-        if (session) |interface| if (self.namespace) |namespace| {
-            if (namespace != interface.namespace) return error.ExecutionForeignSession;
+    fn checkNamespace(self: *const Context, program: *const b.Program) !void {
+        if (program.session) |interface| if (self.namespace) |namespace| {
+            if (namespace != interface.namespace or self.semantic_graph != program.graph)
+                return error.ExecutionForeignSession;
         };
     }
     fn globalKey(program: *const b.Program, binding: g.GlobalBindingId) GlobalKey {
@@ -279,11 +282,14 @@ pub const Vm = struct {
     }
     fn invokeFunction(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         if (self.context().running) return error.ExecutionContextBusy;
-        try self.context().checkNamespace(self.program.session);
+        try self.context().checkNamespace(&self.program);
         self.context().running = true;
         defer self.context().running = false;
         try self.context().ensureStorage();
-        if (self.program.session) |session| self.context().namespace = session.namespace;
+        if (self.program.session) |session| {
+            self.context().namespace = session.namespace;
+            self.context().semantic_graph = self.program.graph;
+        }
         self.steps = 0;
         errdefer self.context().state = .poisoned;
         const inputs = try self.context().storage.cloneValues(args);
@@ -421,12 +427,11 @@ pub const Vm = struct {
                         const origin = virtual.program.session orelse return error.ExecutionForeignSession;
                         if (namespace.namespace != origin.namespace) return error.ExecutionForeignSession;
                     } else if (virtual.program.session != null or unit.graph != virtual.program.graph) return error.ExecutionForeignSession;
-                    // Shared compilation namespaces preserve append-only type IDs.
-                    // Either frame can be older; compare in the longer retained prefix.
-                    const universe = if (unit.graph.types.items.len >= virtual.program.graph.types.items.len) unit.graph else virtual.program.graph;
+                    // Type IDs are comparable only in the same semantic graph.
+                    if (unit.graph != virtual.program.graph) return error.ExecutionForeignSession;
                     const selected = virtual.table;
                     const signature = &x.signature;
-                    if (!types.equal(universe, signature.virtual_type, selected.virtual_type) or signature.method_count != selected.methods.len) return error.ExecutionInvalidVirtual;
+                    if (!types.equal(unit.graph, signature.virtual_type, selected.virtual_type) or signature.method_count != selected.methods.len) return error.ExecutionInvalidVirtual;
                     const method = selected.methods[signature.method_index];
                     if (method.receiver_input_index != signature.receiver_input_index) return error.ExecutionInvalidVirtual;
                     const callee = virtual.program.functions[@intFromEnum(method.function)].?;
@@ -440,12 +445,12 @@ pub const Vm = struct {
                             receiver.mutability = permission;
                             value.* = .{ .reference = receiver };
                         } else {
-                            if (!types.equal(universe, f.slots[slot], callee.slots[input])) return error.ExecutionInvalidVirtual;
+                            if (!types.equal(unit.graph, f.slots[slot], callee.slots[input])) return error.ExecutionInvalidVirtual;
                             value.* = try slots.get(slot);
                         }
                     }
                     for (x.outputs, callee.outputs) |slot, output| {
-                        if (!types.equal(universe, f.slots[slot], callee.slots[output])) return error.ExecutionInvalidVirtual;
+                        if (!types.equal(unit.graph, f.slots[slot], callee.slots[output])) return error.ExecutionInvalidVirtual;
                     }
                     try frames.append(self.allocator, try self.frame(&virtual.program, callee, values, x.outputs));
                 },

@@ -66,14 +66,10 @@ fn mib(value: usize) f64 {
 fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario, modules: Modules, commands: usize, total_ns: u64) !void {
     const stats = session.runtime.stats;
     const backend_ns = stats.lowering_ns + stats.verification_ns + stats.execution_ns;
-    var checked_graphs: usize = 0;
-    for (session.compiler.versions.items) |version| checked_graphs += version.graph.storageBytes();
+    const semantic_graph = session.compiler.semantic.relocation.graph.storageBytes();
     var code: usize = 0;
     for (session.runtime.units.items) |arena| code += arena.queryCapacity();
     var proofs: usize = 0;
-    for (session.compiler.versions.items) |version| if (version.annotations.arena) |arena| {
-        proofs += arena.queryCapacity();
-    };
     var proof = session.compiler.temporal;
     while (proof) |entry| : (proof = entry.parent) proofs += entry.arena.queryCapacity();
     var dead_frames: usize = 0;
@@ -115,7 +111,7 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
         @tagName(scenario),          @tagName(modules),                          commands,
         ms(total_ns),                ms(total_ns -| backend_ns),                 ms(stats.lowering_ns),
         ms(stats.verification_ns),   ms(stats.execution_ns),                     mib(memory.live),
-        mib(memory.peak),            mib(checked_graphs),                        mib(code),
+        mib(memory.peak),            mib(semantic_graph),                        mib(code),
         mib(proofs),                 mib(session.sources.arena.queryCapacity()), mib(session.diagnostic_arena.queryCapacity()),
         runtime,                     dead_frames,                                stats.compiled_functions,
         stats.compiled_instructions, dead_frame_slot_bytes,                      live_frame_slot_bytes,
@@ -139,14 +135,10 @@ fn reportGraphPools(session: *const interactive.Interactive, commands: usize) vo
             .@"struct" => @hasField(field.type, "items") and @hasField(field.type, "capacity"),
             else => false,
         }) {
-            var payload: usize = 0;
-            var reserved: usize = 0;
-            for (session.compiler.versions.items) |version| {
-                const pool = @field(version.graph, field.name);
-                const width = @sizeOf(std.meta.Elem(@TypeOf(pool.items)));
-                payload += pool.items.len * width;
-                reserved += pool.capacity * width;
-            }
+            const pool = @field(session.compiler.semantic.relocation.graph, field.name);
+            const width = @sizeOf(std.meta.Elem(@TypeOf(pool.items)));
+            const payload = pool.items.len * width;
+            const reserved = pool.capacity * width;
             if (reserved != 0) std.debug.print("# graph_pool,{d},{s},{d},{d}\n", .{ commands, field.name, payload, reserved });
         }
     }
@@ -283,6 +275,6 @@ pub fn main(init: std.process.Init) !void {
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
     std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions] [memory-limit-MiB=2048] [--graph-pools]\n", .{});
-    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,checked_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes\n", .{});
+    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes\n", .{});
     try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools);
 }

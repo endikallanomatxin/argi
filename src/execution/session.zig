@@ -51,7 +51,7 @@ pub const Session = struct {
         var scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer scratch.deinit();
         const layout_start = profile.timestamp(self.profile_io);
-        const bindings = try @import("../5_codegen/bytecode/session_layout.zig").build(scratch.allocator(), &checked.graph, semantic.resolvers.expressions.session_bindings.items);
+        const bindings = try @import("../5_codegen/bytecode/session_layout.zig").build(scratch.allocator(), checked.graph, semantic.resolvers.expressions.session_bindings.items);
         profile.accumulate(self.profile_io, layout_start, &self.stats.lowering_ns);
         if (candidate.is_exit) return self.executeExit(candidate, function, bindings);
         return self.execute(candidate, function, bindings);
@@ -62,7 +62,7 @@ pub const Session = struct {
         if (self.context.running) return error.ExecutionContextBusy;
         if (candidate.owner != self.compiler or candidate.revision != self.compiler.revision or candidate.checked == null or candidate.semantic == null)
             return error.StaleCompilationCandidate;
-        const checked = &candidate.checked.?.graph;
+        const checked = candidate.checked.?.graph;
         if (@intFromEnum(function) >= checked.functions.items.len) return error.InvalidEntry;
         const command = checked.function(function);
         if (command.input.len != 0 or command.output.len != 0 or candidate.temporal == null or candidate.entry != function) return error.InvalidCommand;

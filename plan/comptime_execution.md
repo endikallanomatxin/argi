@@ -66,8 +66,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 ## Scalability
 
-- Remove the remaining checked-graph copies and retained historical versions.
-  Share GlobalSG identities with immutable Code Units as their pools grow.
+- Remove the temporary evaluation node-column copy; keep cleanup projection
+  identities bounded when rechecking previously completed bodies.
 - Reuse verified Safety bodies only with stable hypotheses; check caller facts
   independently.
   Keep Code Units immutable without copying whole function/type tables per command.

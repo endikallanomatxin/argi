@@ -7,8 +7,8 @@ const diagnostics_mod = @import("../1_base/diagnostic.zig");
 
 /// Owns immutable submitted source and syntax-free module graphs. Initialize in
 /// final storage. Diagnostics borrow source buffers, including rejected input,
-/// so this owner must outlive their use. Accepted module-prefix snapshots can
-/// borrow these graphs without replaying source or retaining syntax trees.
+/// so this owner must outlive their use. Incremental semantic sessions borrow
+/// these modules without replaying source or retaining syntax trees.
 pub const Sources = struct {
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,

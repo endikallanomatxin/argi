@@ -368,14 +368,14 @@ are outside command timings; the zero-command row includes their retained memory
 Frontend/publication time is total command time minus lowering,
 verification and execution; verification includes host-binding validation.
 Function/instruction totals reveal recompilation across commands.
-Append `--graph-pools` to report final retained checked-graph columns as comment
+Append `--graph-pools` to report the shared semantic graph columns as comment
 rows: `# graph_pool,commands,name,payload_bytes,reserved_bytes`. These rows
 exclude nested slices, lookup tables and safety arenas; they attribute flat
 pool backing only and do not add to the allocation totals above. The diagnostic
 runs after command timing and introduces no instrumentation in normal sessions.
 
 Live/peak bytes count requested allocator backing, including arena slabs, not
-RSS. Checked-graph payload excludes spare capacity and indexes; code, proof and
+RSS. Semantic-graph payload excludes spare capacity and indexes; code, proof and
 runtime arena counters identify retained components but are not a partition of
 total live memory. `live_acquisitions` and `live_acquired_bytes` count live VM
 regions and their extents; `retained_acquired_bytes` includes byte backing and
@@ -658,6 +658,15 @@ source arenas 0.49 MiB. The earlier saved Debug binary takes 1,054.5 ms at 100
 commands in a separate run. These are single samples, not a general speedup claim.
 Candidate preparation no longer forks semantics, but checked publication still
 copies graphs and the retained-memory curve remains nonlinear.
+
+After moving checked publication onto the shared graph, the same Debug
+minimal-call scenario takes 59.2, 569.2 and 21,371.1 ms at 10, 100 and 1,000
+commands. At 1,000 commands it retains 23.82 MiB (23.86 MiB peak), including
+0.60 MiB of semantic graph payload and 8.94 MiB of code arenas. Checked graph
+versions and their proof arenas are no longer retained. These are individual
+observations; frontend time remains nonlinear, and the 2,000 compiled functions
+still show that helper bytecode is regenerated. The CSV column is now named
+`semantic_graph_payload_MiB` and counts the one shared graph rather than copies.
 
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and
