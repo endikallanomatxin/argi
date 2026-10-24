@@ -53,8 +53,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 - Finish eliminating semantic graph queries from execution. External arguments,
   scalar operations, storage projections, variants and host signatures already use
-  prepared descriptors. Virtual compatibility still requires stable identities
-  across semantic refinement: choosing the first equal type per snapshot is unsafe.
+  prepared descriptors. Preserve the shared graph's stable semantic identities
+  when preparing further descriptors.
 - Complete native reference-evidence production for acquired storage, arrays,
   choices, propagation, lifecycle wrappers and bulk copies. Checked reference
   offsets and readonly demotion now preserve existing companions, including
@@ -66,15 +66,6 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 ## Scalability
 
-
-- Keep cleanup projection identities bounded when rechecking previously completed
-  bodies. Compile-time evaluation now discards its projections through nested
-  graph transactions before publishing constant outputs.
-- Safety body proofs now retain their execution annotations and the converged
-  function/virtual hypotheses consulted during checking. Publications are
-  transactional; continuations and caller temporal facts are always checked.
-  Symbolic summaries retain selector and dependency hypotheses separately.
-  Helper bytecode imports immutable verified origins without copying their tables.
 - Recover temporary metadata/frames only after all live dependents release them;
   preserve cross-unit virtual dispatch, references, cleanup and reset.
 - Continue measuring 10/100/1,000-command sessions, separating frontend, lowering,

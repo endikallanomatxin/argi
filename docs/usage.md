@@ -392,358 +392,74 @@ arena total. The memory limit bounds tracked requested bytes; a run that reaches
 it reports the last completed command and fails. Successful runs verify retained
 results and complete teardown.
 
-Current snapshot (`629b8044`, Zig 0.16, ReleaseSafe, Linux x86-64):
-
-| Session / command | 0 | 10 | 100 | 1,000 |
-|---|---:|---:|---:|---:|
-| Minimal / update | 0.05 MiB | 0.51 MiB | 8.13 MiB | 503.26 MiB |
-| Minimal / definitions | 0.05 MiB | 0.29 MiB | 2.30 MiB | 19.32 MiB |
-| Prelude / update | 151.53 MiB | 208.88 MiB | 727.92 MiB | Not reached |
-| Prelude / resources | 151.53 MiB | 225.71 MiB | 1,320.34 MiB | Not reached |
-
-Minimal sessions used a 2,048 MiB tracked limit; prelude sessions used 1,536 MiB.
-All processes also had a 3 GiB virtual-address limit. Prelude/update stopped
-with OutOfMemory after 170 commands, retaining 1,137.74 MiB after temporary
-allocation cleanup. Prelude/resources stopped after 111, retaining 1,510.21 MiB
-with a tracked peak of 1,535.69 MiB. The two limits and temporary allocations
-mean retained bytes alone do not establish the next command's required memory.
-These are bounded failures, not successful 1,000-command runs.
-
-At 100 resource commands, live acquired regions held 4,000 bytes. Checked-graph
-payload was 418.35 MiB, code arenas 481.83 MiB, proof arenas 0.68 MiB and the
-runtime arena 43,566,044 bytes. The run had compiled 3,300 functions and 76,600
-instructions cumulatively. Total command time was 7,099.8 ms: frontend/publication
-5,842.6 ms, lowering 513.5 ms, verification 680.0 ms and execution 63.7 ms.
-A separate 100-command run completed teardown with no tracked allocations left.
-Repeated semantic snapshots and retained code are the main measured costs;
-live resources and execution time do not explain the growth.
-
-Minimal/update completed 1,000 commands in 2,171.4 ms, retaining 267.96 MiB of
-checked-graph payload and 75.05 MiB of code arenas. Minimal/definitions completed
-in 1,754.5 ms and retained only 0.001 MiB of checked-graph payload. Both runs
-verified their final results and complete teardown. Single-run timings are
-observations, not performance guarantees or AOT compilation benchmarks.
-
-Separating lowering work tables from retained code and replacing empty function
-slots with optional immutable descriptor pointers gives the following matched
-ReleaseSafe samples under the same limits:
-
-| Workload | Previous live MiB | Current live MiB | Previous code MiB | Current code MiB |
-|---|---:|---:|---:|---:|
-| Minimal / 1,000 updates | 503.26 | 436.80 | 75.05 | 8.59 |
-| Prelude / 100 resources | 1,320.34 | 938.50 | 481.83 | 99.99 |
-
-Lowering's binding/drop maps, cleanup work list, loop patch lists and pending
-function lists now use temporary storage in sessions. It is released before
-verification and execution; instructions, projections and cleanup layouts retain
-their own backing. Published function tables share immutable descriptors without
-reserving a complete descriptor for every uncompiled graph function. Existing
-units retain their identities and remain immutable when the cache grows.
-
-Both samples preserve their compiled function/instruction counts, checked-graph
-payload and runtime storage, verify the retained results and finish with no tracked
-allocations left. The resource sample retains the same 100 acquisitions and
-4,000 acquired bytes. Command times were 2,270.4 ms for minimal updates and
-6,993.3 ms for resources; these single observations do not establish a speedup.
-The checked semantic snapshots remain a substantial unresolved scaling cost.
-
-Compact continuation proofs and released checker scratch previously reduced
-the ten-resource checkpoint from 319.47 to 229.35 MiB, including a reduction in
-proof arenas from 90.17 to 0.06 MiB. The current sample confirms that proof
-retention is no longer the dominant component. Further work should reduce
-snapshot and code duplication while preserving live identities and resources.
-
-Both definition and continuation publication now discard checker scratch after
-checking. Checked call annotations belong to their graph version; only a
-continuation's final temporal state needs a separate compact proof. Publishing a
-definition does not retain a second arena containing the complete safety analysis.
-
-Scalar host calls carry verified symbol and integer-range descriptors in bytecode.
-Linking checks these descriptors against the execution environment without
-reconstructing their signatures from the semantic graph. Virtual method tables
-also carry verified receiver permissions, so invocation does not inspect a
-method parameter type to determine its access.
-
-Finished call frames now make their slot buffers available to later frames of
-the same size. Frame identities remain retired, and reused cells and cleanup
-flags are reinitialized. Session and acquired storage are not retired by this
-mechanism. Cumulative execution-cell budgets are unchanged. A subsequent ten-command
-resource run in Debug retained 414,040 bytes of dead-frame slot buffers, versus
-4,920,696 bytes in the preceding ReleaseSafe sample. Runtime arena capacity was
-7.44 MiB versus 11.18 MiB, with the same 3,148 dead identities, 330 compiled
-functions and ten live acquisitions. These are requested storage counts across
-different optimization modes, not a timing comparison. The current ReleaseSafe
-measurements above include this reuse and the subsequent storage changes.
-
-Repeated acquired-reference establishment reuses an exact immutable view of the
-same region, byte offset, logical index, layout descriptor and endianness.
-Permissions remain on individual references, and release is checked before a
-view can be reused. A storage regression establishing 1,000 aliases previously
-retained 1,001 frames; it now retains one, with no additional execution cells.
-This does not intern layout descriptors across graph versions or identify
-resource cleanup obligations from byte addresses.
-
-Cleanup owners now retain shared immutable layouts instead of a concrete-path
-entry for every field and variant. LLVM and bytecode use the same preorder
-geometry; the VM follows verified layout projections without semantic-graph
-queries. In matched Debug ten-resource samples with a 1,024 MiB tracked limit,
-code arenas fell from 15.13 to 11.70 MiB and total retained memory from 226.66 to
-223.23 MiB. Runtime capacity, flag bytes, live resources and compiled instruction
-counts were unchanged; both runs closed normally with no tracked allocation
-retained. These single samples establish storage changes, not a speedup.
-
-Definition submissions now release their checked validation snapshots on
-publication; executable submissions retain the graph borrowed by their bytecode.
-Both paths use the same checks and atomic semantic publication. A Debug comparison
-with the `definitions` scenario and a 1,024 MiB tracked limit measured:
-
-| Definitions | Before retained MiB | After retained MiB |
-|---|---:|---:|
-| 10 | 0.42 | 0.29 |
-| 100 | 7.61 | 2.30 |
-| 1,000 | 480.43 | 19.32 |
-
-At 1,000 definitions, retained checked-graph payload fell from 303.28 MiB to
-0.001 MiB. Both runs called the final definition successfully and completed normal
-cleanup with no tracked memory left. Source arenas still retained 13.45 MiB, and
-analysis still repeats accumulated work; this removes unused snapshots rather
-than making definition analysis fully incremental. Single-run timings are not
-performance guarantees.
-
-
-Baseline before incremental snapshot consolidation (parent `6135a55a`, Zig 0.16.0,
-ReleaseSafe, Linux x86-64, Intel Core Ultra X7 358H). Single-process samples;
-timings are observations, not stable performance thresholds. Memory includes
-bootstrap state and is reported in MiB of requested backing:
-
-| Workload | Commands | Total ms | Live MiB | Source arena MiB | Checked graph payload MiB | Code arenas MiB |
-|---|---:|---:|---:|---:|---:|---:|
-| Minimal update | 10 | 15.9 | 0.85 | 0.25 | 0.04 | 0.10 |
-| Minimal update | 100 | 238.8 | 25.81 | 12.76 | 2.77 | 2.87 |
-| Minimal update | 1,000 | 3,278.5 | 2,517.86 | 1,576.08 | 267.96 | 261.90 |
-| Core update | 100 | 3,199.3 | 739.04 | 23.58 | 333.55 | 38.93 |
-| Minimal calls | 1,000 | 7,636.0 | 2,954.78 | 1,728.70 | 393.37 | 262.39 |
-
-At 1,000 minimal updates, frontend/publication took 3,125.4 ms, lowering 60.2 ms,
-verification 87.3 ms and execution 5.5 ms. Runtime storage retained 898,428 bytes
-and 1,001 dead frames. The call workload compiled 2,000 functions for 1,000
-commands, including the same helper on each command. Source snapshot storage,
-checked graphs and code-unit retention dominate these examples; VM execution
-and dead frame bytes are not the first scaling bottleneck.
-
-The 1,000-command samples used a 4,096 MiB limit, for example
-`./zig-out/bin/execution-benchmark 1000 minimal update 4096`. In that baseline,
-the default 2,048 MiB limit stops minimal updates after 954 commands and core
-updates after 296 commands. These failures are retained-memory measurements, not VM
-instruction-budget exhaustion.
-
-After sharing append-only module-prefix buffers and growing source indexes
-geometrically, the same 1,000 minimal updates retain 713.14 MiB: source arena
-13.45 MiB, diagnostic arena 0.87 MiB, checked graph payload 267.96 MiB and code
-arenas 261.90 MiB. The sample takes 2,328.1 ms (2,181.5 ms frontend/publication).
-Core at 100 commands retains 708.11 MiB. Retained memory is still not linear.
-That version preserved module headers for earlier snapshots and branched/rejected
-histories, along with source IDs and original diagnostic buffers.
-
-After verifier linear-state transfer, a 1,000-command minimal call sample
-retains 930.89 MiB (932.53 MiB peak) within a 1,536 MiB limit. Completed-frame
-slots account for 440,088 bytes, live-frame slots for 88 bytes, and logical frame
-records for 160,160 bytes. The entire runtime arena holds 2,220,156 bytes;
-checked-graph payload and code arenas account for 393.37 and 262.44 MiB.
-The run compiles 2,000 functions and 11,000 instructions: the helper is still
-regenerated for each command. This sample prioritizes snapshot/code reuse over
-frame-slot reclamation; it does not establish bounds for aggregate-heavy code.
-Observed total time is 24,358 ms, including 23,799 ms frontend/publication,
-242 ms lowering, 287 ms verification and 30 ms execution. Timing comparisons
-across these samples are not controlled benchmarks.
-
-Publishing function tables directly and copying them only when a retained lowerer
-adds a new function reduces the same 1,000-call sample to 743.70 MiB live
-(745.36 MiB peak). Code arenas fall from 262.44 to 75.26 MiB; checked graphs,
-proofs, frame storage and compiled function/instruction counts are unchanged.
-Observed total time is 23,019 ms, including 147 ms lowering. This removes one
-redundant table snapshot per command without reusing function bodies across
-commands; semantic snapshots remain the largest measured component.
-
-To isolate verifier allocation behavior, run
+For a synthetic verifier-only allocation probe, run
 `zig build benchmark-execution -Doptimize=ReleaseSafe -- --verifier`.
-It constructs linear functions and chains of diamonds with 10, 100 and 1,000
-Boolean slots. Each diamond has two paths merging before the next branch.
-Graph/code construction is excluded from the measured allocator. The output
-distinguishes cumulative requested bytes, peak live requested bytes and bytes
-still owned after verification; these are not RSS measurements.
+The run step builds and executes its own artifact; it does not update an older
+benchmark installed under `zig-out/bin`.
 
-One native ReleaseSafe sample reports:
+Each retained session owns one append-only semantic graph. Commands add to it
+inside coordinated transactions covering graph pools, completions, resolver
+caches and scheduling state. Rejection restores the accepted state. Unit
+reachability and execution annotations are separate from the graph; completing
+one unit does not discard unrelated function bodies.
 
-| Shape | Slots | Instructions | Requested bytes | Peak bytes | Retained bytes |
-|---|---:|---:|---:|---:|---:|
-| Linear | 10 | 11 | 681 | 539 | 0 |
-| Diamonds | 10 | 31 | 4,101 | 1,219 | 0 |
-| Linear | 100 | 101 | 3,021 | 2,789 | 0 |
-| Diamonds | 100 | 301 | 64,721 | 28,089 | 0 |
-| Linear | 1,000 | 1,001 | 26,421 | 25,289 | 0 |
-| Diamonds | 1,000 | 3,001 | 3,342,561 | 2,077,429 | 0 |
-
-Linear state transfer avoids one full slot vector per instruction. Joins still
-retain full vectors: the diamond workload grows with both join count and slot
-count. This synthetic sample identifies that remaining scaling cost; it does
-not establish its contribution to ordinary REPL workloads or justify changing
-the representation by itself. Observed verification time at 1,000 slots was
-0.86 ms for linear code and 27.52 ms for diamonds, without a timing threshold.
-
-The REPL and retained-session benchmark now use the process general-purpose
-allocator for backing storage, including small session tables, instead of
-sending each allocation directly to the page allocator. With the same
-`c42bc995` sources plus this allocator change, ReleaseSafe, Linux x86-64, and a
-2 GiB process virtual-memory limit, the 100-resource workload completed:
-
-| Backing allocator | Completed commands | Peak RSS MiB | Result |
-|---|---:|---:|---|
-| Page allocator | 95 | 1,922.6 | Out of memory |
-| Process allocator | 100 | 1,043.6 | Success |
-
-The successful run retained 908.55 MiB of requested backing, including 418.24 MiB
-of checked-graph payload, and released all tracked allocations at teardown.
-Its 100 live acquisitions held 4,000 bytes. This fixes excessive page allocation
-for small tables; it does not remove duplicated semantic snapshots. RSS includes
-allocator overhead and differs from requested-byte accounting. These are single
-bounded observations, not a general timing comparison. Both measurements used
-the exact benchmark binaries produced by `zig build benchmark-execution`;
-that run step does not update a previously installed `zig-out/bin` benchmark.
-
-The minimal 1,000-update workload still retained 436.28 MiB (267.96 MiB of
-checked-graph payload). Its peak RSS was 686.0 MiB with process allocation,
-compared with 528.3 MiB in the earlier page-allocator sample. General-purpose
-allocation therefore does not uniformly lower RSS; its benefit here is the
-resource workload's many small allocations. Snapshot retention remains unresolved.
-
-The pool diagnostic on the 100-resource sample attributes 418.24 MiB of retained
-checked-graph payload to 626.21 MiB of reserved flat-column capacity. Nodes
-account for 276.19 MiB of payload and 414.29 MiB reserved; strings account for
-35.69 MiB and 53.34 MiB, respectively. The 100-update minimal sample has
-1,176,448 node payload bytes and 1,775,984 reserved node bytes. These measurements
-identify both duplicated node prefixes and retained growth capacity as concrete
-follow-up targets; they do not establish that a moving shrink is safe for every
-published metadata reference.
-
-Retained checked snapshots now attempt to release unused flat-pool capacity
-in place after finalization. Allocators may decline; no pool is moved or copied
-by this step. With the same 100-resource benchmark and process allocator,
-reserved column capacity fell from 626.21 to 424.56 MiB and total requested live
-backing from 908.55 to 706.91 MiB (peak 923.86 to 724.44 MiB). Payload remained
-418.24 MiB, with the same 3,300 compiled functions, 76,600 instructions and 100
-live acquisitions holding 4,000 bytes. Both runs completed cleanup without
-tracked leaks. Command times were 4,347.1 and 4,371.8 ms; these single samples
-show no timing improvement. This removes retained growth room without solving
-duplicated prefixes. The operation is limited to retained execution snapshots;
-ordinary AOT compilation does not perform it.
-
-VM initialization prepares immutable external-input descriptors alongside
-bytecode verification. Invocations validate scalar widths, record/array shapes
-and selected choice payloads through those descriptors rather than traversing
-the semantic graph. External references and virtual handles remain rejected.
-Descriptors share repeated types and array element shapes, belong to the VM,
-and are released on its destruction; they are not persisted in session values.
-
-After preparing external-input descriptors, the 100-resource measurement still
-retained 706.91 MiB (peak 724.44 MiB), with unchanged code/resource counts and
-complete teardown. Verification/preparation took 512.3 ms versus 515.4 ms in
-the preceding sample; total command time was 4,326.6 versus 4,371.8 ms. These
-single observations show no material retained-memory change and do not establish
-a speedup. Input-free entries require no descriptor allocations.
-
-With coordinated candidate transactions, a Debug minimal-call run takes 62.6 ms,
-751.8 ms and 31,526.8 ms at 10, 100 and 1,000 commands. At 1,000 commands it
-retains 457.86 MiB: checked graph payload is 393.35 MiB, code arenas 8.94 MiB and
-source arenas 0.49 MiB. The earlier saved Debug binary takes 1,054.5 ms at 100
-commands in a separate run. These are single samples, not a general speedup claim.
-Candidate preparation no longer forks semantics, but checked publication still
-copies graphs and the retained-memory curve remains nonlinear.
-
-After moving checked publication onto the shared graph, the same Debug
-minimal-call scenario takes 59.2, 569.2 and 21,371.1 ms at 10, 100 and 1,000
-commands. At 1,000 commands it retains 23.82 MiB (23.86 MiB peak), including
-0.60 MiB of semantic graph payload and 8.94 MiB of code arenas. Checked graph
-versions and their proof arenas are no longer retained. These are individual
-observations; frontend time remains nonlinear, and the 2,000 compiled functions
-still show that helper bytecode is regenerated. The CSV column is now named
-`semantic_graph_payload_MiB` and counts the one shared graph rather than copies.
-
-With compact function/session tables and lazy cleanup identities, 1,000 Debug
-minimal calls retain 17.63 MiB (17.67 MiB peak), including 2.74 MiB of code
-arenas; total command time is 21,353.1 ms. At 100 commands, code arenas use
-0.27 MiB and live backing is 1.71 MiB. The 2,000 compiled functions and 11,000
-instructions remain unchanged: body reuse is still pending.
-
-The prelude/resources scenario at 100 strings retains 218.52 MiB (224.60 MiB
-peak), with 34.12 MiB of code arenas and 100 live acquisitions containing
-4,000 bytes. Before making session metadata lazy, the same scenario retained
-341.79 MiB with 157.39 MiB of code arenas. That intermediate run exposed cleanup
-projection trees being constructed for every persistent binding in every
-function, including unused bindings. Published units now keep only referenced
-session bindings, and functions construct only the cleanup identities they use.
-Both samples compile 3,400 functions and 80,500 instructions, and both release
-all tracked backing at teardown. The latest command time is 46,539.0 ms versus
-51,901.2 ms previously; these are individual observations, not a general speedup
-claim. Startup/core preparation and live owners remain included in retained
-memory, while old helper bodies and dead VM frames are still retained.
-
-Safety summary reuse is reported separately by `summary_evaluations`,
-`summary_reuses`, `summary_entries` and `summary_arenas_MiB`. Publications retain
-callee revisions, selector demands and virtual-contract hypotheses; rejected
-commands discard their candidates. Temporal body and caller checking remains
-fresh. In one Debug run, 100 resource commands reused 6,268 summaries and retained
-118 entries using 0.234 MiB of summary arenas. Total time was 43,527.5 ms and live
-backing 218.81 MiB. This is a single observation, not a controlled speedup claim;
-helper bytecode regeneration and repeated body checking still remain.
-
-Verified helper bodies now retain their originating Code Unit. Subsequent units
-import those bodies without relowering their dependency closures or rechecking
-their instructions. `reused_functions` counts imported entries; compiled-body
-and instruction counters include only new bodies. Each invocation links the
-origin units and initializes their globals before entering their frames.
-
-With this reuse, one Debug run of 100 resource commands compiles 130 bodies and
-1,874 instructions, versus 3,400 and 80,500 previously. Code arenas retain
-3.33 MiB instead of 34.12 MiB; total live backing is 188.01 MiB (192.08 MiB peak),
-and command time is 32,951.5 ms. All tracked backing is released at teardown.
-For 1,000 minimal calls, 999 entries are reused and 1,001 bodies compiled;
-retained backing remains 17.63 MiB, since these tiny bodies already fit inside
-per-unit arena blocks. These are individual observations. Repeated Safety body
-checking and dead runtime frames remain separate sources of work and memory.
-
-Bytecode reuse also checks the revision of each body proof in the imported
-call closure, including virtual-table methods and global-initializer helpers.
-A caller's summary can remain equal while a callee's proof changes; that change
-forces re-lowering instead of silently retaining the old callee. Revisions are
-transactional publication IDs, not semantic body versions. They retain no
-historical graph or proof snapshot in executable units.
-
-Incremental Safety also publishes per-function body proofs. Each proof owns its
-execution annotations and snapshots of the converged summaries and virtual
-signatures it consulted; a changed hypothesis forces checking again. The REPL
-continuation and each call's temporal facts are always checked. The counters
+Safety summaries retain selector, callee and virtual-contract hypotheses.
+Body proofs own their execution annotations and the converged hypotheses they
+consulted. A changed hypothesis requires checking again; continuations and
+caller temporal facts are always checked. `summary_evaluations`,
+`summary_reuses`, `summary_entries` and `summary_arenas_MiB` report summary work.
 `bodies_checked`, `bodies_reused`, `body_proof_entries` and
-`body_proof_arenas_MiB` distinguish this work from summary inference.
+`body_proof_arenas_MiB` report body proofs separately.
 
-In one Debug run of 100 resource commands, 27 bodies were checked and 5,573 proofs
-reused, retaining 106 proofs in 0.567 MiB of arenas. Command time was 33,630.3 ms
-and live backing 188.62 MiB. This observation does not establish an additional
-speedup: frontend work outside body verification still dominates. Cached proofs
-and all other tracked allocations were released at teardown.
+Executable units import immutable verified helper bodies through their original
+units, preserving host bindings, globals, session layouts and virtual tables.
+Reuse checks proof revisions across the call closure, including virtual methods
+and global-initializer helpers. A callee's changed proof can require re-lowering
+even when the caller's summary remains equal. These are publication revisions,
+not semantic body versions. `reused_functions` counts imported entries; compiled
+function/instruction counters include only new bodies. No executable unit owns
+a historical semantic-graph snapshot.
 
-Rejected submissions retain only their latest diagnostic batch until the next
-entry. Source buffers use per-submission arenas; accepted batches remain alive
-for published code, while rejected module graphs, selection caches and source
-index tails are discarded together. Message storage is separate from persistent
-source indexes. `source_arenas_MiB` includes all live source batches;
-`diagnostic_arenas_MiB` now measures messages rather than source-index backing.
+Compile-time evaluation uses nested graph transactions to discard temporary
+Safety projections before publishing constant outputs. VM initialization prepares
+external-input descriptors; invocations check scalar widths, aggregates and
+choice payloads through those descriptors. External references and virtual
+handles remain rejected at that boundary.
 
-A Debug run of 1,000 rejected minimal commands retains 0.038 MiB, unchanged at
-10 and 100 commands, compared with 6.16 MiB before reclamation. The accepted
-graph stays at about 0.001 MiB and teardown releases all tracked backing.
-Command time is 2,533.7 ms versus the earlier 2,066.0 ms baseline; these individual
-observations demonstrate bounded retention, not a throughput improvement.
+Rejected submissions retain their latest diagnostic batch until the next entry.
+Accepted source batches remain alive for published code. Rejected module graphs,
+selection caches and source-index tails are discarded together. Message storage
+is separate from persistent source indexes. `source_arenas_MiB` includes all live
+source batches; `diagnostic_arenas_MiB` measures message arenas, excluding indexes.
+
+Measurements for `039a77a8` (Zig 0.16, Debug, Linux x86-64, 1,024 MiB tracked limit):
+
+| Session / scenario | Commands | Live MiB | Peak MiB | Graph payload MiB | Code arenas MiB |
+|---|---:|---:|---:|---:|---:|
+| Minimal / calls | 1,000 | 18.066 | 18.082 | 0.605 | 2.736 |
+| Prelude / resources | 100 | 188.536 | 190.655 | 3.367 | 3.330 |
+| Minimal / rejections | 1,000 | 0.038 | 0.050 | 0.001 | 0.001 |
+
+| Scenario | Total ms | Frontend/publication ms | Lowering ms | Verification ms | Execution ms |
+|---|---:|---:|---:|---:|---:|
+| Calls | 22,086.7 | 20,828.9 | 479.4 | 682.8 | 95.5 |
+| Resources | 33,234.1 | 28,403.8 | 1,985.7 | 2,044.8 | 799.9 |
+| Rejections | 2,412.6 | 2,412.6 | 0 | 0 | 0 |
+
+The 1,000-call session compiles 1,001 bodies: one helper and one new command body
+per submission. It reuses that helper and its body proof 999 times, retaining
+one body proof. The resource session compiles 130 bodies and 1,874 instructions,
+checks 27 new bodies and reuses 5,573 body proofs. It retains 106 body proofs in
+0.567 MiB and 118 summaries in 0.234 MiB. Its 100 live acquisitions hold 4,000
+bytes; startup/core preparation and the live runtime are included in total
+retained memory.
+
+Rejected-command backing remains at 0.038 MiB at 10, 100 and 1,000 commands,
+while accepted graph and revision checkpoints stay unchanged. Every run verifies
+its retained result and releases all tracked backing at teardown. These are
+individual observations, not throughput guarantees or AOT compilation timings.
+Frontend scaling and recovery of dead runtime frames remain further work;
+completed frame payloads currently remain until context reset.
 
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and
