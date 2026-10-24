@@ -689,7 +689,9 @@ pub const Session = struct {
         const node = self.relocation.graph.node(input);
         if (node.content != .struct_value_literal) return error.InvalidSafetyContinuation;
         const fields = try self.resolvers.ownership.inheritAssumedFields(node.source, node.content.struct_value_literal.assumed_fields, assumptions, visible);
-        self.relocation.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = fields;
+        var updated = node;
+        updated.content.struct_value_literal.assumed_fields = fields;
+        try self.relocation.graph.setNode(self.allocator, input, updated);
     }
 
     /// Fill an empty checked command with the retained selected cleanup list.
@@ -1188,16 +1190,16 @@ fn advanceResolution(
 
             var sweep_start = profileTimestamp(options.profile_io);
             sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeTextLiteralTypes()) changed = true;
+            if (try core.materializeTextLiteralTypes()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_string_literal_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (try core.materializeBindingTypes()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_binding_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeAssignmentValues()) changed = true;
+            if (try core.materializeAssignmentValues()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_assignment_values_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeDereferences()) changed = true;
+            if (try core.materializeDereferences()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_dereferences_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (try core.materializeAddresses()) changed = true;
@@ -1223,7 +1225,7 @@ fn advanceResolution(
             if (try errors.inferFunctionErrorReasons(reachable)) changed = true;
             profileAccumulate(options.profile_io, errors_start, &progress.profile_error_summary_ns);
             const refresh_start = profileTimestamp(options.profile_io);
-            if (errors.refreshPropagationResults()) changed = true;
+            if (try errors.refreshPropagationResults()) changed = true;
             profileAccumulate(options.profile_io, refresh_start, &progress.profile_error_refresh_ns);
             if (options.profile_io) |io| progress.profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
             if (try completePropagatedReachCalls(core, modules, offsets)) changed = true;

@@ -336,7 +336,7 @@ pub const Resolver = struct {
         const error_payload = error_variant.variant.payload_type orelse return error.TestingExpectErrorRequiresErrable;
         const reason = global_types.findField(self.graph, error_payload, "reason") orelse return error.TestingExpectErrorRequiresReason;
         if (self.graph.node(expected).ty == null) {
-            self.graph.nodes.items[@intFromEnum(expected)].ty = reason.field.ty;
+            try self.graph.setNodeType(self.allocator, expected, reason.field.ty);
             return .deferred;
         }
         const expected_literal = switch (self.graph.node(expected).content) {
@@ -403,17 +403,17 @@ pub const Resolver = struct {
     /// Contextual literal typing can finish a nominal payload after propagation
     /// first resolves. Keep transparent result unwrapping tied to the final
     /// payload identity rather than retaining its provisional structural shape.
-    pub fn refreshPropagationResults(self: *Resolver) bool {
+    pub fn refreshPropagationResults(self: *Resolver) !bool {
         if (self.graph.error_propagations.items.len == 0 and self.graph.error_contexts.items.len == 0) return false;
         var changed = false;
-        for (self.graph.nodes.items) |*node| {
+        for (self.graph.nodes.items, 0..) |node, raw| {
             switch (node.content) {
                 .error_propagation => |id| {
                     const propagation = &self.graph.error_propagations.items[@intFromEnum(id)];
                     const index = singleFieldIndex(self.graph, propagation.ok_payload_type);
                     if (index != propagation.ok_value_field_index) {
                         propagation.ok_value_field_index = index;
-                        node.ty = unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type;
+                        try self.graph.setNodeType(self.allocator, @enumFromInt(raw), unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type);
                         changed = true;
                     }
                 },
@@ -422,7 +422,7 @@ pub const Resolver = struct {
                     const index = singleFieldIndex(self.graph, propagation.ok_payload_type);
                     if (index != propagation.ok_value_field_index) {
                         propagation.ok_value_field_index = index;
-                        node.ty = unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type;
+                        try self.graph.setNodeType(self.allocator, @enumFromInt(raw), unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type);
                         changed = true;
                     }
                 },

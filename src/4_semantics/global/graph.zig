@@ -879,6 +879,19 @@ pub const GlobalSemanticGraph = struct {
         self.functions.items[raw].body = body;
     }
 
+    pub fn setNodeType(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalNodeId, ty: ?GlobalTypeId) !void {
+        var updated = self.node(id);
+        if (updated.ty == ty) return;
+        updated.ty = ty;
+        try self.setNode(allocator, id, updated);
+    }
+
+    pub fn setNodeContent(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalNodeId, content: Node.Content) !void {
+        var updated = self.node(id);
+        updated.content = content;
+        try self.setNode(allocator, id, updated);
+    }
+
     pub fn setBlock(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBlockId, value: Block) !void {
         const raw = @intFromEnum(id);
         if (self.mutation_frontier) |frontier| if (raw < frontier.blocks) {

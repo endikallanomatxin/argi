@@ -205,7 +205,7 @@ pub const Resolver = struct {
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
-        self.core.contextualizeArithmeticPair(&operands);
+        try self.core.contextualizeArithmeticPair(&operands);
         const call = try self.makeContractOperator(module_index, identity.contract, identity.operation, &operands, reach, assumed) orelse return .deferred;
         try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), self.lowerSelectedScalarArithmetic(call, value.operator, &operands));
         return .resolved;
@@ -340,9 +340,11 @@ pub const Resolver = struct {
         const input = try self.makePositionalInput(operands);
         // Operand transfer is explicit. No distinguished receiver is borrowed
         // automatically, and Args completion handles all auxiliary capabilities.
-        self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.dispatch_prefix_positional_count = 0;
-        if (reach == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
-        if (assumed) |node| self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
+        var completed_input = self.graph.node(input);
+        completed_input.content.struct_value_literal.dispatch_prefix_positional_count = 0;
+        if (reach == .global) completed_input.content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
+        if (assumed) |node| completed_input.content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
+        try self.graph.setNode(self.allocator, input, completed_input);
         var resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = self.generics, .functions = self, .contracts = contracts };
         const selected = switch (try resolver.infer(declaration, &.{ .inferred, .inferred }, input, reach)) {
             .selected => |selection| selection,
@@ -382,7 +384,7 @@ pub const Resolver = struct {
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
-        self.core.contextualizeArithmeticPair(&operands);
+        try self.core.contextualizeArithmeticPair(&operands);
         const call = try self.makeComparisonCall(module_index, value.operator, &operands, reach, assumed) orelse return .deferred;
         try self.patchComparisonResult(globalizer.globalNode(o, value.node), self.lowerSelectedScalarComparison(call, if (value.operator == .not_equal) .equal else value.operator, &operands), value.operator);
         return .resolved;
@@ -2505,7 +2507,7 @@ pub const Resolver = struct {
                             _ = try self.instantiateNodeWithExpected(child, element);
                     }
                     const global = try self.instantiateNode(id);
-                    self.resolver.core.contextualizeStoredValue(global, expected);
+                    try self.resolver.core.contextualizeStoredValue(global, expected);
                     return global;
                 }
                 if (pending == .resolve_expression and pending.resolve_expression.kind == .choice_literal) {
@@ -2526,7 +2528,7 @@ pub const Resolver = struct {
                 const global = try self.instantiateNode(id);
                 const current = self.resolver.graph.nodes.items[@intFromEnum(global)].ty;
                 if (current == null or !global_types.equal(self.resolver.graph, current.?, expected))
-                    self.resolver.core.contextualizeStoredValue(global, expected);
+                    try self.resolver.core.contextualizeStoredValue(global, expected);
                 return global;
             }
             return self.instantiateNode(id);
@@ -2549,7 +2551,7 @@ pub const Resolver = struct {
                     .ty = null,
                     .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } },
                 });
-                if (!self.resolver.core.coerceContextualValue(global, expected)) return error.ParameterizedStructExpectedNonStruct;
+                if (!try self.resolver.core.coerceContextualValue(global, expected)) return error.ParameterizedStructExpectedNonStruct;
                 self.resolver.stats.nodes += 1;
                 return global;
             };
@@ -2586,7 +2588,7 @@ pub const Resolver = struct {
             defer self.resolver.allocator.free(context.global.visible_bindings);
             if (!try self.resolver.core.completeRecordValue(expected, global, context))
                 return error.MissingParameterizedStructField;
-            self.resolver.graph.nodes.items[@intFromEnum(global)].ty = expected;
+            try self.resolver.graph.setNodeType(self.resolver.allocator, global, expected);
             self.resolver.stats.nodes += 1;
             return global;
         }
@@ -3427,7 +3429,7 @@ pub const Resolver = struct {
                 .binary => |value| value,
                 else => return error.InvalidParameterizedBinary,
             };
-            self.resolver.core.contextualizeArithmeticPair(operands);
+            try self.resolver.core.contextualizeArithmeticPair(operands);
             const identity = standard_contracts.arithmeticOperation(operator);
             const reach = try self.operatorContext(assumed);
             defer self.resolver.allocator.free(reach.global.visible_bindings);
@@ -3441,7 +3443,7 @@ pub const Resolver = struct {
                 .comparison => |value| value,
                 else => return error.InvalidParameterizedComparison,
             };
-            self.resolver.core.contextualizeArithmeticPair(operands);
+            try self.resolver.core.contextualizeArithmeticPair(operands);
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
             const reach = try self.operatorContext(assumed);
             defer self.resolver.allocator.free(reach.global.visible_bindings);
@@ -3550,7 +3552,7 @@ pub const Resolver = struct {
                 // Store operands take the array element's context before
                 // codegen, so a narrow element never receives a default-width
                 // literal store that overwrites adjacent elements.
-                if (store) self.resolver.core.contextualizeStoredValue(operands[2], element);
+                if (store) try self.resolver.core.contextualizeStoredValue(operands[2], element);
                 return if (store) .{
                     .source = self.resolver.sourceFor(self.module_index, source),
                     .ty = element,
@@ -3673,7 +3675,7 @@ pub const Resolver = struct {
                 .assignment => |assignment| blk: {
                     if (self.resolver.graph.isBindingTypeUnresolved(assignment.binding)) return error.ParameterizedAddressUntyped;
                     const ty = self.resolver.graph.binding(assignment.binding).ty;
-                    self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty = ty;
+                    try self.resolver.graph.setNodeType(self.resolver.allocator, operands[0], ty);
                     break :blk ty;
                 },
                 else => self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped,

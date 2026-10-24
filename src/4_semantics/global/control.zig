@@ -201,7 +201,7 @@ pub const Resolver = struct {
                         if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
                             const normalized = self.normalizeChoicePayload(payload_node, expected_payload);
                             payload = normalized;
-                            if (self.core) |core| _ = core.coerceContextualValue(normalized, expected_payload);
+                            if (self.core) |core| _ = try core.coerceContextualValue(normalized, expected_payload);
                             payload_ty = self.graph.nodes.items[@intFromEnum(normalized)].ty;
                         };
                         if (!self.payloadCompatible(hit.variant.payload_type, payload_ty)) return .deferred;
@@ -217,7 +217,7 @@ pub const Resolver = struct {
         if (payload) |payload_node| if (variant.variant.payload_type) |expected_payload| {
             const normalized = self.normalizeChoicePayload(payload_node, expected_payload);
             payload = normalized;
-            if (self.core) |core| _ = core.coerceContextualValue(normalized, expected_payload);
+            if (self.core) |core| _ = try core.coerceContextualValue(normalized, expected_payload);
             payload_ty = self.graph.nodes.items[@intFromEnum(normalized)].ty;
         };
         if (!self.payloadCompatible(variant.variant.payload_type, payload_ty)) return .deferred;

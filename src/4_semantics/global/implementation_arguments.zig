@@ -68,7 +68,7 @@ pub const Resolver = struct {
             .no_match => return .incompatible_arguments,
         }
         if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return .deferred;
-        self.graph.nodes.items[@intFromEnum(input)].ty = args_type;
+        try self.graph.setNodeType(self.core.allocator, input, args_type);
         return .completed;
     }
 

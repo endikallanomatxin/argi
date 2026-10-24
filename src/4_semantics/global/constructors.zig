@@ -83,7 +83,7 @@ pub const Resolver = struct {
             .no_match, .deferred => return null,
         }
         if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return null;
-        self.graph.nodes.items[@intFromEnum(input)].ty = ty;
+        try self.graph.setNodeType(self.core.allocator, input, ty);
         var node = self.graph.nodes.items[@intFromEnum(input)];
         node.source = source;
         self.core.stats.calls += 1;
@@ -235,11 +235,6 @@ pub const Resolver = struct {
         const generic_functions = self.generic_functions.?;
         var scope = generic_functions.beginSpeculation();
         defer scope.deinit();
-        const original_input = self.graph.node(input);
-        defer if (scope.active) {
-            scope.rollback();
-            self.graph.nodes.items[@intFromEnum(input)] = original_input;
-        };
         const declaration = standard_contracts.standardDeclaration(self.graph, "Init") orelse return null;
         const contracts = self.contracts orelse return null;
         const selected_arguments = try self.inferContractArguments(declaration, ty, null, input, reach, source) orelse return null;
@@ -480,20 +475,21 @@ pub const Resolver = struct {
         reach: reach_context.Context,
     ) !resolution.Result {
         const fields = types.fields(self.graph, ty) orelse return .deferred;
-        self.core.contextualizeConstructorChoices(module_index, o, fields, input);
+        try self.core.contextualizeConstructorChoices(module_index, o, fields, input);
         switch (self.core.matchCallInput(fields, input)) {
             .applicable => {},
             .no_match, .deferred => return .deferred,
         }
         if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return .deferred;
 
-        self.graph.nodes.items[@intFromEnum(input)].ty = ty;
+        try self.graph.setNodeType(self.core.allocator, input, ty);
         const target = globalizer.globalNode(o, value.node);
-        try self.graph.setNode(self.core.allocator, target, self.graph.nodes.items[@intFromEnum(input)]);
-        self.graph.nodes.items[@intFromEnum(target)].source = .{
+        var completed = self.graph.node(input);
+        completed.source = .{
             .file_index = o.file_base + reference.source.file_index,
             .offset = reference.source.offset,
         };
+        try self.graph.setNode(self.core.allocator, target, completed);
         self.core.stats.calls += 1;
         return .resolved;
     }

@@ -465,7 +465,11 @@ pub const Resolver = struct {
             .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index),
             .assignment => |assignment| {
                 const value = try self.bindingReplacement(node_id, assignment.binding, assignment.value, visible, owner_function, module_index);
-                self.graph.nodes.items[@intFromEnum(node_id)].content.assignment.value = value;
+                {
+                    var updated = self.graph.node(node_id);
+                    updated.content.assignment.value = value;
+                    try self.graph.setNode(self.allocator, node_id, updated);
+                }
                 try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
                 if (value != assignment.value) try self.wrapReplacement(node_id);
             },
@@ -534,7 +538,7 @@ pub const Resolver = struct {
                 try self.replacement_candidates.put(self.allocator, node_id, {});
                 const value = try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
                 if (value != store.value) {
-                    self.graph.nodes.items[@intFromEnum(node_id)].content = .{ .pointer_assignment = .{ .pointer = pointer, .value = value, .cleanup_target = target } };
+                    try self.graph.setNodeContent(self.allocator, node_id, .{ .pointer_assignment = .{ .pointer = pointer, .value = value, .cleanup_target = target } });
                     try self.finalizeExpressionCleanup(pointer, active, defers, visible, owner_function, module_index);
                     try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
                     try self.wrapReplacement(node_id);
@@ -556,12 +560,20 @@ pub const Resolver = struct {
                         .field_name = field.name,
                         .field_index = store.field_index,
                     } });
-                    self.graph.nodes.items[@intFromEnum(node_id)].content.struct_field_store.cleanup_target = target;
+                    {
+                        var updated = self.graph.node(node_id);
+                        updated.content.struct_field_store.cleanup_target = target;
+                        try self.graph.setNode(self.allocator, node_id, updated);
+                    }
                     const value = if (parent != null)
                         try self.projectedReplacement(node_id, target, store.value, visible, owner_function, module_index)
                     else
                         try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
-                    self.graph.nodes.items[@intFromEnum(node_id)].content.struct_field_store.value = value;
+                    {
+                        var updated = self.graph.node(node_id);
+                        updated.content.struct_field_store.value = value;
+                        try self.graph.setNode(self.allocator, node_id, updated);
+                    }
                     try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
                     if (value != store.value) try self.wrapReplacement(node_id);
                 }
@@ -583,12 +595,20 @@ pub const Resolver = struct {
                 const lexical = try self.lexicalAddressTarget(assignment.pointer, visible);
                 const child = self.graph.semanticType(self.graph.node(assignment.pointer).ty.?).pointer.child;
                 const target = lexical orelse try self.appendNode(self.graph.node(node_id).source, child, .{ .dereference = .{ .pointer = assignment.pointer, .pointer_type = self.graph.node(assignment.pointer).ty.?, .ty = child } });
-                self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.cleanup_target = target;
+                {
+                    var updated = self.graph.node(node_id);
+                    updated.content.pointer_assignment.cleanup_target = target;
+                    try self.graph.setNode(self.allocator, node_id, updated);
+                }
                 const value = if (lexical != null)
                     try self.projectedReplacement(node_id, target, assignment.value, visible, owner_function, module_index)
                 else
                     try self.indirectReplacement(node_id, target, assignment.value, visible, owner_function, module_index);
-                self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.value = value;
+                {
+                    var updated = self.graph.node(node_id);
+                    updated.content.pointer_assignment.value = value;
+                    try self.graph.setNode(self.allocator, node_id, updated);
+                }
                 try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
                 if (value != assignment.value) try self.wrapReplacement(node_id);
             },
@@ -703,7 +723,7 @@ pub const Resolver = struct {
         try self.graph.node_refs.append(self.allocator, write);
         const block: global_sg.GlobalBlockId = @enumFromInt(self.graph.blocks.items.len);
         try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = 1 }, .ret_val = write });
-        self.graph.nodes.items[@intFromEnum(id)].content = .{ .replacement = block };
+        try self.graph.setNodeContent(self.allocator, id, .{ .replacement = block });
     }
 
     fn replacementValue(self: *Resolver, value: global_sg.GlobalNodeId, ty: global_sg.GlobalTypeId, cleanup: global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
@@ -1160,8 +1180,11 @@ pub const Resolver = struct {
         if (standard_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
             if (try dispatch.contracts.implements(target_ty, declaration)) {
                 const input = try self.singleNamedInput("self", address, source);
-                if (context == .global)
-                    self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = context.global.assumed_fields;
+                if (context == .global) {
+                    var updated = self.graph.node(input);
+                    updated.content.struct_value_literal.assumed_fields = context.global.assumed_fields;
+                    try self.graph.setNode(self.allocator, input, updated);
+                }
                 var participants = [_]global_sg.GlobalTypeId{target_ty};
                 const node = try dispatch.contracts.callOperationCandidate(module_index, .{
                     .declaration = declaration,

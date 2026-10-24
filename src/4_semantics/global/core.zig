@@ -215,19 +215,21 @@ pub const Resolver = struct {
         }
     }
 
-    pub fn materializeDereferences(self: *Resolver) bool {
+    pub fn materializeDereferences(self: *Resolver) !bool {
         var changed = false;
-        for (self.graph.nodes.items) |*node| switch (node.content) {
-            .dereference => |*dereference| {
+        for (self.graph.nodes.items, 0..) |node, raw| switch (node.content) {
+            .dereference => |dereference| {
                 const pointer_type = self.graph.nodes.items[@intFromEnum(dereference.pointer)].ty orelse continue;
                 const child = switch (self.graph.types.items[@intFromEnum(pointer_type)]) {
                     .pointer => |pointer| pointer.child,
                     else => continue,
                 };
                 if (node.ty != null and types.equal(self.graph, node.ty.?, child) and types.equal(self.graph, dereference.pointer_type, pointer_type)) continue;
-                node.ty = child;
-                dereference.ty = child;
-                dereference.pointer_type = pointer_type;
+                var updated = node;
+                updated.ty = child;
+                updated.content.dereference.ty = child;
+                updated.content.dereference.pointer_type = pointer_type;
+                try self.graph.setNode(self.allocator, @enumFromInt(raw), updated);
                 self.stats.dereferences += 1;
                 changed = true;
             },
@@ -238,7 +240,7 @@ pub const Resolver = struct {
 
     pub fn materializeAddresses(self: *Resolver) !bool {
         var changed = false;
-        for (self.graph.nodes.items) |*node| switch (node.content) {
+        for (self.graph.nodes.items, 0..) |node, raw| switch (node.content) {
             .address_of => |value| {
                 const child = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
                 if (self.graph.isTypeUnresolved(child)) continue;
@@ -254,7 +256,7 @@ pub const Resolver = struct {
                 } else continue;
                 const pointer_type = try self.pointerType(child, mutability);
                 if (node.ty != null and (node.ty.? == pointer_type or types.equal(self.graph, node.ty.?, pointer_type))) continue;
-                node.ty = pointer_type;
+                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), pointer_type);
                 changed = true;
             },
             else => {},
@@ -271,7 +273,7 @@ pub const Resolver = struct {
             const initialization = binding.initialization orelse continue;
             if (self.graph.node(initialization).content == .list_literal) {
                 const array_type = try self.inferArrayLiteralType(initialization) orelse continue;
-                _ = self.coerceContextualValue(initialization, array_type);
+                _ = try self.coerceContextualValue(initialization, array_type);
             }
             const inferred = self.graph.nodes.items[@intFromEnum(initialization)].ty orelse continue;
             if (self.graph.isTypeUnresolved(inferred)) continue;
@@ -279,7 +281,7 @@ pub const Resolver = struct {
             self.stats.binding_types += 1;
             changed = true;
         }
-        for (self.graph.nodes.items) |*node| switch (node.content) {
+        for (self.graph.nodes.items, 0..) |node, raw| switch (node.content) {
             .binding_declaration, .binding_use => |binding_id| {
                 if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
                 const inferred = self.graph.bindings.items[@intFromEnum(binding_id)].ty;
@@ -287,29 +289,29 @@ pub const Resolver = struct {
                 // matching, but writing the same slot cannot advance the
                 // fixed point.
                 if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
-                node.ty = inferred;
+                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
                 changed = true;
             },
             .value_sequence, .replacement => |block| {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse continue;
                 const inferred = self.graph.node(value).ty orelse continue;
                 if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
-                node.ty = inferred;
+                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
                 changed = true;
             },
             .move_value => |value| {
                 const inferred = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
                 if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
-                node.ty = inferred;
+                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
                 changed = true;
             },
             .binary_operation => |operation| {
                 var left_ty = self.graph.nodes.items[@intFromEnum(operation.left)].ty orelse continue;
                 var right_ty = self.graph.nodes.items[@intFromEnum(operation.right)].ty orelse continue;
-                self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
+                try self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
                 if (!self.isScalarArithmeticRepresentation(left_ty, right_ty)) continue;
                 if (node.ty != null and (node.ty.? == left_ty or types.equal(self.graph, node.ty.?, left_ty))) continue;
-                node.ty = left_ty;
+                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), left_ty);
                 changed = true;
             },
             else => {},
@@ -374,18 +376,18 @@ pub const Resolver = struct {
         return ty;
     }
 
-    pub fn materializeTextLiteralTypes(self: *Resolver) bool {
+    pub fn materializeTextLiteralTypes(self: *Resolver) !bool {
         const string_ty = self.defaultStringLiteralType();
         const scalar_ty = self.defaultScalarLiteralType();
         var changed = false;
-        for (self.graph.nodes.items) |*node| {
+        for (self.graph.nodes.items, 0..) |node, raw| {
             if (node.ty != null) continue;
             const ty = switch (node.content) {
                 .string_literal => string_ty,
                 .char_literal => scalar_ty,
                 else => continue,
             } orelse continue;
-            node.ty = ty;
+            try self.graph.setNodeType(self.allocator, @enumFromInt(raw), ty);
             changed = true;
         }
         return changed;
@@ -428,7 +430,7 @@ pub const Resolver = struct {
                 }
                 if (types.fields(self.graph, target) == null) {
                     if (types.isBuiltin(self.graph, target, .Void) or types.arrayLength(self.graph, target) == 0) {
-                        _ = self.coerceContextualValue(id, target);
+                        _ = try self.coerceContextualValue(id, target);
                         break :blk .resolved;
                     }
                     break :blk .deferred;
@@ -437,9 +439,9 @@ pub const Resolver = struct {
                     // Nonempty lists retain tuple/list diagnostics; only empty
                     // parentheses can supply an omitted record field set.
                     if (self.graph.node(id).content.list_literal.elements.len != 0) break :blk .resolved;
-                    self.graph.nodes.items[@intFromEnum(id)].content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } };
+                    try self.graph.setNodeContent(self.allocator, id, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
                 }
-                self.graph.nodes.items[@intFromEnum(id)].ty = target;
+                try self.graph.setNodeType(self.allocator, id, target);
                 // Leave required-field diagnostics to the shared publication check.
                 if (!@import("record_literals.zig").hasRequiredFields(self.graph, id, target)) break :blk .resolved;
                 const completed = self.completeRecordValue(target, id, context) catch |err| switch (err) {
@@ -700,7 +702,7 @@ pub const Resolver = struct {
         const start: u32 = @intCast(self.graph.value_fields.items.len);
         for (nodes, 0..) |node, index| {
             const source_field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];
-            _ = self.coerceContextualValue(node, source_field.ty);
+            _ = try self.coerceContextualValue(node, source_field.ty);
             try self.graph.value_fields.append(self.allocator, .{ .name = source_field.name, .value = node });
         }
         const ty = try self.structType(function.input);
@@ -1000,7 +1002,7 @@ pub const Resolver = struct {
             .assignment => |assignment| blk: {
                 if (self.graph.isBindingTypeUnresolved(assignment.binding)) return .deferred;
                 const ty = self.graph.binding(assignment.binding).ty;
-                self.graph.nodes.items[@intFromEnum(child_node)].ty = ty;
+                try self.graph.setNodeType(self.allocator, child_node, ty);
                 break :blk ty;
             },
             else => self.graph.nodes.items[@intFromEnum(child_node)].ty orelse return .deferred,
@@ -1046,20 +1048,20 @@ pub const Resolver = struct {
 
         var left_ty = self.graph.nodes.items[@intFromEnum(left)].ty orelse return false;
         if (self.graph.nodes.items[@intFromEnum(right)].ty == null and
-            self.contextualizeChoiceOperand(module_index, o, right, left_ty)) return false;
+            try self.contextualizeChoiceOperand(module_index, o, right, left_ty)) return false;
         var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
         // Literal context can arrive after syntaxing when an imported generic
         // supplies the other operand's type. Typed values retain their widths.
         if (!types.equal(self.graph, left_ty, right_ty)) {
             if (self.floatLiteralFits(right, left_ty)) {
-                self.graph.nodes.items[@intFromEnum(right)].ty = left_ty;
+                try self.graph.setNodeType(self.allocator, right, left_ty);
                 right_ty = left_ty;
             } else if (self.floatLiteralFits(left, right_ty)) {
-                self.graph.nodes.items[@intFromEnum(left)].ty = right_ty;
+                try self.graph.setNodeType(self.allocator, left, right_ty);
                 left_ty = right_ty;
             }
         }
-        self.coerceIntegerPair(left, &left_ty, right, &right_ty);
+        try self.coerceIntegerPair(left, &left_ty, right, &right_ty);
         return false;
     }
 
@@ -1124,7 +1126,7 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         expected_fields: global_sg.FieldRange,
         input: global_sg.GlobalNodeId,
-    ) void {
+    ) !void {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |literal| literal,
             else => return,
@@ -1134,11 +1136,11 @@ pub const Resolver = struct {
             if (self.graph.isTypeUnresolved(field.ty)) continue;
             const supplied = self.callArgument(literal, index, field.name) orelse continue;
             if (self.graph.node(supplied).ty != null) continue;
-            _ = self.contextualizeChoiceOperand(module_index, o, supplied, field.ty);
+            _ = try self.contextualizeChoiceOperand(module_index, o, supplied, field.ty);
         }
     }
 
-    fn contextualizeChoiceOperand(self: *Resolver, module_index: usize, o: globalizer.Offsets, node_id: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
+    fn contextualizeChoiceOperand(self: *Resolver, module_index: usize, o: globalizer.Offsets, node_id: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) !bool {
         const module = &self.modules[module_index];
         for (module.semantic.pending_operations.items) |pending| switch (pending) {
             .resolve_choice_literal => |choice| {
@@ -1147,7 +1149,7 @@ pub const Resolver = struct {
                 if (types.variants(self.graph, expected) == null) return false;
                 const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];
                 if (types.findVariant(self.graph, expected, module.text(reference.name)) == null) return false;
-                self.graph.nodes.items[@intFromEnum(node_id)].ty = expected;
+                try self.graph.setNodeType(self.allocator, node_id, expected);
                 return true;
             },
             else => {},
@@ -1180,7 +1182,7 @@ pub const Resolver = struct {
         const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;
         if (types.arrayElement(self.graph, collection_ty)) |element_ty| {
             if (value.store_value) |local_store|
-                self.contextualizeStoredValue(globalizer.globalNode(o, local_store), element_ty);
+                try self.contextualizeStoredValue(globalizer.globalNode(o, local_store), element_ty);
             const target = globalizer.globalNode(o, value.node);
             try self.graph.setNode(self.allocator, target, if (value.store_value) |local_store| .{
                 .source = self.graph.nodes.items[@intFromEnum(collection)].source,
@@ -1537,33 +1539,33 @@ pub const Resolver = struct {
                 const child = self.graph.node_refs.items[elements.start + index];
                 if (!try self.completeAggregateValue(element, child, context, depth + 1)) return false;
             }
-            self.graph.nodes.items[@intFromEnum(node)].content = .{ .array_literal = .{ .elements = elements, .element_type = element, .length = elements.len } };
-            self.graph.nodes.items[@intFromEnum(node)].ty = target;
+            try self.graph.setNodeContent(self.allocator, node, .{ .array_literal = .{ .elements = elements, .element_type = element, .length = elements.len } });
+            try self.graph.setNodeType(self.allocator, node, target);
             return true;
         }
         const content = self.graph.node(node).content;
         if (content == .list_literal and content.list_literal.elements.len == 0 and types.fields(self.graph, target) != null)
-            self.graph.nodes.items[@intFromEnum(node)].content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } };
+            try self.graph.setNodeContent(self.allocator, node, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
         if (self.graph.node(node).content == .struct_value_literal) {
             if (!@import("record_literals.zig").hasRequiredFields(self.graph, node, target)) {
-                self.graph.nodes.items[@intFromEnum(node)].ty = target;
+                try self.graph.setNodeType(self.allocator, node, target);
                 return true;
             }
             return self.completeRecordValue(target, node, context);
         }
-        _ = self.coerceContextualValue(node, target);
+        _ = try self.coerceContextualValue(node, target);
         return true;
     }
 
     pub fn completeRecordValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context) anyerror!bool {
         const fields = types.fields(self.graph, target) orelse return false;
         if (types.isCUnion(self.graph, target)) {
-            _ = self.coerceContextualValue(node, target);
+            _ = try self.coerceContextualValue(node, target);
             return true;
         }
         if (!self.callInputNamesMatch(fields, self.graph.node(node).content.struct_value_literal)) return false;
         if (!try self.completeCallInputFieldsWithReach(fields, node, context)) return false;
-        self.graph.nodes.items[@intFromEnum(node)].ty = target;
+        try self.graph.setNodeType(self.allocator, node, target);
         return true;
     }
 
@@ -1627,7 +1629,7 @@ pub const Resolver = struct {
                     );
             }
             const value = node orelse return false;
-            _ = self.coerceContextualValue(value, expected.ty);
+            _ = try self.coerceContextualValue(value, expected.ty);
             if (self.graph.node(value).content == .struct_value_literal) {
                 if (types.fields(self.graph, expected.ty) != null)
                     if (!try self.completeRecordValue(expected.ty, value, context)) return false;
@@ -1889,17 +1891,17 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn contextualizeArithmeticPair(self: *Resolver, operands: []const global_sg.GlobalNodeId) void {
+    pub fn contextualizeArithmeticPair(self: *Resolver, operands: []const global_sg.GlobalNodeId) !void {
         var left = self.graph.node(operands[0]).ty orelse return;
         var right = self.graph.node(operands[1]).ty orelse return;
         if (self.floatLiteralFits(operands[0], right)) {
-            self.graph.nodes.items[@intFromEnum(operands[0])].ty = right;
+            try self.graph.setNodeType(self.allocator, operands[0], right);
             left = right;
         } else if (self.floatLiteralFits(operands[1], left)) {
-            self.graph.nodes.items[@intFromEnum(operands[1])].ty = left;
+            try self.graph.setNodeType(self.allocator, operands[1], left);
             right = left;
         }
-        self.coerceIntegerPair(operands[0], &left, operands[1], &right);
+        try self.coerceIntegerPair(operands[0], &left, operands[1], &right);
     }
 
     pub fn coerceIntegerPair(
@@ -1908,24 +1910,24 @@ pub const Resolver = struct {
         left_ty: *global_sg.GlobalTypeId,
         right: global_sg.GlobalNodeId,
         right_ty: *global_sg.GlobalTypeId,
-    ) void {
+    ) !void {
         if (types.equal(self.graph, left_ty.*, right_ty.*)) return;
         // Default integer literals follow the typed operand, including typed
         // constants produced by compile-time operations such as size_of.
-        if (types.isBuiltin(self.graph, right_ty.*, .Int32) and self.coerceIntegerLiteral(right, left_ty.*)) {
+        if (types.isBuiltin(self.graph, right_ty.*, .Int32) and try self.coerceIntegerLiteral(right, left_ty.*)) {
             right_ty.* = left_ty.*;
             return;
         }
-        if (self.coerceIntegerLiteral(left, right_ty.*)) {
+        if (try self.coerceIntegerLiteral(left, right_ty.*)) {
             left_ty.* = right_ty.*;
-        } else if (self.coerceIntegerLiteral(right, left_ty.*)) {
+        } else if (try self.coerceIntegerLiteral(right, left_ty.*)) {
             right_ty.* = left_ty.*;
         }
     }
 
-    fn coerceIntegerLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+    fn coerceIntegerLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) !bool {
         if (!self.integerLiteralFits(node, target)) return false;
-        self.graph.nodes.items[@intFromEnum(node)].ty = target;
+        try self.graph.setNodeType(self.allocator, node, target);
         return true;
     }
 
@@ -2023,25 +2025,25 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn coerceContextualLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+    fn coerceContextualLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) !bool {
         if (!self.contextualLiteralFits(node, target)) return false;
-        self.graph.nodes.items[@intFromEnum(node)].ty = target;
+        try self.graph.setNodeType(self.allocator, node, target);
         return true;
     }
 
-    pub fn contextualizeStoredValue(self: *Resolver, value: global_sg.GlobalNodeId, element: global_sg.GlobalTypeId) void {
-        _ = self.coerceContextualValue(value, element);
+    pub fn contextualizeStoredValue(self: *Resolver, value: global_sg.GlobalNodeId, element: global_sg.GlobalTypeId) !void {
+        _ = try self.coerceContextualValue(value, element);
         // Even an out-of-range integer literal carries its destination type
         // into Safety, which diagnoses the range before codegen can emit it.
         if (self.graph.node(value).content == .int_literal) switch (self.graph.semanticType(element)) {
             .builtin => |kind| if (primitives.integerRange(kind, self.graph.target.stdTarget()) != null) {
-                self.graph.nodes.items[@intFromEnum(value)].ty = element;
+                try self.graph.setNodeType(self.allocator, value, element);
             },
             else => {},
         };
     }
 
-    pub fn coerceContextualValue(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+    pub fn coerceContextualValue(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) !bool {
         // Scalar literals have one nominal identity. Wait for bundled core to
         // resolve it rather than adopting an arbitrary early expected type.
         if (self.graph.node(node).content == .char_literal) return false;
@@ -2053,31 +2055,31 @@ pub const Resolver = struct {
             // Parentheses have no inherent element/record type. Normalize an
             // empty literal only after its destination establishes the shape.
             if (literal.elements.len == 0 and types.arrayElement(self.graph, target) == null) {
-                self.graph.nodes.items[@intFromEnum(node)].content = .{ .struct_value_literal = .{
+                try self.graph.setNodeContent(self.allocator, node, .{ .struct_value_literal = .{
                     .fields = .{ .start = 0, .len = 0 },
-                } };
-                self.graph.nodes.items[@intFromEnum(node)].ty = target;
+                } });
+                try self.graph.setNodeType(self.allocator, node, target);
                 return true;
             }
             const element = types.arrayElement(self.graph, target) orelse return false;
             for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |item|
-                _ = self.coerceContextualValue(item, element);
-            self.graph.nodes.items[@intFromEnum(node)].content = .{ .array_literal = .{
+                _ = try self.coerceContextualValue(item, element);
+            try self.graph.setNodeContent(self.allocator, node, .{ .array_literal = .{
                 .elements = literal.elements,
                 .element_type = element,
                 .length = literal.elements.len,
-            } };
-            self.graph.nodes.items[@intFromEnum(node)].ty = target;
+            } });
+            try self.graph.setNodeType(self.allocator, node, target);
             return true;
         }
         if (self.graph.nodes.items[@intFromEnum(node)].content != .struct_value_literal and
-            self.coerceContextualLiteral(node, target)) return true;
+            try self.coerceContextualLiteral(node, target)) return true;
         const current = self.graph.nodes.items[@intFromEnum(node)].ty;
         const literal = switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .struct_value_literal => |value| value,
             else => {
                 if (current == null) {
-                    self.graph.nodes.items[@intFromEnum(node)].ty = target;
+                    try self.graph.setNodeType(self.allocator, node, target);
                     return true;
                 }
                 return false;
@@ -2087,18 +2089,18 @@ pub const Resolver = struct {
         // structural types it has no field range. Context must therefore
         // materialize the empty literal directly instead of asking for fields.
         if (types.isBuiltin(self.graph, target, .Void) and literal.fields.len == 0) {
-            self.graph.nodes.items[@intFromEnum(node)].ty = target;
+            try self.graph.setNodeType(self.allocator, node, target);
             return true;
         }
         // Empty parentheses also represent a zero-length array when the
         // destination supplies its element type.
         if (literal.fields.len == 0 and types.arrayLength(self.graph, target) == 0) {
-            self.graph.nodes.items[@intFromEnum(node)].content = .{ .array_literal = .{
+            try self.graph.setNodeContent(self.allocator, node, .{ .array_literal = .{
                 .elements = .{ .start = 0, .len = 0 },
                 .element_type = types.arrayElement(self.graph, target).?,
                 .length = 0,
-            } };
-            self.graph.nodes.items[@intFromEnum(node)].ty = target;
+            } });
+            try self.graph.setNodeType(self.allocator, node, target);
             return true;
         }
         const expected_fields = types.fields(self.graph, target) orelse return false;
@@ -2107,9 +2109,9 @@ pub const Resolver = struct {
         for (0..expected_fields.len) |offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
             const actual = self.callArgument(literal, offset, expected.name) orelse continue;
-            _ = self.coerceContextualValue(actual, expected.ty);
+            _ = try self.coerceContextualValue(actual, expected.ty);
         }
-        self.graph.nodes.items[@intFromEnum(node)].ty = target;
+        try self.graph.setNodeType(self.allocator, node, target);
         return true;
     }
 
@@ -2132,7 +2134,7 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn materializeAssignmentValues(self: *Resolver) bool {
+    pub fn materializeAssignmentValues(self: *Resolver) !bool {
         var changed = false;
         for (self.graph.bindings.items, 0..) |binding, raw| {
             if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
@@ -2140,7 +2142,7 @@ pub const Resolver = struct {
             const current = self.graph.node(initialization).ty;
             if (current == null or (!types.equal(self.graph, current.?, binding.ty) and self.contextualLiteralFits(initialization, binding.ty)) or
                 self.contextualAggregateNeedsCompletion(initialization, binding.ty))
-                if (self.coerceContextualValue(initialization, binding.ty)) {
+                if (try self.coerceContextualValue(initialization, binding.ty)) {
                     changed = true;
                 };
         }
@@ -2156,7 +2158,7 @@ pub const Resolver = struct {
                     const current = self.graph.node(value.value).ty;
                     if (current == null or (!types.equal(self.graph, current.?, pointer.child) and self.contextualLiteralFits(value.value, pointer.child)) or
                         self.contextualAggregateNeedsCompletion(value.value, pointer.child))
-                        if (self.coerceContextualValue(value.value, pointer.child)) {
+                        if (try self.coerceContextualValue(value.value, pointer.child)) {
                             changed = true;
                         };
                     continue;
@@ -2170,7 +2172,7 @@ pub const Resolver = struct {
                 !self.contextualAggregateNeedsCompletion(assignment.value, expected)) continue;
             // Assignment destinations supply the contextual shape of anonymous
             // aggregates before summary inference and codegen consume them.
-            if (self.coerceContextualValue(assignment.value, self.graph.binding(assignment.binding).ty)) changed = true;
+            if (try self.coerceContextualValue(assignment.value, self.graph.binding(assignment.binding).ty)) changed = true;
         }
         return changed;
     }
@@ -2338,10 +2340,10 @@ test "assignment context materializes anonymous aggregate and child types" {
     try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } });
     try graph.nodes.append(allocator, .{ .source = source, .ty = aggregate_ty, .content = .{ .assignment = .{ .binding = @enumFromInt(0), .value = @enumFromInt(1) } } });
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    try std.testing.expect(resolver.materializeAssignmentValues());
+    try std.testing.expect(try resolver.materializeAssignmentValues());
     try std.testing.expectEqual(aggregate_ty, graph.nodes.items[1].ty.?);
     try std.testing.expectEqual(int_ty, graph.nodes.items[0].ty.?);
-    try std.testing.expect(!resolver.materializeAssignmentValues());
+    try std.testing.expect(!try resolver.materializeAssignmentValues());
 }
 
 test "default integer operands preserve typed compile-time constants" {
@@ -2356,12 +2358,12 @@ test "default integer operands preserve typed compile-time constants" {
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     var left: global_sg.GlobalTypeId = @enumFromInt(0);
     var right: global_sg.GlobalTypeId = @enumFromInt(1);
-    resolver.coerceIntegerPair(@enumFromInt(0), &left, @enumFromInt(1), &right);
+    try resolver.coerceIntegerPair(@enumFromInt(0), &left, @enumFromInt(1), &right);
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), left);
     try std.testing.expectEqual(left, right);
     graph.nodes.items[1].ty = @enumFromInt(1);
     right = @enumFromInt(1);
-    resolver.coerceIntegerPair(@enumFromInt(1), &right, @enumFromInt(0), &left);
+    try resolver.coerceIntegerPair(@enumFromInt(1), &right, @enumFromInt(0), &left);
     try std.testing.expectEqual(left, right);
 }
 
@@ -2376,9 +2378,9 @@ test "typed integer initializer adopts its binding context" {
     try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 131 } });
     try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(1), .initialization = @enumFromInt(0), .mutability = .constant });
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    try std.testing.expect(resolver.materializeAssignmentValues());
+    try std.testing.expect(try resolver.materializeAssignmentValues());
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(1)), graph.node(@enumFromInt(0)).ty.?);
-    try std.testing.expect(!resolver.materializeAssignmentValues());
+    try std.testing.expect(!try resolver.materializeAssignmentValues());
 }
 
 test "address type materializes after its child resolves" {
@@ -2576,6 +2578,40 @@ test "completed call defaults remain reversible after nested publication" {
             try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(0)), graph.value_fields.items[completed.content.struct_value_literal.fields.start].value);
             outer.rollback();
             try std.testing.expectEqualDeep(original, graph.node(@enumFromInt(1)));
+            try std.testing.expectEqualDeep(saved, graph.checkpoint());
+        }
+    }.run, .{});
+}
+
+test "contextual literal normalization rolls back every changed node on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var graph: global_sg.GlobalSemanticGraph = .{};
+            defer graph.deinit(a);
+            const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+            try graph.types.append(a, .{ .builtin = .UInt8 });
+            try graph.types.append(a, .{ .array = .{ .element = @enumFromInt(0), .length = 1 } });
+            const scalar: global_sg.Node = .{ .source = source, .ty = null, .content = .{ .int_literal = 42 } };
+            const aggregate: global_sg.Node = .{ .source = source, .ty = null, .content = .{ .list_literal = .{ .elements = .{ .start = 0, .len = 1 } } } };
+            try graph.nodes.appendSlice(a, &.{ scalar, aggregate });
+            try graph.node_refs.append(a, @enumFromInt(0));
+            var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+            defer resolver.deinit();
+            const saved = graph.checkpoint();
+            var transaction = graph.beginTransaction(a);
+            defer transaction.deinit();
+            errdefer {
+                transaction.rollback();
+                std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
+                std.debug.assert(std.meta.eql(scalar, graph.node(@enumFromInt(0))));
+                std.debug.assert(std.meta.eql(aggregate, graph.node(@enumFromInt(1))));
+            }
+            try std.testing.expect(try resolver.coerceContextualValue(@enumFromInt(1), @enumFromInt(1)));
+            try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), graph.node(@enumFromInt(0)).ty.?);
+            try std.testing.expect(graph.node(@enumFromInt(1)).content == .array_literal);
+            transaction.rollback();
+            try std.testing.expectEqualDeep(scalar, graph.node(@enumFromInt(0)));
+            try std.testing.expectEqualDeep(aggregate, graph.node(@enumFromInt(1)));
             try std.testing.expectEqualDeep(saved, graph.checkpoint());
         }
     }.run, .{});
