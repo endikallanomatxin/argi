@@ -3357,9 +3357,14 @@ pub const SafetyChecker = struct {
 
         // A summary describes the post-state of all inputs at once. Materialize
         // its values before changing any place so effects may transfer a value
-        // from an input that the same summary subsequently marks as moved.
+        // from an input that the same summary subsequently marks as moved. Capture
+        // destinations too: retargeting one reference field must not redirect
+        // another effect that describes its entry referent.
         const post_values = try self.allocator.alloc(?facts.ValueFacts, summary.input_post_states.len);
         @memset(post_values, null);
+        const post_targets = try self.allocator.alloc(?facts.Place, summary.input_post_states.len);
+        for (summary.input_post_states, post_targets) |post_state, *target|
+            target.* = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state);
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             if (post_state.initializedness != .initialized or post_state.opaque_ownership != .none) continue;
@@ -3371,6 +3376,12 @@ pub const SafetyChecker = struct {
                 self.active_fresh_capabilities orelse &fresh_capabilities,
             );
         }
+
+        const reference_generations = try self.allocator.alloc(?facts.ValidityRootId, summary.input_post_states.len);
+        @memset(reference_generations, null);
+        for (summary.input_post_states, 0..) |post, index| if (post.reference_refresh) {
+            if (post_values[index]) |pointer| reference_generations[index] = try self.referenceObservationGeneration(pointer, state);
+        };
 
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
@@ -3409,7 +3420,7 @@ pub const SafetyChecker = struct {
                 continue;
             }
             if (post_state.opaque_ownership == .definite or post_state.opaque_ownership == .conditional) {
-                const consumed = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state);
+                const consumed = post_targets[post_index];
                 const projected = try self.projectValueFacts(arguments[index], post_state.target.projections);
                 const value = if (consumed) |target|
                     if (self.valueAtPlace(state, target)) |stored| stored else projected
@@ -3430,7 +3441,7 @@ pub const SafetyChecker = struct {
                 continue;
             }
 
-            const target = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state) orelse {
+            const target = post_targets[post_index] orelse {
                 if (post_state.initializedness == .initialized and post_state.initialization != .preserved) {
                     if (post_values[post_index]) |value| {
                         if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access|
@@ -3525,6 +3536,24 @@ pub const SafetyChecker = struct {
             const value = post_values[post_index] orelse facts.ValueFacts{};
             try self.setPlace(state, target, initializedness, value);
         }
+        for (summary.input_post_states, 0..) |post, index| {
+            if (!post.reference_refresh) continue;
+            const slot = post_targets[index] orelse continue;
+            const previous = reference_generations[index] orelse continue;
+            const pointer = self.valueAtPlace(state, slot) orelse continue;
+            const current = try self.referenceObservationGeneration(pointer, state) orelse continue;
+            if (current == previous) continue;
+            const refreshed = try self.replaceValueRoots(pointer, &.{previous}, current);
+            try self.setPlace(state, slot, .initialized, refreshed);
+        }
+    }
+
+    fn referenceObservationGeneration(self: *SafetyChecker, pointer: facts.ValueFacts, state: *FunctionState) !?facts.ValidityRootId {
+        if (pointer.referenced_place) |place| return try self.storageGeneration(state, place);
+        if (pointer.symbolic_pointees.len == 1) {
+            for (state.symbolic_pointees.items) |entry| if (entry.identity == pointer.symbolic_pointees[0]) return entry.generation;
+        }
+        return null;
     }
 
     fn summaryInputReferenceSlot(

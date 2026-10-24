@@ -4,7 +4,8 @@ const primitives = @import("../primitives/schema.zig");
 
 // Exact identity is a lexical proof, not a consequence of may-dependencies.
 // Each owning link must move. Reference forwarding may coexist with independent
-// moved owners; unknown calls and control flow still cannot certify identity.
+// moved owners and operations that do not access its forwarding bindings.
+// Changes to forwarding slots and alternate returns need stronger proofs.
 pub fn proves(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool) !bool {
     const block = graph.blocks.items[@intFromEnum(function.body orelse return false)];
     if (relation.input_index >= function.input_bindings.len or relation.output_index >= function.output_bindings.len) return false;
@@ -31,11 +32,85 @@ pub fn proves(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemant
             if (!isForwardingLink(graph, assignment.value, links.items, owning)) return false;
             assigned = true;
         },
-        .auto_deinit_binding => {},
+        .auto_deinit_binding => {
+            if (!owning and !independentExpression(graph, id, links.items, output, 0)) return false;
+        },
         .return_statement => |ret| return ret.expression == null and assigned,
-        else => return false,
+        else => if (owning or !independentExpression(graph, id, links.items, output, 0)) return false,
     };
     return assigned;
+}
+
+// Other input accesses may mutate their referents, but cannot change the
+// reference value stored in an immutable forwarding binding. Reject any access
+// to a forwarding slot or output rather than treating may-dependencies as identity.
+fn independentExpression(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalNodeId, links: []const graph_mod.GlobalBindingId, output: graph_mod.GlobalBindingId, depth: usize) bool {
+    if (depth > 128) return false;
+    return switch (graph.node(id).content) {
+        .binding_use => |binding| binding != output and !linksContains(links, binding),
+        .binding_declaration => |binding| blk: {
+            if (binding == output or linksContains(links, binding)) break :blk false;
+            break :blk if (graph.binding(binding).initialization) |value| independentExpression(graph, value, links, output, depth + 1) else true;
+        },
+        .assignment => |value| value.binding != output and !linksContains(links, value.binding) and independentExpression(graph, value.value, links, output, depth + 1),
+        .return_statement, .error_propagation, .error_context, .testing_expect_error => false,
+        .code_block, .value_sequence, .replacement => |body| independentBlock(graph, body, links, output, depth + 1),
+        .if_statement => |value| independentExpression(graph, value.condition, links, output, depth + 1) and
+            independentBlock(graph, value.then_block, links, output, depth + 1) and
+            (if (value.else_block) |body| independentBlock(graph, body, links, output, depth + 1) else true),
+        .while_statement => |value| independentExpression(graph, value.condition, links, output, depth + 1) and independentBlock(graph, value.body, links, output, depth + 1),
+        .for_statement, .switch_statement, .virtual_call, .nullable_unwrap_or => false,
+        .auto_deinit_binding => |index| blk: {
+            const cleanup = graph.auto_deinits.items[@intFromEnum(index)];
+            if (cleanup.ownerBinding()) |binding| if (binding == output or linksContains(links, binding)) break :blk false;
+            if (cleanup.targetNode()) |target| if (!independentExpression(graph, target, links, output, depth + 1)) break :blk false;
+            if (cleanup.input) |input| if (!independentExpression(graph, input, links, output, depth + 1)) break :blk false;
+            break :blk independentCleanupFields(graph, cleanup.fields, links, output, depth + 1);
+        },
+        .struct_value_literal => |literal| blk: {
+            for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                if (!independentExpression(graph, field.value, links, output, depth + 1)) break :blk false;
+            break :blk true;
+        },
+        inline .list_literal, .array_literal => |literal| blk: {
+            for (graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child|
+                if (!independentExpression(graph, child, links, output, depth + 1)) break :blk false;
+            break :blk true;
+        },
+        else => |content| independentOperands(graph, content, links, output, depth + 1),
+    };
+}
+
+fn independentBlock(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBlockId, links: []const graph_mod.GlobalBindingId, output: graph_mod.GlobalBindingId, depth: usize) bool {
+    if (depth > 128) return false;
+    const block = graph.blocks.items[@intFromEnum(id)];
+    for (graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node|
+        if (!independentExpression(graph, node, links, output, depth + 1)) return false;
+    return if (block.ret_val) |value| independentExpression(graph, value, links, output, depth + 1) else true;
+}
+
+fn independentCleanupFields(graph: *const graph_mod.GlobalSemanticGraph, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), links: []const graph_mod.GlobalBindingId, output: graph_mod.GlobalBindingId, depth: usize) bool {
+    if (depth > 128) return false;
+    for (graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
+        if (field.input) |input| if (!independentExpression(graph, input, links, output, depth + 1)) return false;
+        if (!independentCleanupFields(graph, field.fields, links, output, depth + 1)) return false;
+    }
+    return true;
+}
+
+fn independentOperands(graph: *const graph_mod.GlobalSemanticGraph, value: anytype, links: []const graph_mod.GlobalBindingId, output: graph_mod.GlobalBindingId, depth: usize) bool {
+    if (@TypeOf(value) == graph_mod.GlobalNodeId) return independentExpression(graph, value, links, output, depth);
+    return switch (@typeInfo(@TypeOf(value))) {
+        .optional => if (value) |child| independentOperands(graph, child, links, output, depth) else true,
+        .@"struct" => |info| blk: {
+            inline for (info.fields) |field| if (!independentOperands(graph, @field(value, field.name), links, output, depth)) break :blk false;
+            break :blk true;
+        },
+        .@"union" => switch (value) {
+            inline else => |child| independentOperands(graph, child, links, output, depth),
+        },
+        else => true,
+    };
 }
 
 fn linksContains(links: []const graph_mod.GlobalBindingId, binding: graph_mod.GlobalBindingId) bool {

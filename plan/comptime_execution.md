@@ -2,12 +2,6 @@
 
 Release: [0.4](0.4.md). Current behavior: [usage](../docs/usage.md#experimental-bytecode-execution).
 
-## Correctness
-
-- Fix historical-alias invalidation after replacement through a retargeted
-  reference field, including projections of references returned by wrappers.
-- Audit native bulk copies of reference aggregates for companion evidence.
-
 ## Compile-time host
 
 - Implement `#run (.system: System)` using the existing execution host boundary.

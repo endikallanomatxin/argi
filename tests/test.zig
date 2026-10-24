@@ -14328,6 +14328,10 @@ test "feature_tests/execution/139_comptime_default_effects" {
 }
 
 fn expectReplFixture(fixture_path: ?[]const u8, commands: []const u8, expected: []const u8) !void {
+    return expectReplFixtureWithDiagnostic(fixture_path, commands, expected, null);
+}
+
+fn expectReplFixtureWithDiagnostic(fixture_path: ?[]const u8, commands: []const u8, expected: []const u8, expected_diagnostic: ?[]const u8) !void {
     const installed_argi = try installedArgiPath();
     defer std.testing.allocator.free(installed_argi);
     var child = try std.process.spawn(std.testing.io, .{
@@ -14362,9 +14366,14 @@ fn expectReplFixture(fixture_path: ?[]const u8, commands: []const u8, expected: 
     defer std.testing.allocator.free(stdout);
     const stderr = try reader.toOwnedSlice(1);
     defer std.testing.allocator.free(stderr);
-    if (stderr.len != 0) std.debug.print("REPL stderr: {s}\n", .{stderr});
     try expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(std.testing.io));
-    try expectEqualStrings("", stderr);
+    if (expected_diagnostic) |message| {
+        try expectDiagnostic("argi repl", stderr, message);
+        try expectEqual(@as(usize, 1), std.mem.count(u8, stderr, ": error:"));
+    } else {
+        if (stderr.len != 0) std.debug.print("REPL stderr: {s}\n", .{stderr});
+        try expectEqualStrings("", stderr);
+    }
     try expectEqualStrings(expected, stdout);
 }
 
@@ -15123,4 +15132,91 @@ test "feature_tests/execution/264_fallible_indexed_replacement_preserves_owner" 
     try expectSuccessfulBuild("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner");
     try runExpect("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner", 42);
     try vmExpect("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner", 42, null);
+}
+
+test "feature_tests/execution/265_fallible_retargeted_reference_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/265_fallible_retargeted_reference_replacement");
+    try runExpect("tests/feature_tests/execution/265_fallible_retargeted_reference_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/265_fallible_retargeted_reference_replacement", 42, null);
+}
+
+test "feature_tests/execution/266X_retargeted_replacement_historical_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/266X_retargeted_replacement_historical_reference", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "argi repl preserves captured destinations and rejects historical retargeted references" {
+    const commands =
+        \\counter :: Counter = Counter()
+        \\owner :: Resource = Resource(.counter = $&counter, .value = 1)
+        \\other :: Resource = Resource(.counter = $&counter, .value = 2)
+        \\holder :: Holder = Holder(.reference = $&owner)
+        \\failed ::= replace(.holder = $&holder, .other = $&other, .counter = $&counter, .fail = true)
+        \\owner.value
+        \\counter.drops
+        \\holder.reference&.value
+        \\holder.reference = $&owner
+        \\historical ::= holder.reference
+        \\succeeded ::= replace(.holder = $&holder, .other = $&other, .counter = $&counter, .fail = false)
+        \\historical&.value
+        \\owner.value
+        \\counter.drops
+        \\holder.reference&.value
+        \\counter.selections
+        \\closed_owner ::= deinit(.self = $&owner)
+        \\closed_other ::= deinit(.self = $&other)
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic(
+        "tests/feature_tests/execution/265_fallible_retargeted_reference_replacement/main.rg",
+        commands,
+        "_0 = 1\n_1 = 0\n_2 = 2\n_4 = 9\n_5 = 1\n_6 = 2\n_7 = 2\n_8 = 3\n",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/execution/267X_retarget_before_replacement_historical_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/267X_retarget_before_replacement_historical_reference", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/268_retargeted_replacement_preserves_other_references" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/268_retargeted_replacement_preserves_other_references");
+    try runExpect("tests/feature_tests/execution/268_retargeted_replacement_preserves_other_references", 42);
+    try vmExpect("tests/feature_tests/execution/268_retargeted_replacement_preserves_other_references", 42, null);
+}
+
+test "feature_tests/execution/269X_conditional_retarget_historical_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/269X_conditional_retarget_historical_reference", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/270_large_reference_aggregate_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/270_large_reference_aggregate_cleanup");
+    try runExpect("tests/feature_tests/execution/270_large_reference_aggregate_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/270_large_reference_aggregate_cleanup", 42, null);
+}
+
+test "feature_tests/execution/271_acquired_partial_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/271_acquired_partial_array_cleanup");
+    try runExpect("tests/feature_tests/execution/271_acquired_partial_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/271_acquired_partial_array_cleanup", 42, null);
+}
+
+test "argi repl retains partial acquired array cleanup across submissions" {
+    const commands =
+        \\counter :: Counter = Counter()
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: [3]Resource)(.self = allocator))
+        \\raw ::= raw_pointer#(.t: [3]Resource)(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot#(.t: [3]Resource)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\index :: UIntNative = 0
+        \\slot&[index] = Resource(.counter = $&counter, .value = 10)
+        \\slot&[0].value
+        \\index = 2
+        \\slot&[index] = Resource(.counter = $&counter, .value = 32)
+        \\slot&[2].value
+        \\trusted_opaque_drop(.slot = slot)
+        \\trusted_opaque_mark_empty(.storage = $&memory)
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixture("tests/feature_tests/execution/270_large_reference_aggregate_cleanup/main.rg", commands, "_0 = 10\n_1 = 32\n_2 = ()\n_3 = ()\n_4 = 2\n");
 }

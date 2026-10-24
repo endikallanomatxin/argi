@@ -62,7 +62,7 @@ pub const Infer = struct {
     observation_conflict_sink: ?*std.array_list.Managed(facts.StorageObservationConflict) = null,
     suppressed_observation: ?graph_mod.GlobalNodeId = null,
     loop_post_effects: ?*InputPostStateFlow = null,
-    replacement_storage: ?struct { cleanup: graph_mod.GlobalAutoDeinitId, write: graph_mod.GlobalNodeId, targets: []const facts.InputPath } = null,
+    replacement_storage: ?struct { cleanup: graph_mod.GlobalAutoDeinitId, write: graph_mod.GlobalNodeId, targets: []const facts.InputPath, reference_slots: []const facts.InputPath } = null,
 
     const ForwardOrigin = struct {
         call: graph_mod.GlobalNodeId,
@@ -2117,8 +2117,9 @@ pub const Infer = struct {
             .function_call, .virtual_call => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
             .pointer_assignment => |assignment| {
                 try self.inferInputPostStatesExpression(function_id, assignment.pointer, states, exits);
-                const targets = try self.inferWriteTargets(function_id, node_id);
+                const targets = try self.inferWriteTargets(function_id, node_id, states.items);
                 try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
+                const reference_targets = try self.referenceValueTargets(function_id, assignment.value, states.items);
                 try self.recordInputPostState(
                     states,
                     targets,
@@ -2130,11 +2131,14 @@ pub const Infer = struct {
                     true,
                     .definite,
                 );
+                self.setReferenceTargets(states, targets, reference_targets, false);
+                try self.refreshCapturedReferenceSlots(function_id, node_id, states);
             },
             .struct_field_store => |store| {
                 try self.inferInputPostStatesExpression(function_id, store.struct_ptr, states, exits);
-                const targets = try self.inferWriteTargets(function_id, node_id);
+                const targets = try self.inferWriteTargets(function_id, node_id, states.items);
                 try self.inferInputPostStatesExpression(function_id, store.value, states, exits);
+                const reference_targets = try self.referenceValueTargets(function_id, store.value, states.items);
                 try self.recordInputPostState(
                     states,
                     targets,
@@ -2146,12 +2150,15 @@ pub const Infer = struct {
                     true,
                     .definite,
                 );
+                self.setReferenceTargets(states, targets, reference_targets, false);
+                try self.refreshCapturedReferenceSlots(function_id, node_id, states);
             },
             .array_store => |store| {
                 try self.inferInputPostStatesExpression(function_id, store.array_ptr, states, exits);
                 try self.inferInputPostStatesExpression(function_id, store.index, states, exits);
-                const targets = try self.inferWriteTargets(function_id, node_id);
+                const targets = try self.inferWriteTargets(function_id, node_id, states.items);
                 try self.inferInputPostStatesExpression(function_id, store.value, states, exits);
+                const reference_targets = try self.referenceValueTargets(function_id, store.value, states.items);
                 try self.recordInputPostState(
                     states,
                     targets,
@@ -2163,6 +2170,8 @@ pub const Infer = struct {
                     true,
                     .definite,
                 );
+                self.setReferenceTargets(states, targets, reference_targets, false);
+                try self.refreshCapturedReferenceSlots(function_id, node_id, states);
             },
             .if_statement => |statement| {
                 try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
@@ -2274,10 +2283,11 @@ pub const Infer = struct {
             },
             .replacement => |child| {
                 const plan = try @import("../global/replacement.zig").plan(self.graph, node_id);
-                const targets = try self.inferWriteTargets(function_id, plan.write);
+                const targets = try self.inferWriteTargets(function_id, plan.write, states.items);
                 const previous = self.replacement_storage;
                 defer self.replacement_storage = previous;
-                self.replacement_storage = .{ .cleanup = plan.cleanup, .write = plan.write, .targets = targets };
+                const reference_slots = try self.writeReferenceSlots(function_id, plan.write, states.items);
+                self.replacement_storage = .{ .cleanup = plan.cleanup, .write = plan.write, .targets = targets, .reference_slots = reference_slots };
                 try self.inferInputPostStates(function_id, child, flow, exits);
             },
             .code_block, .value_sequence => |child| try self.inferInputPostStates(function_id, child, flow, exits),
@@ -2717,15 +2727,23 @@ pub const Infer = struct {
                 for (paths) |path| try appendDomain(self.post_domain_sink orelse &self.domain_invalidations, .{ .path = path, .domain_index = domain.domain_index });
             }
         }
-        for (summary.input_post_states) |post_state| {
+        const mapped_targets = try self.allocator.alloc([]const facts.InputPath, summary.input_post_states.len);
+        const mapped_references = try self.allocator.alloc(?[]const facts.InputPath, summary.input_post_states.len);
+        for (summary.input_post_states, 0..) |post, index| {
+            mapped_targets[index] = try self.currentReferenceTargets(try self.substituteInputPath(function_id, post.target, arguments, override, .place), states.items);
+            mapped_references[index] = null;
+            if (post.reference_targets) |references| {
+                var mapped = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                for (references) |reference| {
+                    const sources = try self.substituteInputPath(function_id, reference, arguments, override, .place);
+                    for (try self.currentReferenceTargets(sources, states.items)) |source| try appendInputPath(&mapped, source);
+                }
+                if (mapped.items.len != 0) mapped_references[index] = try mapped.toOwnedSlice();
+            }
+        }
+        for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
-            const targets = try self.substituteInputPath(
-                function_id,
-                post_state.target,
-                arguments,
-                override,
-                .place,
-            );
+            const targets = mapped_targets[post_index];
             if (post_state.opaque_ownership != .none) {
                 const storage = if (post_state.opaque_storage) |opaque_storage| blk: {
                     if (opaque_storage.input_index >= arguments.len) break :blk null;
@@ -2762,6 +2780,7 @@ pub const Infer = struct {
                 post_state.may_repopulate_opaque_storage,
                 post_state.initialization,
             );
+            self.setReferenceTargets(states, targets, mapped_references[post_index], post_state.reference_refresh);
         }
     }
 
@@ -2773,7 +2792,10 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
+        const binding_effect = if (self.replacement_storage) |replacement| blk: {
+            if (replacement.cleanup == auto_id) break :blk facts.ValueEffect{ .input_place_values = replacement.targets };
+            break :blk if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
+        } else if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
         try self.applyCleanupInputPostStates(function_id, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, binding_effect, states);
         // A replacement retires the captured destination's old incarnation.
         // Receiver overrides deliberately omit whole-value consumption for
@@ -2843,13 +2865,14 @@ pub const Infer = struct {
         may_repopulate_opaque_storage: bool,
         initialization: facts.PlacePostState.Initialization,
     ) !void {
+        const selected_initialization = if (targets.len > 1 and initialization == .definite) facts.PlacePostState.Initialization.possible else initialization;
         for (targets) |target| {
             // A definite aggregate write also replaces its embedded storage.
             // Keep earlier generation-ending facts, but do not leave consumed
             // descendants describing the previous value. Dereferences cross
             // into borrowed storage; variant and dynamic-index paths likewise
             // need their own conditional initialization facts.
-            if (initializedness == .initialized and initialization == .definite) {
+            if (initializedness == .initialized and selected_initialization == .definite) {
                 for (states.items) |*existing| {
                     if (existing.target.projections.len <= target.projections.len or
                         !self.inputPathPrefix(target, existing.target)) continue;
@@ -2869,6 +2892,8 @@ pub const Infer = struct {
                     existing.initializedness = .initialized;
                     existing.initialization = .definite;
                     existing.value = projected;
+                    existing.reference_targets = null;
+                    existing.reference_refresh = false;
                 }
             }
             var existing_state: ?*facts.PlacePostState = null;
@@ -2880,14 +2905,16 @@ pub const Infer = struct {
                 const was_deinitialized = existing.initializedness != .initialized;
                 existing.initialization = if (initializedness != .initialized)
                     .preserved
-                else if (initialization == .definite or (!was_deinitialized and existing.initialization == .definite))
+                else if (selected_initialization == .definite or (!was_deinitialized and existing.initialization == .definite))
                     .definite
-                else if (initialization == .possible or existing.initialization == .possible)
+                else if (selected_initialization == .possible or existing.initialization == .possible)
                     .possible
                 else
                     .preserved;
                 existing.initializedness = initializedness;
                 existing.value = value;
+                existing.reference_targets = null;
+                existing.reference_refresh = false;
                 existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
                 existing.refreshes_storage_generation =
                     existing.refreshes_storage_generation or
@@ -2904,7 +2931,7 @@ pub const Infer = struct {
                 .ends_previous_roots = ends_roots,
                 .refreshes_storage_generation = refreshes_storage_generation,
                 .requires_available_destination = requires_available_destination,
-                .initialization = initialization,
+                .initialization = selected_initialization,
                 .may_repopulate_opaque_storage = may_repopulate_opaque_storage,
             });
         }
@@ -2935,6 +2962,14 @@ pub const Infer = struct {
         }
     }
 
+    fn joinUntouchedReferenceTargets(self: *Infer, state: facts.PlacePostState) !?[]const facts.InputPath {
+        const references = state.reference_targets orelse return null;
+        // The untouched branch still contains the reference observed on entry.
+        // Keep it alongside the branch that installed a different target.
+        const entry = try self.projectInputPaths(&.{state.target}, .dereference);
+        return try self.union_input_paths(references, entry);
+    }
+
     fn joinInputPostStates(
         self: *Infer,
         destination: *std.array_list.Managed(facts.PlacePostState),
@@ -2950,6 +2985,11 @@ pub const Infer = struct {
                 merged.initialization = if (left_state.initialization == right_state.initialization) left_state.initialization else .possible;
                 merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
                 merged.value = try self.mergeValueEffects(left_state.value, right_state.value);
+                merged.reference_refresh = left_state.reference_refresh and right_state.reference_refresh;
+                merged.reference_targets = if (left_state.reference_targets != null and right_state.reference_targets != null)
+                    try self.union_input_paths(left_state.reference_targets.?, right_state.reference_targets.?)
+                else
+                    null;
                 merged.ends_previous_roots = left_state.ends_previous_roots or right_state.ends_previous_roots;
                 merged.refreshes_storage_generation =
                     left_state.refreshes_storage_generation or right_state.refreshes_storage_generation;
@@ -2959,6 +2999,8 @@ pub const Infer = struct {
                     left_state.may_repopulate_opaque_storage or right_state.may_repopulate_opaque_storage;
                 self.joinOpaqueOwnershipEffect(&merged, left_state, right_state);
             } else {
+                merged.reference_targets = try self.joinUntouchedReferenceTargets(left_state);
+                merged.reference_refresh = false;
                 if (merged.initialization != .preserved) merged.initialization = .possible;
                 // An untouched relocation destination remains available. It
                 // contributes no initialized value to the joined post-state.
@@ -2982,6 +3024,8 @@ pub const Infer = struct {
         for (right.items) |right_state| {
             if (self.findInputPostState(left.items, right_state.target) != null) continue;
             var merged = right_state;
+            merged.reference_targets = try self.joinUntouchedReferenceTargets(right_state);
+            merged.reference_refresh = false;
             if (merged.initialization != .preserved) merged.initialization = .possible;
             if (right_state.initializedness != .initialized or right_state.requires_available_destination) {
                 merged.initializedness = .maybe_initialized;
@@ -4824,25 +4868,110 @@ pub const Infer = struct {
 
     // Capture caller-relative destinations before RHS inference. A checked
     // replacement reuses that same capture for old cleanup and final commit.
-    fn inferWriteTargets(self: *Infer, function_id: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
+    fn inferWriteTargets(self: *Infer, function_id: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, states: []const facts.PlacePostState) anyerror![]const facts.InputPath {
         if (self.replacement_storage) |captured| if (captured.write == node) return captured.targets;
-        return switch (self.graph.node(node).content) {
-            .pointer_assignment => |write| self.inferWritePointeePaths(function_id, write.pointer),
-            .struct_field_store => |write| self.projectInputPaths(try self.inferWritePointeePaths(function_id, write.struct_ptr), .{ .field = write.field_index }),
-            .array_store => |write| self.projectInputPaths(try self.inferWritePointeePaths(function_id, write.array_ptr), if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index),
+        const paths: []const facts.InputPath = switch (self.graph.node(node).content) {
+            .pointer_assignment => |write| try self.inferPointeePaths(function_id, write.pointer),
+            .struct_field_store => |write| try self.projectInputPaths(try self.inferPointeePaths(function_id, write.struct_ptr), .{ .field = write.field_index }),
+            .array_store => |write| try self.projectInputPaths(try self.inferPointeePaths(function_id, write.array_ptr), if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index),
             else => &.{},
+        };
+        return self.currentReferenceTargets(paths, states);
+    }
+
+    fn referenceValueTargets(self: *Infer, function: graph_mod.GlobalFunctionId, value: graph_mod.GlobalNodeId, states: []const facts.PlacePostState) !?[]const facts.InputPath {
+        const ty = self.graph.node(value).ty orelse return null;
+        if (self.graph.semanticType(ty) != .pointer) return null;
+        const paths = try self.inferPointeePaths(function, value);
+        if (paths.len == 0) return null;
+        return try self.currentReferenceTargets(paths, states);
+    }
+
+    fn setReferenceTargets(self: *Infer, states: *std.array_list.Managed(facts.PlacePostState), targets: []const facts.InputPath, references: ?[]const facts.InputPath, refresh: bool) void {
+        for (states.items) |*state| for (targets) |target| {
+            if (self.inputPathEqual(state.target, target)) {
+                state.reference_targets = references;
+                state.reference_refresh = refresh;
+            }
         };
     }
 
-    // Writes through a returned reference need exact identity, not the may-
-    // dependencies used for reads. Share the proof used to validate refers_to.
-    fn inferWritePointeePaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
-        const direct = try self.inferPointeePaths(function_id, pointer);
-        if (direct.len != 0) return direct;
-        const call = switch (self.graph.node(pointer).content) {
-            .function_call => |call| call,
+    fn writeReferenceSlots(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, states: []const facts.PlacePostState) ![]const facts.InputPath {
+        const pointer = switch (self.graph.node(node).content) {
+            .pointer_assignment => |write| write.pointer,
             else => return &.{},
         };
+        var slots = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (try self.currentReferenceTargets(try self.inferInputPaths(function, pointer), states)) |path| {
+            const ty = self.inputPathType(function, path) orelse continue;
+            if (self.graph.semanticType(ty) == .pointer) try appendInputPath(&slots, path);
+        }
+        return slots.toOwnedSlice();
+    }
+
+    fn refreshCapturedReferenceSlots(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, states: *std.array_list.Managed(facts.PlacePostState)) !void {
+        const captured = self.replacement_storage orelse return;
+        if (captured.write != node or captured.targets.len != 1) return;
+        for (captured.reference_slots) |slot| {
+            // Replacing the storage containing the reference does not renew a
+            // new value installed at its old field coordinates.
+            if (self.inputPathPrefix(captured.targets[0], slot)) continue;
+            var references: []const facts.InputPath = &.{};
+            if (self.findInputPostState(states.items, slot)) |post| {
+                if (post.initializedness != .initialized) continue;
+                references = post.reference_targets orelse continue;
+            } else {
+                references = try self.projectInputPaths(&.{slot}, .dereference);
+            }
+            if (references.len != 1 or !self.inputPathEqual(references[0], captured.targets[0])) continue;
+            var found = false;
+            for (states.items) |*post| if (self.inputPathEqual(post.target, slot)) {
+                post.reference_refresh = true;
+                found = true;
+                break;
+            };
+            if (!found) try states.append(.{
+                .target = slot,
+                .initializedness = .initialized,
+                .value = try self.inputPlaceValueEffect(slot),
+                .reference_targets = references,
+                .reference_refresh = true,
+            });
+        }
+        _ = function;
+    }
+
+    // Coordinates in a recorded reference value are already entry-relative.
+    // Do not reinterpret their prefix using later writes to the source slot.
+    // Only dereferences still present in the access suffix observe current slots.
+    fn currentReferenceTargets(self: *Infer, paths: []const facts.InputPath, states: []const facts.PlacePostState) ![]const facts.InputPath {
+        var result = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (paths) |path| {
+            var current = std.array_list.Managed(facts.InputPath).init(self.allocator);
+            try current.append(.{ .input_index = path.input_index, .storage_domain = path.storage_domain });
+            for (path.projections) |projection| {
+                var next = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                for (current.items) |prefix| {
+                    const stored = if (projection == .dereference) self.findInputPostState(states, prefix) else null;
+                    if (stored) |state| if (state.reference_targets) |references| {
+                        for (references) |reference| try appendInputPath(&next, reference);
+                        continue;
+                    };
+                    try appendInputPath(&next, .{ .input_index = prefix.input_index, .storage_domain = prefix.storage_domain, .projections = try self.appendProjection(prefix.projections, projection) });
+                }
+                current.deinit();
+                current = next;
+            }
+            for (current.items) |target| try appendInputPath(&result, target);
+            current.deinit();
+        }
+        return result.toOwnedSlice();
+    }
+
+    // Return an exact input coordinate before applying outer projections. A
+    // wrapper returning a holder must preserve identity through holder.field&,
+    // not only when its call is itself the complete write destination.
+    fn inferForwardedInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, call: anytype) anyerror![]const facts.InputPath {
         if (call.callee_value != null) return &.{};
         const callee = self.graph.function(call.callee);
         if (callee.flags.is_c_abi or callee.safety_primitive != .none or callee.output.len != 1) return &.{};
@@ -4853,7 +4982,7 @@ pub const Infer = struct {
         for (self.graph.fields.items[callee.input.start..][0..callee.input.len], 0..) |field, index| {
             if (!types.equal(self.graph, field.ty, ty) or index >= input.struct_value_literal.fields.len) continue;
             if (!try @import("lexical_forwarding.zig").proves(self.allocator, self.graph, callee, .{ .input_index = @intCast(index), .output_index = 0 }, false)) continue;
-            return self.inferWritePointeePaths(function_id, self.graph.value_fields.items[input.struct_value_literal.fields.start + index].value);
+            return self.inferInputPaths(function_id, self.graph.value_fields.items[input.struct_value_literal.fields.start + index].value);
         }
         return &.{};
     }
@@ -4906,6 +5035,7 @@ pub const Infer = struct {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
                 break :blk try self.inferInputPaths(function_id, value);
             },
+            .function_call => |call| self.inferForwardedInputPaths(function_id, call),
             .binding_use => |binding| if (self.inputIndex(function_id, binding)) |index|
                 try self.oneInputPath(index, &.{})
             else

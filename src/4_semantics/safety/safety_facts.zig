@@ -113,6 +113,12 @@ pub const PlacePostState = struct {
     initialization: Initialization = .preserved,
     initializedness: value_state.Initializedness,
     value: ValueEffect = .{},
+    /// Proven entry-relative destinations of the reference stored in this slot.
+    /// Lifetime dependencies alone never establish these identities.
+    reference_targets: ?[]const InputPath = null,
+    /// This selected reference access observes the destination's post-value;
+    /// unrelated copies continue observing their entry generation.
+    reference_refresh: bool = false,
     ends_previous_roots: bool = false,
     refreshes_storage_generation: bool = false,
     requires_available_destination: bool = false,

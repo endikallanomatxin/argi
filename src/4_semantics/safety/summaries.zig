@@ -283,6 +283,7 @@ fn domainsEql(a: []const facts.InputDomain, b: []const facts.InputDomain) bool {
 fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
     if (!inputPathEql(a.target, b.target) or
         a.initialization != b.initialization or
+        a.reference_refresh != b.reference_refresh or
         a.initializedness != b.initializedness or
         a.ends_previous_roots != b.ends_previous_roots or
         a.refreshes_storage_generation != b.refreshes_storage_generation or
@@ -290,6 +291,11 @@ fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
         a.opaque_ownership != b.opaque_ownership or
         a.may_repopulate_opaque_storage != b.may_repopulate_opaque_storage or
         !valueEffectEql(a.value, b.value)) return false;
+    if ((a.reference_targets == null) != (b.reference_targets == null)) return false;
+    if (a.reference_targets) |paths| {
+        if (paths.len != b.reference_targets.?.len) return false;
+        for (paths, b.reference_targets.?) |left, right| if (!inputPathEql(left, right)) return false;
+    }
     if ((a.opaque_storage == null) != (b.opaque_storage == null)) return false;
     if (a.opaque_storage) |left| if (!inputPathEql(left, b.opaque_storage.?)) return false;
     return true;
@@ -491,4 +497,18 @@ test "outcome guard refresh preserves general conjunctions and replaces stale ma
     try std.testing.expectEqual(@as(u32, 4), refreshed.guarded_effects[1].effects.input_post_states[0].target.input_index);
     try std.testing.expectEqual(@as(usize, 0), stale.input_post_states.len);
     try std.testing.expect(summaryEql(refreshed, try refreshOutcomeGuards(allocator, refreshed)));
+}
+
+test "summary equality distinguishes stored reference identities from lifetime facts" {
+    const slot: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} };
+    const left: facts.InputPath = .{ .input_index = 1 };
+    const right: facts.InputPath = .{ .input_index = 2 };
+    const unknown: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized }} };
+    const first: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{left} }} };
+    const second: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{right} }} };
+    try std.testing.expect(!summaryEql(unknown, first));
+    try std.testing.expect(!summaryEql(first, second));
+    try std.testing.expect(summaryEql(first, first));
+    const refreshed: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{left}, .reference_refresh = true }} };
+    try std.testing.expect(!summaryEql(first, refreshed));
 }
