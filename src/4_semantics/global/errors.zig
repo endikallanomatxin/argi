@@ -382,11 +382,11 @@ pub const Resolver = struct {
             .diagnostic_source_line = empty,
         });
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset },
             .ty = result_ty,
             .content = .{ .testing_expect_error = id },
-        };
+        });
         return .resolved;
     }
 
@@ -479,11 +479,11 @@ pub const Resolver = struct {
                 .diagnostic_column = 0,
                 .diagnostic_source_line = empty,
             });
-            self.graph.nodes.items[@intFromEnum(target)] = .{
+            try self.graph.setNode(self.allocator, target, .{
                 .source = source,
                 .ty = result_ty,
                 .content = .{ .error_context = id },
-            };
+            });
             self.stats.contexts += 1;
         } else {
             const id: global_sg.GlobalErrorPropagationId = @enumFromInt(@as(u32, @intCast(self.graph.error_propagations.items.len)));
@@ -502,11 +502,11 @@ pub const Resolver = struct {
                 .diagnostic_column = 0,
                 .diagnostic_source_line = empty,
             });
-            self.graph.nodes.items[@intFromEnum(target)] = .{
+            try self.graph.setNode(self.allocator, target, .{
                 .source = source,
                 .ty = result_ty,
                 .content = .{ .error_propagation = id },
-            };
+            });
             self.stats.propagations += 1;
         }
         return true;

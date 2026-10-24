@@ -207,7 +207,7 @@ pub const Resolver = struct {
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
         self.core.contextualizeArithmeticPair(&operands);
         const call = try self.makeContractOperator(module_index, identity.contract, identity.operation, &operands, reach, assumed) orelse return .deferred;
-        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = self.lowerSelectedScalarArithmetic(call, value.operator, &operands);
+        try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), self.lowerSelectedScalarArithmetic(call, value.operator, &operands));
         return .resolved;
     }
 
@@ -392,7 +392,7 @@ pub const Resolver = struct {
         // Negation appends nodes and can relocate the node buffer. Resolve it
         // before taking the destination element's address.
         const result = try self.comparisonResult(call, operator);
-        self.graph.nodes.items[@intFromEnum(target)] = result;
+        try self.graph.setNode(self.allocator, target, result);
     }
 
     fn comparisonResult(self: *Resolver, call: global_sg.Node, operator: primitives.ComparisonOperator) !global_sg.Node {
@@ -454,19 +454,19 @@ pub const Resolver = struct {
         }
         if (reference.module_path == null and std.mem.eql(u8, name, "_zeroed")) {
             const node = (try self.core.makeZeroed(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, name, "size_of")) {
             const node = (try self.makeSizeOf(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, name, "alignment_of")) {
             const node = (try self.makeAlignmentOf(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
@@ -503,11 +503,11 @@ pub const Resolver = struct {
             return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.sourceFor(module_index, reference.source),
             .ty = output_ty,
             .content = .{ .function_call = .{ .callee = function, .input = input } },
-        };
+        });
         self.stats.calls += 1;
         return .resolved;
     }
@@ -2282,7 +2282,9 @@ pub const Resolver = struct {
             try self.binding_map.put(self.resolver.allocator, @intFromEnum(id), global);
             if (source.cleanup_arguments) |node| {
                 const arguments = try self.instantiateNode(node);
-                self.resolver.graph.bindings.items[@intFromEnum(global)].cleanup_arguments = arguments;
+                var updated = self.resolver.graph.binding(global);
+                updated.cleanup_arguments = arguments;
+                try self.resolver.graph.setBinding(self.resolver.allocator, global, updated);
             }
             if (source_ty == null) try self.resolver.graph.markBindingTypeUnresolved(self.resolver.allocator, global);
             if (source.initialization) |node| {
@@ -2290,7 +2292,9 @@ pub const Resolver = struct {
                     try self.instantiateNodeWithExpected(node, self.resolver.graph.bindings.items[@intFromEnum(global)].ty)
                 else
                     try self.instantiateNode(node);
-                self.resolver.graph.bindings.items[@intFromEnum(global)].initialization = initialization;
+                var updated = self.resolver.graph.binding(global);
+                updated.initialization = initialization;
+                try self.resolver.graph.setBinding(self.resolver.allocator, global, updated);
                 if (source_ty == null) {
                     if (self.resolver.graph.nodes.items[@intFromEnum(initialization)].ty) |inferred| {
                         if (!self.resolver.graph.isTypeUnresolved(inferred)) {
@@ -2343,10 +2347,10 @@ pub const Resolver = struct {
             const ret_val = if (local.ret_val) |node| if (conditional_result) null else try self.instantiateNode(node) else null;
             const start: u32 = @intCast(self.resolver.graph.node_refs.items.len);
             try self.resolver.graph.node_refs.appendSlice(self.resolver.allocator, nodes.items);
-            self.resolver.graph.blocks.items[@intFromEnum(global)] = .{
+            try self.resolver.graph.setBlock(self.resolver.allocator, global, .{
                 .nodes = .{ .start = start, .len = @intCast(nodes.items.len) },
                 .ret_val = ret_val,
-            };
+            });
             return global;
         }
 
@@ -2472,7 +2476,7 @@ pub const Resolver = struct {
                 .resolved => |node| try self.instantiateResolvedNode(node),
                 .pending => |pending| try self.instantiatePendingNode(storage.pending.items[@intFromEnum(pending)]),
             };
-            self.resolver.graph.nodes.items[@intFromEnum(global)] = instantiated;
+            try self.resolver.graph.setNode(self.resolver.allocator, global, instantiated);
             if (local == .pending) {
                 const pending = storage.pending.items[@intFromEnum(local.pending)];
                 if (pending == .resolve_expression and pending.resolve_expression.comptime_run)
@@ -2512,7 +2516,7 @@ pub const Resolver = struct {
                     // Resolving payloads can grow the node pool. Compute the
                     // value before taking the destination slot's address.
                     const resolved = try self.resolveChoiceLiteral(pending.resolve_expression, expected);
-                    self.resolver.graph.nodes.items[@intFromEnum(global)] = resolved;
+                    try self.resolver.graph.setNode(self.resolver.allocator, global, resolved);
                     self.resolver.stats.nodes += 1;
                     return global;
                 }
@@ -2540,11 +2544,11 @@ pub const Resolver = struct {
                 // Reuse ordinary contextualization rather than requiring a
                 // record field range merely because this body is specialized.
                 if (local_fields.len != 0) return error.ParameterizedStructExpectedNonStruct;
-                self.resolver.graph.nodes.items[@intFromEnum(global)] = .{
+                try self.resolver.graph.setNode(self.resolver.allocator, global, .{
                     .source = self.resolver.sourceFor(self.module_index, node.source),
                     .ty = null,
                     .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } },
-                };
+                });
                 if (!self.resolver.core.coerceContextualValue(global, expected)) return error.ParameterizedStructExpectedNonStruct;
                 self.resolver.stats.nodes += 1;
                 return global;
@@ -2567,14 +2571,14 @@ pub const Resolver = struct {
             }
             const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
-            self.resolver.graph.nodes.items[@intFromEnum(global)] = .{
+            try self.resolver.graph.setNode(self.resolver.allocator, global, .{
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = expected,
                 .content = .{ .struct_value_literal = .{
                     .fields = .{ .start = start, .len = local_fields.len },
                     .dispatch_prefix_positional_count = node.content.struct_value_literal.dispatch_prefix_positional_count,
                 } },
-            };
+            });
             // Use ordinary default completion before publishing a value with
             // the complete contextual record type. A type annotation alone
             // cannot manufacture omitted runtime fields.
@@ -3646,7 +3650,7 @@ pub const Resolver = struct {
             const start: u32 = @intCast(graph.node_refs.items.len);
             try graph.node_refs.appendSlice(self.resolver.allocator, &.{ declaration, assignment });
             try graph.node_refs.appendSlice(self.resolver.allocator, nodes);
-            graph.blocks.items[@intFromEnum(body_id)] = .{ .nodes = .{ .start = start, .len = @intCast(nodes.len + 2) }, .ret_val = actual_body.ret_val };
+            try graph.setBlock(self.resolver.allocator, body_id, .{ .nodes = .{ .start = start, .len = @intCast(nodes.len + 2) }, .ret_val = actual_body.ret_val });
             return graph.node(target);
         }
 

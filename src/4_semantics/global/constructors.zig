@@ -172,8 +172,8 @@ pub const Resolver = struct {
         }
         const function = selected orelse return self.callbackError(source, "no visible concrete CFunction body matches the callback signature");
         const node: global_sg.Node = .{ .source = source, .ty = ty, .content = .{ .function_address = function } };
-        self.graph.nodes.items[@intFromEnum(selector)] = node;
-        self.graph.nodes.items[@intFromEnum(target)] = node;
+        try self.graph.setNode(self.core.allocator, selector, node);
+        try self.graph.setNode(self.core.allocator, target, node);
         return .resolved;
     }
 
@@ -237,6 +237,7 @@ pub const Resolver = struct {
         defer scope.deinit();
         const original_input = self.graph.node(input);
         defer if (scope.active) {
+            scope.rollback();
             self.graph.nodes.items[@intFromEnum(input)] = original_input;
         };
         const declaration = standard_contracts.standardDeclaration(self.graph, "Init") orelse return null;
@@ -311,7 +312,7 @@ pub const Resolver = struct {
         }) |call| {
             var selected = call;
             selected.source = .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset };
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = selected;
+            try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), selected);
             self.core.stats.calls += 1;
             return .resolved;
         }
@@ -348,7 +349,7 @@ pub const Resolver = struct {
                         if (err == error.DeferredContractInitializer) return .deferred;
                         return err;
                     }) |call| {
-                        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
+                        try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), call);
                         self.core.stats.calls += 1;
                         scope.commit();
                         return .resolved;
@@ -370,7 +371,7 @@ pub const Resolver = struct {
                     return err;
                 };
                 if (call) |node| {
-                    self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+                    try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), node);
                     self.core.stats.calls += 1;
                     scope.commit();
                     return .resolved;
@@ -425,7 +426,7 @@ pub const Resolver = struct {
                     };
                     if (selection) |selected| {
                         if (try self.contractInitializer(module_index, selected.target, input, reach, self.graph.node(input).source)) |call| {
-                            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
+                            try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), call);
                             scope.commit();
                             self.core.stats.calls += 1;
                             return .resolved;
@@ -450,7 +451,7 @@ pub const Resolver = struct {
         }) |call| {
             var selected = call;
             selected.source = .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset };
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = selected;
+            try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), selected);
             self.core.stats.calls += 1;
             scope.commit();
             return .resolved;
@@ -488,7 +489,7 @@ pub const Resolver = struct {
 
         self.graph.nodes.items[@intFromEnum(input)].ty = ty;
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(input)];
+        try self.graph.setNode(self.core.allocator, target, self.graph.nodes.items[@intFromEnum(input)]);
         self.graph.nodes.items[@intFromEnum(target)].source = .{
             .file_index = o.file_base + reference.source.file_index,
             .offset = reference.source.offset,

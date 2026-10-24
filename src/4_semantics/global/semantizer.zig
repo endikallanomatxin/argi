@@ -740,7 +740,11 @@ pub const Session = struct {
         const count = std.math.cast(u32, nodes.len) orelse return error.SemanticGraphTooLarge;
         _ = std.math.add(u32, start, count) catch return error.SemanticGraphTooLarge;
         try self.relocation.graph.node_refs.appendSlice(self.allocator, nodes);
-        self.relocation.graph.blocks.items[@intFromEnum(body)].nodes = .{ .start = start, .len = count };
+        {
+            var updated = self.relocation.graph.blocks.items[@intFromEnum(body)];
+            updated.nodes = .{ .start = start, .len = count };
+            try self.relocation.graph.setBlock(self.allocator, body, updated);
+        }
         try self.prepareContinuationScope(function);
     }
 
@@ -819,7 +823,7 @@ pub const Session = struct {
         const ownership = &resolvers.ownership;
         const staged_execution = &resolvers.staged_execution;
         try contracts.validateGenericFunctionInstances();
-        control.annotateChoiceTests();
+        try control.annotateChoiceTests();
 
         if (control.for_each_failure) |failure| {
             if (options.diagnostics) |diagnostics| {

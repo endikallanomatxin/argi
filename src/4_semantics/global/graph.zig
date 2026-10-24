@@ -204,10 +204,12 @@ pub const GlobalSemanticGraph = struct {
         binding_rewrites_len: usize,
         function_completions_len: usize,
         virtual_completions_len: usize,
+        node_rewrites_len: usize,
+        block_rewrites_len: usize,
         safety_arena: ?*std.heap.ArenaAllocator,
     };
 
-    const MutationFrontier = struct { types: usize, bindings: usize, virtual_registries: usize, depth: usize };
+    const MutationFrontier = struct { types: usize, bindings: usize, virtual_registries: usize, nodes: usize, blocks: usize, depth: usize };
 
     /// Coordinates pool tails and type/binding completions. Other resolver
     /// mutations still require the resolver's side-effect checkpoint.
@@ -242,7 +244,7 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn beginTransaction(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) Transaction {
         const parent = self.mutation_frontier;
-        const frontier: MutationFrontier = .{ .types = self.types.items.len, .bindings = self.bindings.items.len, .virtual_registries = self.virtual_registries.items.len, .depth = if (parent) |value| value.depth + 1 else 1 };
+        const frontier: MutationFrontier = .{ .types = self.types.items.len, .bindings = self.bindings.items.len, .virtual_registries = self.virtual_registries.items.len, .nodes = self.nodes.items.len, .blocks = self.blocks.items.len, .depth = if (parent) |value| value.depth + 1 else 1 };
         const saved = self.checkpoint();
         self.mutation_frontier = frontier;
         // New immutable metadata belongs to this scope. A child never appends
@@ -256,13 +258,10 @@ pub const GlobalSemanticGraph = struct {
         value: GlobalNodeId,
     };
 
-    const FunctionCompletion = union(enum) {
-        body: GlobalFunctionId,
-        initializer: struct { binding: GlobalBindingId, previous: ?GlobalNodeId },
-    };
-
     const ConstructionState = struct {
-        function_completions: std.ArrayList(FunctionCompletion) = .empty,
+        function_completions: std.ArrayList(GlobalFunctionId) = .empty,
+        block_rewrites: std.ArrayList(struct { id: GlobalBlockId, previous: Block }) = .empty,
+        node_rewrites: std.ArrayList(struct { id: GlobalNodeId, previous: Node }) = .empty,
         virtual_completions: std.ArrayList(struct { id: GlobalVirtualRegistryId, previous: VirtualMethodRegistry }) = .empty,
         type_resolution: std.ArrayList(TypeResolutionState) = .empty,
         binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
@@ -273,13 +272,15 @@ pub const GlobalSemanticGraph = struct {
         }) = .empty,
         binding_rewrites: std.ArrayList(struct {
             binding_id: GlobalBindingId,
-            previous: GlobalTypeId,
+            previous: Binding,
             resolution: TypeResolutionState,
         }) = .empty,
 
         fn deinit(self: *ConstructionState, allocator: std.mem.Allocator) void {
             self.function_completions.deinit(allocator);
             self.virtual_completions.deinit(allocator);
+            self.node_rewrites.deinit(allocator);
+            self.block_rewrites.deinit(allocator);
             self.type_resolution.deinit(allocator);
             self.binding_type_resolution.deinit(allocator);
             self.type_rewrites.deinit(allocator);
@@ -483,6 +484,8 @@ pub const GlobalSemanticGraph = struct {
             .binding_rewrites_len = self.construction.binding_rewrites.items.len,
             .function_completions_len = self.construction.function_completions.items.len,
             .virtual_completions_len = self.construction.virtual_completions.items.len,
+            .node_rewrites_len = self.construction.node_rewrites.items.len,
+            .block_rewrites_len = self.construction.block_rewrites.items.len,
             .safety_arena = self.safety_arena,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
@@ -503,15 +506,20 @@ pub const GlobalSemanticGraph = struct {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         self.discardIndexedTail(allocator, saved.indexed_functions, saved.indexed_declarations);
         self.discardParameterizedTail(allocator, saved.indexed_parameterized_modules, saved.indexed_module_functions);
+        while (self.construction.node_rewrites.items.len > saved.node_rewrites_len) {
+            const rewrite = self.construction.node_rewrites.pop().?;
+            self.nodes.items[@intFromEnum(rewrite.id)] = rewrite.previous;
+        }
         while (self.construction.virtual_completions.items.len > saved.virtual_completions_len) {
             const previous = self.construction.virtual_completions.pop().?;
             self.virtual_registries.items[@intFromEnum(previous.id)] = previous.previous;
         }
         while (self.construction.function_completions.items.len > saved.function_completions_len) {
-            switch (self.construction.function_completions.pop().?) {
-                .body => |id| self.functions.items[@intFromEnum(id)].body = null,
-                .initializer => |entry| self.bindings.items[@intFromEnum(entry.binding)].initialization = entry.previous,
-            }
+            self.functions.items[@intFromEnum(self.construction.function_completions.pop().?)].body = null;
+        }
+        while (self.construction.block_rewrites.items.len > saved.block_rewrites_len) {
+            const rewrite = self.construction.block_rewrites.pop().?;
+            self.blocks.items[@intFromEnum(rewrite.id)] = rewrite.previous;
         }
         while (self.construction.type_rewrites.items.len > saved.type_rewrites_len) {
             const rewrite = self.construction.type_rewrites.pop().?;
@@ -523,7 +531,7 @@ pub const GlobalSemanticGraph = struct {
         while (self.construction.binding_rewrites.items.len > saved.binding_rewrites_len) {
             const rewrite = self.construction.binding_rewrites.pop().?;
             const raw = @intFromEnum(rewrite.binding_id);
-            self.bindings.items[raw].ty = rewrite.previous;
+            self.bindings.items[raw] = rewrite.previous;
             if (raw < self.construction.binding_type_resolution.items.len)
                 self.construction.binding_type_resolution.items[raw] = rewrite.resolution;
         }
@@ -803,7 +811,7 @@ pub const GlobalSemanticGraph = struct {
         if (raw >= frontier.bindings) return;
         try self.construction.binding_rewrites.append(allocator, .{
             .binding_id = id,
-            .previous = self.bindings.items[raw].ty,
+            .previous = self.bindings.items[raw],
             .resolution = if (self.isBindingTypeUnresolved(id)) .unresolved else .resolved,
         });
     }
@@ -833,6 +841,10 @@ pub const GlobalSemanticGraph = struct {
         self.construction.function_completions = .empty;
         self.construction.virtual_completions.deinit(allocator);
         self.construction.virtual_completions = .empty;
+        self.construction.node_rewrites.deinit(allocator);
+        self.construction.node_rewrites = .empty;
+        self.construction.block_rewrites.deinit(allocator);
+        self.construction.block_rewrites = .empty;
     }
 
     fn ensureTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
@@ -852,15 +864,44 @@ pub const GlobalSemanticGraph = struct {
             if (@intFromEnum(entry.binding) >= self.bindings.items.len or @intFromEnum(entry.value) >= self.nodes.items.len)
                 return error.InvalidFunctionCompletion;
         }
-        const count = std.math.add(usize, defaults.len, 1) catch return error.OutOfMemory;
-        try self.construction.function_completions.ensureUnusedCapacity(allocator, count);
+        try self.construction.function_completions.ensureUnusedCapacity(allocator, 1);
+        try self.construction.binding_rewrites.ensureUnusedCapacity(allocator, defaults.len);
         for (defaults) |entry| {
             const slot = &self.bindings.items[@intFromEnum(entry.binding)];
-            self.construction.function_completions.appendAssumeCapacity(.{ .initializer = .{ .binding = entry.binding, .previous = slot.initialization } });
+            self.construction.binding_rewrites.appendAssumeCapacity(.{
+                .binding_id = entry.binding,
+                .previous = slot.*,
+                .resolution = if (self.isBindingTypeUnresolved(entry.binding)) .unresolved else .resolved,
+            });
             slot.initialization = entry.value;
         }
-        self.construction.function_completions.appendAssumeCapacity(.{ .body = id });
+        self.construction.function_completions.appendAssumeCapacity(id);
         self.functions.items[raw].body = body;
+    }
+
+    pub fn setBlock(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBlockId, value: Block) !void {
+        const raw = @intFromEnum(id);
+        if (self.mutation_frontier) |frontier| if (raw < frontier.blocks) {
+            try self.construction.block_rewrites.append(allocator, .{ .id = id, .previous = self.blocks.items[raw] });
+        };
+        self.blocks.items[raw] = value;
+    }
+
+    /// Binding metadata and type resolution share one ordered undo history.
+    /// Explicit type resolution remains responsible for its readiness marker.
+    pub fn setBinding(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBindingId, value: Binding) !void {
+        try self.recordBindingRewrite(allocator, id);
+        self.bindings.items[@intFromEnum(id)] = value;
+    }
+
+    /// Complete or annotate a node without retaining pointers into a growing pool.
+    /// Reserve undo storage before changing a slot owned by an enclosing scope.
+    pub fn setNode(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalNodeId, value: Node) !void {
+        const raw = @intFromEnum(id);
+        if (self.mutation_frontier) |frontier| if (raw < frontier.nodes) {
+            try self.construction.node_rewrites.append(allocator, .{ .id = id, .previous = self.nodes.items[raw] });
+        };
+        self.nodes.items[raw] = value;
     }
 
     /// Publish a complete erased interface once, preserving the receiver slot.
@@ -1790,4 +1831,101 @@ fn completeVirtualWithAllocationFailures(allocator: std.mem.Allocator) !void {
 
 test "virtual signature completions release staged metadata on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, completeVirtualWithAllocationFailures, .{});
+}
+
+test "node completions restore enclosing state after nested commit and pool growth" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const original: Node = .{ .source = .{ .file_index = 0, .offset = 7 }, .ty = null, .content = .{ .int_literal = 1 } };
+    try graph.nodes.append(a, original);
+    const saved = graph.checkpoint();
+    var outer = graph.beginTransaction(a);
+    defer outer.deinit();
+    var completed = original;
+    completed.content = .{ .int_literal = 2 };
+    try graph.setNode(a, @enumFromInt(0), completed);
+    try graph.nodes.append(a, original);
+    try graph.setNode(a, @enumFromInt(1), completed);
+    try std.testing.expectEqual(@as(usize, 1), graph.construction.node_rewrites.items.len);
+    var child = graph.beginTransaction(a);
+    defer child.deinit();
+    completed.content = .{ .int_literal = 3 };
+    try graph.setNode(a, @enumFromInt(0), completed);
+    try graph.setNode(a, @enumFromInt(1), completed);
+    child.commit();
+    for (0..128) |_| try graph.nodes.append(a, original);
+    outer.rollback();
+    try std.testing.expectEqualDeep(original, graph.node(@enumFromInt(0)));
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+}
+
+test "node completion allocation failure leaves the original slot untouched" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var graph: GlobalSemanticGraph = .{};
+            defer graph.deinit(a);
+            const original: Node = .{ .source = .{ .file_index = 0, .offset = 3 }, .ty = null, .content = .{ .int_literal = 1 } };
+            try graph.nodes.append(a, original);
+            const saved = graph.checkpoint();
+            var transaction = graph.beginTransaction(a);
+            defer transaction.deinit();
+            errdefer {
+                transaction.rollback();
+                std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
+                std.debug.assert(std.meta.eql(original, graph.node(@enumFromInt(0))));
+            }
+            var completed = original;
+            completed.content = .{ .int_literal = 9 };
+            try graph.setNode(a, @enumFromInt(0), completed);
+            transaction.rollback();
+            try std.testing.expectEqualDeep(original, graph.node(@enumFromInt(0)));
+            try std.testing.expectEqualDeep(saved, graph.checkpoint());
+        }
+    }.run, .{});
+}
+
+test "binding and block completions share ordered rollback with function defaults" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var graph = try resolutionTransactionGraph(a);
+            defer graph.deinit(a);
+            try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 0 } });
+            try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+            try graph.nodes.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } });
+            const original_binding = graph.binding(@enumFromInt(0));
+            const original_block = graph.blocks.items[0];
+            const saved = graph.checkpoint();
+            var outer = graph.beginTransaction(a);
+            defer outer.deinit();
+            errdefer {
+                outer.rollback();
+                std.debug.assert(std.meta.eql(original_binding, graph.binding(@enumFromInt(0))));
+                std.debug.assert(std.meta.eql(original_block, graph.blocks.items[0]));
+                std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
+            }
+            var updated = original_binding;
+            updated.deferred_initialization = true;
+            try graph.setBinding(a, @enumFromInt(0), updated);
+            try graph.resolveBindingType(a, @enumFromInt(0), @enumFromInt(0));
+            var child = graph.beginTransaction(a);
+            defer child.deinit();
+            try graph.completeFunctionBody(a, @enumFromInt(0), @enumFromInt(0), &.{.{ .binding = @enumFromInt(0), .value = @enumFromInt(0) }});
+            updated = graph.binding(@enumFromInt(0));
+            updated.deferred_initialization = false;
+            try graph.setBinding(a, @enumFromInt(0), updated);
+            try graph.setBlock(a, @enumFromInt(0), .{ .nodes = .{ .start = 0, .len = 0 }, .ret_val = @enumFromInt(0) });
+            child.commit();
+            for (0..64) |_| {
+                try graph.bindings.append(a, original_binding);
+                try graph.blocks.append(a, original_block);
+            }
+            outer.rollback();
+            try std.testing.expectEqualDeep(original_binding, graph.binding(@enumFromInt(0)));
+            try std.testing.expectEqualDeep(original_block, graph.blocks.items[0]);
+            try std.testing.expect(graph.function(@enumFromInt(0)).body == null);
+            try std.testing.expect(graph.isBindingTypeUnresolved(@enumFromInt(0)));
+            try std.testing.expectEqualDeep(saved, graph.checkpoint());
+        }
+    }.run, .{});
 }

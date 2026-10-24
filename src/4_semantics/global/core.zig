@@ -740,11 +740,11 @@ pub const Resolver = struct {
             }
             const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
             if (!try self.completeCallInputWithReach(signature, input, reach)) return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), .{
                 .source = self.sourceFor(reference.source, o),
                 .ty = try self.functionOutputType(signature),
                 .content = .{ .function_call = .{ .callee = signature, .callee_value = pointer, .input = input } },
-            };
+            });
             self.stats.calls += 1;
             return .resolved;
         }
@@ -764,11 +764,11 @@ pub const Resolver = struct {
                     };
                     if (length) |count| {
                         const result = std.math.cast(i64, count) orelse return .deferred;
-                        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
+                        try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), .{
                             .source = self.sourceFor(reference.source, o),
                             .ty = try self.builtin(.UIntNative),
                             .content = .{ .int_literal = result },
-                        };
+                        });
                         self.stats.calls += 1;
                         return .resolved;
                     }
@@ -782,25 +782,25 @@ pub const Resolver = struct {
         }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "_zeroed")) {
             const node = (try self.makeZeroed(input, self.sourceFor(reference.source, o))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "size_of")) {
             const node = (try self.makeSizeOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "alignment_of")) {
             const node = (try self.makeAlignmentOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "type_of")) {
             const node = (try self.makeTypeOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
@@ -812,13 +812,13 @@ pub const Resolver = struct {
             if (literal.fields.len != 0) return .deferred;
             const void_ty = try self.builtin(.Void);
             const target = globalizer.globalNode(o, value.node);
-            self.graph.nodes.items[@intFromEnum(target)] = .{
+            try self.graph.setNode(self.allocator, target, .{
                 .source = self.sourceFor(reference.source, o),
                 .ty = void_ty,
                 .content = .{ .struct_value_literal = .{
                     .fields = .{ .start = @intCast(self.graph.value_fields.items.len), .len = 0 },
                 } },
-            };
+            });
             self.stats.calls += 1;
             return .resolved;
         }
@@ -832,11 +832,11 @@ pub const Resolver = struct {
         if (!try self.completeCallInputWithReach(function, input, reach)) return .deferred;
         const output = try self.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.sourceFor(reference.source, o),
             .ty = if (value.expected_type) |local| globalizer.globalType(o, local) else output,
             .content = .{ .function_call = .{ .callee = function, .input = input } },
-        };
+        });
         self.stats.calls += 1;
         return .resolved;
     }
@@ -932,7 +932,7 @@ pub const Resolver = struct {
         const target = globalizer.globalNode(o, value.node);
         const field_name = module.text(value.field_name);
         if (self.isUnpackedOutputField(source, field_name)) {
-            self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
+            try self.graph.setNode(self.allocator, target, self.graph.nodes.items[@intFromEnum(source)]);
             self.stats.fields += 1;
             return true;
         }
@@ -945,7 +945,7 @@ pub const Resolver = struct {
                 return false;
             const any = try self.builtin(.Any);
             const pointer = try self.pointerType(any, .read_only);
-            self.graph.nodes.items[@intFromEnum(target)] = .{
+            try self.graph.setNode(self.allocator, target, .{
                 .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
                 .ty = pointer,
                 .content = .{ .struct_field_access = .{
@@ -953,12 +953,12 @@ pub const Resolver = struct {
                     .field_name = try self.graph.addString(self.allocator, field_name),
                     .field_index = field_index,
                 } },
-            };
+            });
             self.stats.fields += 1;
             return true;
         }
         const hit = types.findField(self.graph, source_ty, field_name) orelse return false;
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
             .ty = hit.field.ty,
             .content = .{ .struct_field_access = .{
@@ -966,7 +966,7 @@ pub const Resolver = struct {
                 .field_name = try self.graph.addString(self.allocator, module.text(value.field_name)),
                 .field_index = hit.index,
             } },
-        };
+        });
         self.stats.fields += 1;
         return true;
     }
@@ -981,7 +981,7 @@ pub const Resolver = struct {
         };
         if (self.graph.isTypeUnresolved(child)) return .deferred;
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.graph.nodes.items[@intFromEnum(pointer)].source,
             .ty = child,
             .content = .{ .dereference = .{
@@ -989,7 +989,7 @@ pub const Resolver = struct {
                 .ty = child,
                 .pointer_type = pointer_type,
             } },
-        };
+        });
         self.stats.dereferences += 1;
         return .resolved;
     }
@@ -1008,18 +1008,18 @@ pub const Resolver = struct {
         if (self.graph.isTypeUnresolved(child)) return .deferred;
         if (value.collapse_existing_pointer) switch (self.graph.types.items[@intFromEnum(child)]) {
             .pointer => |pointer| if (value.mutability == .read_only or pointer.mutability == .read_write) {
-                self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = self.graph.node(child_node);
+                try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), self.graph.node(child_node));
                 return .resolved;
             },
             else => {},
         };
         const pointer_type = try self.pointerType(child, value.mutability);
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.graph.nodes.items[@intFromEnum(child_node)].source,
             .ty = pointer_type,
             .content = .{ .address_of = child_node },
-        };
+        });
         return .resolved;
     }
 
@@ -1071,7 +1071,7 @@ pub const Resolver = struct {
         tag: global_sg.GlobalNodeId,
     ) !bool {
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.graph.nodes.items[@intFromEnum(choice)].source,
             .ty = try self.builtin(.Bool),
             .content = .{ .comparison = .{
@@ -1079,7 +1079,7 @@ pub const Resolver = struct {
                 .left = choice,
                 .right = tag,
             } },
-        };
+        });
         self.stats.operators += 1;
         return true;
     }
@@ -1099,14 +1099,14 @@ pub const Resolver = struct {
                 if (choice.payload != null) return false;
                 const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];
                 const hit = types.findVariant(self.graph, choice_ty, module.text(reference.name)) orelse return false;
-                self.graph.nodes.items[@intFromEnum(node_id)] = .{
+                try self.graph.setNode(self.allocator, node_id, .{
                     .source = .{
                         .file_index = o.file_base + reference.source.file_index,
                         .offset = reference.source.offset,
                     },
                     .ty = try self.builtin(.Int32),
                     .content = .{ .int_literal = types.variantTag(self.graph, choice_ty, hit) },
-                };
+                });
                 return true;
             },
             else => {},
@@ -1168,8 +1168,7 @@ pub const Resolver = struct {
                     const selected = self.graph.node_refs.items[
                         literal.elements.start + @as(u32, @intCast(raw_index))
                     ];
-                    self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] =
-                        self.graph.node(selected);
+                    try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), self.graph.node(selected));
                     self.stats.indexes += 1;
                     return .resolved;
                 },
@@ -1183,7 +1182,7 @@ pub const Resolver = struct {
             if (value.store_value) |local_store|
                 self.contextualizeStoredValue(globalizer.globalNode(o, local_store), element_ty);
             const target = globalizer.globalNode(o, value.node);
-            self.graph.nodes.items[@intFromEnum(target)] = if (value.store_value) |local_store| .{
+            try self.graph.setNode(self.allocator, target, if (value.store_value) |local_store| .{
                 .source = self.graph.nodes.items[@intFromEnum(collection)].source,
                 .ty = element_ty,
                 .content = .{ .array_store = .{
@@ -1202,7 +1201,7 @@ pub const Resolver = struct {
                     .element_type = element_ty,
                     .array_type = collection_ty,
                 } },
-            };
+            });
             self.stats.indexes += 1;
             return .resolved;
         }
@@ -1638,11 +1637,13 @@ pub const Resolver = struct {
         const ty = try self.structType(expected_fields);
         const start: u32 = @intCast(self.graph.value_fields.items.len);
         try self.graph.value_fields.appendSlice(self.allocator, values.items);
-        self.graph.nodes.items[@intFromEnum(input_node)].ty = ty;
-        self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{
+        var completed = self.graph.node(input_node);
+        completed.ty = ty;
+        completed.content.struct_value_literal = .{
             .fields = .{ .start = start, .len = expected_fields.len },
             .assumed_fields = literal.assumed_fields,
         };
+        try self.graph.setNode(self.allocator, input_node, completed);
         transaction.commit();
         published = true;
         return true;
@@ -2545,4 +2546,37 @@ test "binding materialization follows pending states as bindings are appended" {
     try std.testing.expect(try resolver.materializeBindingTypes());
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(1)), graph.bindings.items[3].ty);
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), graph.bindings.items[0].ty);
+}
+
+test "completed call defaults remain reversible after nested publication" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var graph: global_sg.GlobalSemanticGraph = .{};
+            defer graph.deinit(a);
+            const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+            try graph.types.append(a, .{ .builtin = .Int32 });
+            try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } });
+            const original: global_sg.Node = .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } } };
+            try graph.nodes.append(a, original);
+            try graph.fields.append(a, .{ .name = try graph.addString(a, "value"), .source = source, .ty = @enumFromInt(0), .default_value = @enumFromInt(0) });
+            var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+            defer resolver.deinit();
+            const saved = graph.checkpoint();
+            var outer = graph.beginTransaction(a);
+            defer outer.deinit();
+            errdefer {
+                outer.rollback();
+                std.debug.assert(std.meta.eql(original, graph.node(@enumFromInt(1))));
+                std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
+            }
+            try std.testing.expect(try resolver.completeCallInputFields(.{ .start = 0, .len = 1 }, @enumFromInt(1)));
+            const completed = graph.node(@enumFromInt(1));
+            try std.testing.expect(completed.ty != null);
+            try std.testing.expectEqual(@as(u32, 1), completed.content.struct_value_literal.fields.len);
+            try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(0)), graph.value_fields.items[completed.content.struct_value_literal.fields.start].value);
+            outer.rollback();
+            try std.testing.expectEqualDeep(original, graph.node(@enumFromInt(1)));
+            try std.testing.expectEqualDeep(saved, graph.checkpoint());
+        }
+    }.run, .{});
 }

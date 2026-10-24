@@ -69,8 +69,7 @@ pub const Resolver = struct {
             globalizer.globalNode(o, value.reach),
             binding,
         ) orelse return .deferred;
-        self.core.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] =
-            self.core.graph.nodes.items[@intFromEnum(selected)];
+        try self.core.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), self.core.graph.nodes.items[@intFromEnum(selected)]);
         return .resolved;
     }
 
@@ -98,7 +97,7 @@ pub const Resolver = struct {
                     else => return err,
                 };
                 if (selected) |node| {
-                    self.core.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, call.node))] = node;
+                    try self.core.graph.setNode(self.core.allocator, globalizer.globalNode(o, call.node), node);
                     return .resolved;
                 }
             }

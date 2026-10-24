@@ -150,8 +150,16 @@ pub const Resolver = struct {
             self.graph.node_refs.appendAssumeCapacity(write);
         }
         self.graph.node_refs.appendSliceAssumeCapacity(self.graph.node_refs.items[body.nodes.start..][0..body.nodes.len]);
-        self.graph.blocks.items[@intFromEnum(body_id)].nodes = .{ .start = start, .len = count };
-        for (bindings) |binding| self.graph.bindings.items[@intFromEnum(binding)].initialization = null;
+        {
+            var updated = self.graph.blocks.items[@intFromEnum(body_id)];
+            updated.nodes = .{ .start = start, .len = count };
+            try self.graph.setBlock(self.allocator, body_id, updated);
+        }
+        for (bindings) |binding| {
+            var updated = self.graph.bindings.items[@intFromEnum(binding)];
+            updated.initialization = null;
+            try self.graph.setBinding(self.allocator, binding, updated);
+        }
     }
 
     fn functionReadyForCleanup(
@@ -256,12 +264,12 @@ pub const Resolver = struct {
         // inserted an implicit copy. The call already produces a fresh value;
         // copying its result would require a spurious copy of owned outputs.
         if (self.graph.nodes.items[@intFromEnum(source)].content == .function_call) {
-            self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
+            try self.graph.setNode(self.allocator, target, self.graph.nodes.items[@intFromEnum(source)]);
             return true;
         }
         if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) {
             const original = self.graph.nodes.items[@intFromEnum(source)];
-            self.graph.nodes.items[@intFromEnum(target)] = original;
+            try self.graph.setNode(self.allocator, target, original);
             self.stats.copies += 1;
             return true;
         }
@@ -278,25 +286,25 @@ pub const Resolver = struct {
                 // Stabilizing a produced value must preserve its transfer into
                 // a consuming argument. Repeated consumption remains a move
                 // error, while borrows still use the temporary's storage.
-                self.graph.nodes.items[@intFromEnum(target)] = .{
+                try self.graph.setNode(self.allocator, target, .{
                     .source = self.graph.nodes.items[@intFromEnum(source)].source,
                     .ty = ty,
                     .content = .{ .move_value = source },
-                };
+                });
                 return true;
             }
             if (self.denied_copy == null) self.denied_copy = .{
                 .source = self.graph.nodes.items[@intFromEnum(source)].source,
                 .ty = ty,
             };
-            self.graph.nodes.items[@intFromEnum(target)] = .{
+            try self.graph.setNode(self.allocator, target, .{
                 .source = self.graph.nodes.items[@intFromEnum(source)].source,
                 .ty = ty,
                 .content = .{ .denied_implicit_copy = source },
-            };
+            });
             return true;
         }
-        self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
+        try self.graph.setNode(self.allocator, target, self.graph.nodes.items[@intFromEnum(source)]);
         self.stats.copies += 1;
         return true;
     }
@@ -772,7 +780,7 @@ pub const Resolver = struct {
             const content = self.graph.node(node_id).content;
             if (content != .code_block and content != .value_sequence and content != .replacement)
                 try self.finalizeExpressionCleanup(node_id, active.items, defers.items, visible.items, owner_function, module_index);
-            const node = &self.graph.nodes.items[@intFromEnum(node_id)];
+            const node = self.graph.node(node_id);
             if (self.deferValue(node_id)) |deferred_value| {
                 // The marker is a no-op, but the deferred body still owns
                 // branch-local bindings and nested deferred actions.
@@ -792,7 +800,12 @@ pub const Resolver = struct {
                         self.graph.function(owner_function).body == block_id;
                     if (!persistent) try active.append(self.allocator, binding);
                 },
-                .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
+                .return_statement => {
+                    const cleanup = try self.appendCleanup(active.items, defers.items);
+                    var updated = node;
+                    updated.content.return_statement.cleanup = cleanup;
+                    try self.graph.setNode(self.allocator, node_id, updated);
+                },
                 .code_block, .value_sequence => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
                 .if_statement => |statement| {
                     try self.finalizeBlock(statement.then_block, &active, &defers, &visible, &.{}, owner_function, module_index);
@@ -851,7 +864,11 @@ pub const Resolver = struct {
 
         const start: u32 = @intCast(self.graph.node_refs.items.len);
         try self.graph.node_refs.appendSlice(self.allocator, rebuilt.items);
-        self.graph.blocks.items[@intFromEnum(block_id)].nodes = .{ .start = start, .len = @intCast(rebuilt.items.len) };
+        {
+            var updated = self.graph.blocks.items[@intFromEnum(block_id)];
+            updated.nodes = .{ .start = start, .len = @intCast(rebuilt.items.len) };
+            try self.graph.setBlock(self.allocator, block_id, updated);
+        }
         if (local_cleanup.items.len != 0) self.stats.cleanup_edges += @intCast(local_cleanup.items.len);
     }
 
@@ -979,8 +996,11 @@ pub const Resolver = struct {
             cleanup_node = try self.appendNode(record.source, try self.builtin(.Void), .{ .auto_deinit_binding = auto_id });
             self.stats.auto_deinits += 1;
         }
-        if (record.deferred_initialization)
-            self.graph.bindings.items[@intFromEnum(binding)].reinitialize_cleanup = cleanup_node;
+        if (record.deferred_initialization) {
+            var updated = self.graph.bindings.items[@intFromEnum(binding)];
+            updated.reinitialize_cleanup = cleanup_node;
+            try self.graph.setBinding(self.allocator, binding, updated);
+        }
         try self.auto_nodes.append(self.allocator, .{ .binding = binding, .node = cleanup_node });
     }
 
@@ -1243,11 +1263,11 @@ pub const Resolver = struct {
             self.empty_block = id;
             break :blk id;
         };
-        self.graph.nodes.items[@intFromEnum(marker)] = .{
+        try self.graph.setNode(self.allocator, marker, .{
             .source = source,
             .ty = try self.builtin(.Void),
             .content = .{ .code_block = block },
-        };
+        });
     }
 
     fn builtin(self: *Resolver, wanted: primitives.BuiltinType) !global_sg.GlobalTypeId {

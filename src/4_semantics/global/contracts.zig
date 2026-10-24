@@ -147,7 +147,7 @@ pub const Resolver = struct {
         const input = globalizer.globalNode(o, value.input);
         if (std.mem.eql(u8, module.text(reference.name), "to_virtual")) {
             const node = (try self.makeVirtualize(module_index, reference, input, if (value.expected_type) |ty| globalizer.globalType(o, ty) else null)) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             return .resolved;
         }
         if (!self.ownsVirtualCall(module_index, module, reference, input)) return .not_applicable;
@@ -158,7 +158,7 @@ pub const Resolver = struct {
             .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset },
             reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function),
         )) orelse return .deferred;
-        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+        try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
         return .resolved;
     }
 
@@ -1244,7 +1244,7 @@ pub const Resolver = struct {
         const context = reach_context.Context.fromModule(module, offsets, call.visible_bindings, call.owner_function);
         const node = try self.makeScopedOperationCall(module_index, globalizer.globalType(offsets, call.contract_type.?), module.text(reference.name), globalizer.globalNode(offsets, call.input), context, self.sourceFor(module_index, reference.source)) orelse
             return if (self.participant_conformance_failure != null) .invalid else .deferred;
-        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(offsets, call.node))] = node;
+        try self.graph.setNode(self.allocator, globalizer.globalNode(offsets, call.node), node);
         return .resolved;
     }
 
