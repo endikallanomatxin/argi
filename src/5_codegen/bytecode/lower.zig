@@ -1466,11 +1466,11 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = @import("../integer_arithmetic.zig").encode(value, b.integerBounds(self.parent.graph, self.slots.items[dst]).?) } } });
             },
             .float_literal => |value| {
-                const ty = self.parent.graph.semanticType(self.slots.items[dst]);
-                const number: b.Value = switch (ty.builtin) {
-                    .Float16 => .{ .float16 = @floatCast(value) },
-                    .Float32 => .{ .float32 = @floatCast(value) },
-                    .Float64 => .{ .float64 = @floatCast(value) },
+                const kind = b.scalarKind(self.parent.graph, self.slots.items[dst]);
+                const number: b.Value = switch (kind) {
+                    .f16 => .{ .float16 = @floatCast(value) },
+                    .f32 => .{ .float32 = @floatCast(value) },
+                    .f64 => .{ .float64 = @floatCast(value) },
                     else => return error.InvalidBytecode,
                 };
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = number } });

@@ -119,16 +119,15 @@ scope exits before completion, only its initialized owning fields are cleaned;
 the incomplete record's `deinit` is not called. This applies recursively to
 partially initialized nested records and to early exits.
 
-> [!IMPLEMENTATION]
-> Replacement cleanup currently follows lexical bindings, record fields, and
-> constant local reference aliases. Runtime-selected and indexed owner destinations
-> still need shared cleanup identities; bytecode execution rejects these forms.
-
-`#defer` schedules a statement to run when the current scope exits, including
+`defer` schedules a statement to run when the current scope exits, including
 on a return or error propagation. Deferred statements run in reverse order,
 before automatic cleanup of the scope's locals. Use it for an exit action
 that automatic cleanup does not provide; a local value with a suitable
 `deinit` does not need a deferred `deinit` call.
+
+`defer` is a reserved keyword, as is `implement`. It has no directive prefix:
+write `defer { ... }` or `defer cleanup(...)`. The former `#defer` spelling is
+rejected with a migration diagnostic.
 
 Deferred actions cannot return from the containing function or propagate errors
 with `!`, `!!`, or `!!!`: doing so would bypass remaining deferred actions and

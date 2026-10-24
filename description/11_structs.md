@@ -41,7 +41,7 @@ remain possible.
 
 A field whose name begins with `_` is private to the module that declares
 the struct. Files in that directory share the module and may access it;
-another module in the same package may not.
+another module in the same distribution may not.
 
 ```rg
 Counter : Type = (

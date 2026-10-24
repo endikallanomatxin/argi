@@ -41,6 +41,7 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
         .name = declaration.name,
         .source = .{ .file_index = declaration.module_file_index, .offset = declaration.source_offset },
         .type_id = declaration.type_id,
+        .underlying_type = declaration.underlying_type,
         .function_id = declaration.function_id,
         .struct_fields = if (declaration.struct_fields) |range| .{ .start = range.start, .len = range.len } else null,
         .choice_variants = if (declaration.choice_variants) |range| .{ .start = range.start, .len = range.len } else null,

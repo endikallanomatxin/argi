@@ -1853,7 +1853,7 @@ pub const Resolver = struct {
 
     pub fn isScalarArithmeticRepresentation(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
         if (!types.equal(self.graph, a, b)) return false;
-        return switch (self.graph.types.items[@intFromEnum(a)]) {
+        return switch (types.representation(self.graph, a) orelse return false) {
             .builtin => |value| switch (value) {
                 .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64 => true,
                 else => false,
@@ -1904,7 +1904,7 @@ pub const Resolver = struct {
 
     pub fn floatLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
         if (self.graph.node(node).content != .float_literal) return false;
-        return switch (self.graph.semanticType(target)) {
+        return switch (types.representation(self.graph, target) orelse return false) {
             .builtin => |value| value == .Float16 or value == .Float32 or value == .Float64,
             else => false,
         };
@@ -1914,6 +1914,7 @@ pub const Resolver = struct {
         if (self.integerLiteralFits(node, target) or self.floatLiteralFits(node, target)) return true;
         if (self.pendingChoiceLiteralFits(node, target)) return true;
         switch (self.graph.nodes.items[@intFromEnum(node)].content) {
+            .bool_literal => return if (types.representation(self.graph, target)) |represented| represented == .builtin and represented.builtin == .Bool else false,
             .string_literal => return switch (self.graph.types.items[@intFromEnum(target)]) {
                 .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, primitives.builtinTypeNamedForTarget("CChar", self.graph.target.stdTarget()).?),
                 else => false,
@@ -2006,7 +2007,7 @@ pub const Resolver = struct {
         _ = try self.coerceContextualValue(value, element);
         // Even an out-of-range integer literal carries its destination type
         // into Safety, which diagnoses the range before codegen can emit it.
-        if (self.graph.node(value).content == .int_literal) switch (self.graph.semanticType(element)) {
+        if (self.graph.node(value).content == .int_literal) switch (types.representation(self.graph, element) orelse return) {
             .builtin => |kind| if (primitives.integerRange(kind, self.graph.target.stdTarget()) != null) {
                 try self.graph.setNodeType(self.allocator, value, element);
             },
@@ -2082,6 +2083,39 @@ pub const Resolver = struct {
             const actual = self.callArgument(literal, offset, expected.name) orelse continue;
             _ = try self.coerceContextualValue(actual, expected.ty);
         }
+        _ = try self.normalizeNamedStructLiteral(node, target);
+        try self.graph.setNodeType(self.allocator, node, target);
+        return true;
+    }
+
+    fn normalizeNamedStructLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) anyerror!bool {
+        const literal = self.graph.node(node).content.struct_value_literal;
+        const expected_fields = types.fields(self.graph, target) orelse return false;
+        if (literal.fields.len > expected_fields.len) return false;
+        var ordered = literal.fields.len == expected_fields.len;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
+            const expected = self.graph.fields.items[expected_fields.start + offset];
+            if (!std.mem.eql(u8, self.graph.text(field.name), self.graph.text(expected.name))) {
+                ordered = false;
+                break;
+            }
+        }
+        if (ordered) return false;
+        // Safety projections and codegen both consume storage positions. Match
+        // named literals to that order before attaching their target
+        // type, filling omitted defaults through the constructor completion path.
+        // Positional structural conversions retain their existing ordering.
+        var named = true;
+        var reordered = literal.fields.len != expected_fields.len;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
+            const hit = types.findField(self.graph, target, self.graph.text(field.name)) orelse {
+                named = false;
+                break;
+            };
+            if (hit.index != offset) reordered = true;
+        }
+        if (!named or !reordered) return false;
+        if (!(try self.completeCallInputFields(expected_fields, node))) return false;
         try self.graph.setNodeType(self.allocator, node, target);
         return true;
     }
@@ -2107,6 +2141,16 @@ pub const Resolver = struct {
 
     pub fn materializeAssignmentValues(self: *Resolver) !bool {
         var changed = false;
+        // Specialized generic bodies can already carry their contextual type.
+        // Normalize their literals too, even without an assignment type change.
+        const count = self.graph.nodes.items.len;
+        var index: usize = 0;
+        while (index < count) : (index += 1) {
+            const node = self.graph.nodes.items[index];
+            if (node.content != .struct_value_literal) continue;
+            const target = node.ty orelse continue;
+            if (try self.normalizeNamedStructLiteral(@enumFromInt(index), target)) changed = true;
+        }
         for (self.graph.bindings.items, 0..) |binding, raw| {
             if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
             const initialization = binding.initialization orelse continue;
@@ -2153,7 +2197,7 @@ pub const Resolver = struct {
             .int_literal => |number| number,
             else => return false,
         };
-        const fits = switch (self.graph.types.items[@intFromEnum(target)]) {
+        const fits = switch (types.representation(self.graph, target) orelse return false) {
             .builtin => |builtin_type| switch (builtin_type) {
                 .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
                 .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
@@ -2189,7 +2233,7 @@ pub const Resolver = struct {
 
     pub fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
         if (!types.equal(self.graph, a, b)) return false;
-        return switch (self.graph.types.items[@intFromEnum(a)]) {
+        return switch (types.representation(self.graph, a) orelse return false) {
             .builtin => |value| value != .Void and value != .Type and value != .Any,
             else => false,
         };
@@ -2209,7 +2253,9 @@ pub const Resolver = struct {
 
     /// Resolve a source qualifier through the module aliases linked before
     /// semantic resolution. Paths are no longer semantic identity here.
-    pub fn findModuleForQualifier(self: *Resolver, current_module: usize, qualifier: []const u8) !global_sg.GlobalModuleId {
+    pub fn findModuleForQualifier(self: *Resolver, current_module: usize, spelling: []const u8) !global_sg.GlobalModuleId {
+        const symbolic = std.mem.startsWith(u8, spelling, "@alias:");
+        const qualifier = if (symbolic) spelling["@alias:".len..] else spelling;
         var found: ?global_sg.GlobalModuleId = null;
         const current: global_sg.GlobalModuleId = @enumFromInt(@as(u32, @intCast(current_module)));
         for (self.graph.module_aliases.items) |alias| {
@@ -2218,10 +2264,23 @@ pub const Resolver = struct {
             if (!self.graph.sameModuleNamespace(alias.owner, current) and
                 (@intFromEnum(alias.owner) > current_module or !self.sameDeclarationNamespace(@intFromEnum(alias.owner), current_module))) continue;
             const declaration = self.graph.declarations.items[@intFromEnum(alias.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), qualifier)) continue;
+            const name = self.graph.text(declaration.name);
+            var target = alias.target;
+            if (!std.mem.eql(u8, name, qualifier)) {
+                if (!symbolic) continue;
+                if (qualifier.len <= name.len or !std.mem.startsWith(u8, qualifier, name) or qualifier[name.len] != '/') continue;
+                const dir = self.graph.text(self.graph.modules.items[@intFromEnum(alias.target)].dir);
+                const path = try std.fs.path.resolve(self.allocator, &.{ dir, qualifier[name.len + 1 ..] });
+                defer self.allocator.free(path);
+                var child: ?global_sg.GlobalModuleId = null;
+                for (self.graph.modules.items, 0..) |candidate, index| {
+                    if (std.mem.eql(u8, self.graph.text(candidate.dir), path)) child = @enumFromInt(@as(u32, @intCast(index)));
+                }
+                target = child orelse return error.UnknownModuleReference;
+            }
             if (found) |previous| {
-                if (previous != alias.target) return error.AmbiguousModuleReference;
-            } else found = alias.target;
+                if (previous != target) return error.AmbiguousModuleReference;
+            } else found = target;
         }
         if (found) |target| return target;
         // Local lexical imports are lowered to their original path spelling.
@@ -2396,7 +2455,7 @@ test "qualified lookup follows linked module alias" {
     defer module.deinit(allocator);
 
     const app_dir = try graph.addString(allocator, "/workspace/app");
-    const target_dir = try graph.addString(allocator, "/tool/more/_test_support/basic");
+    const target_dir = try graph.addString(allocator, "/tool/more/test_support/basic");
     const alias_name = try graph.addString(allocator, "support");
     try graph.declarations.append(allocator, .{
         .kind = .import_alias,

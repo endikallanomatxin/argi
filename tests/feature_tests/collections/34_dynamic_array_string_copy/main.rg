@@ -3,7 +3,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&allocator_storage
 
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 1))
-    #defer deinit(.self = $&array)
+    defer deinit(.self = $&array)
     text ::= unwrap_or_abort(.value = String(.length = 1))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
     pushed ::= push(.self = $&array, .value = ~text)
@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ { status_code = 2 }
         ..ok ~copied_payload {
             copied ::= ~copied_payload
-            #defer deinit(.self = $&copied)
+            defer deinit(.self = $&copied)
             original ::= dynamic_array_element_reference#(.t: String)(
                 .array = &array, .offset = 0
             ).pointer

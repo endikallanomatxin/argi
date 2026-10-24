@@ -1,4 +1,4 @@
-test view_mismatch(.system: System) -> !() := {
+test view_mismatch := (.system: System) -> !() {
     expected :: [3]Int32 = (1, 2, 3)
     actual :: [3]Int32 = (1, 9, 3)
     testing.expect_equal_views(
@@ -6,7 +6,7 @@ test view_mismatch(.system: System) -> !() := {
     )!
 }
 
-test byte_prefix(.system: System) -> !() := {
+test byte_prefix := (.system: System) -> !() {
     expected :: [2]UInt8 = (1, 2)
     actual :: [1]UInt8 = (1)
     testing.expect_equal_bytes(

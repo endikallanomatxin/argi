@@ -22,8 +22,8 @@ finish#(.WriterType: Type: Writer#(WriterType))(
         .result : Int32 = 1
     ) := {
     owner ::= Owner(1)
-    #defer { state&= state&* 10 + 3 }
-    #defer {
+    defer { state&= state&* 10 + 3 }
+    defer {
         deferred_owner ::= Owner(3)
         fail() handle error {
             state&= state&* 10 + 2
@@ -31,7 +31,7 @@ finish#(.WriterType: Type: Writer#(WriterType))(
             report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
     }
-    #defer {
+    defer {
         while true {
             state&= state&* 10 + 1
             break
@@ -43,15 +43,15 @@ finish#(.WriterType: Type: Writer#(WriterType))(
 
 finish_generic#(.t: Type)(.value: t, .state: $&Int32) -> (.result: Int32 = 0) := {
     owner ::= Owner(2)
-    #defer { state&= state&* 10 + 3 }
-    #defer {
+    defer { state&= state&* 10 + 3 }
+    defer {
         deferred_owner ::= Owner(3)
         fail() handle error {
             state&= state&* 10 + 2
             result = 1
         }
     }
-    #defer {
+    defer {
         while true {
             state&= state&* 10 + 1
             break

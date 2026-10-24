@@ -1763,7 +1763,7 @@ pub const Resolver = struct {
             if (std.mem.eql(u8, self.graph.text(argument.name), "to")) to = argument.value.type;
         }
         const target = to orelse return error.InvalidIntegerConversion;
-        const target_kind = switch (self.graph.resolvedSemanticType(target) orelse return error.InvalidIntegerConversion) {
+        const target_kind = switch (global_types.representation(self.graph, target) orelse return error.InvalidIntegerConversion) {
             .builtin => |kind| kind,
             else => return error.InvalidIntegerConversion,
         };
@@ -1773,7 +1773,7 @@ pub const Resolver = struct {
             if (literal.fields.len != 1) return error.InvalidIntegerConversion;
             const value = self.graph.value_fields.items[literal.fields.start].value;
             const original = self.graph.node(value).ty orelse return error.InvalidIntegerConversion;
-            const kind = switch (self.graph.resolvedSemanticType(original) orelse return error.InvalidIntegerConversion) {
+            const kind = switch (global_types.representation(self.graph, original) orelse return error.InvalidIntegerConversion) {
                 .builtin => |kind| kind,
                 else => return error.InvalidIntegerConversion,
             };
@@ -1781,7 +1781,7 @@ pub const Resolver = struct {
             return .{ .source = source, .ty = target, .content = .{ .explicit_cast = .{ .value = value, .target_type = target } } };
         }
         const original = from orelse return error.InvalidIntegerConversion;
-        const original_kind = switch (self.graph.resolvedSemanticType(original) orelse return error.InvalidIntegerConversion) {
+        const original_kind = switch (global_types.representation(self.graph, original) orelse return error.InvalidIntegerConversion) {
             .builtin => |kind| kind,
             else => return error.InvalidIntegerConversion,
         };

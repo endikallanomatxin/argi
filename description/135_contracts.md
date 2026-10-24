@@ -36,7 +36,8 @@ members under the composing contract.
 
 ## Implementations and specialization
 
-`implement` supplies a contract's operations and associated elements for a tuple
+The reserved keyword `implement` supplies a contract's operations and associated
+elements for a tuple
 of participants. It does not use an assignment after the contract application:
 
 ```argi

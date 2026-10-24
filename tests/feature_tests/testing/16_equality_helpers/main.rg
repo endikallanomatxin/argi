@@ -1,4 +1,4 @@
-test equality_helpers(.system: System) -> !() := {
+test equality_helpers := (.system: System) -> !() {
     testing.expect(.condition = true, .message = "successful checks stay silent")!
     testing.expect_equal(.expected = true, .actual = true)!
     testing.expect_equal(.expected = 1, .actual = 1)!

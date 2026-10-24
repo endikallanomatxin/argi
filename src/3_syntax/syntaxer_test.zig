@@ -225,3 +225,15 @@ test "compact syntax views preserve semantic distinctions" {
 test "generic type applications retain positional arguments" {
     try expectTags("tests/feature_tests/types/280_positional_type_arguments/main.rg", &.{ .generic_type_instantiation, .positional_type_field });
 }
+
+test "modern and legacy test declarations share function payloads" {
+    var tree = try parseTestFile("tests/feature_tests/testing/21_modern_test_syntax/main.rg");
+    defer tree.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 3), tree.roots.len);
+    for (tree.roots) |root| {
+        const declaration = tree.testDeclaration(root).?;
+        try std.testing.expect(declaration.function.body != null);
+        try std.testing.expectEqual(@as(usize, 1), tree.structTypeLiteral(declaration.function.input).?.fields.len);
+        try std.testing.expectEqual(syntax_tree.Node.Tag.test_declaration, tree.tag(root));
+    }
+}

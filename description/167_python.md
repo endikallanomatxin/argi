@@ -7,7 +7,7 @@ Python does not add a language primitive, core dependency, or `System` field.
 
 ```rg
 python := import("python")
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     interpreter ::= unwrap_or_abort(.value = python.Python(.ffi = system.ffi)).result
     json ::= unwrap_or_abort(.value = python.import_module(.self = &interpreter, .name = "json")).result
     loads ::= unwrap_or_abort(.value = python.attribute(.self = &json, .name = "loads")).result

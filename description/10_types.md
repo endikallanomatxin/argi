@@ -95,15 +95,27 @@ User-defined conversions implement `Convert#(Source, Target)`. Its `Result` must
 be `Target` or an `Errable` containing it. Construction uses `Init` separately;
 conversion never selects an implementation from the expected result type.
 
-## Type aliases
+## Named underlying types
 
-> [!QUESTION]
-> Should `Name : Type = ExistingType` create an alias with the same type
-> identity, or should distinct named wrappers be required? Define how an
-> alias participates in dispatch and whether it converts implicitly to its
-> underlying type. The spelling alone should not decide those rules.
+`VertexId: Type = UIntNative` declares a distinct nominal type with the
+representation of `UIntNative`, without an extra field or runtime wrapper.
+`EdgeId: Type = UIntNative` is a different type. Neither type implicitly
+converts to the other or to its underlying type, including in function calls.
+Ordinary type expressions, imported names, and generic parameters can supply
+the underlying type. Direct and indirect underlying-type cycles are invalid.
+
+Numeric literals take the expected nominal type and must fit its underlying
+representation. This is the same contextual typing rule as for builtin numeric
+types, not an implicit conversion of an already typed value. Numeric types
+retain the bundled scalar representation facts
+(`Int`, `UInt`, `Float`, arithmetic, comparison, and integer conversion facts).
+Operators still select the ordinary core contract implementations, with nominal
+operands and results. User-defined contracts are not inherited from the base.
+Integer conversions use explicit `convert` calls and retain range checking.
+Aggregate underlying types expose their fields, variants, or array shape
+while retaining a separate nominal identity.
 
 > [!IDEA]
 > An explicit underlying-type constraint, similar to Go's `~T`, could
 > describe types with a common representation while preserving their distinct
-> identities. It would need a separate rule from ordinary type aliases.
+> identities. Such a constraint would be separate from declaring a nominal type.

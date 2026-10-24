@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator := system.page_allocator
     stdin ::= $&system.terminal&.stdin
     output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([8192]UInt8)()))
-    #defer {
+    defer {
         Writer#().flush(output) handle error {
             status_code = 1
             report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}

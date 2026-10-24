@@ -1081,7 +1081,7 @@ fn classifyToken(content: token.Content) ?TokenClass {
             .bool_literal => .{ .type_index = TOKEN_INDEX.keyword },
             else => .{ .type_index = TOKEN_INDEX.number },
         },
-        .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
+        .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_implement, .keyword_defer, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
         .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .triple_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
         else => null,
     };
@@ -1111,6 +1111,8 @@ fn tokenLength(content: token.Content, source: []const u8, offset: u32) u32 {
         .keyword_assume => 6,
         .keyword_reach => 5,
         .keyword_test => 4,
+        .keyword_implement => 9,
+        .keyword_defer => 5,
         .keyword_and => 3,
         .keyword_or => 2,
         .double_colon, .arrow, .double_bang => 2,
@@ -1298,6 +1300,7 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
         \\    assume writer := $&system.terminal&.stdout
         \\    point ::= Point(.x = 2)
+        \\    defer {}
         \\    amount := identity(.value = point.x)
         \\    print("Hello world")
         \\    -- comment
@@ -1314,6 +1317,8 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     var data = try service.semanticTokensFull("file:///colors.rg");
     defer data.deinit();
     try expectSemanticToken(data.items, code, "Point :", TOKEN_INDEX.type_, 1);
+    try expectSemanticToken(data.items, code, "implement", TOKEN_INDEX.keyword, 0);
+    try expectSemanticToken(data.items, code, "defer", TOKEN_INDEX.keyword, 0);
     try expectSemanticToken(data.items, code, "Point, (.x:", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "Point) (.deinit", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "Box#(.t: t),", TOKEN_INDEX.type_, 0);
@@ -1996,4 +2001,14 @@ test "LSP proves unused concrete conformance safety promises" {
         found = true;
     };
     try std.testing.expect(found);
+}
+
+test "LSP classifies implement and defer as keywords with exact lengths" {
+    const code = "implement defer";
+    const implementation: token.Content = .{ .keyword_implement = .{} };
+    const deferred: token.Content = .{ .keyword_defer = .{} };
+    try std.testing.expectEqual(TOKEN_INDEX.keyword, classifyToken(implementation).?.type_index);
+    try std.testing.expectEqual(TOKEN_INDEX.keyword, classifyToken(deferred).?.type_index);
+    try std.testing.expectEqual(@as(u32, 9), tokenLength(implementation, code, 0));
+    try std.testing.expectEqual(@as(u32, 5), tokenLength(deferred, code, 10));
 }

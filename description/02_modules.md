@@ -1,9 +1,77 @@
-# Modules and project layout
+# Modules, configuration, and distribution
 
 ## Directory modules
 
 Each directory is a module named after that directory. Its `.rg` files share
 one namespace. Imports can be transitive; cycles are rejected.
+
+## One abstraction: the module
+
+Everything is a module. There is no separate package abstraction in the
+language. A module may contain submodules and import other modules. Local,
+official, and external modules use the same import mechanism; their origin
+does not change namespace or visibility rules.
+
+Every module may optionally contain `argi.toml`. This declarative file adds
+configuration for compilation, dependencies, tools, testing, and distribution.
+Its presence does not create a different kind of module or imply that the
+module is distributable. A module can be compiled, run, and tested without a
+manifest, using an explicit module path where needed.
+
+### Configuration files
+
+| File | Role |
+| --- | --- |
+| `argi.toml` | Optional declarative module configuration, organized in optional sections. |
+| `build.rg` | Optional programmable automation for builds and complex tasks. |
+
+`argi.toml` remains the source of declarative dependency and distribution
+metadata; `build.rg` does not replace it. Exact resolved dependency versions
+are stored in an automatically managed `[lock]` section of `argi.toml`, not in
+a separate file. This section records resolutions rather than introducing
+another module identity or a second dependency declaration. A comment marks
+the managed section so users can distinguish it from their configuration:
+
+```toml
+# Automatically managed by Argi. Do not edit this section manually.
+[lock]
+```
+
+The dependency manager updates this section while preserving user-authored
+configuration and comments elsewhere in the manifest. The concrete lock entry
+schema remains to be specified.
+
+### Distribution identity and ownership
+
+A module declares a distributable identity only by including `[distribution]`:
+
+```toml
+[distribution]
+name = "example"
+version = "1.0.0"
+description = "An example Argi distribution"
+```
+
+A distribution is a unit of delivery and versioning, not a second language
+abstraction. Declaring it does not mean the module has been published. Its
+root module and all submodules belong to that distribution and share its
+version and dependencies. Submodules may have their own module configuration,
+but cannot declare independent distributions inside an enclosing distribution
+or acquire separate versions or dependency resolutions there.
+
+The dependency manager resolves, downloads, and versions complete
+distributions. The compiler works only with modules. A resolved external
+module must be identified unambiguously by its provenance, exact distribution
+version, and internal module path; a directory basename alone is not its
+identity. Two versions or origins must never silently collapse into one module.
+
+> [!IMPLEMENTATION]
+> Distribution metadata, nested-distribution validation, dependency resolution,
+> downloads, publication, and `[lock]` generation/consumption are not yet
+> implemented. External module identities will be integrated with that resolver;
+> current local and bundled imports resolve filesystem modules. `build.rg`
+> execution is also pending. The rules above define the model these features
+> must implement, rather than commands already available today.
 
 ## The official library: `core` and `more`
 
@@ -29,10 +97,6 @@ example, `source/math/_detail` is visible to `source/math` and
 to every `_` component in the resolved import path, regardless of whether the
 import uses `./`, `../`, or `.../`.
 
-> [!IMPLEMENTATION]
-> Directory privacy is not enforced yet. The current `_` rule protects
-> declarations only.
-
 Unqualified lookup uses the current module and public `core`. Other modules
 use named imports; standalone `import("...")` is unsupported. Paths resolve as
 follows:
@@ -43,6 +107,21 @@ follows:
 | `../` | Parent module |
 | `.../` | Project root |
 | No prefix | Bundled `more/` library |
+
+Importing a module also exposes its public directory submodules through qualified
+access. The parent can have no `.rg` files; it still provides a namespace:
+
+```rg
+math := import("math")
+-- Matrix belongs to linear_algebra, not directly to math.
+Matrix2: Type = math.linear_algebra.Matrix#(.rows = 2, .cols = 2, .t: Int32)
+```
+
+This works for nested types, calls, and values, and for local import aliases.
+Submodules are discovered on demand from qualified uses; importing a parent
+does not recursively compile its unused descendants. Private `_` directories
+follow the visibility rule above for both qualified access and explicit imports.
+Members are not flattened into the parent's namespace.
 
 Module-qualified calls accept explicit compile-time arguments, such as
 `dep.identity#(.t: Int32)(.value = 42)` or `dep.identity#(Int32)(42)`.
@@ -69,14 +148,15 @@ parent_dep := import("../shared")
 root_dep := import(".../app/shared")
 ```
 
-## Package layout
+## Module configuration and layout
 
 Any directory module with a valid `main` can be built as an executable; its
 path has no special meaning. `main` may be declared in any `.rg` file in that
-directory. A package's `argi.toml` lists the modules it wants to build as
+directory. A module's optional `argi.toml` lists the modules it wants to build as
 named executable targets:
 
 ```toml
+[module]
 name = "example"
 
 [executables.app]
@@ -86,7 +166,19 @@ path = "source/app"
 default = "app"
 ```
 
-Package executables default to `build/debug/<name>`; direct module builds use
+`[module].name` is a descriptive configuration name, not a distribution
+identity. `argi init` does not generate `[distribution]` or a version. Legacy
+top-level `name` and `version` entries do not declare a distribution either.
+
+> [!IMPLEMENTATION]
+> Build/run currently require declared executable targets when the selected
+> directory contains a manifest. A configuration-only manifest does not yet
+> fall back to that directory's `main`. Enclosing executable selection and
+> `.../` project-root lookup currently use manifest boundaries, rather than
+> distribution ownership. Nested configuration inheritance and distribution
+> boundaries must be separated when distribution support is implemented.
+
+Configured executables default to `build/debug/<name>`; direct module builds use
 `build/output`. `main.rg` is only a convenient filename. `argi init app`
 scaffolds `source/app/main.rg`; `argi init --lib <name>` scaffolds a library
 without executable targets.
@@ -112,20 +204,24 @@ project/
 > [!IDEA]
 > `dist/<target>/` could hold distribution artifacts.
 
-## Package dependencies
+## Dependencies and testing
 
-Package management commands:
+Dependency declarations belong in `argi.toml`; exact resolved distribution
+versions belong in the managed `[lock]` section of `argi.toml`. Submodules within a distribution use its shared
+dependencies. The concrete dependency declaration schema and resolver commands
+remain pending; there is no implemented `argi add` or `argi remove` command.
 
-```sh
-argi add <package>
-argi remove <package>
+Module test selection is independent of distribution identity:
+
+```toml
+[test]
+modules = ["tests/unit", "tests/integration"]
 ```
 
-Dependencies use `argi.toml` plus a lockfile and a shared global package
-store, without per-project virtual environments.
-
-> [!IMPLEMENTATION]
-> `argi add`, `argi remove`, and dependency resolution are not implemented yet.
+`argi test` runs these modules relative to the manifest in the current directory,
+without recursively scanning the tree. `argi test path/to/module` selects one
+module explicitly and works without a manifest; use `argi test .` for the current
+module. Results include the module path and test name.
 
 ## C interoperability
 

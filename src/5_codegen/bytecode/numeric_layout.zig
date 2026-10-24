@@ -64,21 +64,21 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
     const physical = try types.layoutOf(graph, ty);
     const size = std.math.cast(usize, physical.size) orelse return error.Overflow;
     const alignment = std.math.cast(usize, physical.alignment) orelse return error.Overflow;
-    const semantic = graph.semanticType(ty);
+    const semantic = types.representation(graph, ty) orelse return error.UnsupportedNumericLayout;
     const shape: @FieldType(Layout, "shape") = if (acquired and semantic == .pointer) blk: {
         if (size != graph.target.pointerBytes()) return error.UnsupportedNumericLayout;
         break :blk .{ .reference = semantic.pointer.mutability };
     } else if (acquired and semantic == .virtual) blk: {
         if (size != graph.target.pointerBytes() * 2) return error.UnsupportedNumericLayout;
         break :blk .virtual_reference;
-    } else if (types.isBuiltin(graph, ty, .Bool)) blk: {
+    } else if (b.isBuiltinRepresentation(graph, ty, .Bool)) blk: {
         if (size != 1 or alignment != 1) return error.UnsupportedNumericLayout;
         break :blk .boolean;
     } else if (b.integerBounds(graph, ty)) |bounds| blk: {
         if (size == 0 or size > 8) return error.UnsupportedNumericLayout;
         break :blk .{ .integer = .{ .signed = bounds.minimum < 0 } };
     } else if (b.floatType(graph, ty)) blk: {
-        const kind: @FieldType(@FieldType(Layout, "shape"), "floating") = if (types.isBuiltin(graph, ty, .Float16)) .float16 else if (types.isBuiltin(graph, ty, .Float32)) .float32 else .float64;
+        const kind: @FieldType(@FieldType(Layout, "shape"), "floating") = if (b.isBuiltinRepresentation(graph, ty, .Float16)) .float16 else if (b.isBuiltinRepresentation(graph, ty, .Float32)) .float32 else .float64;
         const expected: usize = switch (kind) {
             .float16 => 2,
             .float32 => 4,

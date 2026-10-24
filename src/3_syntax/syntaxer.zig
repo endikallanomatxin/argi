@@ -5,6 +5,7 @@ const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const SyntaxerError = error{
     ExpectedIdentifier,
+    ExpectedType,
     ExpectedConformanceType,
     ExpectedColon,
     ExpectedEqual,
@@ -83,6 +84,10 @@ pub const Syntaxer = struct {
                 try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declarations cannot have compile-time parameters", .{});
             } else if (err == SyntaxerError.ExpectedConformanceType) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected a contract type after the conformance relation", .{});
+            } else if (err == SyntaxerError.ExpectedType) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected an underlying type after 'Type ='", .{});
+            } else if (self.tokenIs(.semicolon)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "';' separates statements, not arguments, fields, or expression parts", .{});
             } else {
                 try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
             }
@@ -431,7 +436,7 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         var qualifier_token: ?syn.TokenIndex = null;
         var name_token = name.token;
-        if (self.tokenIs(.dot)) {
+        while (self.tokenIs(.dot)) {
             self.advanceOne();
             const rhs = try self.parseName();
             qualifier_token = name.token;
@@ -1380,8 +1385,10 @@ pub const Syntaxer = struct {
                     var qualifier: ?syn.TokenIndex = null;
                     const callee_token = if (self.file.tag(node) == .struct_field_access) blk: {
                         const sfa = self.file.data(node).token_and_node;
-                        if (self.file.tag(sfa.node) != .identifier) break;
-                        qualifier = self.file.mainToken(sfa.node);
+                        var root = sfa.node;
+                        while (self.file.structFieldAccess(root)) |access| root = access.value;
+                        if (self.file.tag(root) != .identifier) break;
+                        qualifier = self.file.mainToken(root);
                         break :blk sfa.token;
                     } else self.file.mainToken(node);
                     var type_args = try self.addNodeRange(&.{});
@@ -2038,9 +2045,16 @@ pub const Syntaxer = struct {
         self.skipNewLinesAndComments();
 
         const name = try self.parseName();
+        // Tests share ordinary named-function syntax, including `name := (...)`.
+        const body_follows_signature = self.tokenIs(.colon) and self.contentAt(self.index + 1) == .equal;
+        if (body_follows_signature) {
+            self.advanceOne();
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+        }
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, false);
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, body_follows_signature);
         const function = self.file.functionDeclaration(decl_node).?;
 
         if (function.body == null) {
@@ -2100,6 +2114,12 @@ pub const Syntaxer = struct {
             .keyword_match => return self.parseMatch(),
             .keyword_while => return self.parseWhile(),
             .keyword_test => return self.parseTestDeclaration(),
+            .keyword_defer => {
+                const defer_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                const expr = try self.parseExpression();
+                return self.addNode(.defer_statement, defer_token, .{ .node = expr });
+            },
             .keyword_break => {
                 const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
@@ -2130,15 +2150,15 @@ pub const Syntaxer = struct {
             const hash_loc = self.tokenLocation();
             self.advanceOne();
             if (self.tokenIs(.keyword_if)) return self.parseIfKind(true);
+            if (self.tokenIs(.keyword_defer)) {
+                try self.diags.add(hash_loc, .syntax, "use 'defer' without a '#' prefix", .{});
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            }
             const ident = try self.parseIdentifier();
             if (std.mem.eql(u8, ident, "run")) {
                 self.index = @intFromEnum(hash_token);
                 const expression = try self.parseExpression();
                 return try self.addNode(.expression_statement, hash_token, .{ .node = expression });
-            }
-            if (std.mem.eql(u8, ident, "defer")) {
-                const expr = try self.parseExpression();
-                return try self.addNode(.defer_statement, hash_token, .{ .node = expr });
             }
             try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
             return SyntaxerError.ExpectedDeclarationOrAssignment;
@@ -2175,7 +2195,11 @@ pub const Syntaxer = struct {
         }
 
         const id_loc = self.tokenLocation();
-        var name = try self.parseName();
+        var name = if (self.tokenIs(.keyword_implement)) blk: {
+            const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            break :blk ParsedName{ .token = token_index, .text = "implement" };
+        } else try self.parseName();
 
         if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init")) {
             try self.diags.add(self.tokenLocation(), .syntax, "legacy constructor declarations are unsupported; use implement Init", .{});
@@ -2360,9 +2384,10 @@ pub const Syntaxer = struct {
                 if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion") or std.mem.eql(u8, type_name, "CStruct")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
-                    if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
                     const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else if (std.mem.eql(u8, type_name, "CStruct")) .c_struct_declaration else .type_declaration;
-                    const lit_node = if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
+                    const lit_node = if (tag == .type_declaration and !self.tokenIs(.open_parenthesis))
+                        (try self.parseType()) orelse return SyntaxerError.ExpectedType
+                    else if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
                         try self.parseChoiceTypeLiteral(tag == .c_enum_declaration)
                     else
                         try self.parseStructTypeLiteral();
@@ -2435,6 +2460,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.currentContent()) {
+                .semicolon => self.advanceOne(),
                 .new_line, .comment => self.skipNewLinesAndComments(),
                 else => {
                     const stmt = try self.parseStatement();
@@ -2593,7 +2619,7 @@ pub const Syntaxer = struct {
         // ── Is there anything else on the line?  -----------------
         // If the next token is a newline, '}', or EOF, there is no expression.
         switch (self.currentContent()) {
-            .new_line, .close_brace, .eof => {
+            .semicolon, .new_line, .close_brace, .eof => {
                 return try self.addNode(.return_statement, start, .{ .optional_node = .none });
             },
             else => {},

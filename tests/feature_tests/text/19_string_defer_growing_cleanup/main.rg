@@ -6,7 +6,7 @@ helper#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocator
     text ::= unwrap_or_abort(
         .value = string_with_capacity(.allocator = allocator, .capacity = 1)
     )
-    #defer deinit(.self = $&text)
+    defer deinit(.self = $&text)
 
     match push_ascii(.self = $&text, .byte = 65, .allocator = allocator) {
         ..ok _ {

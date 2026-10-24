@@ -219,3 +219,20 @@ for & item in values { sum = sum + item& }
 ```
 
 Each braced body has its own lexical scope. See [Control flow](44_control_flow.md).
+
+## Explicit statement separators
+
+A semicolon (`;`) separates statements or declarations without requiring a
+physical newline. Newlines remain the usual spelling; semicolons are optional.
+They are also allowed after the final statement before a closing brace:
+
+```rg
+x := 1; y := 2
+if ready { prepare(); execute(); }
+```
+
+`return;` is a return without a value. A semicolon is a statement boundary,
+not expression whitespace or a separator for arguments, fields, or type
+parameters. Continue to use their ordinary separators. Semicolons inside
+strings and comments are ordinary text. They do not change lexical scope,
+evaluation order, or cleanup behavior.

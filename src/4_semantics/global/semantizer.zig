@@ -595,6 +595,7 @@ pub const Session = struct {
         var setup_start = profileTimestamp(options.profile_io);
         try core.resolveExternalTypes();
         try generics.resolveExternalTypes();
+        try validateUnderlyingTypes(&relocation.graph, options.diagnostics);
         profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
         setup_start = profileTimestamp(options.profile_io);
         // Generic record fields can contain associated projections. Publish tuple
@@ -761,6 +762,7 @@ pub const Session = struct {
         if (try resolveQualifiedChoiceOptions(core, self.options.diagnostics)) return error.Reported;
         try core.resolveExternalTypesFrom(previous);
         try generics.resolveExternalTypesFrom(previous);
+        try validateUnderlyingTypes(&self.relocation.graph, self.options.diagnostics);
         try contracts.prepareParticipantConformances();
         try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
         try contracts.resolveAssociatedTypes();
@@ -1745,7 +1747,7 @@ fn diagnoseInvalidNumericAssignments(
         };
         // Literal range failures have a more precise Safety diagnostics_mod. Their
         // default type is not evidence of an implicit variable conversion.
-        if (graph.node(value).content == .int_literal and switch (graph.semanticType(expected)) {
+        if (graph.node(value).content == .int_literal and switch (global_types.representation(graph, expected) orelse continue) {
             .builtin => |builtin| switch (builtin) {
                 .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
                 else => false,
@@ -1769,7 +1771,8 @@ fn diagnoseInvalidNumericAssignments(
             }
         }
         const unicode_mismatch = isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected);
-        if (!unicode_mismatch and (!isNumericType(graph, actual) or !isNumericType(graph, expected))) continue;
+        const nominal_mismatch = hasUnderlyingType(graph, actual) or hasUnderlyingType(graph, expected);
+        if (!unicode_mismatch and !nominal_mismatch and (!isNumericType(graph, actual) or !isNumericType(graph, expected))) continue;
         if (global_types.equal(graph, actual, expected)) continue;
         if (diagnostics) |sink| {
             var actual_name = std.array_list.Managed(u8).init(allocator);
@@ -1783,6 +1786,13 @@ fn diagnoseInvalidNumericAssignments(
                     diagnosticLocation(graph, sink, node.source),
                     .semantic,
                     "cannot assign value of type '{s}' to destination of type '{s}'; Unicode scalars and bytes require explicit conversion",
+                    .{ actual_name.items, expected_name.items },
+                );
+            } else if (nominal_mismatch) {
+                try sink.add(
+                    diagnosticLocation(graph, sink, node.source),
+                    .semantic,
+                    "cannot assign value of type '{s}' to destination of type '{s}'; distinct nominal types require explicit conversion",
                     .{ actual_name.items, expected_name.items },
                 );
             } else {
@@ -1836,9 +1846,20 @@ fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: glob
     if (isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected))
         return !global_types.equal(graph, actual, expected);
     // Integer range errors retain the dedicated safety diagnostics_mod.
-    if (node.content == .int_literal and !global_types.isBuiltin(graph, expected, .Float16) and
-        !global_types.isBuiltin(graph, expected, .Float32) and !global_types.isBuiltin(graph, expected, .Float64)) return false;
+    if (node.content == .int_literal) {
+        const represented = global_types.representation(graph, expected) orelse return false;
+        if (represented == .builtin and primitives.integerRange(represented.builtin, graph.target.stdTarget()) != null) return false;
+    }
+    if (hasUnderlyingType(graph, actual) or hasUnderlyingType(graph, expected)) return !global_types.equal(graph, actual, expected);
     return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
+}
+
+fn hasUnderlyingType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
+    return switch (graph.resolvedSemanticType(ty) orelse return false) {
+        .declared => |id| graph.declaration(id).underlying_type != null,
+        .generic => if (global_types.genericInstance(graph, ty)) |instance| instance.shape == .alias else false,
+        else => false,
+    };
 }
 
 fn isUnicodeScalarType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
@@ -1852,7 +1873,7 @@ fn isUnicodeScalarType(graph: *const global_sg.GlobalSemanticGraph, ty: global_s
 }
 
 fn isNumericType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
-    return switch (graph.semanticType(ty)) {
+    return switch (global_types.representation(graph, ty) orelse return false) {
         .builtin => |builtin| switch (builtin) {
             .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64 => true,
             else => false,
@@ -4006,6 +4027,23 @@ fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, 
             try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}: {s}", .{ failure.reason, @errorName(err) });
         } else try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
         return error.Reported;
+    }
+}
+
+fn validateUnderlyingTypes(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
+    for (graph.declarations.items) |declaration| {
+        var current = declaration.underlying_type orelse continue;
+        for (0..graph.types.items.len + 1) |_| {
+            const semantic = graph.resolvedSemanticType(current) orelse break;
+            if (semantic != .declared) break;
+            current = graph.declaration(semantic.declared).underlying_type orelse break;
+        } else {
+            if (diagnostics) |sink| {
+                try sink.add(diagnosticLocation(graph, sink, declaration.source), .semantic, "cyclic underlying type for '{s}'", .{graph.text(declaration.name)});
+                return error.Reported;
+            }
+            return error.CyclicUnderlyingType;
+        }
     }
 }
 

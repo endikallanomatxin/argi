@@ -45,7 +45,7 @@ verify(.status: $&Int32) -> () := {
 
 main() -> (.status_code: Int32) := {
     status_code = 9
-    #defer verify(.status = $&status_code)
+    defer verify(.status = $&status_code)
     second :: Second = (.value = 0)
     register_second(.value = $&second)
     value :: First = (.value = 0)

@@ -18,7 +18,7 @@ cleanup follow the same rules as body statements. The body may then replace the
 initial value:
 
 ```rg
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
 }
 ```
 

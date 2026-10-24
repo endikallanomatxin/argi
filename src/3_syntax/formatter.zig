@@ -10,7 +10,7 @@ const Tag = std.meta.Tag(tok.Content);
 const List = std.array_list.Managed(u8);
 const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, hanging: bool = false, reflow: bool = false, comma_free: bool = false };
 const line_width = 96;
-const max_alignment_padding = 8;
+const max_alignment_padding = 24;
 const InsertedToken = struct { ordinal: usize, tag: Tag };
 
 /// Formatting uses the complete token stream, including discarded target
@@ -371,11 +371,12 @@ const Layout = struct {
                 layout.group[groupOpening(&tree, node, tokens)] = true;
                 // Reserve the padding a compact row would receive from its
                 // siblings, even when an expanded child currently separates them.
-                var name_width: usize = 0;
-                for (items) |item| if (memberName(&tree, item)) |name| {
-                    name_width = @max(name_width, tokenText(tokens, source, @intFromEnum(name)).len);
-                };
-                for (items) |item| {
+                const widths = try allocator.alloc(?usize, items.len);
+                defer allocator.free(widths);
+                for (items, 0..) |item, index| widths[index] = if (memberName(&tree, item)) |name| tokenText(tokens, source, @intFromEnum(name)).len else null;
+                const targets = try alignmentTargets(allocator, widths);
+                defer allocator.free(targets);
+                for (items, 0..) |item, index| {
                     var start = if (tree.valueField(item)) |value_field|
                         if (value_field.name_token) |name| @intFromEnum(name) else expressionSpan(&tree, value_field.value, tokens, layout).first
                     else if (tree.structTypeField(item)) |type_field|
@@ -385,7 +386,7 @@ const Layout = struct {
                     if (start > 0 and tokens.contents[start - 1] == .dot) start -= 1;
                     layout.item_start[start] = true;
                     if (memberName(&tree, item)) |name|
-                        layout.item_padding[start] = alignmentPadding(name_width, tokenText(tokens, source, @intFromEnum(name)).len);
+                        layout.item_padding[start] = targets[index] - tokenText(tokens, source, @intFromEnum(name)).len;
                 }
             }
             if (tree.tag(node) == .struct_value_literal) {
@@ -801,6 +802,8 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (right == .comment) return true;
     if (left == .arrow and right == .bang) return true;
     if (left == .bang and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
+    if (right == .semicolon) return false;
+    if (left == .semicolon) return true;
     if (right == .comma or right == .close_parenthesis or right == .close_bracket) return false;
     if (left == .comma) return true;
     // A named compile-time directive starts an operand. Generic argument
@@ -881,9 +884,32 @@ fn field(line: []const u8) ?Field {
     return .{ .indent = indent, .name_end = end, .marker_end = marker_end, .equal = equal };
 }
 
-fn alignmentPadding(width: usize, actual: usize) usize {
-    const padding = width - actual;
-    return if (padding <= max_alignment_padding) padding else 0;
+/// Remove the longest outliers from a column until its padding fits, then
+/// align those outliers in subsequent columns. Sorting widths keeps the
+/// grouping independent of source order without moving any source rows.
+fn alignmentTargets(allocator: std.mem.Allocator, widths: []const ?usize) ![]usize {
+    const Entry = struct {
+        width: usize,
+        index: usize,
+        fn less(_: void, a: @This(), b: @This()) bool {
+            return a.width < b.width;
+        }
+    };
+    var entries: std.ArrayList(Entry) = .empty;
+    defer entries.deinit(allocator);
+    for (widths, 0..) |width, index| if (width) |value| try entries.append(allocator, .{ .width = value, .index = index });
+    std.mem.sort(Entry, entries.items, {}, Entry.less);
+    const targets = try allocator.alloc(usize, widths.len);
+    @memset(targets, 0);
+    var start: usize = 0;
+    while (start < entries.items.len) {
+        var end = start + 1;
+        while (end < entries.items.len and entries.items[end].width - entries.items[start].width <= max_alignment_padding) : (end += 1) {}
+        const target = entries.items[end - 1].width;
+        for (entries.items[start..end]) |entry| targets[entry.index] = target;
+        start = end;
+    }
+    return targets;
 }
 
 fn alignFields(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
@@ -918,23 +944,37 @@ fn alignFields(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             continue;
         };
         var end = i;
-        var name_width: usize = 0;
-        var type_width: usize = 0;
         while (end < lines.items.len) : (end += 1) {
             if (literal_lines[end]) break;
             const row = field(lines.items[end]) orelse break;
             if (row.indent != first.indent) break;
-            name_width = @max(name_width, row.name_end - row.indent);
-            const type_end = row.equal orelse lines.items[end].len;
-            if (lines.items[end][row.marker_end - 1] != '=')
-                type_width = @max(type_width, std.mem.trim(u8, lines.items[end][row.marker_end..type_end], " ").len);
         }
-        for (lines.items[i..end]) |line| {
+        const widths = try allocator.alloc(?usize, end - i);
+        defer allocator.free(widths);
+        for (lines.items[i..end], 0..) |line, index| {
+            const row = field(line).?;
+            widths[index] = row.name_end - row.indent;
+        }
+        const names = try alignmentTargets(allocator, widths);
+        defer allocator.free(names);
+        // Default assignments align by their complete prefix, so different
+        // name columns cannot accidentally create a second excessive gap.
+        for (lines.items[i..end], 0..) |line, index| {
+            const row = field(line).?;
+            var marker = row.name_end;
+            while (line[marker] == ' ') marker += 1;
+            const type_end = row.equal orelse line.len;
+            const type_len = std.mem.trim(u8, line[row.marker_end..type_end], " ").len;
+            widths[index] = if (line[row.marker_end - 1] == '=') null else names[index] + 1 + row.marker_end - marker + (if (type_len == 0) @as(usize, 0) else type_len + 1);
+        }
+        const defaults = try alignmentTargets(allocator, widths);
+        defer allocator.free(defaults);
+        for (lines.items[i..end], 0..) |line, index| {
             const row = field(line).?;
             var marker = row.name_end;
             while (line[marker] == ' ') marker += 1;
             try out.appendSlice(line[0..row.name_end]);
-            try out.appendNTimes(' ', alignmentPadding(name_width, row.name_end - row.indent) + 1);
+            try out.appendNTimes(' ', names[index] - (row.name_end - row.indent) + 1);
             try out.appendSlice(line[marker..row.marker_end]);
             const type_end = row.equal orelse line.len;
             const type_text = std.mem.trimStart(u8, line[row.marker_end..type_end], " ");
@@ -943,7 +983,7 @@ fn alignFields(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                 try out.appendSlice(std.mem.trimEnd(u8, type_text, " "));
             }
             if (row.equal) |equal| {
-                try out.appendNTimes(' ', alignmentPadding(type_width, std.mem.trim(u8, type_text, " ").len) + 1);
+                try out.appendNTimes(' ', defaults[index] - widths[index].? + 1);
                 try out.appendSlice(line[equal..]);
             }
             try out.append('\n');
@@ -1307,6 +1347,38 @@ test "formatter bounds field name and default alignment" {
     );
 }
 
+test "formatter permits up to 24 spaces of alignment padding" {
+    const allocator = std.testing.allocator;
+    const letters = "abcdefghijklmnopqrstuvwxyz";
+    const spaces = "                         ";
+    for ([_]usize{ 9, 24, 25 }) |padding| {
+        const name = letters[0 .. padding + 1];
+        const extra = if (padding <= 24) padding else 0;
+        const source = try std.fmt.allocPrint(allocator, "T: Type = (\n.a: Int32 = 1\n.{s}: Int32 = 2\n)\n", .{name});
+        defer allocator.free(source);
+        const expected = try std.fmt.allocPrint(allocator, "T: Type = (\n    .a{s} : Int32 = 1\n    .{s} : Int32 = 2\n)\n", .{ spaces[0..extra], name });
+        defer allocator.free(expected);
+        try expectFormat(source, expected);
+
+        const defaults = try std.fmt.allocPrint(allocator, "T: Type = (\n.a: A = 1\n.b: {s} = 2\n)\n", .{name});
+        defer allocator.free(defaults);
+        const aligned_defaults = try std.fmt.allocPrint(allocator, "T: Type = (\n    .a : A{s} = 1\n    .b : {s} = 2\n)\n", .{ spaces[0..extra], name });
+        defer allocator.free(aligned_defaults);
+        try expectFormat(defaults, aligned_defaults);
+    }
+}
+
+test "formatter retries alignment after removing long outliers" {
+    try expectFormat(
+        "call(\n.this_name_is_far_beyond_the_first_column = 3\n.a = 1\n.this_name_is_far_beyond_the_first_column_suffix = 4\n.short_name = 2\n)\n",
+        "call(\n    .this_name_is_far_beyond_the_first_column        = 3\n    .a          = 1\n    .this_name_is_far_beyond_the_first_column_suffix = 4\n    .short_name = 2\n)\n",
+    );
+    try expectFormat(
+        "T: Type = (\n.a: A = 1\n.b: ShortType = 2\n.c: ExceptionallyLongTypeNameForSecondaryColumn = 3\n.d: ExceptionallyLongTypeNameForSecondaryColumnSuffix = 4\n)\n",
+        "T: Type = (\n    .a : A         = 1\n    .b : ShortType = 2\n    .c : ExceptionallyLongTypeNameForSecondaryColumn       = 3\n    .d : ExceptionallyLongTypeNameForSecondaryColumnSuffix = 4\n)\n",
+    );
+}
+
 test "formatter compacts short grouped arithmetic without removing precedence" {
     try expectFormat(
         "result := [\n    first * second\n    + third * fourth\n]\n",
@@ -1356,5 +1428,30 @@ test "formatter retains conditional compilation directive boundaries" {
     try expectFormat(
         "main() -> () := {\n#if true { f() }#else { g() }\n}\n",
         "main() -> () := {\n    #if true { f() } #else { g() }\n}\n",
+    );
+}
+
+test "formatter preserves modern test declaration syntax" {
+    try expectFormat(
+        "test example:=(.system:System)->!(){testing.expect(true)!}\n",
+        "test example := (.system: System) -> !() { testing.expect(true)! }\n",
+    );
+}
+
+test "formatter preserves implementation and defer keywords" {
+    try expectFormat(
+        "implement Marker#(Value)()\nmain:=()->(){defer cleanup()}\n",
+        "implement Marker#(Value) ()\n\nmain := () -> () { defer cleanup() }\n",
+    );
+}
+
+test "formatter preserves explicit semicolon statement boundaries" {
+    try expectFormat(
+        "x:=1;y:=2;\nmain:=()->(){return;}\n",
+        "x := 1; y := 2;\n\nmain := () -> () { return; }\n",
+    );
+    try expectFormat(
+        "main:=()->(){x:=1;y:=2;}\n",
+        "main := () -> () {\n    x := 1;\n    y := 2;\n}\n",
     );
 }

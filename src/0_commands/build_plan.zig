@@ -44,6 +44,7 @@ const ManifestExecutable = struct {
 const ModuleManifest = struct {
     name: ?[]const u8 = null,
     run_default: ?[]const u8 = null,
+    test_modules: ?[]const []const u8 = null,
     executables: std.array_list.Managed(ManifestExecutable),
     native_inputs: std.ArrayList(link.NativeInput) = .empty,
 
@@ -196,7 +197,7 @@ fn hasManifest(io: std.Io, allocator: std.mem.Allocator, module_root: []const u8
     return true;
 }
 
-fn enclosingPackageRoot(allocator: std.mem.Allocator, io: std.Io, module_dir: []const u8) !?[]u8 {
+fn enclosingConfiguredModuleRoot(allocator: std.mem.Allocator, io: std.Io, module_dir: []const u8) !?[]u8 {
     var current = std.fs.path.dirname(module_dir) orelse return null;
     while (true) {
         if (try hasManifest(io, allocator, current)) return try allocator.dupe(u8, current);
@@ -241,6 +242,7 @@ fn parseManifest(allocator: std.mem.Allocator, module_root: []const u8, text: []
     var manifest = ModuleManifest.init(allocator);
     var current_executable: ?*ManifestExecutable = null;
     var in_run = false;
+    var in_test = false;
     var in_native = false;
     var native_has_input = false;
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -250,6 +252,7 @@ fn parseManifest(allocator: std.mem.Allocator, module_root: []const u8, text: []
         if (line[0] == '[' and line[line.len - 1] == ']') {
             if (in_native and !native_has_input) return error.InvalidNativeLinkInput;
             const section = line[1 .. line.len - 1];
+            in_test = std.mem.eql(u8, section, "test");
             in_run = std.mem.eql(u8, section, "run");
             in_native = std.mem.eql(u8, line, "[[native]]");
             native_has_input = false;
@@ -262,6 +265,21 @@ fn parseManifest(allocator: std.mem.Allocator, module_root: []const u8, text: []
             continue;
         }
         const key = parseKey(line);
+        if (in_test) {
+            if (!std.mem.eql(u8, key, "modules") or manifest.test_modules != null) return error.InvalidTestConfiguration;
+            const eq = std.mem.indexOfScalar(u8, line, '=') orelse return error.InvalidTestConfiguration;
+            var array_text: std.Io.Writer.Allocating = .init(allocator);
+            defer array_text.deinit();
+            try array_text.writer.writeAll(line[eq + 1 ..]);
+            // Consume the array here so its lines cannot be mistaken for manifest sections.
+            while (!testArrayClosed(array_text.written())) {
+                const next = lines.next() orelse return error.InvalidTestConfiguration;
+                try array_text.writer.writeByte('\n');
+                try array_text.writer.writeAll(next);
+            }
+            manifest.test_modules = try parseTestModules(allocator, module_root, array_text.written());
+            continue;
+        }
         if (in_native) {
             if (native_has_input) return error.InvalidNativeLinkInput;
             const value = parseNativeString(line) orelse return error.InvalidNativeLinkInput;
@@ -295,6 +313,77 @@ fn parseManifest(allocator: std.mem.Allocator, module_root: []const u8, text: []
     return manifest;
 }
 
+// Only the configured module directories are inspected; no recursive discovery.
+pub fn configuredTestModules(allocator: std.mem.Allocator, io: std.Io) ![]const []const u8 {
+    const root = try std.process.currentPathAlloc(io, allocator);
+    if (!try hasManifest(io, allocator, root)) return error.MissingTestConfiguration;
+    const manifest = try readManifest(allocator, io, root);
+    return manifest.test_modules orelse error.MissingTestConfiguration;
+}
+
+fn testArrayClosed(text: []const u8) bool {
+    var quote: u8 = 0;
+    var comment = false;
+    for (text) |ch| {
+        if (comment) {
+            if (ch == '\n') comment = false;
+        } else if (quote != 0) {
+            if (ch == quote) quote = 0;
+        } else if (ch == '#') {
+            comment = true;
+        } else if (ch == '"' or ch == '\'') {
+            quote = ch;
+        } else if (ch == ']') return true;
+    }
+    return false;
+}
+
+fn parseTestModules(allocator: std.mem.Allocator, root: []const u8, text: []const u8) ![]const []const u8 {
+    var modules: std.ArrayList([]const u8) = .empty;
+    var i: usize = 0;
+    skipTestSpace(text, &i);
+    if (i == text.len or text[i] != '[') return error.InvalidTestConfiguration;
+    i += 1;
+    while (true) {
+        skipTestSpace(text, &i);
+        if (i == text.len) return error.InvalidTestConfiguration;
+        if (text[i] == ']') break;
+        const quote = text[i];
+        if (quote != '"' and quote != '\'') return error.InvalidTestConfiguration;
+        i += 1;
+        const start = i;
+        while (i < text.len and text[i] != quote) : (i += 1) {
+            if (text[i] == '\n' or (quote == '"' and text[i] == '\\')) return error.InvalidTestConfiguration;
+        }
+        if (i == text.len or i == start) return error.InvalidTestConfiguration;
+        const path = try std.fs.path.resolve(allocator, &.{ root, text[start..i] });
+        for (modules.items) |existing| {
+            if (std.mem.eql(u8, existing, path)) return error.InvalidTestConfiguration;
+        }
+        try modules.append(allocator, path);
+        i += 1;
+        skipTestSpace(text, &i);
+        if (i == text.len) return error.InvalidTestConfiguration;
+        if (text[i] == ']') break;
+        if (text[i] != ',') return error.InvalidTestConfiguration;
+        i += 1;
+    }
+    i += 1;
+    skipTestSpace(text, &i);
+    if (i != text.len) return error.InvalidTestConfiguration;
+    return modules.toOwnedSlice(allocator);
+}
+
+fn skipTestSpace(text: []const u8, i: *usize) void {
+    while (i.* < text.len) {
+        if (std.ascii.isWhitespace(text[i.*])) {
+            i.* += 1;
+        } else if (text[i.*] == '#') {
+            while (i.* < text.len and text[i.*] != '\n') i.* += 1;
+        } else break;
+    }
+}
+
 // Native link configuration accepts single-line literal or basic strings.
 // Literal strings preserve backslashes; basic strings with escapes require a
 // TOML parser rather than silently passing a different filename to the linker.
@@ -317,14 +406,14 @@ fn printAvailableExecutables(executables: []const ManifestExecutable) void {
 
 fn printNoExecutablesError() void {
     std.debug.print(
-        \\Error: package has no executables to build.
+        \\Error: module has no executables to build.
         \\
         \\Add one to argi.toml:
         \\
         \\  [executables.app]
         \\  path = "source/app"
         \\
-        \\Or create a library package with:
+        \\Or create a library module with:
         \\  argi init --lib [name]
         \\
     , .{});
@@ -336,7 +425,7 @@ fn printUnknownExecutableError(name: []const u8, executables: []const ManifestEx
 }
 
 fn printAmbiguousRunDefaultError(executables: []const ManifestExecutable) void {
-    std.debug.print("Error: package has multiple executables and no default run target.\n\n", .{});
+    std.debug.print("Error: module has multiple executables and no default run target.\n\n", .{});
     printAvailableExecutables(executables);
     std.debug.print("\nUse:\n  argi run {s}\n\n", .{executables[0].name});
     std.debug.print("Or set in argi.toml:\n  [run]\n  default = \"{s}\"\n", .{executables[0].name});
@@ -414,27 +503,27 @@ pub fn resolveBuildPlans(allocator: std.mem.Allocator, io: std.Io, target_path: 
         return plans;
     }
 
-    // An explicitly selected entry module still belongs to its package. Use
+    // An explicitly selected entry module can use its enclosing configuration. Use
     // the declared executable's output rather than creating a second build
     // directory under source/. The nearest manifest defines this boundary;
     // unrelated modules keep the standalone-module behavior.
-    if (try enclosingPackageRoot(allocator, io, target_dir)) |package_root| {
-        errdefer allocator.free(package_root);
-        const manifest = try readManifest(allocator, io, package_root);
+    if (try enclosingConfiguredModuleRoot(allocator, io, target_dir)) |configured_root| {
+        errdefer allocator.free(configured_root);
+        const manifest = try readManifest(allocator, io, configured_root);
         for (manifest.executables.items) |*executable| {
             if (flags.executable_name) |name|
                 if (!std.mem.eql(u8, name, executable.name)) continue;
-            const executable_dir = try std.fs.path.resolve(allocator, &.{ package_root, executable.path orelse executable.name });
+            const executable_dir = try std.fs.path.resolve(allocator, &.{ configured_root, executable.path orelse executable.name });
             defer allocator.free(executable_dir);
             if (!std.mem.eql(u8, executable_dir, target_dir)) continue;
-            try appendExecutablePlan(allocator, io, &plans, target_path, package_root, executable, manifest.native_inputs.items);
+            try appendExecutablePlan(allocator, io, &plans, target_path, configured_root, executable, manifest.native_inputs.items);
         }
         if (plans.items.len != 0) return plans;
-        allocator.free(package_root);
+        allocator.free(configured_root);
     }
 
     if (flags.executable_name != null) {
-        std.debug.print("Error: --exec requires argi.toml in the selected package root.\n", .{});
+        std.debug.print("Error: --exec requires argi.toml in the selected module root.\n", .{});
         return error.CompilationFailed;
     }
 
@@ -495,11 +584,11 @@ test "build planning validates and preserves native link input order" {
     try std.testing.expectError(error.InvalidNativeLinkInput, parseBuildArgs(allocator, &.{ "--link-file", "-Wl,bad" }));
 }
 
-test "native manifest inputs preserve order and resolve package paths" {
+test "native manifest inputs preserve order and resolve module paths" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const root = try std.fs.path.resolve(allocator, &.{"native package"});
+    const root = try std.fs.path.resolve(allocator, &.{"native module"});
     const manifest = try parseManifest(allocator, root,
         \\[[native]]
         \\search_path = "native # libs" # comment
@@ -564,4 +653,40 @@ test "frontend worker counts require a bounded positive integer" {
     for ([_][]const u8{ "0", "257", "-1", "many" }) |value|
         try std.testing.expectError(error.InvalidFrontendJobs, parseBuildArgs(allocator, &.{ "--frontend-jobs", value }));
     try std.testing.expectError(error.MissingFlagValue, parseBuildArgs(allocator, &.{"--frontend-jobs"}));
+}
+
+test "test modules resolve multiline paths relative to manifest and preserve order" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const manifest = try parseManifest(allocator, "/project",
+        \\[test]
+        \\modules = [
+        \\  "tests/unit", # first suite
+        \\  'tests/hash#name]',
+        \\]
+        \\[run]
+        \\default = "app"
+    );
+    try std.testing.expectEqual(@as(usize, 2), manifest.test_modules.?.len);
+    try std.testing.expectEqualStrings("/project/tests/unit", manifest.test_modules.?[0]);
+    try std.testing.expectEqualStrings("/project/tests/hash#name]", manifest.test_modules.?[1]);
+    try std.testing.expectEqualStrings("app", manifest.run_default.?);
+}
+
+test "test modules distinguish absent and empty suites and reject invalid configuration" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    try std.testing.expect((try parseManifest(allocator, "/project", "name = \"app\"")).test_modules == null);
+    try std.testing.expectEqual(@as(usize, 0), (try parseManifest(allocator, "/project", "[test]\nmodules = []")).test_modules.?.len);
+    for ([_][]const u8{
+        "[test]\nmodules = [1]",
+        "[test]\nmodules = [\"\"]",
+        "[test]\nmodules = [\"one\" \"two\"]",
+        "[test]\nmodules = [\"one\", \"./one\"]",
+        "[test]\nmodules = [\"one\"] trailing",
+        "[test]\nmodules = [\"one\"",
+        "[test]\nmodules = []\nmodules = []",
+    }) |text| try std.testing.expectError(error.InvalidTestConfiguration, parseManifest(allocator, "/project", text));
 }

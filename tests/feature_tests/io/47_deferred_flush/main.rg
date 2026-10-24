@@ -11,7 +11,7 @@ finish(
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
     assume writer := sink
-    #defer {
+    defer {
         Writer#().flush(writer) handle error { result = ..error ~error }
     }
 

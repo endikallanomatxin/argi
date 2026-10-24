@@ -12,7 +12,7 @@ pub const Lowerer = struct {
     graph: *const graph_mod.GlobalSemanticGraph,
 
     pub fn toLLVMType(self: *Lowerer, ty: graph_mod.GlobalTypeId) Error!llvm.c.LLVMTypeRef {
-        return switch (self.graph.types.items[@intFromEnum(ty)]) {
+        return switch (types.representation(self.graph, ty) orelse return Error.InvalidType) {
             .builtin => |builtin| self.builtinType(builtin),
             // LLVM uses opaque pointers. The pointee's semantic type is kept
             // in GlobalSG and supplied explicitly to loads and GEPs; lowering

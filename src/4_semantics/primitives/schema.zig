@@ -278,6 +278,8 @@ pub fn Declaration(comptime Ids: type) type {
         name: StringRange,
         source: SourceRef,
         type_id: ?Ids.TypeId = null,
+        /// Representation only; type_id continues to name this declaration.
+        underlying_type: ?Ids.TypeId = null,
         function_id: ?Ids.FunctionId = null,
         struct_fields: ?Range(Ids.FieldId) = null,
         choice_variants: ?Range(Ids.VariantId) = null,

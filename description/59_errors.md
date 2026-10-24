@@ -243,7 +243,7 @@ An optional block after `!!!` runs only on failure, after reporting and before
 the containing function returns:
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&system.terminal&.stderr
     write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
 }

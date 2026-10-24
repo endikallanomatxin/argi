@@ -33,7 +33,7 @@ sort#(
     .policy     : Type: OrderPolicy#(policy, t),
     .Collection : Type: MutableIndexable#(.Item: t)
 ) := (.self: $&Collection, .order: &policy) -> () {
-    count ::= length(self).count
+    count ::= Indexable#(Collection).length(self).count
 
     if count < 2 { return }
     parent ::= count / 2

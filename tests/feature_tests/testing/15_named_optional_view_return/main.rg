@@ -1,11 +1,11 @@
-test named_optional_view_return(.system: System) -> !() := {
+test named_optional_view_return := (.system: System) -> !() {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     path :: Path = unwrap_or_abort(
         .value = path_with_view(.allocator = $&allocator_storage, .view = "/tmp/file.txt")
     )
-    #defer deinit(.self = $&path)
+    defer deinit(.self = $&path)
 
     name ::= file_name(.self = &path).value
     match name {

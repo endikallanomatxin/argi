@@ -37,7 +37,7 @@ verify(.status: $&Int32) -> () := {
 
 main() -> (.status_code: Int32) := {
     status_code = 9
-    #defer verify(.status = $&status_code)
+    defer verify(.status = $&status_code)
     keeping :: Keeping = (.value = 0)
     register_keeping(.value = $&keeping)
     value :: Closing = (.value = 0)

@@ -1064,7 +1064,7 @@ const Context = struct {
         const module_path = if (callee_value != null)
             null
         else if (call.module_qualifier) |token_index|
-            try self.modulePathForQualifier(token_index)
+            try self.modulePathForQualifier(token_index, call.callee_token)
         else
             null;
         const external = try self.writer.addExternalRef(.{
@@ -1259,11 +1259,19 @@ const Context = struct {
 
     fn lowerField(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const access = self.tree.structFieldAccess(node).?;
-        if (self.tree.tag(access.value) == .identifier) {
-            const qualifier = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(access.value));
+        var root = access.value;
+        while (self.tree.structFieldAccess(root)) |parent| root = parent.value;
+        if (self.tree.tag(root) == .identifier) {
+            const root_token = self.tree.mainToken(root);
+            const qualifier = self.tree.tokenTextFromSource(self.source, root_token);
             if (self.lookupBinding(qualifier) == null) {
-                if (self.moduleAliasPath(qualifier)) |module_path| {
-                    return self.pending(node, .{ .resolve_name_use = .{
+                if (self.moduleAliasPath(qualifier)) |_| {
+                    const module_path = try self.modulePathForQualifier(root_token, access.field_token);
+                    const is_module = access.value == root or if (self.diagnostics) |diagnostics|
+                        try @import("qualified_path.zig").isDiscovered(self.allocator, &diagnostics.source_db, self.graph.module_dir, self.graph.text(module_path))
+                    else
+                        false;
+                    if (is_module) return self.pending(node, .{ .resolve_name_use = .{
                         .node = self.nextNodeId(),
                         .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
                         .module_path = module_path,
@@ -1896,9 +1904,14 @@ const Context = struct {
         return null;
     }
 
-    fn modulePathForQualifier(self: *Context, token: syn.TokenIndex) !primitives.StringRange {
+    fn modulePathForQualifier(self: *Context, token: syn.TokenIndex, member: syn.TokenIndex) !primitives.StringRange {
         const spelling = self.tree.tokenTextFromSource(self.source, token);
-        return self.moduleAliasPath(spelling) orelse try self.writer.addString(spelling);
+        const path = if (self.moduleAliasPath(spelling)) |root|
+            try @import("qualified_path.zig").build(self.allocator, self.tree, self.source, token, member, self.graph.text(root))
+        else
+            try @import("qualified_path.zig").symbolic(self.allocator, self.tree, self.source, token, member);
+        defer self.allocator.free(path);
+        return self.writer.addString(path);
     }
 
     fn pushScope(self: *Context) !void {

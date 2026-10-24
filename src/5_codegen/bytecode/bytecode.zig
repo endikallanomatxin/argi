@@ -11,7 +11,7 @@ pub const Type = g.GlobalTypeId;
 pub const LoadInterpretation = enum(u8) { value, erased, signed_byte, unsigned_byte };
 
 pub fn loadInterpretation(graph: *const g.GlobalSemanticGraph, ty: Type) LoadInterpretation {
-    if (types.isBuiltin(graph, ty, .Any)) return .erased;
+    if (isBuiltinRepresentation(graph, ty, .Any)) return .erased;
     if (integerBounds(graph, ty)) |bounds| {
         if (bounds.maximum - bounds.minimum == 255) return if (bounds.minimum < 0) .signed_byte else .unsigned_byte;
     }
@@ -61,10 +61,10 @@ pub fn scalarKind(graph: *const g.GlobalSemanticGraph, ty: Type) ScalarKind {
             if (candidate.minimum == range.minimum and candidate.maximum == range.maximum) return kind;
         }
     }
-    if (types.isBuiltin(graph, ty, .Float16)) return .f16;
-    if (types.isBuiltin(graph, ty, .Float32)) return .f32;
-    if (types.isBuiltin(graph, ty, .Float64)) return .f64;
-    if (types.isBuiltin(graph, ty, .Bool)) return .boolean;
+    if (isBuiltinRepresentation(graph, ty, .Float16)) return .f16;
+    if (isBuiltinRepresentation(graph, ty, .Float32)) return .f32;
+    if (isBuiltinRepresentation(graph, ty, .Float64)) return .f64;
+    if (isBuiltinRepresentation(graph, ty, .Bool)) return .boolean;
     if (types.variants(graph, ty) != null) return .choice;
     return .unresolved;
 }
@@ -316,19 +316,26 @@ pub const Program = struct {
 };
 
 pub fn integerBounds(graph: *const g.GlobalSemanticGraph, ty: Type) ?p.IntegerRange {
-    const semantic = graph.semanticType(ty);
+    const semantic = types.representation(graph, ty) orelse return null;
     if (semantic != .builtin) return null;
     return p.integerRange(semantic.builtin, graph.target.stdTarget());
 }
 
+// Representation queries do not change the nominal identity checked by slots,
+// calls and selected contract evidence.
+pub fn isBuiltinRepresentation(graph: *const g.GlobalSemanticGraph, ty: Type, builtin: p.BuiltinType) bool {
+    const semantic = types.representation(graph, ty) orelse return false;
+    return semantic == .builtin and semantic.builtin == builtin;
+}
+
 pub fn floatType(graph: *const g.GlobalSemanticGraph, ty: Type) bool {
-    return types.isBuiltin(graph, ty, .Float16) or types.isBuiltin(graph, ty, .Float32) or types.isBuiltin(graph, ty, .Float64);
+    return isBuiltinRepresentation(graph, ty, .Float16) or isBuiltinRepresentation(graph, ty, .Float32) or isBuiltinRepresentation(graph, ty, .Float64);
 }
 
 pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bool {
     if (depth > 64 or @intFromEnum(ty) >= graph.types.items.len) return false;
     if (integerBounds(graph, ty) != null or floatType(graph, ty)) return true;
-    const semantic = graph.semanticType(ty);
+    const semantic = types.representation(graph, ty) orelse return false;
     if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void or semantic.builtin == .Any;
     if (semantic == .virtual) return true;
     if (semantic == .pointer) return types.isBuiltin(graph, semantic.pointer.child, .Any) or supportedType(graph, semantic.pointer.child, depth + 1);
@@ -347,7 +354,7 @@ pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize
 
 fn regularChoice(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bool {
     if (depth > 64) return false;
-    return switch (graph.semanticType(ty)) {
+    return switch (types.representation(graph, ty) orelse return false) {
         .structural_choice => |shape| shape.layout == .regular,
         .inferred_choice => true,
         .declared => |id| graph.declaration(id).choice_layout == .regular,
@@ -363,12 +370,12 @@ fn regularChoice(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bo
 pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bool {
     return switch (value) {
         .integer => |n| if (integerBounds(graph, ty)) |range| n <= range.maximum - range.minimum else false,
-        .float16 => types.isBuiltin(graph, ty, .Float16),
-        .float32 => types.isBuiltin(graph, ty, .Float32),
-        .float64 => types.isBuiltin(graph, ty, .Float64),
-        .boolean => graph.semanticType(ty) == .builtin and graph.semanticType(ty).builtin == .Bool,
-        .unit => graph.semanticType(ty) == .builtin and graph.semanticType(ty).builtin == .Void,
-        .erased => types.isBuiltin(graph, ty, .Any),
+        .float16 => isBuiltinRepresentation(graph, ty, .Float16),
+        .float32 => isBuiltinRepresentation(graph, ty, .Float32),
+        .float64 => isBuiltinRepresentation(graph, ty, .Float64),
+        .boolean => isBuiltinRepresentation(graph, ty, .Bool),
+        .unit => isBuiltinRepresentation(graph, ty, .Void),
+        .erased => isBuiltinRepresentation(graph, ty, .Any),
         .array => |values| blk: {
             const element = types.arrayElement(graph, ty) orelse break :blk false;
             if (types.arrayLength(graph, ty).? != values.len) break :blk false;

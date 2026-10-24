@@ -6,7 +6,7 @@ capability retains its ordinary FFI dependency; sockets and resolution owners
 borrow it and must be cleaned up before it ends.
 
 ```rg
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume writer ::= $&system.terminal&.stderr
     assume network := system.network
     addresses ::= resolve_addresses(.host = "localhost", .port = 8080)!!!

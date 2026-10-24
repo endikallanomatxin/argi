@@ -28,6 +28,7 @@ pub fn lower(
         .writer = writer_mod.Writer.init(allocator, graph),
     };
     var stats: Stats = .{};
+    try ctx.lowerUnderlyingTypes();
     try ctx.lowerDeferredStructDefinitions();
     try ctx.lowerDeferredChoiceDefinitions();
     try ctx.lowerDeferredFunctionInterfaces();
@@ -64,6 +65,23 @@ const Context = struct {
         self.file_index = index;
         self.tree = self.files[@intCast(index)].tree;
         self.source = self.files[@intCast(index)].source;
+    }
+
+    fn lowerUnderlyingTypes(self: *Context) !void {
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .type) continue;
+            self.selectFile(declaration.module_file_index);
+            const node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
+            if (self.tree.tag(node) != .type_declaration) continue;
+            const value = self.tree.typeDeclaration(node).?;
+            if (value.generic_params.len != 0 or value.generic_params_struct != null) continue;
+            switch (self.tree.tag(value.value)) {
+                .struct_type_literal, .choice_type_literal => continue,
+                else => {},
+            }
+            const underlying = try self.lowerType(value.value);
+            self.graph.declarations.items[raw].underlying_type = underlying;
+        }
     }
 
     /// The compact graph's early interface pass can only materialize fields

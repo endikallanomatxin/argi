@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 | Command | Purpose |
 | --- | --- |
-| `argi build [dir]` | Compile the current package or a selected module. |
+| `argi build [dir]` | Compile the current module or a selected module. |
 | `argi run` | Compile and run the default executable. |
 | `argi run --vm <directory>` | Run the experimental scalar/aggregate bytecode subset. |
 | `argi check [dir]` | Check all function bodies, including unreachable ones. |
@@ -43,15 +43,23 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 Use `--release` with `build` or `run` for optimized executables. See `argi help`
 for target selection, output paths, and LLVM/object emission options.
 
-## Packages and build outputs
+## Module configuration and build outputs
 
-Packages declare executables in `argi.toml`; outputs go to
+Modules declare executables in `argi.toml`; outputs go to
 `build/debug/<name>`, including when selecting a declared entry module directly.
 Standalone modules use `build/output`; test artifacts and reusable compiler
 snapshots use `.argi-cache/`. Use `--no-cache` for a fresh frontend build and
 `--stats` to inspect module reuse.
-See [package configuration](../description/02_modules.md) and
+See [module configuration](../description/02_modules.md) and
 [language-level testing](../description/72_testing.md).
+
+`argi.toml` is optional and does not make a module distributable. Only an
+explicit `[distribution]` declares distribution identity; it does not publish
+anything. Submodules share their distribution's version and dependencies.
+Exact dependency resolutions belong in an automatically managed `[lock]` section
+of `argi.toml`, marked with a comment; there is no separate lockfile.
+Dependency resolution, managed `[lock]` updates, and programmable `build.rg` automation
+are specified but not implemented yet.
 
 ## Formatting and editor support
 
@@ -486,3 +494,27 @@ locations after evaluator teardown and report them through the scheduler.
 Trace capture is best-effort under
 allocation failure, stores no language values and performs no unwinding. A
 trapped REPL still requires reset; its saved failure trace is not resumable state.
+
+### Project test suites
+
+Declare the modules run by `argi test` in the current directory's `argi.toml`:
+
+```toml
+[test]
+modules = [
+    "tests/unit",
+    "tests/integration",
+]
+```
+
+Paths are relative to the manifest. Each entry selects one folder-level module;
+subdirectories are not searched recursively. Modules run in the configured order.
+`argi test path/to/module` overrides the configured suite, and `argi test .`
+explicitly tests the current module. Without a configured suite or an explicit
+path, the command reports how to select modules instead of scanning the project.
+An empty suite reports no tests found and exits with status 1.
+
+`--filter text` applies to test names in either form. Results include the module
+path and test name, for example `PASS /project/tests/unit/example`, so identical
+names in different modules remain distinguishable. A failed test causes the
+command to exit with status 1 after running the remaining selected tests.

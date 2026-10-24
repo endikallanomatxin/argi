@@ -2,21 +2,25 @@
 
 Testing is a native Argi language feature.
 
-Tests are declared explicitly at top level with the same function-like header shape used by `main`, but prefixed with `test`:
+Tests are declared explicitly at top level with the same named-function syntax
+used by `main`, prefixed with `test`. The assignment precedes the signature:
 
 ```rg
-test my_test(.system: System) -> !() := {
+test my_test := (.system: System) -> !() {
     testing.expect(true)!
 }
 ```
 
-V1 supports exactly this surface shape:
+The test entry contract requires:
 
 - top-level only
 - one input: `.system: System`, supplied by the checked entry wrapper
 - return: `-> !()`
 
-There is no other test syntax in v1.
+As with ordinary named functions, the legacy spelling
+`test my_test(.system: System) -> !() := { ... }` remains accepted.
+Both spellings produce the same test declaration, discovery behavior and entry
+contract. New code and examples use `test name := (...) -> !() { ... }`.
 
 These are not supported:
 
@@ -29,7 +33,8 @@ These are not supported:
 Tests are discoverable by the compiler and tooling as explicit top-level declarations.
 
 - `argi build` ignores test declarations
-- `argi test <module-dir>` discovers and runs tests
+- `argi test <module-dir>` discovers and runs tests without requiring a manifest
+- `argi test` runs the current manifest's `[test].modules` list; it does not recursively scan the project
 
 Tests are not semantically merged into one synthetic `main`.
 Each test is treated as its own root / entrypoint.
@@ -64,13 +69,13 @@ They compose with Argi’s existing `Errable` and `!` flow.
 Examples:
 
 ```rg
-test simple_pass(.system: System) -> !() := {
+test simple_pass := (.system: System) -> !() {
     testing.expect(true)!
 }
 ```
 
 ```rg
-test equality(.system: System) -> !() := {
+test equality := (.system: System) -> !() {
     testing.expect_equal(.expected = 1, .actual = 1)!
 }
 ```
@@ -82,7 +87,7 @@ some_fallible_call() -> (.result: Errable#(Int32, (..some_reason))) := {
     result = ..error(.reason = ..some_reason)
 }
 
-test expected_error(.system: System) -> !() := {
+test expected_error := (.system: System) -> !() {
     call_result := some_fallible_call()
     testing.expect_error(.expected_reason = ..some_reason, .actual_result = call_result)!
 }

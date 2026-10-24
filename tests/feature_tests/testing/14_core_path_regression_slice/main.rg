@@ -1,11 +1,11 @@
-test core_path_regression_slice(.system: System) -> !() := {
+test core_path_regression_slice := (.system: System) -> !() {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     full :: Path = unwrap_or_abort(
         .value = path_with_view(.allocator = $&allocator_storage, .view = "/tmp/demo/file.txt")
     )
-    #defer deinit(.self = $&full)
+    defer deinit(.self = $&full)
 
     testing.expect(.condition = is_absolute(.self = &full).ok)!
 

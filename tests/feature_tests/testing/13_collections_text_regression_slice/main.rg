@@ -1,4 +1,4 @@
-test collections_text_array_slice(.system: System) -> !() := {
+test collections_text_array_slice := (.system: System) -> !() {
     arr :: [3]Int32 = (10, 20, 30)
     testing.expect(.condition = length(.value = arr) == 3)!
     testing.expect(.condition = arr[0] == 10)!
@@ -7,7 +7,7 @@ test collections_text_array_slice(.system: System) -> !() := {
     testing.expect(.condition = arr[1] == 99)!
 }
 
-test collections_text_format_slice(.system: System) -> !() := {
+test collections_text_format_slice := (.system: System) -> !() {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -15,7 +15,7 @@ test collections_text_format_slice(.system: System) -> !() := {
     match text_result {
         ..ok ~format_payload {
             text ::= ~format_payload
-            #defer deinit(.self = $&text)
+            defer deinit(.self = $&text)
             view ::= view(.self = &text)
             testing.expect(.condition = view == "7")!
         }

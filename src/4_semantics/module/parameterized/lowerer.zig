@@ -811,7 +811,7 @@ pub const Context = struct {
             .{ .external = try self.writer.addExternalRef(.{
                 .kind = .contract,
                 .module_path = if (base.name.qualifier_token) |qualifier|
-                    try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier))
+                    try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, qualifier, base.name.name_token)
                 else
                     null,
                 .name = try self.writer.addString(name),
@@ -894,7 +894,7 @@ pub const Context = struct {
         }
         const external = try self.writer.addExternalRef(.{
             .kind = .type,
-            .module_path = if (qualifier) |token_index| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index)) else null,
+            .module_path = if (qualifier) |token_index| try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, token_index, name_token) else null,
             .name = try self.writer.addString(name),
             .source = self.sourceRef(owner),
         });
@@ -960,7 +960,7 @@ pub const Context = struct {
         else blk: {
             const external = try self.writer.addExternalRef(.{
                 .kind = .type,
-                .module_path = if (name.qualifier_token) |token_index| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index)) else null,
+                .module_path = if (name.qualifier_token) |token_index| try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, token_index, name.name_token) else null,
                 .name = try self.writer.addString(base_text),
                 .source = self.sourceRef(generic.base),
             });
@@ -1515,7 +1515,7 @@ pub const Context = struct {
             const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)), null, .none);
             const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)].pending;
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.generic_arguments = .{ .start = start, .len = @intCast(arguments.items.len) };
-            self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (call.module_qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null;
+            self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (call.module_qualifier) |token| try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, token, call.callee_token) else null;
             if (call.contract_type) |contract| {
                 const contract_type = try self.lowerType(contract, false);
                 self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.contract_type = contract_type;

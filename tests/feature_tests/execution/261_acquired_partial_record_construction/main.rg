@@ -28,7 +28,7 @@ build_partial(.fail: Bool, .ffi: $&ForeignFunctionInterface) -> (
     slot ::= trusted_establish_allocation_slot#(.t: Pair)(
         .allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)
     ).reference
-    #defer {
+    defer {
         trusted_opaque_drop(.slot = slot)
         trusted_opaque_mark_empty(.storage = $&memory)
     }
