@@ -3673,3 +3673,27 @@ fn importedPublicationAllocationFailures(allocator: std.mem.Allocator) !void {
 test "bytecode verified import DAG releases every failed publication and invocation" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, importedPublicationAllocationFailures, .{});
 }
+
+test "virtual contract declarations retain domains without concrete implementations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\Storage#(.T: Type): Contract = (
+        \\    domain contents
+        \\    domain shape
+        \\    .inspect: (.self: &T) -> (.value: Int32)
+        \\)
+        \\main() -> (.status_code: Int32 = 0) := {}
+    }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = try pipeline.semantizeGlobalFiles(&files);
+    try std.testing.expectEqual(@as(usize, 0), graph.virtualizes.items.len);
+    const declaration = for (graph.declarations.items) |decl| {
+        if (std.mem.eql(u8, graph.text(decl.name), "Storage")) break decl;
+    } else return error.MissingStorageContract;
+    try std.testing.expectEqual(@as(u32, 2), declaration.contract_domain_count);
+}

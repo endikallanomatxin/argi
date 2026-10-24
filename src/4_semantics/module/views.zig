@@ -30,6 +30,11 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     const declaration = graph.declarations.items[raw];
     if (declaration.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
     const semantic = findDeclarationSemantic(graph, id);
+    const domain_count: u32 = if (declaration.kind == .contract_type) count: {
+        for (graph.semantic.parameterized_storage.contract_definitions.items) |definition|
+            if (definition.declaration == id) break :count @intCast(definition.domains.len);
+        break :count 0;
+    } else 0;
 
     return .{
         .kind = declaration.kind,
@@ -40,6 +45,7 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
         .struct_fields = if (declaration.struct_fields) |range| .{ .start = range.start, .len = range.len } else null,
         .choice_variants = if (declaration.choice_variants) |range| .{ .start = range.start, .len = range.len } else null,
         .generic_parameter_count = declaration.generic_parameter_count,
+        .contract_domain_count = domain_count,
         .struct_layout = if (semantic) |value| value.struct_layout else .regular,
         .choice_layout = if (semantic) |value| value.choice_layout else .regular,
     };

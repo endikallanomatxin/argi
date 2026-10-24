@@ -536,6 +536,8 @@ Static calls and virtual construction resolve those paths from the selected
 conformance. The existing ownership proofs reject missing, invalid or aliased
 domains. A domain mapping supplies no storage acquisition permission. Contracts
 with multiple participants still require an explicit domain receiver model.
+Virtual inputs retain the declared domains even before any concrete handle is
+constructed; checking an interface does not depend on available implementations.
 
 A unary virtual interface may bind associated types and constants. Every
 associated element must be fixed in the interface; the concrete selected

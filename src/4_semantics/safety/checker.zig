@@ -797,19 +797,22 @@ pub const SafetyChecker = struct {
             };
             const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
             if (self.graph.semanticType(ty) == .virtual) {
-                for (self.graph.virtualizes.items) |virtualize| {
-                    if (!types.equal(self.graph, ty, virtualize.virtual_type) or virtualize.domains.len == 0) continue;
-                    const domains = try self.allocator.alloc(facts.DomainFacts, virtualize.domains.len);
-                    for (virtualize.domains, domains) |mapping, *domain| {
-                        const storage = try self.project(.{ .root = binding }, .{ .field = mapping.domain_index });
-                        _ = try self.storageGeneration(state, storage);
-                        const places = try self.allocator.alloc(facts.Place, 1);
-                        places[0] = storage;
-                        domain.* = .{ .domain_index = mapping.domain_index, .storages = places };
-                    }
-                    value.domains = domains;
-                    break;
+                const contract_type = self.graph.semanticType(ty).virtual;
+                const declaration = switch (self.graph.semanticType(contract_type)) {
+                    .declared => |decl| decl,
+                    .generic => |generic| generic.base,
+                    else => return error.InvalidVirtualContractType,
+                };
+                const count = self.graph.declaration(declaration).contract_domain_count;
+                const domains = try self.allocator.alloc(facts.DomainFacts, count);
+                for (domains, 0..) |*domain, domain_index| {
+                    const storage = try self.project(.{ .root = binding }, .{ .field = @intCast(domain_index) });
+                    _ = try self.storageGeneration(state, storage);
+                    const places = try self.allocator.alloc(facts.Place, 1);
+                    places[0] = storage;
+                    domain.* = .{ .domain_index = @intCast(domain_index), .storages = places };
                 }
+                value.domains = domains;
             }
             try self.setPlace(state, .{ .root = binding }, .initialized, value);
         }
@@ -10852,4 +10855,37 @@ test "loop symbolic observations canonicalize only without retained historical a
     try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
     try std.testing.expectEqual(guarded_generation, next.symbolic_pointees.items[0].generation.?);
     try std.testing.expect(guarded_generation != canonical);
+}
+
+test "virtual input storage domains exist before concrete handles" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = .{ .start = 0, .len = 0 }, .source = source, .contract_domain_count = 2 });
+    try graph.types.appendSlice(a, &.{
+        .{ .declared = @enumFromInt(0) },
+        .{ .virtual = @enumFromInt(0) },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+    });
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(2), .mutability = .constant });
+    try graph.binding_refs.append(a, @enumFromInt(0));
+    const function: graph_mod.Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .input_bindings = .{ .start = 0, .len = 1 } };
+    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    try checker.seedFunctionInputs(@enumFromInt(0), function, &state);
+    const value = checker.valueAtPlace(&state, .{ .root = @enumFromInt(0) }).?;
+    try std.testing.expectEqual(@as(usize, 0), graph.virtualizes.items.len);
+    try std.testing.expectEqual(@as(usize, 2), value.domains.len);
+    for (value.domains, 0..) |domain, index| {
+        try std.testing.expectEqual(@as(u32, @intCast(index)), domain.domain_index);
+        try std.testing.expectEqual(@as(usize, 1), domain.storages.len);
+        try std.testing.expect(domain.storages[0].eql(.{ .root = @enumFromInt(0), .projections = &.{.{ .field = @intCast(index) }} }));
+    }
 }
