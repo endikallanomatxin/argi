@@ -15292,3 +15292,12 @@ test "argi repl renews borrowed argument references without renewing copies" {
     ;
     try expectReplFixtureWithDiagnostic("tests/feature_tests/ownership/364_projected_call_reinitialization/main.rg", commands, "_0 = ()\n_1 = 1\n_3 = 1\n_4 = 2\n", "reference depends on a root that has ended");
 }
+
+test "feature_tests/system/68_system_storage_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/system/68_system_storage_initialization");
+    try runExpect("tests/feature_tests/system/68_system_storage_initialization", 42);
+}
+
+test "feature_tests/system/69X_system_storage_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/system/69X_system_storage_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}

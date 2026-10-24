@@ -6,6 +6,12 @@ Release: [0.4](0.4.md). Current behavior: [usage](../docs/usage.md#experimental-
 
 - Implement `#run (.system: System)` using the existing execution host boundary.
   Define permitted host effects and build dependencies before enabling external I/O.
+  Use checked caller-owned resource storage: `system/68` proves initialization
+  and `system/69X` rejects escaping its lifetime. Keep user assumptions inside
+  the entry; resource construction must not install them in its lexical scope.
+  Verify once acquisitions separately for each compile-time invocation. The
+  evaluator currently rejects once/foreign bodies and nonconstant inputs, so
+  enabling System requires an explicit host-entry path, not relaxing all entries.
 
 ## Later
 
