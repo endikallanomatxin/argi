@@ -122,7 +122,10 @@ as external VM inputs, and results cannot borrow a completed frame. Lexical life
 and aliasing rules remain the responsibility of the ordinary safety checker.
 
 Choices support construction, tag tests, active-payload access and `match`,
-including borrowed payloads. The verifier checks variant membership and payload
+including borrowed payloads. Fallible aggregate and argument construction retains
+evaluated operands in lexical owners until transfer, so early propagation cleans
+previous operands without invoking a destructor on an incomplete whole value.
+The verifier checks variant membership and payload
 types; execution checks that a payload is active before reading or writing it.
 `for` invokes the ordinary selected iterator operations, including borrowed array
 iteration and scalar ranges when their checked bodies fit the VM subset.
@@ -224,8 +227,7 @@ arithmetic, comparisons and compile-time results. Byte views and acquired storag
 retain their exact representations, including signed zero and NaN payloads.
 
 Raw pointers, C enums, complete trace reporting,
-partial choice initialization before selecting a complete variant, vacant arrays
-with owning elements, owning globals,
+partial choice initialization before selecting a complete variant, owning globals,
 closures,
 general foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable

@@ -15086,3 +15086,41 @@ test "feature_tests/execution/260_acquired_choice_array_replacement" {
     try runExpect("tests/feature_tests/execution/260_acquired_choice_array_replacement", 42);
     try vmExpect("tests/feature_tests/execution/260_acquired_choice_array_replacement", 42, null);
 }
+
+test "feature_tests/execution/261_acquired_partial_record_construction" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/261_acquired_partial_record_construction");
+    try runExpect("tests/feature_tests/execution/261_acquired_partial_record_construction", 42);
+    try vmExpect("tests/feature_tests/execution/261_acquired_partial_record_construction", 42, null);
+}
+
+test "feature_tests/execution/262_choice_construction_failure_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/262_choice_construction_failure_cleanup");
+    try runExpect("tests/feature_tests/execution/262_choice_construction_failure_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/262_choice_construction_failure_cleanup", 42, null);
+}
+
+test "argi repl cleans fallible aggregate operands across submissions" {
+    const commands =
+        \\counter :: Counter = Counter()
+        \\failed ::= build_owned(.counter = $&counter, .fail = true, .tracer = error_tracer)
+        \\counter.drops
+        \\succeeded ::= build_owned(.counter = $&counter, .fail = false, .tracer = error_tracer)
+        \\counter.drops
+        \\discarded ::= discard_result(.value = ~succeeded)
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixture("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup/main.rg", commands, "_0 = 7\n_1 = 7\n_2 = 28\n");
+}
+
+test "feature_tests/execution/263_comptime_fallible_operand_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup");
+    try runExpect("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup", 42, null);
+}
+
+test "feature_tests/execution/264_fallible_indexed_replacement_preserves_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner");
+    try runExpect("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner", 42);
+    try vmExpect("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner", 42, null);
+}

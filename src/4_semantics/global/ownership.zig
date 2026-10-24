@@ -470,6 +470,158 @@ pub const Resolver = struct {
         }
     }
 
+    // An aggregate/call cannot take ownership of an operand until all later
+    // operands have evaluated successfully. Keep evaluated operands in ordinary
+    // lexical owners across possible early exits, then move them into the result.
+    fn mayExitExpression(self: *const Resolver, id: global_sg.GlobalNodeId, depth: usize) bool {
+        if (depth > 128) return true;
+        return switch (self.graph.node(id).content) {
+            .error_propagation, .error_context, .return_statement, .break_statement, .continue_statement, .testing_expect_error => true,
+            .struct_value_literal => |literal| blk: {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                    if (self.mayExitExpression(field.value, depth + 1)) break :blk true;
+                break :blk false;
+            },
+            inline .list_literal, .array_literal => |literal| blk: {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child|
+                    if (self.mayExitExpression(child, depth + 1)) break :blk true;
+                break :blk false;
+            },
+            .binding_declaration => |binding| if (self.graph.binding(binding).initialization) |value| self.mayExitExpression(value, depth + 1) else false,
+            .code_block, .value_sequence, .replacement => |body| self.mayExitBlock(body, depth + 1),
+            .if_statement => |value| self.mayExitExpression(value.condition, depth + 1) or self.mayExitBlock(value.then_block, depth + 1) or
+                (if (value.else_block) |body| self.mayExitBlock(body, depth + 1) else false),
+            .while_statement, .for_statement, .switch_statement => true,
+            .virtual_call => |index| blk: {
+                const call = self.graph.virtual_calls.items[@intFromEnum(index)];
+                break :blk self.mayExitExpression(call.handle, depth + 1) or self.mayExitExpression(call.input, depth + 1);
+            },
+            .nullable_unwrap_or => |index| blk: {
+                const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(index)];
+                break :blk self.mayExitExpression(unwrap.nullable_value, depth + 1) or self.mayExitExpression(unwrap.fallback_value, depth + 1);
+            },
+            else => |content| self.mayExitOperands(content, depth + 1),
+        };
+    }
+
+    fn mayExitBlock(self: *const Resolver, id: global_sg.GlobalBlockId, depth: usize) bool {
+        const block = self.graph.blocks.items[@intFromEnum(id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node|
+            if (self.mayExitExpression(node, depth + 1)) return true;
+        return if (block.ret_val) |value| self.mayExitExpression(value, depth + 1) else false;
+    }
+
+    fn mayExitOperands(self: *const Resolver, value: anytype, depth: usize) bool {
+        const T = @TypeOf(value);
+        if (T == global_sg.GlobalNodeId) return self.mayExitExpression(value, depth);
+        return switch (@typeInfo(T)) {
+            .optional => if (value) |child| self.mayExitOperands(child, depth) else false,
+            .@"struct" => |info| blk: {
+                inline for (info.fields) |field| if (self.mayExitOperands(@field(value, field.name), depth)) break :blk true;
+                break :blk false;
+            },
+            .@"union" => switch (value) {
+                inline else => |child| self.mayExitOperands(child, depth),
+            },
+            else => false,
+        };
+    }
+
+    fn needsStagedFields(self: *const Resolver, fields: primitives.Range(global_sg.GlobalValueFieldId)) bool {
+        if (fields.len < 2) return false;
+        for (self.graph.value_fields.items[fields.start + 1 ..][0 .. fields.len - 1]) |field|
+            if (self.mayExitExpression(field.value, 0)) return true;
+        return false;
+    }
+
+    fn stageOperand(self: *Resolver, value: global_sg.GlobalNodeId, statements: *std.ArrayList(global_sg.GlobalNodeId)) !global_sg.GlobalNodeId {
+        const node = self.graph.node(value);
+        const ty = node.ty orelse return error.UnresolvedAggregateOperand;
+        const binding: global_sg.GlobalBindingId = @enumFromInt(self.graph.bindings.items.len);
+        try self.graph.bindings.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, "#evaluated_operand"),
+            .source = node.source,
+            .ty = ty,
+            .mutability = .constant,
+            .initialization = value,
+        });
+        try statements.append(self.allocator, try self.appendNode(node.source, null, .{ .binding_declaration = binding }));
+        const use = try self.appendNode(node.source, ty, .{ .binding_use = binding });
+        return self.appendNode(node.source, ty, .{ .move_value = use });
+    }
+
+    fn stageFields(self: *Resolver, range: primitives.Range(global_sg.GlobalValueFieldId), statements: *std.ArrayList(global_sg.GlobalNodeId)) !primitives.Range(global_sg.GlobalValueFieldId) {
+        const fields = try self.allocator.dupe(global_sg.ValueField, self.graph.value_fields.items[range.start..][0..range.len]);
+        defer self.allocator.free(fields);
+        for (fields) |*field| field.value = try self.stageOperand(field.value, statements);
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.appendSlice(self.allocator, fields);
+        return .{ .start = start, .len = range.len };
+    }
+
+    fn stageCompound(self: *Resolver, id: global_sg.GlobalNodeId) !bool {
+        var node = self.graph.node(id);
+        var statements: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+        defer statements.deinit(self.allocator);
+        switch (node.content) {
+            .struct_value_literal => |*literal| {
+                if (!self.needsStagedFields(literal.fields)) return false;
+                literal.fields = try self.stageFields(literal.fields, &statements);
+            },
+            .function_call => |*call| {
+                var input = self.graph.node(call.input);
+                if (input.content != .struct_value_literal or !self.needsStagedFields(input.content.struct_value_literal.fields)) return false;
+                if (call.callee_value) |value| call.callee_value = try self.stageOperand(value, &statements);
+                input.content.struct_value_literal.fields = try self.stageFields(input.content.struct_value_literal.fields, &statements);
+                call.input = try self.appendNode(input.source, input.ty, input.content);
+            },
+            .virtual_call => |index| {
+                var call = self.graph.virtual_calls.items[@intFromEnum(index)];
+                var input = self.graph.node(call.input);
+                if (input.content != .struct_value_literal or !self.needsStagedFields(input.content.struct_value_literal.fields)) return false;
+                call.handle = try self.stageOperand(call.handle, &statements);
+                const range = input.content.struct_value_literal.fields;
+                const fields = try self.allocator.dupe(global_sg.ValueField, self.graph.value_fields.items[range.start..][0..range.len]);
+                defer self.allocator.free(fields);
+                // The receiver is evaluated through handle, not again through
+                // its input field. Preserve that single evaluation in the plan.
+                for (fields, 0..) |*field, position|
+                    field.value = if (position == call.self_input_index) call.handle else try self.stageOperand(field.value, &statements);
+                const start: u32 = @intCast(self.graph.value_fields.items.len);
+                try self.graph.value_fields.appendSlice(self.allocator, fields);
+                input.content.struct_value_literal.fields = .{ .start = start, .len = range.len };
+                call.input = try self.appendNode(input.source, input.ty, input.content);
+                const staged: global_sg.GlobalVirtualCallId = @enumFromInt(self.graph.virtual_calls.items.len);
+                try self.graph.virtual_calls.append(self.allocator, call);
+                node.content = .{ .virtual_call = staged };
+            },
+            inline .list_literal, .array_literal => |*literal| {
+                if (literal.elements.len < 2) return false;
+                const elements = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]);
+                defer self.allocator.free(elements);
+                var needed = false;
+                for (elements[1..]) |element| if (self.mayExitExpression(element, 0)) {
+                    needed = true;
+                    break;
+                };
+                if (!needed) return false;
+                for (elements) |*element| element.* = try self.stageOperand(element.*, &statements);
+                const start: u32 = @intCast(self.graph.node_refs.items.len);
+                try self.graph.node_refs.appendSlice(self.allocator, elements);
+                literal.elements = .{ .start = start, .len = @intCast(elements.len) };
+            },
+            else => return false,
+        }
+        const result = try self.appendNode(node.source, node.ty, node.content);
+        try statements.append(self.allocator, result);
+        const start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.appendSlice(self.allocator, statements.items);
+        const body: global_sg.GlobalBlockId = @enumFromInt(self.graph.blocks.items.len);
+        try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = @intCast(statements.items.len) }, .ret_val = result });
+        try self.graph.setNodeContent(self.allocator, id, .{ .value_sequence = body });
+        return true;
+    }
+
     fn finalizeExpressionCleanup(
         self: *Resolver,
         node_id: global_sg.GlobalNodeId,
@@ -479,6 +631,7 @@ pub const Resolver = struct {
         owner_function: global_sg.GlobalFunctionId,
         module_index: usize,
     ) anyerror!void {
+        _ = try self.stageCompound(node_id);
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
             .replacement => {}, // Already finalized when the transition was built.
