@@ -77,7 +77,7 @@ test "module fragments retain declaration identities and share lexical and quali
     var safety = @import("../safety/checker.zig").SafetyChecker.init(scratch.allocator(), &diagnostics, &result.graph);
     defer safety.deinit();
     try safety.analyze();
-    var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &result.graph);
+    var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &result.graph, .{});
     lower.annotations = &safety.annotations;
     const program = try lower.compile(@enumFromInt(2));
     var vm = try @import("../../execution/vm.zig").Vm.init(a, program, .{});
@@ -163,7 +163,7 @@ test "module fragments select contract implementations in the shared namespace" 
     var safety = @import("../safety/checker.zig").SafetyChecker.init(scratch.allocator(), &diagnostics, &result.graph);
     defer safety.deinit();
     try safety.analyze();
-    var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &result.graph);
+    var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &result.graph, .{});
     lower.annotations = &safety.annotations;
     const program = try lower.compile(functions[0]);
     var vm = try @import("../../execution/vm.zig").Vm.init(a, program, .{});
@@ -360,7 +360,7 @@ test "checked module decisions select source fragments without evaluating discar
     var safety = @import("../safety/checker.zig").SafetyChecker.init(scratch.allocator(), &diagnostics, &checked.graph);
     defer safety.deinit();
     try safety.analyze();
-    var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &checked.graph);
+    var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &checked.graph, .{});
     lower.annotations = &safety.annotations;
     var vm = try @import("../../execution/vm.zig").Vm.init(a, try lower.compile(declaration.function_id.?), .{});
     defer vm.deinit();

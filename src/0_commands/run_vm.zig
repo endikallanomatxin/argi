@@ -72,7 +72,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
             return error.CompilationFailed;
         }
     }
-    var compiler = try lower.Lower.init(allocator, graph);
+    var compiler = try lower.Lower.init(allocator, graph, .{});
     compiler.mode = .runtime;
     if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
     compiler.diagnostics = &diagnostics;

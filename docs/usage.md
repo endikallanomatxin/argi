@@ -668,6 +668,25 @@ observations; frontend time remains nonlinear, and the 2,000 compiled functions
 still show that helper bytecode is regenerated. The CSV column is now named
 `semantic_graph_payload_MiB` and counts the one shared graph rather than copies.
 
+With compact function/session tables and lazy cleanup identities, 1,000 Debug
+minimal calls retain 17.63 MiB (17.67 MiB peak), including 2.74 MiB of code
+arenas; total command time is 21,353.1 ms. At 100 commands, code arenas use
+0.27 MiB and live backing is 1.71 MiB. The 2,000 compiled functions and 11,000
+instructions remain unchanged: body reuse is still pending.
+
+The prelude/resources scenario at 100 strings retains 218.52 MiB (224.60 MiB
+peak), with 34.12 MiB of code arenas and 100 live acquisitions containing
+4,000 bytes. Before making session metadata lazy, the same scenario retained
+341.79 MiB with 157.39 MiB of code arenas. That intermediate run exposed cleanup
+projection trees being constructed for every persistent binding in every
+function, including unused bindings. Published units now keep only referenced
+session bindings, and functions construct only the cleanup identities they use.
+Both samples compile 3,400 functions and 80,500 instructions, and both release
+all tracked backing at teardown. The latest command time is 46,539.0 ms versus
+51,901.2 ms previously; these are individual observations, not a general speedup
+claim. Startup/core preparation and live owners remain included in retained
+memory, while old helper bodies and dead VM frames are still retained.
+
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and
 REPL submissions share this presentation. Compile-time failures retain these

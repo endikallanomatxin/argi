@@ -458,7 +458,7 @@ test "compilation session shares one graph across executable publications" {
     defer first.deinit();
     try session.accept(&first);
     const graph = &session.semantic.relocation.graph;
-    var compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, graph);
+    var compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, graph, .{});
     // This fixture has no ownership transitions to lower.
     const program = try compiler.compile(@enumFromInt(0));
     // Grow semantic pools after bytecode captured the graph. Old units must
@@ -482,7 +482,7 @@ test "compilation session shares one graph across executable publications" {
     defer old_vm.deinit();
     const previous = try old_vm.invoke(@enumFromInt(0), &.{.{ .integer = 42 }});
     const identity = context.storage.context;
-    var current_compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, &session.semantic.relocation.graph);
+    var current_compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, &session.semantic.relocation.graph, .{});
     const current_program = try current_compiler.compile(@enumFromInt(0));
     var current_vm = try execution.Vm.initShared(a, current_program, .{}, &context);
     defer current_vm.deinit();

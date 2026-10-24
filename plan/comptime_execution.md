@@ -69,8 +69,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 - Remove the temporary evaluation node-column copy; keep cleanup projection
   identities bounded when rechecking previously completed bodies.
 - Reuse verified Safety bodies only with stable hypotheses; check caller facts
-  independently.
-  Keep Code Units immutable without copying whole function/type tables per command.
+  independently. Reuse immutable helper bytecode across commands while keeping
+  host bindings, globals and virtual dispatch linked to its originating Code Unit.
 - Keep definition lookup separate from instantiation evidence. Delayed body
   completion must preserve its selected context; new conformances must not
   invalidate safety assumptions of published code.

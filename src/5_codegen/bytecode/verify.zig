@@ -23,9 +23,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     const owning_types = try @import("../cleanup_layout.zig").owningTypes(allocator, program.graph);
     defer allocator.free(owning_types);
     if (!program.graph.target.isNative()) return error.UnsupportedExecutionTarget;
-    // A published unit can predate later declarations in the shared graph.
-    // Its own function table and every call still have to verify independently.
-    if (program.functions.len > program.graph.functions.items.len) return error.InvalidBytecode;
+    // Validate ordering before any binary lookup, including unreachable callees.
+    for (program.functions, 0..) |entry, index| {
+        if (@intFromEnum(entry.id) >= program.graph.functions.items.len) return error.InvalidBytecode;
+        if (index != 0 and @intFromEnum(program.functions[index - 1].id) >= @intFromEnum(entry.id)) return error.InvalidBytecode;
+    }
     if (program.session) |session| {
         for (session.bindings, 0..) |binding, index| {
             if (@intFromEnum(binding.binding) >= program.graph.bindings.items.len or
@@ -56,14 +58,15 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     }
     const expression_end = program.functions.len + @intFromBool(program.expression != null);
     for (0..expression_end + program.globals.len) |fi| {
-        const f = if (fi >= expression_end) program.globals[fi - expression_end].initializer else if (fi == program.functions.len) program.expression.?.* else (program.functions[fi] orelse continue).*;
+        const f = if (fi >= expression_end) program.globals[fi - expression_end].initializer else if (fi == program.functions.len) program.expression.?.* else program.functions[fi].body.*;
+        const function_id: ?g.GlobalFunctionId = if (fi < program.functions.len) program.functions[fi].id else null;
         if (f.code.len == 0) return error.InvalidBytecode;
         for (f.slots) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
         for (f.write_destinations) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
         for (f.inputs) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
         for (f.outputs) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
         if (fi < program.functions.len) {
-            const declaration = program.graph.function(@enumFromInt(fi));
+            const declaration = program.graph.function(function_id.?);
             if (f.inputs.len != declaration.input.len or f.outputs.len != declaration.output.len) return error.InvalidBytecode;
             for (f.inputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.input.start + i].ty)) return error.InvalidBytecode;
             for (f.outputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.output.start + i].ty)) return error.InvalidBytecode;
@@ -109,8 +112,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (bounds.maximum - bounds.minimum != 255) return error.InvalidBytecode;
                 },
                 .prepare_acquired => |x| {
-                    if (fi >= program.graph.functions.items.len) return error.InvalidBytecode;
-                    const id: g.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(fi)));
+                    const id = function_id orelse return error.InvalidBytecode;
                     if (program.graph.function(id).safety_primitive != .prepare_allocation_metadata or f.inputs.len != 1 or f.outputs.len != 1 or x.receipt != f.inputs[0] or x.dst != f.outputs[0] or !types.isBuiltin(program.graph, f.slots[x.dst], .UIntNative)) return error.InvalidBytecode;
                     var arena = std.heap.ArenaAllocator.init(allocator);
                     defer arena.deinit();
@@ -124,8 +126,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (expected.cleanup) |layout| if (!try cleanup_equal.compare(layout, x.layout.cleanup.?, 0)) return error.InvalidBytecode;
                 },
                 .acquired_reference => |x| {
-                    if (fi >= program.graph.functions.items.len) return error.InvalidBytecode;
-                    const primitive = program.graph.function(@enumFromInt(@as(u32, @intCast(fi)))).safety_primitive;
+                    const primitive = program.graph.function(function_id orelse return error.InvalidBytecode).safety_primitive;
                     if (primitive != .establish_inherited_reference and primitive != .establish_allocation_slot) return error.InvalidBytecode;
                     const target = program.graph.semanticType(f.slots[x.dst]);
                     if (target != .pointer or !types.isBuiltin(program.graph, f.slots[x.address], .UIntNative)) return error.InvalidBytecode;
@@ -190,8 +191,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const receiver = program.graph.semanticType(f.slots[x.receiver]);
                     if (receiver != .pointer or !types.equal(program.graph, receiver.pointer.child, selected.concrete_type)) return error.InvalidBytecode;
                     for (selected.methods) |method| {
-                        if (@intFromEnum(method.function) >= program.functions.len or program.functions[@intFromEnum(method.function)] == null) return error.InvalidBytecode;
-                        const implementation = program.functions[@intFromEnum(method.function)].?;
+                        const implementation = program.function(method.function) orelse return error.InvalidBytecode;
                         if (method.receiver_input_index >= implementation.inputs.len) return error.InvalidBytecode;
                         const expected = program.graph.semanticType(implementation.slots[implementation.inputs[method.receiver_input_index]]);
                         if (expected != .pointer or expected.pointer.mutability != method.receiver_permission or !types.equal(program.graph, expected.pointer.child, selected.concrete_type) or
@@ -367,8 +367,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     }
                 },
                 .call => |x| {
-                    if (@intFromEnum(x.function) >= program.functions.len) return error.InvalidBytecode;
-                    const callee = program.functions[@intFromEnum(x.function)] orelse return error.InvalidBytecode;
+                    const callee = program.function(x.function) orelse return error.InvalidBytecode;
                     if (x.args.len != callee.inputs.len or x.outputs.len != callee.outputs.len) return error.InvalidBytecode;
                     for (x.args, callee.inputs) |slot, input| if (!types.equal(program.graph, f.slots[slot], callee.slots[input])) return error.InvalidBytecode;
                     for (x.outputs, callee.outputs, 0..) |slot, output, index| {

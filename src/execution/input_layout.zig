@@ -57,7 +57,7 @@ pub const Inputs = struct {
         var result: Inputs = .{ .arena = .init(allocator) };
         errdefer result.deinit();
         var compiler: Compiler = .{ .allocator = result.arena.allocator(), .graph = program.graph };
-        for (program.functions) |function| if (function) |body| try result.add(&compiler, body);
+        for (program.functions) |function| try result.add(&compiler, function.body);
         if (program.expression) |body| try result.add(&compiler, body);
         return result;
     }
@@ -138,7 +138,7 @@ fn prepareInputs(allocator: std.mem.Allocator) !void {
     });
     const function: b.Function = .{ .slots = &.{@enumFromInt(1)}, .inputs = &.{0}, .outputs = &.{}, .code = &.{} };
     const pointer_function: b.Function = .{ .slots = &.{@enumFromInt(2)}, .inputs = &.{0}, .outputs = &.{}, .code = &.{} };
-    var inputs = try Inputs.init(allocator, .{ .graph = &graph, .functions = &.{ &function, &pointer_function } });
+    var inputs = try Inputs.init(allocator, .{ .graph = &graph, .functions = &.{ .{ .id = @enumFromInt(0), .body = &function }, .{ .id = @enumFromInt(1), .body = &pointer_function } } });
     defer inputs.deinit();
     const valid: b.Value = .{ .array = &.{ .{ .integer = 128 }, .{ .integer = 255 } } };
     try std.testing.expect(inputs.accepts(&function, &.{valid}));
@@ -160,7 +160,7 @@ test "input-free execution entries need no descriptor allocations" {
     const function: b.Function = .{ .slots = &.{}, .inputs = &.{}, .outputs = &.{}, .code = &.{} };
     var empty: [0]u8 = .{};
     var backing = std.heap.FixedBufferAllocator.init(&empty);
-    var inputs = try Inputs.init(backing.allocator(), .{ .graph = &graph, .functions = &.{&function}, .expression = &function });
+    var inputs = try Inputs.init(backing.allocator(), .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(0), .body = &function }}, .expression = &function });
     defer inputs.deinit();
     try std.testing.expectEqual(@as(usize, 0), inputs.functions.count());
     try std.testing.expect(inputs.accepts(&function, &.{}));

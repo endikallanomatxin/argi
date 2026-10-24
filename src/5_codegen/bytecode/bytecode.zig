@@ -74,7 +74,8 @@ pub const SessionNamespace = enum(u64) { _ };
 pub const SessionBinding = struct { binding: g.GlobalBindingId, ty: Type, cleanup: []const Cleanup = &.{} };
 // The compilation owner issues the namespace and preserves binding/type
 // identities and layouts across revisions. It must never stamp independently
-// rebuilt graphs with the same namespace. This metadata is immutable like code.
+// rebuilt graphs with the same namespace. Binding indices are unit-local;
+// persistent storage is keyed by binding IDs. Published metadata is immutable.
 pub const Session = struct { namespace: SessionNamespace, bindings: []const SessionBinding };
 pub const Value = @import("value.zig").Value;
 // A place starts in local storage and can follow checked safe references.
@@ -237,15 +238,35 @@ pub const HostFunction = struct {
     outputs: []const p.IntegerRange,
 };
 
+pub const FunctionEntry = struct {
+    id: g.GlobalFunctionId,
+    body: *const Function,
+
+    pub fn lessThan(_: void, a: FunctionEntry, other: FunctionEntry) bool {
+        return @intFromEnum(a.id) < @intFromEnum(other.id);
+    }
+};
+
 pub const Program = struct {
     host_functions: []const HostFunction = &.{},
     globals: []const Global = &.{},
     graph: *const g.GlobalSemanticGraph,
-    // Preserve graph IDs without reserving a complete descriptor for unused bodies.
-    // Published tables and compiled descriptors remain immutable.
-    functions: []const ?*const Function,
+    // Strictly ordered by stable semantic ID. Only compiled bodies occupy space.
+    functions: []const FunctionEntry,
     expression: ?*const Function = null,
     session: ?Session = null,
+
+    pub fn function(self: Program, id: g.GlobalFunctionId) ?*const Function {
+        var first: usize = 0;
+        var end = self.functions.len;
+        while (first < end) {
+            const middle = first + (end - first) / 2;
+            const entry = self.functions[middle];
+            if (entry.id == id) return entry.body;
+            if (@intFromEnum(entry.id) < @intFromEnum(id)) first = middle + 1 else end = middle;
+        }
+        return null;
+    }
 };
 
 pub fn integerBounds(graph: *const g.GlobalSemanticGraph, ty: Type) ?p.IntegerRange {

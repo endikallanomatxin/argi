@@ -3877,7 +3877,7 @@ test "native and bytecode metadata primitives share selected type geometry" {
     const native = c.LLVMGetOperand(returned, 0);
     const native_data = c.LLVMGetModuleDataLayout(generator.module);
     try std.testing.expectEqual(@as(c_ulonglong, 40), c.LLVMABISizeOfType(native_data, reference_evidence.storageViewType()));
-    var compiler = try @import("../bytecode/lower.zig").Lower.init(work, &graph);
+    var compiler = try @import("../bytecode/lower.zig").Lower.init(work, &graph, .{});
     const program = try compiler.compile(@enumFromInt(0));
     var executor = try @import("../../execution/vm.zig").Vm.init(work, program, .{});
     defer executor.deinit();

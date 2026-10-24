@@ -25,7 +25,7 @@ fn execute(source: []const u8, limits: vm.Limits) !i128 {
     };
     for (graph.functions.items, 0..) |f, i| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(f.declaration)), "main")) continue;
-        var compiler = try lower.Lower.init(allocator, graph);
+        var compiler = try lower.Lower.init(allocator, graph, .{});
         if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         compiler.mode = .runtime;
         const program = compiler.compile(@enumFromInt(i)) catch |err| {
@@ -125,8 +125,8 @@ test "bytecode verifier rejects malformed control flow and missing initializatio
         .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{1}, .code = &code }};
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]b.Function{.{ .slots = &.{ @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{1}, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, program));
     try std.testing.expectError(error.UninitializedBytecodeSlot, vm.Vm.init(a, program, .{}));
     code[1].op.branch.yes = 2;
@@ -204,8 +204,8 @@ test "bytecode array verifier rejects malformed elements and indices" {
         .{ .source = source, .op = .{ .index = .{ .dst = 3, .base = 2, .index = 0, .kind = .i32 } } },
         .{ .source = source, .op = .{ .ret = &.{3} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{3}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{3}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     try b.verify(a, program);
     code[2].op.array.elements = &.{};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
@@ -281,8 +281,8 @@ test "bytecode VM retains invocations and resets poisoned execution contexts" {
     try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
     const code = [_]b.Instruction{.{ .source = source, .op = .{ .ret = &.{0} } }};
-    const functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(1)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
-    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functionPointers(&functions) }, .{});
+    const functions = [_]b.Function{.{ .slots = &.{@enumFromInt(1)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functionEntries(&functions) }, .{});
     defer executor.deinit();
     var result = try executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
     const context = executor.context().storage.context;
@@ -306,7 +306,7 @@ test "bytecode VM retains invocations and resets poisoned execution contexts" {
     try std.testing.expectError(error.ExecutionCallDepthLimit, executor.run(@enumFromInt(0), result));
     // Per-invocation fuel resets, whereas retained storage keeps its cumulative
     // allocation budget. Exhaustion poisons the context until explicit reset.
-    var retained = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functionPointers(&functions) }, .{ .instructions = 1, .value_cells = 9 });
+    var retained = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functionEntries(&functions) }, .{ .instructions = 1, .value_cells = 9 });
     defer retained.deinit();
     const input = [_]b.Value{.{ .array = &.{.{ .integer = 42 }} }};
     _ = try retained.invoke(@enumFromInt(0), &input);
@@ -471,11 +471,11 @@ test "bytecode lifecycle instructions update caller state through an ordinary re
         .{ .source = source, .op = .{ .cleanup_set = .{ .place = .{ .root = 0, .path = &.{.dereference} }, .enabled = false } } },
         .{ .source = source, .op = .{ .ret = &.{} } },
     };
-    var functions = [_]?b.Function{
+    var functions = [_]b.Function{
         .{ .slots = &.{ @enumFromInt(0), @enumFromInt(2), @enumFromInt(1), @enumFromInt(1) }, .inputs = &.{}, .outputs = &.{3}, .code = &caller, .cleanup = &.{.{ .root = 0, .offset = 0 }} },
         .{ .slots = &.{@enumFromInt(2)}, .inputs = &.{0}, .outputs = &.{}, .code = &callee },
     };
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expect(!(try executor.run(@enumFromInt(0), &.{}))[0].boolean);
@@ -483,13 +483,13 @@ test "bytecode lifecycle instructions update caller state through an ordinary re
     defer bounded.deinit();
     try std.testing.expectError(error.ExecutionInstructionLimit, bounded.run(@enumFromInt(0), &.{}));
     // Cleanup metadata must select valid value storage and distinct paths.
-    functions[0].?.cleanup = &.{.{ .root = 99, .offset = 0 }};
+    functions[0].cleanup = &.{.{ .root = 99, .offset = 0 }};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    functions[0].?.cleanup = &.{ .{ .root = 0, .offset = 0 }, .{ .root = 0, .offset = 1 } };
+    functions[0].cleanup = &.{ .{ .root = 0, .offset = 0 }, .{ .root = 0, .offset = 1 } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    functions[0].?.cleanup = &.{.{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.single }};
+    functions[0].cleanup = &.{.{ .root = 0, .layout = &@import("../test_support.zig").cleanup_layouts.single }};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    functions[0].?.cleanup = &.{.{ .root = 0, .offset = 0 }};
+    functions[0].cleanup = &.{.{ .root = 0, .offset = 0 }};
     graph.types.items[2].pointer.mutability = .read_only;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
@@ -552,8 +552,8 @@ test "bytecode verifies reference access and traps escaped frame storage" {
         .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{1}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{1}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectError(error.ExecutionDeadReference, executor.run(@enumFromInt(0), &.{}));
@@ -636,8 +636,8 @@ test "bytecode choice verifier rejects foreign variants and incorrect payload ty
         .{ .source = source, .op = .{ .payload = .{ .dst = 0, .src = 2, .ordinal = 0, .variant = @enumFromInt(0) } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code }};
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     try b.verify(a, program);
     code[2].op.choice.ordinal = std.math.maxInt(u32);
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
@@ -708,8 +708,8 @@ test "bytecode verifier checks every call output destination" {
         .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(0), .args = &.{}, .outputs = &.{ 0, 2 } } } },
         .{ .source = source, .op = .{ .ret = &.{ 0, 2 } } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{ 0, 2 }, .code = &code }};
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{ 0, 2 }, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     // Both output slots become initialized on the returning call edge.
     try b.verify(a, program);
     code[0].op.call.outputs = &.{0};
@@ -748,8 +748,8 @@ test "bytecode write destinations capture aliases before later writes" {
         .{ .source = source, .op = .{ .copy = .{ .dst = 4, .src = 3 } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
-    var functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    var functions = [_]b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try executor.run(@enumFromInt(0), &.{}))[0].integer);
@@ -775,11 +775,11 @@ test "bytecode write destinations capture aliases before later writes" {
     // activation executes, just like an explicit cleanup_set instruction.
     code[5].op.capture_write.activate_cleanup = true;
     try std.testing.expectError(error.ExecutionMissingCleanup, executor.run(@enumFromInt(0), &.{}));
-    functions[0].?.cleanup = &.{.{ .root = 0, .offset = 0 }};
+    functions[0].cleanup = &.{.{ .root = 0, .offset = 0 }};
     const untracked_initialization = code[2];
     code[2].op = .{ .cleanup_set = .{ .place = .{ .root = 0, .path = &.{} }, .enabled = false } };
     code[11].op = .{ .cleanup_test = .{ .dst = 4, .place = .{ .root = 0, .path = &.{} } } };
-    functions[0].?.outputs = &.{4};
+    functions[0].outputs = &.{4};
     code[12].op = .{ .ret = &.{4} };
     graph.fields.items[0].ty = @enumFromInt(2);
     var tracked = try vm.Vm.init(a, program, .{});
@@ -798,10 +798,10 @@ test "bytecode write destinations capture aliases before later writes" {
     var bounded = try vm.Vm.init(a, program, .{ .instructions = 11 });
     defer bounded.deinit();
     try std.testing.expectError(error.ExecutionInstructionLimit, bounded.run(@enumFromInt(0), &.{}));
-    functions[0].?.cleanup = &.{};
+    functions[0].cleanup = &.{};
     code[2] = untracked_initialization;
     code[11] = original_copy;
-    functions[0].?.outputs = &.{0};
+    functions[0].outputs = &.{0};
     code[12].op = .{ .ret = &.{0} };
     graph.fields.items[0].ty = @enumFromInt(0);
     code[5].op.capture_write.activate_cleanup = false;
@@ -816,7 +816,7 @@ test "bytecode write destinations capture aliases before later writes" {
     code[9].op.store.value = 3;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[9].op.store.value = 1;
-    functions[0].?.write_destinations = &.{@enumFromInt(2)};
+    functions[0].write_destinations = &.{@enumFromInt(2)};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
 
@@ -997,7 +997,9 @@ test "bytecode retained lowering publishes stable programs for independent entri
         \\first() -> (.result: Int32 = 20) := {}
         \\second() -> (.result: Int32 = 22) := {}
         \\Mode: CEnum = (..one)
-        \\unsupported() -> (.result: Int32 = 0) := { value: Mode = ..one }
+        \\shared: Int32 = 22
+        \\unsupported() -> (.result: Int32 = 0) := { read ::= shared
+        \\    value: Mode = ..one }
         \\main() -> (.status_code: Int32 = 0) := {
         \\    status_code = first() + second()
         \\    unused ::= unsupported()
@@ -1022,32 +1024,36 @@ test "bytecode retained lowering publishes stable programs for independent entri
         if (std.mem.eql(u8, name, "unsupported")) unsupported = @enumFromInt(index);
         if (std.mem.eql(u8, name, "main")) main = @enumFromInt(index);
     }
-    var compiler = try lower.Lower.init(a, graph);
+    var compiler = try lower.Lower.init(a, graph, .{});
     if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
     const initial = try compiler.compile(first.?);
-    try std.testing.expectEqual(compiler.functions.ptr, initial.functions.ptr);
+    try std.testing.expectEqual(@as(usize, 1), initial.functions.len);
+    try std.testing.expectEqual(compiler.published_functions.ptr, initial.functions.ptr);
     var executor = try vm.Vm.init(a, initial, .{});
     defer executor.deinit();
-    const original_body = initial.functions[@intFromEnum(first.?)].?;
+    const original_body = initial.function(first.?).?;
     const original_code = original_body.code.ptr;
-    // The pending queue allocates first; fail the subsequent table copy.
+    // Fail a temporary lowering allocation after the pending queue.
     var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 1 });
     compiler.allocator = failing.allocator();
     try std.testing.expectError(error.OutOfMemory, compiler.compile(second.?));
     compiler.allocator = a;
-    try std.testing.expectEqual(initial.functions.ptr, compiler.functions.ptr);
-    try std.testing.expect(initial.functions[@intFromEnum(second.?)] == null);
+    try std.testing.expectEqual(initial.functions.ptr, compiler.published_functions.ptr);
+    try std.testing.expect(initial.function(second.?) == null);
     try std.testing.expectError(error.InvalidEntry, compiler.compile(@enumFromInt(graph.functions.items.len)));
     try std.testing.expectError(error.UnsupportedExecution, compiler.compile(unsupported.?));
+    try std.testing.expectEqual(@as(usize, 0), compiler.globals.items.len);
+    try std.testing.expectEqual(@as(usize, 0), compiler.pending.items.len);
     try std.testing.expectError(error.UnsupportedExecution, compiler.compile(main.?));
     try std.testing.expectError(error.UnsupportedExecution, compiler.compile(main.?));
-    try std.testing.expect(compiler.functions[@intFromEnum(main.?)] == null);
+    try std.testing.expect(compiler.functions.get(main.?) == null);
     const extended = try compiler.compile(second.?);
+    try std.testing.expectEqual(@as(usize, 2), extended.functions.len);
     try std.testing.expect(initial.functions.ptr != extended.functions.ptr);
-    try std.testing.expect(initial.functions[@intFromEnum(second.?)] == null);
-    try std.testing.expect(initial.functions[@intFromEnum(unsupported.?)] == null);
-    try std.testing.expectEqual(original_body, extended.functions[@intFromEnum(first.?)].?);
-    try std.testing.expectEqual(original_code, extended.functions[@intFromEnum(first.?)].?.code.ptr);
+    try std.testing.expect(initial.function(second.?) == null);
+    try std.testing.expect(initial.function(unsupported.?) == null);
+    try std.testing.expectEqual(original_body, extended.function(first.?).?);
+    try std.testing.expectEqual(original_code, extended.function(first.?).?.code.ptr);
     try std.testing.expectEqual(@as(i128, 20), (try executor.invoke(first.?, &.{}))[0].integer);
     try std.testing.expectError(error.InvalidEntry, executor.invoke(second.?, &.{}));
     var next = try vm.Vm.init(a, extended, .{});
@@ -1055,8 +1061,46 @@ test "bytecode retained lowering publishes stable programs for independent entri
     try std.testing.expectEqual(@as(i128, 22), (try next.invoke(second.?, &.{}))[0].integer);
     const repeated = try compiler.compile(first.?);
     try std.testing.expectEqual(extended.functions.ptr, repeated.functions.ptr);
-    try std.testing.expectEqual(original_body, repeated.functions[@intFromEnum(first.?)].?);
-    try std.testing.expectEqual(original_code, repeated.functions[@intFromEnum(first.?)].?.code.ptr);
+    try std.testing.expectEqual(original_body, repeated.function(first.?).?);
+    try std.testing.expectEqual(original_code, repeated.function(first.?).?.code.ptr);
+    var invalid_entries = [_]b.FunctionEntry{ extended.functions[1], extended.functions[0] };
+    var invalid = extended;
+    invalid.functions = &invalid_entries;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, invalid));
+    invalid_entries = .{ extended.functions[0], extended.functions[0] };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, invalid));
+    invalid_entries[1] = .{ .id = @enumFromInt(graph.functions.items.len), .body = original_body };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, invalid));
+    // Exercise every allocation of an extension, including final publication.
+    // A rejected attempt must leave the original closure valid and retryable.
+    var failure_index: usize = 0;
+    while (failure_index < 256) : (failure_index += 1) {
+        var publication = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer publication.deinit();
+        const retained = publication.allocator();
+        var cached = try lower.Lower.init(retained, graph, .{});
+        cached.annotations = compiler.annotations;
+        const seed = try cached.compile(first.?);
+        var injection = std.testing.FailingAllocator.init(retained, .{ .fail_index = failure_index });
+        cached.allocator = injection.allocator();
+        const attempt = cached.compile(second.?);
+        cached.allocator = retained;
+        if (attempt) |program| {
+            try b.verify(retained, program);
+            break;
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            try std.testing.expectEqual(@as(usize, 1), cached.functions.count());
+            try std.testing.expectEqual(seed.functions.ptr, cached.published_functions.ptr);
+            try std.testing.expect(seed.function(second.?) == null);
+            const retry = try cached.compile(second.?);
+            try b.verify(retained, retry);
+            var previous = try vm.Vm.init(retained, seed, .{});
+            defer previous.deinit();
+            try std.testing.expectEqual(@as(u64, 20), (try previous.invoke(first.?, &.{}))[0].integer);
+        }
+    }
+    try std.testing.expect(failure_index < 256);
 }
 
 test "compile-time evaluation proves its dependency unit before execution" {
@@ -1180,7 +1224,7 @@ test "bytecode safety preserves observations through returned reference aliases"
             const entry = for (graph.functions.items, 0..) |function, index| {
                 if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) break @as(@import("../4_semantics/global/graph.zig").GlobalFunctionId, @enumFromInt(index));
             } else return error.TestMissingEntry;
-            var compiler = try lower.Lower.init(a, graph);
+            var compiler = try lower.Lower.init(a, graph, .{});
             if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
             var executor = try vm.Vm.init(a, try compiler.compile(entry), .{});
             defer executor.deinit();
@@ -1821,8 +1865,8 @@ test "bytecode program instances share context identity storage and trap state" 
     try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
     const code = [_]b.Instruction{.{ .source = source, .op = .{ .ret = &.{0} } }};
-    const functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(1)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]b.Function{.{ .slots = &.{@enumFromInt(1)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     var context = vm.Context.init(a, 1000);
     defer context.deinit();
     const persistent = try context.sessionSlots(1, &.{});
@@ -1962,20 +2006,20 @@ test "bytecode typed session bindings persist across verified program revisions"
         .{ .source = source, .op = .{ .activate_write_cleanup = 0 } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
-    const first_functions = [_]?b.Function{ .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &initialize }, null };
-    const read_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &read } };
-    const reference_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &read_reference } };
-    const write_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &write, .write_destinations = slots[0..1] } };
+    const first_functions = [_]b.Function{.{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &initialize }};
+    const read_functions = [_]b.Function{.{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &read }};
+    const reference_functions = [_]b.Function{.{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &read_reference }};
+    const write_functions = [_]b.Function{.{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &write, .write_destinations = slots[0..1] }};
     var context = vm.Context.init(a, 1000);
     defer context.deinit();
     const limits = vm.Limits{ .value_cells = 1000 };
-    var first = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &functionPointers(&first_functions), .session = interface }, limits, &context);
+    var first = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(0), .body = &first_functions[0] }}, .session = interface }, limits, &context);
     defer first.deinit();
-    var reader = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &functionPointers(&read_functions), .session = interface }, limits, &context);
+    var reader = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(1), .body = &read_functions[0] }}, .session = interface }, limits, &context);
     defer reader.deinit();
-    var writer = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &functionPointers(&write_functions), .session = interface }, limits, &context);
+    var writer = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(1), .body = &write_functions[0] }}, .session = interface }, limits, &context);
     defer writer.deinit();
-    var reference_reader = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &functionPointers(&reference_functions), .session = interface }, limits, &context);
+    var reference_reader = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(1), .body = &reference_functions[0] }}, .session = interface }, limits, &context);
     defer reference_reader.deinit();
     _ = try first.invoke(@enumFromInt(0), &.{});
     try std.testing.expectEqual(@as(i128, 42), (try reference_reader.invoke(@enumFromInt(1), &.{}))[0].integer);
@@ -1986,7 +2030,7 @@ test "bytecode typed session bindings persist across verified program revisions"
     try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
     var compilation_arena = std.heap.ArenaAllocator.init(a);
     defer compilation_arena.deinit();
-    var compiler = try lower.Lower.initSession(compilation_arena.allocator(), &graph, interface);
+    var compiler = try lower.Lower.init(compilation_arena.allocator(), &graph, .{ .session = interface });
     const expression_program = try compiler.compileExpression(node, &.{});
     try std.testing.expectEqual(b.Place{ .root = 0, .region = .session, .path = &.{} }, expression_program.expression.?.code[0].op.load.place);
     var expression_vm = try vm.Vm.initShared(a, expression_program, limits, &context);
@@ -1996,7 +2040,7 @@ test "bytecode typed session bindings persist across verified program revisions"
     try std.testing.expectEqual(@as(i128, 7), (try expression_vm.invokeExpression(&.{}))[0].integer);
     try std.testing.expectEqual(@as(i128, 7), (try reference_reader.invoke(@enumFromInt(1), &.{}))[0].integer);
     try std.testing.expectEqual(@as(i128, 7), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
-    var foreign = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &functionPointers(&read_functions), .session = .{ .namespace = @enumFromInt(2), .bindings = &bindings } }, limits, &context);
+    var foreign = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(1), .body = &read_functions[0] }}, .session = .{ .namespace = @enumFromInt(2), .bindings = &bindings } }, limits, &context);
     defer foreign.deinit();
     const cells = context.storage.cells;
     try std.testing.expectError(error.ExecutionForeignSession, foreign.invoke(@enumFromInt(1), &.{}));
@@ -2004,13 +2048,13 @@ test "bytecode typed session bindings persist across verified program revisions"
     try std.testing.expectEqual(@as(i128, 7), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
     var foreign_graph = try graph.clone(a);
     defer foreign_graph.deinit(a);
-    var impersonator = try vm.Vm.initShared(a, .{ .graph = &foreign_graph, .functions = &functionPointers(&read_functions), .session = interface }, limits, &context);
+    var impersonator = try vm.Vm.initShared(a, .{ .graph = &foreign_graph, .functions = &.{.{ .id = @enumFromInt(1), .body = &read_functions[0] }}, .session = interface }, limits, &context);
     defer impersonator.deinit();
     const impersonator_cells = context.storage.cells;
     try std.testing.expectError(error.ExecutionForeignSession, impersonator.invoke(@enumFromInt(1), &.{}));
     try std.testing.expectEqual(impersonator_cells, context.storage.cells);
     try std.testing.expectEqual(@as(i128, 7), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
-    var malformed = b.Program{ .graph = &graph, .functions = &functionPointers(&read_functions), .session = null };
+    var malformed = b.Program{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(1), .body = &read_functions[0] }}, .session = null };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
     const duplicates = [_]b.SessionBinding{ bindings[0], bindings[0] };
     malformed.session = .{ .namespace = interface.namespace, .bindings = &duplicates };
@@ -2020,11 +2064,11 @@ test "bytecode typed session bindings persist across verified program revisions"
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
     var missing_binding_code = read;
     missing_binding_code[0].op.borrow_storage.place.root = 99;
-    const missing_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &missing_binding_code } };
-    malformed = .{ .graph = &graph, .functions = &functionPointers(&missing_functions), .session = interface };
+    const missing_functions = [_]b.Function{.{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &missing_binding_code }};
+    malformed = .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(1), .body = &missing_functions[0] }}, .session = interface };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
-    const uninitialized_functions = [_]?b.Function{ .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = initialize[1..] }, null };
-    malformed = .{ .graph = &graph, .functions = &functionPointers(&uninitialized_functions), .session = interface };
+    const uninitialized_functions = [_]b.Function{.{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = initialize[1..] }};
+    malformed = .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(0), .body = &uninitialized_functions[0] }}, .session = interface };
     try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, malformed));
     context.reset();
     try std.testing.expectError(error.ExecutionUninitializedStorage, reader.invoke(@enumFromInt(1), &.{}));
@@ -2048,7 +2092,7 @@ test "bytecode session moves update persistent cleanup rather than frame flags" 
     try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .move_value = @enumFromInt(0) } });
     const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .ty = @enumFromInt(0), .cleanup = &.{.{ .root = 0 }} }};
     const interface = b.Session{ .namespace = @enumFromInt(9), .bindings = &bindings };
-    var compiler = try lower.Lower.initSession(a, &graph, interface);
+    var compiler = try lower.Lower.init(a, &graph, .{ .session = interface });
     const program = try compiler.compileExpression(@enumFromInt(1), &.{});
     try std.testing.expectEqual(@as(usize, 0), program.expression.?.cleanup.len);
     var context = vm.Context.init(a, 1000);
@@ -2069,7 +2113,7 @@ test "bytecode session moves update persistent cleanup rather than frame flags" 
     const cleanup_node: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
     try graph.auto_deinits.append(a, .{ .storage = .{ .binding = @enumFromInt(0) }, .deinit_fn = null });
     try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .auto_deinit_binding = @enumFromInt(0) } });
-    var exit_compiler = try lower.Lower.initSession(a, &graph, interface);
+    var exit_compiler = try lower.Lower.init(a, &graph, .{ .session = interface });
     const exit_program = try exit_compiler.compileSessionCleanup(&.{cleanup_node});
     var exit_vm = try vm.Vm.initShared(a, exit_program, .{ .value_cells = 1000 }, &context);
     defer exit_vm.deinit();
@@ -2098,9 +2142,9 @@ test "bytecode session declarations initialize persistent storage without local 
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(0) });
     const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .ty = @enumFromInt(0), .cleanup = &.{.{ .root = 0 }} }};
     const interface = b.Session{ .namespace = @enumFromInt(12), .bindings = &bindings };
-    var compiler = try lower.Lower.initSession(a, &graph, interface);
+    var compiler = try lower.Lower.init(a, &graph, .{ .session = interface });
     const program = try compiler.compile(@enumFromInt(0));
-    try std.testing.expectEqual(@as(usize, 0), program.functions[0].?.cleanup.len);
+    try std.testing.expectEqual(@as(usize, 0), program.function(@enumFromInt(0)).?.cleanup.len);
     var context = vm.Context.init(a, 1000);
     defer context.deinit();
     var executor = try vm.Vm.initShared(a, program, .{ .value_cells = 1000 }, &context);
@@ -2454,7 +2498,7 @@ test "bytecode failed lowering does not retain host requirements" {
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
     const graph = try pipeline.semantizeGlobalFiles(&files);
-    var compiler = try lower.Lower.init(a, graph);
+    var compiler = try lower.Lower.init(a, graph, .{});
     if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
     compiler.mode = .runtime;
     const entry = for (graph.functions.items, 0..) |function, index| {
@@ -2528,9 +2572,9 @@ test "bytecode cooperative cancellation poisons execution and permits explicit r
     try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 } });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
     const code = [_]b.Instruction{.{ .source = .{ .file_index = 0, .offset = 17 }, .op = .{ .ret = &.{0} } }};
-    const functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
+    const functions = [_]b.Function{.{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
     var cancellation: vm.Cancellation = .{};
-    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functionPointers(&functions) }, .{ .cancellation = &cancellation });
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functionEntries(&functions) }, .{ .cancellation = &cancellation });
     defer executor.deinit();
     cancellation.cancel();
     try std.testing.expectError(error.ExecutionCancelled, executor.run(@enumFromInt(0), &.{.{ .integer = 42 }}));
@@ -2587,8 +2631,8 @@ test "bytecode acquired establishment requires a checked primitive and matching 
         .{ .source = source, .op = .{ .acquired_reference = &acquired_instruction } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(2) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code }};
-    const program: b.Program = .{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(2) }, .inputs = &.{0}, .outputs = &.{1}, .code = &code }};
+    const program: b.Program = .{ .graph = &graph, .functions = &functionEntries(&functions) };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     graph.functions.items[0].safety_primitive = .establish_inherited_reference;
     try b.verify(a, program);
@@ -2640,9 +2684,7 @@ test "bytecode memory adapters consume registered identities rather than declara
                 .{ .source = .{ .file_index = 0, .offset = 0 }, .op = .{ .ret = &.{} } },
             };
             const expression: b.Function = .{ .slots = argument_types, .inputs = arguments, .outputs = &.{}, .code = &code };
-            const functions = try a.alloc(?*const b.Function, graph.functions.items.len);
-            @memset(functions, null);
-            const program: b.Program = .{ .graph = graph, .functions = functions, .expression = &expression };
+            const program: b.Program = .{ .graph = graph, .functions = &.{}, .expression = &expression };
             try b.verify(a, program);
             code[0].op.memory_call.operation = .{ .allocate = .{ .size = 0, .alignment = null } };
             try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
@@ -2751,11 +2793,11 @@ test "bytecode virtual tables verify receiver access descriptors" {
     const graph = try pipeline.semantizeGlobalFiles(&files);
     for (graph.functions.items, 0..) |function, raw| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
-        var compiler = try lower.Lower.init(a, graph);
+        var compiler = try lower.Lower.init(a, graph, .{});
         if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         const program = try compiler.compile(@enumFromInt(raw));
         try b.verify(a, program);
-        for (program.functions[raw].?.code) |instruction| if (instruction.op == .virtualize) {
+        for (program.function(@enumFromInt(raw)).?.code) |instruction| if (instruction.op == .virtualize) {
             const method = &@constCast(instruction.op.virtualize.table.methods)[0];
             try std.testing.expectEqual(.read_only, method.receiver_permission);
             method.receiver_permission = .read_write;
@@ -2782,13 +2824,13 @@ test "bytecode cleanup flags neither require Bool slots nor initialize owner val
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
-    var functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(0)}, .inputs = &.{}, .outputs = &.{0}, .code = &code, .cleanup = &.{.{ .root = 0, .offset = 0 }} }};
-    const program = b.Program{ .graph = &graph, .functions = &functionPointers(&functions) };
+    var functions = [_]b.Function{.{ .slots = &.{@enumFromInt(0)}, .inputs = &.{}, .outputs = &.{0}, .code = &code, .cleanup = &.{.{ .root = 0, .offset = 0 }} }};
+    const program = b.Program{ .graph = &graph, .functions = &functionEntries(&functions) };
     try b.verify(a, program);
-    functions[0].?.code = code[1..];
+    functions[0].code = code[1..];
     try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, program));
-    functions[0].?.code = &code;
-    functions[0].?.cleanup = &.{.{ .root = 0, .offset = std.math.maxInt(usize) }};
+    functions[0].code = &code;
+    functions[0].cleanup = &.{.{ .root = 0, .offset = std.math.maxInt(usize) }};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }
 
@@ -2816,10 +2858,9 @@ test "bytecode repeated cleanup plans traverse indexed flags with bounded code" 
     defer counts.deinit(a);
     _ = try counts.count(a, &graph, @enumFromInt(3));
     const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .ty = @enumFromInt(3), .cleanup = &.{.{ .root = 0, .layout = counts.retained(@enumFromInt(3)) }} }};
-    var compiler = try lower.Lower.initSession(a, &graph, .{ .namespace = @enumFromInt(0), .bindings = &bindings });
     var scratch = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer scratch.deinit();
-    compiler.scratch_allocator = scratch.allocator();
+    var compiler = try lower.Lower.init(a, &graph, .{ .session = .{ .namespace = @enumFromInt(0), .bindings = &bindings }, .scratch_allocator = scratch.allocator() });
     const program = try compiler.compileSessionCleanup(&.{@enumFromInt(0)});
     // Verified code and cleanup layouts must not borrow lowering work tables.
     _ = scratch.reset(.free_all);
@@ -2876,7 +2917,7 @@ test "acquired slot indices use verified inputs and survive execution" {
         .{ .source = source, .op = .{ .acquired_reference = &acquired_instruction } },
         .{ .source = source, .op = .{ .ret = &.{4} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(2), @enumFromInt(6) }, .inputs = &.{ 5, 0, 2, 3 }, .outputs = &.{4}, .code = &code }};
+    const functions = [_]b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(2), @enumFromInt(6) }, .inputs = &.{ 5, 0, 2, 3 }, .outputs = &.{4}, .code = &code }};
     const entry_code = [_]b.Instruction{
         .{ .source = source, .op = .{ .record = .{ .dst = 5, .fields = &.{ 1, 2, 3 } } } },
         .{ .source = source, .op = .{ .borrow_storage = .{ .dst = 6, .place = .{ .root = 5, .path = &.{} }, .permission = .read_only } } },
@@ -2884,7 +2925,7 @@ test "acquired slot indices use verified inputs and survive execution" {
         .{ .source = source, .op = .{ .ret = &.{7} } },
     };
     const entry: b.Function = .{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(0), @enumFromInt(4), @enumFromInt(5), @enumFromInt(6), @enumFromInt(2) }, .inputs = &.{ 0, 1, 2, 3, 4 }, .outputs = &.{7}, .code = &entry_code };
-    const program: b.Program = .{ .graph = &graph, .functions = &functionPointers(&functions), .expression = &entry };
+    const program: b.Program = .{ .graph = &graph, .functions = &functionEntries(&functions), .expression = &entry };
     try b.verify(a, program);
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
@@ -2950,8 +2991,8 @@ test "bytecode relocation requires selected matching mutable evidence" {
         .{ .source = source, .op = .{ .ret = &.{} } },
     };
     var slot_types = [_]b.Type{ @enumFromInt(1), @enumFromInt(1) };
-    const functions = [_]?b.Function{.{ .slots = &slot_types, .inputs = &.{ 0, 1 }, .outputs = &.{}, .code = &code }};
-    const program: b.Program = .{ .graph = &graph, .functions = &functionPointers(&functions) };
+    const functions = [_]b.Function{.{ .slots = &slot_types, .inputs = &.{ 0, 1 }, .outputs = &.{}, .code = &code }};
+    const program: b.Program = .{ .graph = &graph, .functions = &functionEntries(&functions) };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     graph.functions.items[0].safety_primitive = .relocate;
     try b.verify(a, program);
@@ -2965,9 +3006,10 @@ test "bytecode relocation requires selected matching mutable evidence" {
 }
 
 // Keep malformed test bodies mutable while programs expose immutable descriptors.
-fn functionPointers(functions: anytype) [@typeInfo(@typeInfo(@TypeOf(functions)).pointer.child).array.len]?*const b.Function {
-    var result: [@typeInfo(@typeInfo(@TypeOf(functions)).pointer.child).array.len]?*const b.Function = undefined;
-    for (functions, &result) |*body, *pointer| pointer.* = if (body.*) |*value| value else null;
+fn functionEntries(functions: anytype) [@typeInfo(@typeInfo(@TypeOf(functions)).pointer.child).array.len]b.FunctionEntry {
+    var result: [@typeInfo(@typeInfo(@TypeOf(functions)).pointer.child).array.len]b.FunctionEntry = undefined;
+    for (functions, &result, 0..) |*body, *entry, index|
+        entry.* = .{ .id = @enumFromInt(index), .body = body };
     return result;
 }
 
@@ -3069,7 +3111,7 @@ test "VM failures retain bounded caller locations and reset clears them" {
     const entry: @import("../4_semantics/global/graph.zig").GlobalFunctionId = for (graph.functions.items, 0..) |function, index| {
         if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) break @enumFromInt(index);
     } else return error.MissingEntry;
-    var compiler = try lower.Lower.init(a, graph);
+    var compiler = try lower.Lower.init(a, graph, .{});
     if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
     compiler.mode = .runtime;
     const program = try compiler.compile(entry);
@@ -3241,7 +3283,7 @@ test "registered core allocation metadata executes through ordinary generic spec
     };
     for (graph.functions.items, 0..) |function, index| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
-        var compiler = try lower.Lower.init(a, graph);
+        var compiler = try lower.Lower.init(a, graph, .{});
         if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         const program = try compiler.compile(@enumFromInt(index));
         var executor = try vm.Vm.init(a, program, .{});
@@ -3278,7 +3320,7 @@ test "allocation metadata retains generic cleanup evidence without checking unus
     };
     for (graph.functions.items, 0..) |function, index| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
-        var compiler = try lower.Lower.init(a, graph);
+        var compiler = try lower.Lower.init(a, graph, .{});
         if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         const program = try compiler.compile(@enumFromInt(index));
         var executor = try vm.Vm.init(a, program, .{});
@@ -3333,13 +3375,13 @@ test "prepared acquisition bytecode rejects altered receipt value and cleanup de
     };
     for (graph.functions.items, 0..) |function, index| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
-        var compiler = try lower.Lower.init(a, graph);
+        var compiler = try lower.Lower.init(a, graph, .{});
         if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         compiler.mode = .runtime;
         const program = try compiler.compile(@enumFromInt(index));
         try b.verify(a, program);
-        for (program.functions) |maybe_body| {
-            const body = maybe_body orelse continue;
+        for (program.functions) |entry| {
+            const body = entry.body;
             for (@constCast(body.code)) |*instruction| {
                 if (instruction.op != .prepare_acquired) continue;
                 const original = instruction.op.prepare_acquired.layout;
@@ -3426,7 +3468,7 @@ test "lowered literal bytes belong to the code unit rather than semantic pools" 
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
     });
     try graph.nodes.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(1), .content = .{ .string_literal = text } });
-    var compiler = try lower.Lower.init(allocator, &graph);
+    var compiler = try lower.Lower.init(allocator, &graph, .{});
     const program = try compiler.compileExpression(@enumFromInt(0), &.{});
     var found = false;
     for (program.expression.?.code) |instruction| {
@@ -3443,4 +3485,67 @@ test "lowered literal bytes belong to the code unit rather than semantic pools" 
     defer executor.deinit();
     const reference = (try executor.runExpression(&.{}))[0].reference;
     try std.testing.expectEqualStrings("hello", try executor.context().storage.literalBytes(reference));
+}
+
+test "bytecode publishes only used session bindings and rolls back failed extensions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "helper := () -> (.result: Int32 = 42) {}" }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = try pipeline.semantizeGlobalFiles(&files);
+    const g = @import("../4_semantics/global/graph.zig");
+    const helper: g.GlobalFunctionId = @enumFromInt(0);
+    const ty = graph.fields.items[graph.function(helper).output.start].ty;
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const mutable = @constCast(graph);
+    var bindings: [2]b.SessionBinding = undefined;
+    for (&bindings) |*binding| {
+        const id: g.GlobalBindingId = @enumFromInt(graph.bindings.items.len);
+        try mutable.bindings.append(a, .{ .source = source, .name = .{ .start = 0, .len = 0 }, .ty = ty, .mutability = .variable });
+        binding.* = .{ .binding = id, .ty = ty, .cleanup = &.{.{ .root = 0 }} };
+    }
+    const expression: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try mutable.nodes.append(a, .{ .source = source, .ty = ty, .content = .{ .binding_use = bindings[1].binding } });
+    var failure_index: usize = 0;
+    while (failure_index < 256) : (failure_index += 1) {
+        var publication = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer publication.deinit();
+        const retained = publication.allocator();
+        var compiler = try lower.Lower.init(retained, graph, .{ .session = .{ .namespace = @enumFromInt(77), .bindings = &bindings } });
+        const seed = try compiler.compile(helper);
+        try std.testing.expectEqual(@as(usize, 0), seed.session.?.bindings.len);
+        var injection = std.testing.FailingAllocator.init(retained, .{ .fail_index = failure_index });
+        compiler.allocator = injection.allocator();
+        const attempt = compiler.compileExpression(expression, &.{});
+        compiler.allocator = retained;
+        const program = if (attempt) |value| value else |err| blk: {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            try std.testing.expectEqual(@as(usize, 0), compiler.session_bindings.items.len);
+            try std.testing.expect(compiler.session_indexes.get(bindings[1].binding).?.published == null);
+            try std.testing.expectEqual(@as(usize, 0), compiler.published_session.?.bindings.len);
+            break :blk try compiler.compileExpression(expression, &.{});
+        };
+        try std.testing.expectEqual(@as(usize, 0), seed.session.?.bindings.len);
+        try std.testing.expectEqual(@as(usize, 1), program.session.?.bindings.len);
+        try std.testing.expectEqual(bindings[1].binding, program.session.?.bindings[0].binding);
+        try std.testing.expectEqual(b.Place{ .root = 0, .region = .session, .path = &.{} }, program.expression.?.code[0].op.load.place);
+        var context = vm.Context.init(retained, 1000);
+        defer context.deinit();
+        const storage = try context.sessionSlots(1, bindings[1].cleanup);
+        try context.storage.initializeSession(storage, 0, .{ .integer = 77 });
+        try context.bindings.put(context.arena.allocator(), bindings[1].binding, storage.frame);
+        var previous = try vm.Vm.initShared(retained, seed, .{ .value_cells = 1000 }, &context);
+        defer previous.deinit();
+        try std.testing.expectEqual(@as(u64, 42), (try previous.invoke(helper, &.{}))[0].integer);
+        var current = try vm.Vm.initShared(retained, program, .{ .value_cells = 1000 }, &context);
+        defer current.deinit();
+        try std.testing.expectEqual(@as(u64, 77), (try current.invokeExpression(&.{}))[0].integer);
+        try std.testing.expect(!context.bindings.contains(bindings[0].binding));
+        if (!injection.has_induced_failure) break;
+    }
+    try std.testing.expect(failure_index < 256);
 }

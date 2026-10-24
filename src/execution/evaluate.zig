@@ -34,7 +34,7 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     var checker = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(temporary, diagnostics, &checked);
     defer checker.deinit();
     try checker.analyzeUnit(&.{entry});
-    var lower = try Lower.init(temporary, &checked);
+    var lower = try Lower.init(temporary, &checked, .{});
     lower.annotations = &checker.annotations;
     lower.diagnostics = diagnostics;
     const function = graph.function(entry);
@@ -47,9 +47,8 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     const program = try lower.compile(entry);
     // Nested entries execute in the outer VM invocation, but retain their
     // declared output boundary even without an independently frozen request.
-    for (program.functions, 0..) |compiled, index| {
-        if (compiled == null) continue;
-        const nested = graph.functions.items[index];
+    for (program.functions) |compiled| {
+        const nested = graph.function(compiled.id);
         if (!nested.flags.is_comptime_entry) continue;
         for (graph.fields.items[nested.output.start..][0..nested.output.len]) |field|
             if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationResult;
@@ -163,7 +162,7 @@ pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemantic
     var scratch = std.heap.ArenaAllocator.init(allocator);
     defer scratch.deinit();
     const temporary = scratch.allocator();
-    var lower = try Lower.init(temporary, graph);
+    var lower = try Lower.init(temporary, graph, .{});
     const ty = node.ty orelse return error.UnfreezableEvaluationResult;
     if (!freezable(graph, lower.cleanup_types, ty, 0)) return error.UnfreezableEvaluationResult;
     for (operands) |operand| {
