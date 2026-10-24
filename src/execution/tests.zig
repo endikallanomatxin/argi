@@ -3557,3 +3557,119 @@ test "bytecode publishes only used session bindings and rolls back failed extens
     }
     try std.testing.expect(failure_index < 256);
 }
+
+test "bytecode imported bodies retain verified origins and global initialization" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code =
+        \\offset :: Int32 = 40
+        \\helper() -> (.result: Int32 = offset + 2) := {}
+        \\main() -> (.status_code: Int32 = helper()) := {}
+        },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = try pipeline.semantizeGlobalFiles(&files);
+    const G = @import("../4_semantics/global/graph.zig");
+    var main: ?G.GlobalFunctionId = null;
+    var helper: ?G.GlobalFunctionId = null;
+    for (graph.functions.items, 0..) |function, index| {
+        const name = graph.text(graph.declarationSourceName(function.declaration));
+        if (std.mem.eql(u8, name, "main")) main = @enumFromInt(index);
+        if (std.mem.eql(u8, name, "helper")) helper = @enumFromInt(index);
+    }
+    const interface: b.Session = .{ .namespace = @enumFromInt(1), .bindings = &.{} };
+    var first = try lower.Lower.init(a, graph, .{ .session = interface });
+    if (pipeline.safety_ctx) |*safety| first.annotations = &safety.annotations;
+    const original = try first.compile(main.?);
+    try std.testing.expect(original.globals.len != 0);
+    const verified = try b.Verified.create(a, std.testing.allocator, original);
+    defer verified.destroy(a);
+    var cache: @import("../5_codegen/bytecode/body_cache.zig").Store = .init(std.testing.allocator);
+    defer cache.deinit();
+    try cache.reserve(original);
+    cache.commit(verified, main.?);
+    try std.testing.expect(!cache.entries.contains(main.?));
+    try std.testing.expect(cache.entries.contains(helper.?));
+    var second = try lower.Lower.init(a, graph, .{ .bodies = &cache, .session = interface });
+    if (pipeline.safety_ctx) |*safety| second.annotations = &safety.annotations;
+    const imported = try second.compile(main.?);
+    try std.testing.expectEqual(@as(usize, 0), imported.globals.len);
+    const entry = imported.functionEntry(helper.?).?;
+    try std.testing.expect(entry.origin.? == verified);
+    try std.testing.expect(entry.body == original.function(helper.?).?);
+    var executor = try vm.Vm.init(std.testing.allocator, imported, .{});
+    defer executor.deinit();
+    try std.testing.expectEqual(@as(u64, 42), (try executor.run(main.?, &.{}))[0].integer);
+    // An imported function can also be the external entrypoint.
+    var third = try lower.Lower.init(a, graph, .{ .bodies = &cache, .session = interface });
+    var entry_executor = try vm.Vm.init(std.testing.allocator, try third.compile(helper.?), .{});
+    defer entry_executor.deinit();
+    try std.testing.expectEqual(@as(u64, 42), (try entry_executor.run(helper.?, &.{}))[0].integer);
+    // A verified origin cannot certify another body under the same semantic ID.
+    const changed = try a.dupe(b.FunctionEntry, imported.functions);
+    for (changed) |*candidate| if (candidate.id == helper.?) {
+        candidate.body = original.function(main.?).?;
+    };
+    var malformed = imported;
+    malformed.functions = changed;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(std.testing.allocator, malformed));
+    malformed = imported;
+    malformed.session = .{ .namespace = @enumFromInt(2), .bindings = &.{} };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(std.testing.allocator, malformed));
+    malformed.session = null;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(std.testing.allocator, malformed));
+    var foreign = try graph.clone(a);
+    malformed = imported;
+    malformed.graph = &foreign;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(std.testing.allocator, malformed));
+    var failed = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var rejected: @import("../5_codegen/bytecode/body_cache.zig").Store = .init(failed.allocator());
+    defer rejected.deinit();
+    try std.testing.expectError(error.OutOfMemory, rejected.reserve(original));
+    try std.testing.expectEqual(@as(usize, 0), rejected.entries.count());
+}
+
+fn importedPublicationAllocationFailures(allocator: std.mem.Allocator) !void {
+    const G = @import("../4_semantics/global/graph.zig");
+    var graph: G.GlobalSemanticGraph = .{};
+    defer graph.deinit(std.testing.allocator);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(std.testing.allocator, .{ .builtin = .Int32 });
+    try graph.fields.append(std.testing.allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    for (0..3) |_| try graph.functions.append(std.testing.allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
+    const ret = b.Instruction{ .source = source, .op = .{ .ret = &.{0} } };
+    const leaf: b.Function = .{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &.{ret} };
+    const first: b.Program = .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(0), .body = &leaf }} };
+    const first_verified = try b.Verified.create(allocator, allocator, first);
+    defer first_verified.destroy(allocator);
+    const forward: b.Function = .{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &.{ .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(0), .args = &.{0}, .outputs = &.{0} } } }, ret } };
+    const second: b.Program = .{ .graph = &graph, .functions = &.{ .{ .id = @enumFromInt(0), .body = &leaf, .origin = first_verified }, .{ .id = @enumFromInt(1), .body = &forward } } };
+    const second_verified = try b.Verified.create(allocator, allocator, second);
+    defer second_verified.destroy(allocator);
+    const root: b.Function = .{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &.{ .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(1), .args = &.{0}, .outputs = &.{0} } } }, ret } };
+    const program: b.Program = .{ .graph = &graph, .functions = &.{ .{ .id = @enumFromInt(1), .body = &forward, .origin = second_verified }, .{ .id = @enumFromInt(2), .body = &root } } };
+    var cache: @import("../5_codegen/bytecode/body_cache.zig").Store = .init(allocator);
+    defer cache.deinit();
+    try cache.reserve(second);
+    cache.commit(second_verified, @enumFromInt(99));
+    try std.testing.expect(cache.lookup(&graph, @enumFromInt(1), null).?.origin.? == second_verified);
+    // Origin links stop at locally owned bodies instead of retaining chains of
+    // aliases for an already imported function.
+    try std.testing.expect(!cache.entries.contains(@enumFromInt(0)));
+    var executor = try vm.Vm.init(allocator, program, .{});
+    defer executor.deinit();
+    try std.testing.expectEqual(@as(usize, 2), executor.dependencies.len);
+    try std.testing.expect(executor.dependencies[0] == first_verified.program());
+    try std.testing.expect(executor.dependencies[1] == second_verified.program());
+    try std.testing.expectEqual(@as(u64, 42), (try executor.run(@enumFromInt(2), &.{.{ .integer = 42 }}))[0].integer);
+}
+
+test "bytecode verified import DAG releases every failed publication and invocation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, importedPublicationAllocationFailures, .{});
+}

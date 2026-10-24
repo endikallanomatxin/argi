@@ -225,7 +225,8 @@ pub const Function = struct {
 // Bytecode borrows the finalized graph's type and function identities. Its owner
 // must retain that graph; execution never calls semantic resolution.
 // Program is unverified data. Vm.init validates it once; instructions, function
-// tables and graph metadata must then remain unchanged until Vm.deinit.
+// tables must then remain unchanged until Vm.deinit. Graph pools may grow,
+// but referenced semantic identities must preserve their established meaning.
 // A shared context can retain virtual code after Vm.deinit. Its owner must
 // retain those backing tables and graphs until context reset or destruction.
 pub const Global = struct { binding: g.GlobalBindingId, ty: Type, initializer: Function };
@@ -238,7 +239,11 @@ pub const HostFunction = struct {
     outputs: []const p.IntegerRange,
 };
 
+pub const Verified = @import("verify.zig").Verified;
+
 pub const FunctionEntry = struct {
+    // Imported bodies execute against this previously verified unit.
+    origin: ?*const Verified = null,
     id: g.GlobalFunctionId,
     body: *const Function,
 
@@ -256,13 +261,52 @@ pub const Program = struct {
     expression: ?*const Function = null,
     session: ?Session = null,
 
+    /// Dependency-first imported units, without copying their tables. The
+    /// caller owns the returned slice; verified origins form an immutable DAG.
+    pub fn dependencies(self: *const Program, allocator: std.mem.Allocator) ![]const *const Program {
+        const Walk = struct { program: *const Program, next: usize = 0 };
+        var stack: std.ArrayList(Walk) = .empty;
+        defer stack.deinit(allocator);
+        var visited: std.AutoHashMapUnmanaged(*const Verified, void) = .empty;
+        defer visited.deinit(allocator);
+        var result: std.ArrayList(*const Program) = .empty;
+        errdefer result.deinit(allocator);
+        try stack.append(allocator, .{ .program = self });
+        while (stack.items.len != 0) {
+            const current = &stack.items[stack.items.len - 1];
+            if (current.next < current.program.functions.len) {
+                const entry = current.program.functions[current.next];
+                current.next += 1;
+                if (entry.origin) |origin| {
+                    const seen = try visited.getOrPut(allocator, origin);
+                    if (!seen.found_existing) try stack.append(allocator, .{ .program = origin.program() });
+                }
+            } else {
+                const completed = stack.pop().?;
+                if (completed.program != self) try result.append(allocator, completed.program);
+            }
+        }
+        return result.toOwnedSlice(allocator);
+    }
+
+    pub const Callee = struct { program: *const Program, body: *const Function };
+
+    pub fn resolve(self: *const Program, id: g.GlobalFunctionId) ?Callee {
+        const entry = self.functionEntry(id) orelse return null;
+        return .{ .program = if (entry.origin) |origin| origin.program() else self, .body = entry.body };
+    }
+
     pub fn function(self: Program, id: g.GlobalFunctionId) ?*const Function {
+        return if (self.functionEntry(id)) |entry| entry.body else null;
+    }
+
+    pub fn functionEntry(self: Program, id: g.GlobalFunctionId) ?FunctionEntry {
         var first: usize = 0;
         var end = self.functions.len;
         while (first < end) {
             const middle = first + (end - first) / 2;
             const entry = self.functions[middle];
-            if (entry.id == id) return entry.body;
+            if (entry.id == id) return entry;
             if (@intFromEnum(entry.id) < @intFromEnum(id)) first = middle + 1 else end = middle;
         }
         return null;

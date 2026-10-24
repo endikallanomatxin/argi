@@ -1499,6 +1499,11 @@ test "interactive definitions preserve semantic identities without retaining exe
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(usize, 1), session.runtime.units.items.len);
     const executable = session.runtime.units.items[0];
+    const answer = for (shared_graph.functions.items, 0..) |function, raw| {
+        if (std.mem.eql(u8, shared_graph.text(shared_graph.declarationSourceName(function.declaration)), "answer"))
+            break @as(@import("../4_semantics/global/graph.zig").GlobalFunctionId, @enumFromInt(raw));
+    } else return error.MissingAnswer;
+    const origin = session.runtime.bodies.entries.get(answer).?.origin;
     try std.testing.expect(shared_graph == &session.compiler.semantic.relocation.graph);
     try session.submitDefinitions("forward := () -> (.value: Int32) { value = answer() }");
     try std.testing.expectEqual(@as(usize, 1), session.runtime.units.items.len);
@@ -1506,7 +1511,9 @@ test "interactive definitions preserve semantic identities without retaining exe
     const revision = session.compiler.revision;
     try std.testing.expectError(error.DuplicateSessionDeclaration, session.submitDefinitions("answer := () -> (.value: Int32) { value = 7 }"));
     try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expect(session.runtime.bodies.entries.get(answer).?.origin == origin);
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("forward()")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(usize, 2), session.runtime.units.items.len);
+    try std.testing.expect(session.runtime.bodies.entries.get(answer).?.origin == origin);
     try session.close();
 }

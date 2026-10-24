@@ -12,6 +12,7 @@ pub const Stats = struct {
     verification_ns: u64 = 0,
     execution_ns: u64 = 0,
     compiled_functions: usize = 0,
+    reused_functions: usize = 0,
     compiled_instructions: usize = 0,
 };
 
@@ -25,15 +26,17 @@ pub const Session = struct {
     context: execution.Context,
     limits: execution.Limits,
     units: std.ArrayList(*std.heap.ArenaAllocator) = .empty,
+    bodies: @import("../5_codegen/bytecode/body_cache.zig").Store,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
 
     pub fn init(allocator: std.mem.Allocator, compiler: *compilation.CompilationSession, limits: execution.Limits) Session {
-        return .{ .allocator = allocator, .compiler = compiler, .context = .init(allocator, limits.value_cells), .limits = limits };
+        return .{ .bodies = .init(allocator), .allocator = allocator, .compiler = compiler, .context = .init(allocator, limits.value_cells), .limits = limits };
     }
     pub fn deinit(self: *Session) void {
         // Language cleanup is an explicit checked exit, never Zig destruction.
         self.context.deinit();
+        self.bodies.deinit();
         for (self.units.items) |arena| {
             arena.deinit();
             self.allocator.destroy(arena);
@@ -77,7 +80,7 @@ pub const Session = struct {
         const a = arena.allocator();
         var lowering_scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer lowering_scratch.deinit();
-        var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, checked, .{ .session = .{ .namespace = self.compiler.namespace, .bindings = bindings }, .scratch_allocator = lowering_scratch.allocator() });
+        var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, checked, .{ .session = .{ .namespace = self.compiler.namespace, .bindings = bindings }, .scratch_allocator = lowering_scratch.allocator(), .bodies = &self.bodies });
         lower.annotations = &candidate.checked.?.annotations;
         const diagnostics = candidate.semantic.?.options.diagnostics orelse return error.MissingSessionDiagnostics;
         lower.diagnostics = diagnostics;
@@ -91,15 +94,26 @@ pub const Session = struct {
         _ = lowering_scratch.reset(.free_all);
         profile.accumulate(self.profile_io, lower_start, &self.stats.lowering_ns);
         if (self.profile_io != null) for (program.functions) |function_| {
-            self.stats.compiled_functions += 1;
-            self.stats.compiled_instructions += function_.body.code.len;
+            if (function_.origin != null) {
+                self.stats.reused_functions += 1;
+            } else {
+                self.stats.compiled_functions += 1;
+                self.stats.compiled_instructions += function_.body.code.len;
+            }
         };
         const verify_start = profile.timestamp(self.profile_io);
-        var vm = execution.Vm.initShared(self.allocator, program, self.limits, &self.context) catch |err| {
+        const verified = try bytecode.Verified.create(a, self.allocator, program);
+        var vm = execution.Vm.initVerifiedShared(self.allocator, verified, self.limits, &self.context) catch |err| {
             switch (err) {
                 error.MissingHostBinding, error.IncompatibleHostBinding, error.AmbiguousHostBinding => {
                     const host = @import("host.zig");
-                    const failure = host.findFailure(program, self.context.host_bindings) orelse return err;
+                    const dependencies = try program.dependencies(self.allocator);
+                    defer self.allocator.free(dependencies);
+                    const failure = found: {
+                        if (host.findFailure(program, self.context.host_bindings)) |value| break :found value;
+                        for (dependencies) |dependency| if (host.findFailure(dependency.*, self.context.host_bindings)) |value| break :found value;
+                        return err;
+                    };
                     try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, failure.source), .codegen, "bytecode host binding for '{s}' is unavailable: {s}", .{ host.symbol(checked, failure.function), @errorName(failure.reason) });
                     return error.Reported;
                 },
@@ -109,7 +123,9 @@ pub const Session = struct {
         profile.accumulate(self.profile_io, verify_start, &self.stats.verification_ns);
         defer vm.deinit();
         try self.units.ensureUnusedCapacity(self.allocator, 1);
+        try self.bodies.reserve(program);
         try self.compiler.accept(candidate);
+        self.bodies.commit(verified, function);
         self.units.appendAssumeCapacity(arena);
         published = true;
         // After publication the unit and graph belong to their retained owners,

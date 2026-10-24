@@ -12,6 +12,28 @@ const valueFits = b.valueFits;
 const integerBounds = b.integerBounds;
 const choiceVariant = b.choiceVariant;
 
+// Only this module constructs a verified handle. Its program and all borrowed
+// metadata must remain immutable and alive until the handle is released.
+const Publication = struct { program: Program };
+pub const Verified = opaque {
+    pub fn create(allocator: std.mem.Allocator, scratch: std.mem.Allocator, value: Program) !*const Verified {
+        try verify(scratch, value);
+        const result = try allocator.create(Publication);
+        result.* = .{ .program = value };
+        return @ptrCast(result);
+    }
+
+    pub fn program(self: *const Verified) *const Program {
+        const publication: *const Publication = @ptrCast(@alignCast(self));
+        return &publication.program;
+    }
+
+    pub fn destroy(self: *const Verified, allocator: std.mem.Allocator) void {
+        const publication: *const Publication = @ptrCast(@alignCast(self));
+        allocator.destroy(publication);
+    }
+};
+
 // Structural validation precedes dataflow: even unreachable instructions may
 // never address invalid slots, call signatures or branch targets.
 pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
@@ -27,6 +49,14 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     for (program.functions, 0..) |entry, index| {
         if (@intFromEnum(entry.id) >= program.graph.functions.items.len) return error.InvalidBytecode;
         if (index != 0 and @intFromEnum(program.functions[index - 1].id) >= @intFromEnum(entry.id)) return error.InvalidBytecode;
+        if (entry.origin) |origin| {
+            const owner = origin.program();
+            if (owner.graph != program.graph) return error.InvalidBytecode;
+            if ((owner.session == null) != (program.session == null)) return error.InvalidBytecode;
+            if (owner.session) |session| if (session.namespace != program.session.?.namespace) return error.InvalidBytecode;
+            const original = owner.functionEntry(entry.id) orelse return error.InvalidBytecode;
+            if (original.origin != null or original.body != entry.body) return error.InvalidBytecode;
+        }
     }
     if (program.session) |session| {
         for (session.bindings, 0..) |binding, index| {
@@ -58,6 +88,8 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     }
     const expression_end = program.functions.len + @intFromBool(program.expression != null);
     for (0..expression_end + program.globals.len) |fi| {
+        // Imported bodies were verified in their own immutable table context.
+        if (fi < program.functions.len and program.functions[fi].origin != null) continue;
         const f = if (fi >= expression_end) program.globals[fi - expression_end].initializer else if (fi == program.functions.len) program.expression.?.* else program.functions[fi].body.*;
         const function_id: ?g.GlobalFunctionId = if (fi < program.functions.len) program.functions[fi].id else null;
         if (f.code.len == 0) return error.InvalidBytecode;

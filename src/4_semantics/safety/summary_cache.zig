@@ -4,21 +4,7 @@ const facts = @import("facts.zig");
 const summaries = @import("summaries.zig");
 const Selector = @import("outcome_selectors.zig").Selector;
 
-/// Completed semantic identities stay stable while their pools grow. Precision
-/// demands and summary dependencies are separate hypotheses, not body versions.
-pub const Key = struct {
-    function: g.Function,
-    block: ?g.Block,
-
-    pub fn read(graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) Key {
-        const function = graph.function(id);
-        return .{ .function = function, .block = if (function.body) |body| graph.blocks.items[@intFromEnum(body)] else null };
-    }
-
-    pub fn matches(self: Key, graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) bool {
-        return @intFromEnum(id) < graph.functions.items.len and std.meta.eql(self, read(graph, id));
-    }
-};
+pub const Key = @import("../global/function_identity.zig").FunctionIdentity;
 
 pub const Dependency = struct { function: g.GlobalFunctionId, revision: u64 };
 pub const VirtualDependency = struct { registry: g.GlobalVirtualRegistryId, signature: g.VirtualMethodRegistry };

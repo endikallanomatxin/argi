@@ -696,6 +696,21 @@ fresh. In one Debug run, 100 resource commands reused 6,268 summaries and retain
 backing 218.81 MiB. This is a single observation, not a controlled speedup claim;
 helper bytecode regeneration and repeated body checking still remain.
 
+Verified helper bodies now retain their originating Code Unit. Subsequent units
+import those bodies without relowering their dependency closures or rechecking
+their instructions. `reused_functions` counts imported entries; compiled-body
+and instruction counters include only new bodies. Each invocation links the
+origin units and initializes their globals before entering their frames.
+
+With this reuse, one Debug run of 100 resource commands compiles 130 bodies and
+1,874 instructions, versus 3,400 and 80,500 previously. Code arenas retain
+3.33 MiB instead of 34.12 MiB; total live backing is 188.01 MiB (192.08 MiB peak),
+and command time is 32,951.5 ms. All tracked backing is released at teardown.
+For 1,000 minimal calls, 999 entries are reused and 1,001 bodies compiled;
+retained backing remains 17.63 MiB, since these tiny bodies already fit inside
+per-unit arena blocks. These are individual observations. Repeated Safety body
+checking and dead runtime frames remain separate sources of work and memory.
+
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and
 REPL submissions share this presentation. Compile-time failures retain these

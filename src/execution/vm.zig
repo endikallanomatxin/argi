@@ -199,6 +199,7 @@ pub const FailureFrame = struct { graph: *const g.GlobalSemanticGraph, source: p
 pub const Vm = struct {
     allocator: std.mem.Allocator,
     program: b.Program,
+    dependencies: []const *const b.Program = &.{},
     limits: Limits,
     steps: usize = 0,
     failure_trace: std.ArrayList(FailureFrame) = .empty,
@@ -216,27 +217,40 @@ pub const Vm = struct {
         try b.verify(a, program);
         var linked: host.LinkedPrograms = .{};
         errdefer linked.deinit(a);
+        const dependencies = try program.dependencies(a);
+        errdefer a.free(dependencies);
+        for (dependencies) |dependency| _ = try linked.get(a, dependency, bindings);
         _ = try linked.get(a, &program, bindings);
         var context_ = Context.init(a, limits.value_cells);
         context_.host_bindings = bindings;
-        return .{ .input_layouts = try @import("input_layout.zig").Inputs.init(a, program), .linked_hosts = linked, .owned_context = context_, .allocator = a, .program = program, .limits = limits };
+        return .{ .input_layouts = try @import("input_layout.zig").Inputs.init(a, program), .linked_hosts = linked, .dependencies = dependencies, .owned_context = context_, .allocator = a, .program = program, .limits = limits };
     }
     /// Borrow session-owned execution storage without transferring it. The
     /// memory quota belongs to that context; instruction/depth limits are local
     /// to each invocation. Fresh-run convenience APIs are unavailable here.
     pub fn initShared(a: std.mem.Allocator, program: b.Program, limits: Limits, shared: *Context) !Vm {
-        if (limits.value_cells != shared.limit) return error.ExecutionContextLimitMismatch;
         try b.verify(a, program);
+        return initSharedProgram(a, program, limits, shared);
+    }
+    pub fn initVerifiedShared(a: std.mem.Allocator, unit: *const b.Verified, limits: Limits, shared: *Context) !Vm {
+        return initSharedProgram(a, unit.program().*, limits, shared);
+    }
+    fn initSharedProgram(a: std.mem.Allocator, program: b.Program, limits: Limits, shared: *Context) !Vm {
+        if (limits.value_cells != shared.limit) return error.ExecutionContextLimitMismatch;
         var linked: host.LinkedPrograms = .{};
         errdefer linked.deinit(a);
+        const dependencies = try program.dependencies(a);
+        errdefer a.free(dependencies);
+        for (dependencies) |dependency| _ = try linked.get(a, dependency, shared.host_bindings);
         _ = try linked.get(a, &program, shared.host_bindings);
-        return .{ .input_layouts = try @import("input_layout.zig").Inputs.init(a, program), .linked_hosts = linked, .owned_context = undefined, .shared_context = shared, .allocator = a, .program = program, .limits = limits };
+        return .{ .input_layouts = try @import("input_layout.zig").Inputs.init(a, program), .linked_hosts = linked, .dependencies = dependencies, .owned_context = undefined, .shared_context = shared, .allocator = a, .program = program, .limits = limits };
     }
     pub fn context(self: *Vm) *Context {
         return self.shared_context orelse &self.owned_context;
     }
     pub fn deinit(self: *Vm) void {
         self.failure_trace.deinit(self.allocator);
+        self.allocator.free(self.dependencies);
         self.input_layouts.deinit();
         self.linked_hosts.deinit(self.allocator);
         if (self.shared_context == null) self.owned_context.deinit();
@@ -271,16 +285,16 @@ pub const Vm = struct {
         self.failure_trace.clearRetainingCapacity();
         if (self.context().state == .poisoned) return error.ExecutionContextPoisoned;
         const function = try self.entryFunction(entry, args);
-        return self.invokeFunction(function, args);
+        return self.invokeFunction(self.program.resolve(entry).?.program, function, args);
     }
     pub fn invokeExpression(self: *Vm, args: []const b.Value) ![]const b.Value {
         self.failure_trace.clearRetainingCapacity();
         if (self.context().state == .poisoned) return error.ExecutionContextPoisoned;
         const function = self.program.expression orelse return error.InvalidEntry;
         try self.validateArguments(function, args);
-        return self.invokeFunction(function, args);
+        return self.invokeFunction(&self.program, function, args);
     }
-    fn invokeFunction(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
+    fn invokeFunction(self: *Vm, owner: *const b.Program, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         if (self.context().running) return error.ExecutionContextBusy;
         try self.context().checkNamespace(&self.program);
         self.context().running = true;
@@ -293,17 +307,21 @@ pub const Vm = struct {
         self.steps = 0;
         errdefer self.context().state = .poisoned;
         const inputs = try self.context().storage.cloneValues(args);
-        for (self.program.globals) |global| {
-            const key = Context.globalKey(&self.program, global.binding);
+        for (self.dependencies) |dependency| try self.initializeGlobals(dependency);
+        try self.initializeGlobals(&self.program);
+        return self.execute(owner, function, inputs);
+    }
+    fn initializeGlobals(self: *Vm, unit: *const b.Program) !void {
+        for (unit.globals) |global| {
+            const key = Context.globalKey(unit, global.binding);
             if (self.context().globals.contains(key)) continue;
-            const initialized = try self.execute(&self.program, &global.initializer, &.{});
+            const initialized = try self.execute(unit, &global.initializer, &.{});
             if (initialized.len != 1) return error.InvalidBytecode;
             const storage = try self.context().storage.enterSession(1, &.{});
             try self.context().storage.initializeSession(storage, 0, initialized[0]);
             try self.context().storage.charge(1);
             try self.context().globals.put(self.context().arena.allocator(), key, storage.frame);
         }
-        return self.execute(&self.program, function, inputs);
     }
     fn chargeCleanup(self: *Vm, work: usize) !void {
         if (work > self.limits.instructions - self.steps) return error.ExecutionInstructionLimit;
@@ -433,7 +451,8 @@ pub const Vm = struct {
                     if (!types.equal(unit.graph, signature.virtual_type, selected.virtual_type) or signature.method_count != selected.methods.len) return error.ExecutionInvalidVirtual;
                     const method = selected.methods[signature.method_index];
                     if (method.receiver_input_index != signature.receiver_input_index) return error.ExecutionInvalidVirtual;
-                    const callee = virtual.program.function(method.function).?;
+                    const target = virtual.program.resolve(method.function).?;
+                    const callee = target.body;
                     if (callee.inputs.len != x.args.len or callee.outputs.len != x.outputs.len) return error.ExecutionInvalidVirtual;
                     const values = try self.allocate(x.args.len);
                     for (values, x.args, callee.inputs, 0..) |*value, slot, input, index| {
@@ -451,7 +470,7 @@ pub const Vm = struct {
                     for (x.outputs, callee.outputs) |slot, output| {
                         if (!types.equal(unit.graph, f.slots[slot], callee.slots[output])) return error.ExecutionInvalidVirtual;
                     }
-                    try frames.append(self.allocator, try self.frame(&virtual.program, callee, values, x.outputs));
+                    try frames.append(self.allocator, try self.frame(target.program, callee, values, x.outputs));
                 },
                 .prepare_acquired => |x| {
                     const storage = &self.context().storage;
@@ -701,8 +720,8 @@ pub const Vm = struct {
                     if (frames.items.len >= self.limits.call_depth) return error.ExecutionCallDepthLimit;
                     const values = try self.allocate(x.args.len);
                     for (values, x.args) |*value, slot| value.* = try slots.get(slot);
-                    const callee = unit.function(x.function).?;
-                    try frames.append(self.allocator, try self.frame(unit, callee, values, x.outputs));
+                    const callee = unit.resolve(x.function).?;
+                    try frames.append(self.allocator, try self.frame(callee.program, callee.body, values, x.outputs));
                 },
                 .branch => |x| current.pc = if ((try slots.get(x.condition)).boolean) x.yes else x.no,
                 .jump => |target| current.pc = target,

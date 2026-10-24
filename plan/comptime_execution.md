@@ -71,8 +71,9 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   graph transactions before publishing constant outputs.
 - Reuse verified Safety bodies only with stable hypotheses; symbolic summaries
   now retain selector, callee and virtual-contract dependencies in transactional
-  publications. Keep temporal caller checks independent. Reuse immutable helper bytecode across commands while keeping
-  host bindings, globals and virtual dispatch linked to its originating Code Unit.
+  publications. Keep temporal caller checks independent. Helper bytecode now
+  imports immutable verified origins, retaining their host, global and session
+  tables without copying them into subsequent units.
 - Keep definition lookup separate from instantiation evidence. Delayed body
   completion must preserve its selected context; new conformances must not
   invalidate safety assumptions of published code.
