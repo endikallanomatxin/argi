@@ -15040,3 +15040,9 @@ test "argi repl retains acquired virtual witnesses across submissions" {
     ;
     try expectReplFixture(null, commands, "_0 = ()\n_1 = ()\n_2 = 42\n");
 }
+
+test "feature_tests/execution/257_partial_choice_payload_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/257_partial_choice_payload_storage");
+    try runExpect("tests/feature_tests/execution/257_partial_choice_payload_storage", 42);
+    try vmExpect("tests/feature_tests/execution/257_partial_choice_payload_storage", 42, null);
+}

@@ -11,7 +11,7 @@ pub const Node = struct {
     count: u32 = 0,
     span: u32 = 1,
     offset: u32 = 0,
-    kind: enum { leaf, record, array } = .leaf,
+    kind: enum { leaf, record, array, choice, payloadless } = .leaf,
 };
 pub const Layout = struct { nodes: []const Node };
 
@@ -57,6 +57,25 @@ fn populate(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, t
         try populate(allocator, graph, element, nodes, start, depth + 1);
         const span = std.math.add(u32, 1, std.math.mul(u32, count, nodes.items[start].span) catch return error.UnsupportedStorageLayout) catch return error.UnsupportedStorageLayout;
         nodes.items[index] = .{ .kind = .array, .first = start, .count = count, .span = span, .offset = nodes.items[index].offset };
+        return;
+    }
+    if (types.variants(graph, ty)) |variants| {
+        if (variants.len == 0) {
+            nodes.items[index].kind = .choice;
+            return;
+        }
+        const start = std.math.cast(u32, nodes.items.len) orelse return error.UnsupportedStorageLayout;
+        try nodes.appendNTimes(allocator, .{}, variants.len);
+        var span: u32 = 1;
+        for (0..variants.len) |ordinal| {
+            const child = start + @as(u32, @intCast(ordinal));
+            nodes.items[child].offset = span;
+            if (graph.variants.items[variants.start + ordinal].payload_type) |payload| {
+                try populate(allocator, graph, payload, nodes, child, depth + 1);
+                span = std.math.add(u32, span, nodes.items[child].span) catch return error.UnsupportedStorageLayout;
+            } else nodes.items[child] = .{ .kind = .payloadless, .span = 0, .offset = span };
+        }
+        nodes.items[index] = .{ .kind = .choice, .first = start, .count = variants.len, .span = span, .offset = nodes.items[index].offset };
         return;
     }
     const fields = types.fields(graph, ty) orelse return;
