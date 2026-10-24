@@ -13,6 +13,7 @@ const Dependency = struct { function: g.GlobalFunctionId, summary: facts.SafetyS
 pub const Proof = struct {
     arena: std.heap.ArenaAllocator,
     function: g.GlobalFunctionId,
+    revision: u64,
     identity: Identity,
     dependencies: []const Dependency,
     virtuals: []const VirtualDependency,
@@ -27,10 +28,18 @@ pub const Proof = struct {
 
 pub const Batch = struct {
     entries: std.ArrayList(*Proof) = .empty,
+    reused: std.AutoHashMapUnmanaged(g.GlobalFunctionId, u64) = .empty,
+    next_revision: ?u64 = null,
+
+    pub fn revision(self: *const Batch, function: g.GlobalFunctionId) ?u64 {
+        for (self.entries.items) |proof| if (proof.function == function) return proof.revision;
+        return self.reused.get(function);
+    }
 
     pub fn deinit(self: *Batch, allocator: std.mem.Allocator) void {
         for (self.entries.items) |proof| proof.deinit(allocator);
         self.entries.deinit(allocator);
+        self.reused.deinit(allocator);
         self.* = .{};
     }
 };
@@ -39,6 +48,7 @@ pub const Store = struct {
     allocator: std.mem.Allocator,
     graph: *const g.GlobalSemanticGraph,
     entries: std.AutoHashMapUnmanaged(g.GlobalFunctionId, *Proof) = .empty,
+    next_revision: u64 = 1,
 
     pub fn init(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) Store {
         return .{ .allocator = allocator, .graph = graph };
@@ -75,9 +85,11 @@ pub const Store = struct {
         if (engine.virtual_dependencies.get(function)) |required| for (required.items) |registry| {
             try virtuals.append(engine.allocator, .{ .registry = registry, .signature = self.graph.virtual_registries.items[@intFromEnum(registry)] });
         };
+        const revision = batch.next_revision orelse self.next_revision;
+        const next_revision = try std.math.add(u64, revision, 1);
         const proof = try self.allocator.create(Proof);
         errdefer self.allocator.destroy(proof);
-        proof.* = .{ .arena = .init(self.allocator), .function = function, .identity = Identity.read(self.graph, function), .dependencies = &.{}, .virtuals = &.{}, .annotations = .{} };
+        proof.* = .{ .arena = .init(self.allocator), .function = function, .revision = revision, .identity = Identity.read(self.graph, function), .dependencies = &.{}, .virtuals = &.{}, .annotations = .{} };
         errdefer proof.arena.deinit();
         var copy: @import("fact_snapshot.zig").Copy = .{ .allocator = proof.arena.allocator(), .scratch = engine.allocator };
         defer copy.deinit();
@@ -86,6 +98,7 @@ pub const Store = struct {
         proof.annotations = try annotations.clone(proof.arena.allocator());
         errdefer proof.annotations.deinit(proof.arena.allocator());
         try batch.entries.append(self.allocator, proof);
+        batch.next_revision = next_revision;
     }
 
     pub fn reserve(self: *Store, batch: *const Batch) !void {
@@ -96,7 +109,10 @@ pub const Store = struct {
         for (batch.entries.items) |proof| {
             if (self.entries.fetchPutAssumeCapacity(proof.function, proof)) |old| old.value.deinit(self.allocator);
         }
+        if (batch.next_revision) |revision| self.next_revision = revision;
+        batch.next_revision = null;
         batch.entries.clearRetainingCapacity();
+        batch.reused.clearRetainingCapacity();
     }
 };
 
@@ -135,6 +151,16 @@ fn publicationFailures(allocator: std.mem.Allocator) !void {
     store.commit(&batch);
     annotations.clear(a);
     const proof = store.lookup(@enumFromInt(0), &engine).?;
+    try std.testing.expect(proof.revision != 0);
+    const accepted_revision = store.next_revision;
+    {
+        var rejected: Batch = .{};
+        defer rejected.deinit(allocator);
+        try store.stage(&rejected, @enumFromInt(0), &engine, &annotations);
+        try std.testing.expect(rejected.revision(@enumFromInt(0)).? != proof.revision);
+        try std.testing.expectEqual(accepted_revision, store.next_revision);
+    }
+    try std.testing.expectEqual(accepted_revision, store.next_revision);
     try std.testing.expect(proof.annotations.initializes(@enumFromInt(7)));
     try std.testing.expectEqual(@as(g.GlobalNodeId, @enumFromInt(9)), proof.annotations.call(@enumFromInt(8)).consumed_auto_deinits[0]);
     var merged: Annotations = .{};

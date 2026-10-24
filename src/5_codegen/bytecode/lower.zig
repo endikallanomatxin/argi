@@ -10,6 +10,8 @@ const replacement = @import("../../4_semantics/global/replacement.zig");
 
 pub const Options = struct {
     bodies: ?*const @import("body_cache.zig").Store = null,
+    // Candidate proof availability stays fixed throughout this lowering.
+    proofs: ?*const @import("../../4_semantics/safety/body_cache.zig").Batch = null,
     // Must outlive Lower, but may be reset once only its published Program remains.
     scratch_allocator: ?std.mem.Allocator = null,
     // Borrowed catalogue; the published Program retains only referenced rows.
@@ -23,8 +25,10 @@ pub const Lower = struct {
     graph: *const g.GlobalSemanticGraph,
     annotations: *const @import("../../4_semantics/safety/annotations.zig").Annotations = &.empty,
     bodies: ?*const @import("body_cache.zig").Store = null,
+    proofs: ?*const @import("../../4_semantics/safety/body_cache.zig").Batch = null,
     functions: std.AutoHashMapUnmanaged(g.GlobalFunctionId, b.FunctionEntry) = .empty,
     published_functions: []const b.FunctionEntry = &.{},
+    validated_bodies: std.AutoHashMapUnmanaged(@import("body_cache.zig").ValidationKey, bool) = .empty,
     session_bindings: std.ArrayList(b.SessionBinding) = .empty,
     session_indexes: std.AutoHashMapUnmanaged(g.GlobalBindingId, SessionIndex) = .empty,
     published_session: ?b.Session = null,
@@ -55,7 +59,7 @@ pub const Lower = struct {
         const bool_type: ?b.Type = for (graph.types.items, 0..) |ty, i| {
             if (ty == .builtin and ty.builtin == .Bool) break @as(b.Type, @enumFromInt(i));
         } else null;
-        return .{ .bodies = options.bodies, .allocator = a, .scratch_allocator = options.scratch_allocator, .graph = graph, .cleanup_bindings = cleanup_bindings, .cleanup_types = cleanup_types, .bool_type = bool_type, .session_indexes = session_indexes, .session = options.session, .mode = if (options.session != null) .runtime else .compile_time };
+        return .{ .proofs = options.proofs, .bodies = options.bodies, .allocator = a, .scratch_allocator = options.scratch_allocator, .graph = graph, .cleanup_bindings = cleanup_bindings, .cleanup_types = cleanup_types, .bool_type = bool_type, .session_indexes = session_indexes, .session = options.session, .mode = if (options.session != null) .runtime else .compile_time };
     }
     // Only temporary lookup and patch tables use this allocator. Instructions,
     // projections and immutable descriptors always belong to allocator.
@@ -185,7 +189,7 @@ pub const Lower = struct {
         while (self.pending.pop()) |id| {
             if (self.functions.contains(id)) continue;
             try compiled.append(self.scratch(), id);
-            if (self.bodies) |cache| if (cache.lookup(self.graph, id, self.session)) |imported| {
+            if (self.bodies) |cache| if (try cache.lookupChecked(self.graph, id, self.session, self.proofs, self.scratch(), &self.validated_bodies)) |imported| {
                 try self.functions.put(self.scratch(), id, imported);
                 continue;
             };
@@ -193,7 +197,7 @@ pub const Lower = struct {
             const compiled_body = try f.compile(id);
             const body = try self.allocator.create(b.Function);
             body.* = compiled_body;
-            try self.functions.put(self.scratch(), id, .{ .id = id, .body = body });
+            try self.functions.put(self.scratch(), id, .{ .id = id, .body = body, .safety_revision = @import("body_cache.zig").proofRevision(self.graph, id, self.proofs) orelse std.math.maxInt(u64) });
         }
         // Mutable lookup tables stay in lowering scratch. A changed publication
         // copies only its actual entries; previous tables remain immutable.

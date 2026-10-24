@@ -244,6 +244,8 @@ pub const Verified = @import("verify.zig").Verified;
 pub const FunctionEntry = struct {
     // Imported bodies execute against this previously verified unit.
     origin: ?*const Verified = null,
+    // Zero denotes standalone lowering without retained proofs; maxInt forbids reuse.
+    safety_revision: u64 = 0,
     id: g.GlobalFunctionId,
     body: *const Function,
 

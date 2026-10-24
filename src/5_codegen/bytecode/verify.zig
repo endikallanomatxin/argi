@@ -55,7 +55,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             if ((owner.session == null) != (program.session == null)) return error.InvalidBytecode;
             if (owner.session) |session| if (session.namespace != program.session.?.namespace) return error.InvalidBytecode;
             const original = owner.functionEntry(entry.id) orelse return error.InvalidBytecode;
-            if (original.origin != null or original.body != entry.body) return error.InvalidBytecode;
+            if (original.origin != null or original.body != entry.body or original.safety_revision != entry.safety_revision) return error.InvalidBytecode;
         }
     }
     if (program.session) |session| {

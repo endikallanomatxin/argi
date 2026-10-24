@@ -712,6 +712,13 @@ retained backing remains 17.63 MiB, since these tiny bodies already fit inside
 per-unit arena blocks. These are individual observations. Repeated Safety body
 checking and dead runtime frames remain separate sources of work and memory.
 
+Bytecode reuse also checks the revision of each body proof in the imported
+call closure, including virtual-table methods and global-initializer helpers.
+A caller's summary can remain equal while a callee's proof changes; that change
+forces re-lowering instead of silently retaining the old callee. Revisions are
+transactional publication IDs, not semantic body versions. They retain no
+historical graph or proof snapshot in executable units.
+
 Incremental Safety also publishes per-function body proofs. Each proof owns its
 execution annotations and snapshots of the converged summaries and virtual
 signatures it consulted; a changed hypothesis forces checking again. The REPL

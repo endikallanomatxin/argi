@@ -80,7 +80,7 @@ pub const Session = struct {
         const a = arena.allocator();
         var lowering_scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer lowering_scratch.deinit();
-        var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, checked, .{ .session = .{ .namespace = self.compiler.namespace, .bindings = bindings }, .scratch_allocator = lowering_scratch.allocator(), .bodies = &self.bodies });
+        var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, checked, .{ .session = .{ .namespace = self.compiler.namespace, .bindings = bindings }, .scratch_allocator = lowering_scratch.allocator(), .bodies = &self.bodies, .proofs = &candidate.checked.?.bodies });
         lower.annotations = &candidate.checked.?.annotations;
         const diagnostics = candidate.semantic.?.options.diagnostics orelse return error.MissingSessionDiagnostics;
         lower.diagnostics = diagnostics;

@@ -396,6 +396,7 @@ pub const SafetyChecker = struct {
         if (self.body_cache) |cache| {
             if (cache.graph != self.graph) return error.ForeignSafetyBodyCache;
             if (cache.lookup(id, engine)) |proof| {
+                if (self.body_publication) |batch| try batch.reused.put(cache.allocator, id, proof.revision);
                 try self.annotations.merge(self.allocator, &proof.annotations);
                 self.stats.bodies_reused += 1;
                 return;

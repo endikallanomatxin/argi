@@ -3642,18 +3642,26 @@ fn importedPublicationAllocationFailures(allocator: std.mem.Allocator) !void {
     const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
     try graph.types.append(std.testing.allocator, .{ .builtin = .Int32 });
     try graph.fields.append(std.testing.allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
-    for (0..3) |_| try graph.functions.append(std.testing.allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
+    try graph.blocks.append(std.testing.allocator, .{ .nodes = .{ .start = 0, .len = 0 } });
+    for (0..3) |_| try graph.functions.append(std.testing.allocator, .{ .declaration = @enumFromInt(0), .body = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
     const ret = b.Instruction{ .source = source, .op = .{ .ret = &.{0} } };
     const leaf: b.Function = .{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &.{ret} };
-    const first: b.Program = .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(0), .body = &leaf }} };
+    const first: b.Program = .{ .graph = &graph, .functions = &.{.{ .id = @enumFromInt(0), .body = &leaf, .safety_revision = 1 }} };
     const first_verified = try b.Verified.create(allocator, allocator, first);
     defer first_verified.destroy(allocator);
     const forward: b.Function = .{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &.{ .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(0), .args = &.{0}, .outputs = &.{0} } } }, ret } };
-    const second: b.Program = .{ .graph = &graph, .functions = &.{ .{ .id = @enumFromInt(0), .body = &leaf, .origin = first_verified }, .{ .id = @enumFromInt(1), .body = &forward } } };
+    const second: b.Program = .{ .graph = &graph, .functions = &.{ .{ .id = @enumFromInt(0), .body = &leaf, .origin = first_verified, .safety_revision = 1 }, .{ .id = @enumFromInt(1), .body = &forward, .safety_revision = 2 } } };
     const second_verified = try b.Verified.create(allocator, allocator, second);
     defer second_verified.destroy(allocator);
     const root: b.Function = .{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &.{ .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(1), .args = &.{0}, .outputs = &.{0} } } }, ret } };
-    const program: b.Program = .{ .graph = &graph, .functions = &.{ .{ .id = @enumFromInt(1), .body = &forward, .origin = second_verified }, .{ .id = @enumFromInt(2), .body = &root } } };
+    const program: b.Program = .{ .graph = &graph, .functions = &.{ .{ .id = @enumFromInt(1), .body = &forward, .origin = second_verified, .safety_revision = 2 }, .{ .id = @enumFromInt(2), .body = &root } } };
+    var forged_entries = [_]b.FunctionEntry{
+        .{ .id = @enumFromInt(1), .body = &forward, .origin = second_verified, .safety_revision = 3 },
+        .{ .id = @enumFromInt(2), .body = &root },
+    };
+    var forged = program;
+    forged.functions = &forged_entries;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(std.testing.allocator, forged));
     var cache: @import("../5_codegen/bytecode/body_cache.zig").Store = .init(allocator);
     defer cache.deinit();
     try cache.reserve(second);
@@ -3662,6 +3670,21 @@ fn importedPublicationAllocationFailures(allocator: std.mem.Allocator) !void {
     // Origin links stop at locally owned bodies instead of retaining chains of
     // aliases for an already imported function.
     try std.testing.expect(!cache.entries.contains(@enumFromInt(0)));
+    var proofs: @import("../4_semantics/safety/body_cache.zig").Batch = .{};
+    defer proofs.deinit(allocator);
+    try proofs.reused.put(allocator, @enumFromInt(0), 1);
+    try proofs.reused.put(allocator, @enumFromInt(1), 2);
+    var validated: std.AutoHashMapUnmanaged(@import("../5_codegen/bytecode/body_cache.zig").ValidationKey, bool) = .empty;
+    defer validated.deinit(allocator);
+    try std.testing.expect((try cache.lookupChecked(&graph, @enumFromInt(1), null, &proofs, allocator, &validated)) != null);
+    // The caller's proof is unchanged, but its origin contains a callee built
+    // under another proof. Reusing that call closure would bypass re-lowering.
+    validated.clearRetainingCapacity();
+    proofs.reused.getPtr(@enumFromInt(0)).?.* = 3;
+    try std.testing.expect((try cache.lookupChecked(&graph, @enumFromInt(1), null, &proofs, allocator, &validated)) == null);
+    validated.clearRetainingCapacity();
+    _ = proofs.reused.remove(@enumFromInt(0));
+    try std.testing.expect((try cache.lookupChecked(&graph, @enumFromInt(1), null, &proofs, allocator, &validated)) == null);
     var executor = try vm.Vm.init(allocator, program, .{});
     defer executor.deinit();
     try std.testing.expectEqual(@as(usize, 2), executor.dependencies.len);
