@@ -66,6 +66,11 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 ## Scalability
 
+- Reclaim rejected source modules, buffers and diagnostic metadata after the
+  latest diagnostic is no longer needed. The `rejections` benchmark keeps the
+  semantic checkpoint fixed but currently retains 6.16 MiB after 1,000 commands.
+  Preserve accepted source identities and diagnostics from older live code.
+
 - Keep cleanup projection identities bounded when rechecking previously completed
   bodies. Compile-time evaluation now discards its projections through nested
   graph transactions before publishing constant outputs.

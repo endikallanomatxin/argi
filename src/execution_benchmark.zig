@@ -50,7 +50,7 @@ const Memory = struct {
     }
 };
 
-const Scenario = enum { update, bindings, calls, resources, definitions };
+const Scenario = enum { update, bindings, calls, resources, definitions, rejections };
 const Modules = enum { minimal, core, prelude };
 
 fn elapsed(io: std.Io, start: i96) u64 {
@@ -198,13 +198,23 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
             const source = switch (scenario) {
                 .update => try allocator.dupe(u8, "value = 42"),
                 .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
+                .rejections => try allocator.dupe(u8, "value = 42\nmissing_function()"),
                 .definitions => try std.fmt.allocPrint(allocator, "function_{d} := () -> (.result: Int32) {{ result = 42 }}", .{index}),
                 .bindings => try std.fmt.allocPrint(allocator, "value_{d} :: Int32 = 42", .{index}),
                 .resources => try std.fmt.allocPrint(allocator, "text_{d} ::= unwrap_or_abort(.value = String(.length = 32))\nvalue_{d} :: Int32 = 42", .{ index, index }),
             };
             defer allocator.free(source);
             const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
-            const submitted = if (scenario == .definitions) session.submitDefinitions(source) else session.submitStatements(source);
+            const submitted = if (scenario == .rejections) rejected: {
+                const revision = session.compiler.revision;
+                const saved = session.compiler.semantic.relocation.graph.checkpoint();
+                session.submitStatements(source) catch |err| {
+                    if (err != error.Reported) return err;
+                    if (revision != session.compiler.revision or !std.meta.eql(saved, session.compiler.semantic.relocation.graph.checkpoint())) return error.RejectedSubmissionChangedState;
+                    break :rejected;
+                };
+                return error.RejectedSubmissionAccepted;
+            } else if (scenario == .definitions) session.submitDefinitions(source) else session.submitStatements(source);
             submitted catch |err| {
                 std.debug.print("Stopped after {d} commands: {s}; retained {d:.3} MiB, peak {d:.3} MiB\n", .{ index - 1, @errorName(err), mib(memory.live), mib(memory.peak) });
                 try session.diagnostics.dump();
@@ -287,7 +297,7 @@ pub fn main(init: std.process.Init) !void {
     if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions] [memory-limit-MiB=2048] [--graph-pools]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions|rejections] [memory-limit-MiB=2048] [--graph-pools]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB\n", .{});
     try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools);
 }

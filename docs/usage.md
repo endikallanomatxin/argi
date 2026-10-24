@@ -354,7 +354,7 @@ bindings, and their logical `ffi` input still participates in safety checking.
 Build the developer benchmark with `zig build build-execution-benchmark
 -Doptimize=ReleaseSafe`. From the repository root, run
 `./zig-out/bin/execution-benchmark [commands=1000] [minimal|core|prelude]
-[update|bindings|calls|resources|definitions] [memory-limit-MiB=2048]`. It reports checkpoints at 10,
+[update|bindings|calls|resources|definitions|rejections] [memory-limit-MiB=2048]`. It reports checkpoints at 10,
 100 and 1,000 commands, plus the final count. Run benchmarks separately from tests.
 
 `minimal` isolates session growth; `core` also retains a prepared bundled-core
@@ -362,8 +362,9 @@ module template. `prelude` also executes the CLI's checked prelude, including
 its persistent allocator. `resources` requires that mode and retains one 32-byte
 `String` plus a scalar marker per command. `definitions` introduces one new
 function per command, then calls the last function outside the measured section.
-Other scenarios preserve their existing
-behavior. Initial preparation, prelude execution, the first binding and teardown
+`rejections` repeatedly submits an unresolved call and checks that the graph
+checkpoint and accepted revision remain unchanged. It measures rejected source
+and diagnostic retention separately from accepted semantic growth. Initial preparation, prelude execution, the first binding and teardown
 are outside command timings; the zero-command row includes their retained memory.
 Frontend/publication time is total command time minus lowering,
 verification and execution; verification includes host-binding validation.
@@ -723,6 +724,13 @@ reused, retaining 106 proofs in 0.567 MiB of arenas. Command time was 33,630.3 m
 and live backing 188.62 MiB. This observation does not establish an additional
 speedup: frontend work outside body verification still dominates. Cached proofs
 and all other tracked allocations were released at teardown.
+
+A Debug baseline of 1,000 rejected minimal commands takes 2,066.0 ms and retains
+6.16 MiB, despite keeping the accepted semantic graph at about 0.001 MiB. At
+100 rejections it retains 0.64 MiB. Source arenas account for 0.49 MiB at 1,000
+and diagnostic arenas for 1.12 MiB; rejected module graphs account for additional
+backing. Teardown releases it, but reclamation between rejected submissions is
+still pending. This is a known lifecycle gap, not accepted semantic growth.
 
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and
