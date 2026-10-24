@@ -264,6 +264,7 @@ pub const SafetyChecker = struct {
     profile_io: ?std.Io = null,
     stats: Stats = .{},
     active_replacement: ?struct { plan: checked_replacement.Plan, pointer: ?facts.ValueFacts = null } = null,
+    annotations: @import("annotations.zig").Annotations = .{},
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -280,6 +281,7 @@ pub const SafetyChecker = struct {
 
     pub fn deinit(self: *SafetyChecker) void {
         self.call_stack.deinit();
+        self.annotations.deinit(self.allocator);
     }
 
     pub fn enableStats(self: *SafetyChecker, io: std.Io) void {
@@ -321,10 +323,7 @@ pub const SafetyChecker = struct {
     pub fn analyze(self: *SafetyChecker) !void {
         self.stats = .{ .timing_io = self.profile_io };
         const before = self.diagnostics.list.items.len;
-        for (self.graph.nodes.items, 0..) |*node, raw| {
-            if (self.unit) |unit| if (!unit.containsNode(@enumFromInt(raw))) continue;
-            if (node.content == .pointer_assignment) node.content.pointer_assignment.checked_initialization = null;
-        }
+        self.annotations.clear(self.allocator);
         try self.validateNominalChoiceLayouts();
         try self.validateForeignSignatures();
 
@@ -913,8 +912,7 @@ pub const SafetyChecker = struct {
                     else
                         null;
                     const initializes = was_deinitialized or symbolic_renewal != null;
-                    const proof = &self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.checked_initialization;
-                    proof.* = (proof.* orelse true) and initializes;
+                    try self.annotations.recordInitialization(self.allocator, node_id, initializes);
                     if (symbolic_renewal) |renewed| pointer = renewed;
                     if (pointer.referenced_place) |target| {
                         if (was_deinitialized and pointer.opaque_provenance.len == 0) {
@@ -1705,20 +1703,22 @@ pub const SafetyChecker = struct {
         const consumed = try self.callCleanupNodes(summary, argument_ids, arguments, state, false);
         const initialized = try self.callCleanupNodes(summary, argument_ids, arguments, state, true);
         const outcomes = try self.callOutcomeCleanups(summary, argument_ids, arguments, state);
-        const node = &self.graph.nodes.items[@intFromEnum(call_node)];
-        if (node.content != .function_call) return;
-        node.content.function_call.consumed_auto_deinits = consumed;
-        node.content.function_call.initialized_auto_deinits = initialized;
-        node.content.function_call.outcome_cleanups = outcomes;
+        if (self.graph.node(call_node).content != .function_call) return;
+        var effects: @import("annotations.zig").CallEffects = .{
+            .consumed_auto_deinits = consumed,
+            .initialized_auto_deinits = initialized,
+            .outcome_cleanups = outcomes,
+        };
         for (summary.input_post_states) |post_state| {
             if (post_state.target.projections.len != 0 or post_state.target.input_index >= argument_ids.len) continue;
             const field = self.graph.value_fields.items[@intFromEnum(argument_ids[post_state.target.input_index])];
             if (self.graph.nodes.items[@intFromEnum(field.value)].content != .address_of or self.rootBinding(field.value) == null) continue;
             if (post_state.requires_available_destination and post_state.initializedness == .initialized)
-                node.content.function_call.initializes_auto_deinit = field.value;
+                effects.initializes_auto_deinit = field.value;
             if (post_state.initializedness == .deinitialized or post_state.initializedness == .moved)
-                node.content.function_call.consumes_auto_deinit = field.value;
+                effects.consumes_auto_deinit = field.value;
         }
+        try self.annotations.setCall(self.allocator, call_node, effects);
     }
 
     fn initializesInput(summary: facts.SafetySummary, index: usize) bool {
@@ -1730,7 +1730,8 @@ pub const SafetyChecker = struct {
     /// A represented exit can disable source cleanup or enable destination
     /// cleanup. Possible transitions in the fallback cannot select either flag.
     fn callOutcomeCleanups(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const primitives.OutcomeCleanup(graph_mod.Ids) {
-        var result = std.array_list.Managed(primitives.OutcomeCleanup(graph_mod.Ids)).init(self.allocator);
+        const annotation_allocator = try self.annotations.storageAllocator(self.allocator);
+        var result = std.array_list.Managed(primitives.OutcomeCleanup(graph_mod.Ids)).init(annotation_allocator);
         // A possible consumption without an exact result partition cannot be
         // implemented by either always keeping or always disabling cleanup.
         // Projected may-states also describe opaque backing-storage replacement;
@@ -1812,13 +1813,14 @@ pub const SafetyChecker = struct {
                     };
                     continue;
                 };
-                try result.append(.{ .place = node, .captured_input = captured, .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index, .enabled = initializing });
+                try result.append(.{ .place = node, .captured_input = captured, .output_index = outcome.output_index, .parent_variants = try annotation_allocator.dupe(u32, outcome.parent_variants), .variant_index = outcome.variant_index, .enabled = initializing });
             }
         }
         return result.toOwnedSlice();
     }
 
     fn capturedCleanupInput(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId) !?primitives.CapturedCleanupInput {
+        const annotation_allocator = try self.annotations.storageAllocator(self.allocator);
         if (path.storage_domain != null or path.input_index >= ids.len) return null;
         const argument = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
         var ty = self.graph.node(argument).ty orelse return null;
@@ -1827,11 +1829,11 @@ pub const SafetyChecker = struct {
         // projection inside a copied argument.
         if (isPointer(self.graph, ty)) return if (path.projections.len == 0) .{ .argument_index = path.input_index } else null;
         var projections: std.ArrayList(primitives.CleanupInputProjection) = .empty;
-        defer projections.deinit(self.allocator);
+        defer projections.deinit(annotation_allocator);
         for (path.projections, 0..) |projection, index| {
             if (projection == .dereference) {
                 if (index + 1 != path.projections.len or !isPointer(self.graph, ty)) return null;
-                return .{ .argument_index = path.input_index, .projections = try projections.toOwnedSlice(self.allocator) };
+                return .{ .argument_index = path.input_index, .projections = try projections.toOwnedSlice(annotation_allocator) };
             }
             const selected: primitives.CleanupInputProjection = switch (projection) {
                 .field => |field| .{ .field = field },
@@ -1839,7 +1841,7 @@ pub const SafetyChecker = struct {
                 else => return null,
             };
             ty = @import("../global/cleanup_input.zig").inputProjectionType(self.graph, ty, selected) catch return null;
-            try projections.append(self.allocator, selected);
+            try projections.append(annotation_allocator, selected);
         }
         return null;
     }
@@ -2033,7 +2035,7 @@ pub const SafetyChecker = struct {
     fn callCleanupNodes(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initializing: bool) ![]const graph_mod.GlobalNodeId {
         var targets = std.array_list.Managed(facts.Place).init(self.allocator);
         defer targets.deinit();
-        var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+        var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(try self.annotations.storageAllocator(self.allocator));
         for (summary.input_post_states) |post| {
             if (initializing) {
                 if (post.initializedness != .initialized or
@@ -5227,9 +5229,7 @@ pub const SafetyChecker = struct {
         const consumed = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, false);
         const initialized = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, true);
         const outcomes = try self.callOutcomeCleanups(summary, argument_nodes, values, &candidate);
-        self.graph.virtual_calls.items[@intFromEnum(id)].consumed_auto_deinits = consumed;
-        self.graph.virtual_calls.items[@intFromEnum(id)].initialized_auto_deinits = initialized;
-        self.graph.virtual_calls.items[@intFromEnum(id)].outcome_cleanups = outcomes;
+        try self.annotations.setVirtualCall(self.allocator, id, .{ .consumed_auto_deinits = consumed, .initialized_auto_deinits = initialized, .outcome_cleanups = outcomes });
         const result = (try self.applyVirtualContractSummary(call, input_node.source, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
@@ -5284,8 +5284,7 @@ pub const SafetyChecker = struct {
                 }
                 // RHS evaluation may repopulate a destination that was empty
                 // when captured. Only omit old-value cleanup if it stays empty.
-                const write = &self.graph.nodes.items[@intFromEnum(active.plan.write)].content.pointer_assignment;
-                write.checked_initialization = write.checked_initialization == true and vacant;
+                try self.annotations.constrainInitialization(self.allocator, active.plan.write, vacant);
                 if (pointer.referenced_place == null and pointer.symbolic_pointees.len == 1) {
                     const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
                     if (self.symbolicStorageComplete(state, pointer.symbolic_pointees[0])) if (cleanup.deinit_fn) |callee|
@@ -8947,8 +8946,8 @@ test "direct call summaries annotate auto deinit transitions" {
         .initializedness = .deinitialized,
     }} }, &.{@as(graph_mod.GlobalValueFieldId, @enumFromInt(0))}, &.{}, &state);
 
-    try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(initializes_call)].content.function_call.initializes_auto_deinit.?);
-    try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(consumes_call)].content.function_call.consumes_auto_deinit.?);
+    try std.testing.expectEqual(address, checker.annotations.call(initializes_call).initializes_auto_deinit.?);
+    try std.testing.expectEqual(address, checker.annotations.call(consumes_call).consumes_auto_deinit.?);
 }
 
 test "ordinary call writes reactivate cleanup only for unavailable caller storage" {
@@ -10324,7 +10323,7 @@ test "replacement initialization proof observes destination after RHS preparatio
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.bindings.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(0), .mutability = .variable });
     try graph.nodes.appendSlice(allocator, &.{
-        .{ .source = source, .ty = null, .content = .{ .pointer_assignment = .{ .pointer = @enumFromInt(1), .value = @enumFromInt(1), .checked_initialization = true } } },
+        .{ .source = source, .ty = null, .content = .{ .pointer_assignment = .{ .pointer = @enumFromInt(1), .value = @enumFromInt(1) } } },
         .{ .source = source, .ty = null, .content = .{ .int_literal = 0 } },
     });
     try graph.auto_deinits.append(allocator, .{ .storage = .{ .indirect = @enumFromInt(1) }, .deinit_fn = null });
@@ -10335,17 +10334,18 @@ test "replacement initialization proof observes destination after RHS preparatio
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const target = facts.Place{ .root = @enumFromInt(0) };
+    try checker.annotations.recordInitialization(allocator, @enumFromInt(0), true);
     checker.active_replacement = .{
         .plan = .{ .block = @enumFromInt(0), .write = @enumFromInt(0), .value = @enumFromInt(1), .prepared = @enumFromInt(0), .cleanup = @enumFromInt(0), .result = @enumFromInt(1) },
         .pointer = .{ .referenced_place = target },
     };
     try checker.setPlace(&state, target, .deinitialized, .{});
     try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
-    try std.testing.expect(graph.nodes.items[0].content.pointer_assignment.checked_initialization == true);
+    try std.testing.expect(checker.annotations.observed(@enumFromInt(0)) == true);
     // Model a RHS that initializes the captured destination before its cleanup.
     try checker.setPlace(&state, target, .initialized, .{});
     try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
-    try std.testing.expect(graph.nodes.items[0].content.pointer_assignment.checked_initialization == false);
+    try std.testing.expect(checker.annotations.observed(@enumFromInt(0)) == false);
     try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, target));
 }
 

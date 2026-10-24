@@ -443,10 +443,6 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .output_type = globalType(o, value.output_type),
         .self_permission = value.self_permission,
         .safety_methods = globalVirtualRegistry(o, value.safety_methods),
-        .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
-        .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
-        .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
-        .outcome_cleanups = try relocateOutcomeCleanups(allocator, o, value.outcome_cleanups),
     });
     for (storage.reach_segments.items) |value| try result.reach_segments.append(allocator, try relocateString(module, value, o.string_base));
     for (storage.reach_alternatives.items) |value| try result.reach_alternatives.append(allocator, .{
@@ -510,7 +506,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     });
 
     for (storage.nodes.items) |node| switch (node) {
-        .resolved => |value| try result.nodes.append(allocator, try relocateNode(allocator, module, o, value)),
+        .resolved => |value| try result.nodes.append(allocator, try relocateNode(module, o, value)),
         .pending => if (mode == .allow_holes) try result.nodes.append(allocator, .{
             .source = .{ .file_index = o.file_base, .offset = 0 },
             .ty = null,
@@ -521,7 +517,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     for (storage.roots.items) |id| try result.roots.append(allocator, globalNode(o, id));
 }
 
-fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: module_entities.ResolvedNode) !global_sg.Node {
+fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: module_entities.ResolvedNode) !global_sg.Node {
     return .{
         .source = globalSource(o, node.source),
         .ty = if (node.ty) |id| globalType(o, id) else null,
@@ -539,11 +535,6 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
                 .callee = globalFunction(o, value.callee),
                 .callee_value = if (value.callee_value) |id| globalNode(o, id) else null,
                 .input = globalNode(o, value.input),
-                .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
-                .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
-                .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
-                .outcome_cleanups = try relocateOutcomeCleanups(allocator, o, value.outcome_cleanups),
-                .initializes_auto_deinit = if (value.initializes_auto_deinit) |id| globalNode(o, id) else null,
             } },
             .virtualize => |id| .{ .virtualize = globalVirtualize(o, id) },
             .virtual_call => |id| .{ .virtual_call = globalVirtualCall(o, id) },
@@ -679,24 +670,6 @@ pub fn globalFunction(o: Offsets, id: module_entities.ModuleFunctionId) global_s
 }
 pub fn globalBinding(o: Offsets, id: module_entities.ModuleBindingId) global_sg.GlobalBindingId {
     return @enumFromInt(o.binding_base + @intFromEnum(id));
-}
-fn relocateCleanupNodes(allocator: std.mem.Allocator, o: Offsets, nodes: []const module_entities.ModuleNodeId) ![]const global_sg.GlobalNodeId {
-    const result = try allocator.alloc(global_sg.GlobalNodeId, nodes.len);
-    for (nodes, result) |node, *relocated| relocated.* = globalNode(o, node);
-    return result;
-}
-
-fn relocateOutcomeCleanups(allocator: std.mem.Allocator, o: Offsets, cleanups: []const primitives.OutcomeCleanup(module_entities.Ids)) ![]const primitives.OutcomeCleanup(global_sg.Ids) {
-    const result = try allocator.alloc(primitives.OutcomeCleanup(global_sg.Ids), cleanups.len);
-    for (cleanups, result) |cleanup, *relocated| relocated.* = .{
-        .place = globalNode(o, cleanup.place),
-        .captured_input = if (cleanup.captured_input) |input| .{ .argument_index = input.argument_index, .projections = try allocator.dupe(primitives.CleanupInputProjection, input.projections) } else null,
-        .output_index = cleanup.output_index,
-        .parent_variants = try allocator.dupe(u32, cleanup.parent_variants),
-        .variant_index = cleanup.variant_index,
-        .enabled = cleanup.enabled,
-    };
-    return result;
 }
 
 pub fn globalNode(o: Offsets, id: module_entities.ModuleNodeId) global_sg.GlobalNodeId {
@@ -874,20 +847,4 @@ test "globalizer relocates cleanup storage identities without inventing indirect
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), cleanups[4].targetNode().?);
     try std.testing.expect(cleanups[5].ownerBinding() == null);
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), cleanups[5].targetNode().?);
-}
-
-test "globalizer retains captured cleanup paths without relocating argument positions" {
-    const a = std.testing.allocator;
-    var projections = [_]primitives.CleanupInputProjection{ .{ .field = 1 }, .{ .element = 2 } };
-    var offsets = std.mem.zeroes(Offsets);
-    offsets.node_base = 7;
-    const result = try relocateOutcomeCleanups(a, offsets, &.{.{ .place = @enumFromInt(3), .captured_input = .{ .argument_index = 2, .projections = &projections }, .output_index = 0, .variant_index = 1 }});
-    defer a.free(result);
-    defer a.free(result[0].parent_variants);
-    defer a.free(result[0].captured_input.?.projections);
-    projections[0] = .{ .field = 99 };
-    try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(10)), result[0].place);
-    try std.testing.expectEqual(@as(u32, 2), result[0].captured_input.?.argument_index);
-    try std.testing.expectEqual(@as(u32, 1), result[0].captured_input.?.projections[0].field);
-    try std.testing.expectEqual(@as(u64, 2), result[0].captured_input.?.projections[1].element);
 }

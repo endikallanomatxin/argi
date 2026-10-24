@@ -87,6 +87,7 @@ pub const Session = struct {
         var lowering_scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer lowering_scratch.deinit();
         var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.initSession(a, checked, .{ .namespace = self.compiler.namespace, .bindings = retained });
+        lower.annotations = &candidate.checked.?.annotations;
         const diagnostics = candidate.semantic.?.options.diagnostics orelse return error.MissingSessionDiagnostics;
         lower.diagnostics = diagnostics;
         lower.scratch_allocator = lowering_scratch.allocator();

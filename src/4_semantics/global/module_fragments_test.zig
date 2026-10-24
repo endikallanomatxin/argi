@@ -78,6 +78,7 @@ test "module fragments retain declaration identities and share lexical and quali
     defer safety.deinit();
     try safety.analyze();
     var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &result.graph);
+    lower.annotations = &safety.annotations;
     const program = try lower.compile(@enumFromInt(2));
     var vm = try @import("../../execution/vm.zig").Vm.init(a, program, .{});
     defer vm.deinit();
@@ -163,6 +164,7 @@ test "module fragments select contract implementations in the shared namespace" 
     defer safety.deinit();
     try safety.analyze();
     var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &result.graph);
+    lower.annotations = &safety.annotations;
     const program = try lower.compile(functions[0]);
     var vm = try @import("../../execution/vm.zig").Vm.init(a, program, .{});
     defer vm.deinit();
@@ -359,6 +361,7 @@ test "checked module decisions select source fragments without evaluating discar
     defer safety.deinit();
     try safety.analyze();
     var lower = try @import("../../5_codegen/bytecode/lower.zig").Lower.init(scratch.allocator(), &checked.graph);
+    lower.annotations = &safety.annotations;
     var vm = try @import("../../execution/vm.zig").Vm.init(a, try lower.compile(declaration.function_id.?), .{});
     defer vm.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try vm.invoke(declaration.function_id.?, &.{}))[0].integer);

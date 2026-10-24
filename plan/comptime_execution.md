@@ -68,8 +68,8 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 
 - Remove the remaining checked-graph copies and retained historical versions.
   Share GlobalSG identities with immutable Code Units as their pools grow.
-- Separate unit finalization and Safety proofs from persistent semantics. Reuse
-  verified bodies only with stable hypotheses; check caller facts independently.
+- Reuse verified Safety bodies only with stable hypotheses; check caller facts
+  independently.
   Keep Code Units immutable without copying whole function/type tables per command.
 - Keep definition lookup separate from instantiation evidence. Delayed body
   completion must preserve its selected context; new conformances must not

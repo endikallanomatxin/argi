@@ -283,11 +283,6 @@ const State = struct {
                 if (self.graph.callOperation(call)) |operation| try self.functions.operations.put(operation, {});
                 if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
-                if (call.consumes_auto_deinit) |value| try self.walkNode(value);
-                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
-                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
-                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
-                if (call.initializes_auto_deinit) |value| try self.walkNode(value);
                 try self.includeFunction(call.callee);
                 const callee = self.graph.functions.items[@intFromEnum(call.callee)];
                 if (callee.safety_primitive == .trusted_opaque_drop and callee.input.len != 0) {
@@ -310,10 +305,6 @@ const State = struct {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
-                if (call.consumes_auto_deinit) |value| try self.walkNode(value);
-                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
-                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
-                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
                 // A virtual call uses its declared effects. Concrete bodies
                 // are retained by the handle constructions that selected them.
             },

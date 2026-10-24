@@ -25,19 +25,17 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     var scratch = std.heap.ArenaAllocator.init(allocator);
     defer scratch.deinit();
     const temporary = scratch.allocator();
-    // Evaluation needs checked call annotations, but neither those annotations
-    // nor the checker's facts belong in the retained construction graph. Borrow
-    // immutable pools and copy only the two columns the checker can annotate.
-    // All evaluation nodes/annotations die together with the scratch arena.
+    // Safety may append cleanup projection nodes while checking this unit.
+    // Keep those temporary nodes separate from the construction graph; derived
+    // execution annotations are owned independently by the checker.
     var checked = graph.*;
     checked.nodes = .empty;
-    checked.virtual_calls = .empty;
     try checked.nodes.appendSlice(temporary, graph.nodes.items);
-    try checked.virtual_calls.appendSlice(temporary, graph.virtual_calls.items);
     var checker = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(temporary, diagnostics, &checked);
     defer checker.deinit();
     try checker.analyzeUnit(&.{entry});
     var lower = try Lower.init(temporary, &checked);
+    lower.annotations = &checker.annotations;
     lower.diagnostics = diagnostics;
     const function = graph.function(entry);
     for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {

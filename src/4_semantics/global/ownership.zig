@@ -737,8 +737,6 @@ pub const Resolver = struct {
 
     fn indirectReplacement(self: *Resolver, node_id: global_sg.GlobalNodeId, target: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId, visible: []const global_sg.GlobalBindingId, owner_function: global_sg.GlobalFunctionId, module_index: usize) !global_sg.GlobalNodeId {
         if (!self.replacement_candidates.contains(node_id)) return value;
-        const write = self.graph.node(node_id).content;
-        if (write == .pointer_assignment and write.pointer_assignment.checked_initialization == true) return value;
         const ty = self.graph.node(target).ty orelse return value;
         const plan = try self.buildAutoDeinit(.{ .indirect = target }, target, ty, reach_context.Context.fromGlobal(visible, owner_function), module_index) orelse return value;
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);

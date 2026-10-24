@@ -74,6 +74,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     }
     var compiler = try lower.Lower.init(allocator, graph);
     compiler.mode = .runtime;
+    if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
     compiler.diagnostics = &diagnostics;
     const program = compiler.compile(id) catch |err| {
         const message = try std.fmt.allocPrint(allocator, "VM cannot lower {s}: {s}", .{ compiler.unsupported, @errorName(err) });

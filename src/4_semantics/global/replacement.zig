@@ -13,11 +13,8 @@ pub const Plan = struct {
     cleanup: g.GlobalAutoDeinitId,
     result: g.GlobalNodeId,
 
-    pub fn initializes(self: Plan, graph: *const g.GlobalSemanticGraph) bool {
-        return switch (graph.node(self.write).content) {
-            .pointer_assignment => |write| write.checked_initialization == true,
-            else => false,
-        };
+    pub fn initializes(self: Plan, annotations: *const @import("../safety/annotations.zig").Annotations) bool {
+        return annotations.initializes(self.write);
     }
 };
 

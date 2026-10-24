@@ -547,13 +547,6 @@ pub fn VirtualCall(comptime Ids: type) type {
         output_type: Ids.TypeId,
         self_permission: PointerMutability,
         safety_methods: Ids.VirtualRegistryId,
-        consumes_auto_deinit: ?Ids.NodeId = null,
-        /// Safety records every consumed caller place, including aliases and
-        /// multiple resource inputs. These nodes identify cleanup flags only.
-        consumed_auto_deinits: []const Ids.NodeId = &.{},
-        /// Returning calls enable these destination cleanup flags.
-        initialized_auto_deinits: []const Ids.NodeId = &.{},
-        outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
     };
 }
 
@@ -665,14 +658,6 @@ pub fn Node(comptime Ids: type) type {
                 // the runtime address is evaluated separately from arguments.
                 callee_value: ?Ids.NodeId = null,
                 input: Ids.NodeId,
-                consumes_auto_deinit: ?Ids.NodeId = null,
-                /// Safety records every consumed caller place, including aliases and
-                /// multiple resource inputs. These nodes identify cleanup flags only.
-                consumed_auto_deinits: []const Ids.NodeId = &.{},
-                /// Returning calls enable these destination cleanup flags.
-                initialized_auto_deinits: []const Ids.NodeId = &.{},
-                outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
-                initializes_auto_deinit: ?Ids.NodeId = null,
             },
             virtualize: Ids.VirtualizeId,
             virtual_call: Ids.VirtualCallId,
@@ -774,9 +759,6 @@ pub fn Node(comptime Ids: type) type {
                 pointer: Ids.NodeId,
                 value: Ids.NodeId,
                 cleanup_target: ?Ids.NodeId = null,
-                // Published by safety checking; every visited incoming state
-                // must prove initialization rather than replacement.
-                checked_initialization: ?bool = null,
             },
             type_literal: Ids.TypeId,
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },

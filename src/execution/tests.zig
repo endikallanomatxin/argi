@@ -26,6 +26,7 @@ fn execute(source: []const u8, limits: vm.Limits) !i128 {
     for (graph.functions.items, 0..) |f, i| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(f.declaration)), "main")) continue;
         var compiler = try lower.Lower.init(allocator, graph);
+        if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         compiler.mode = .runtime;
         const program = compiler.compile(@enumFromInt(i)) catch |err| {
             return err;
@@ -1022,6 +1023,7 @@ test "bytecode retained lowering publishes stable programs for independent entri
         if (std.mem.eql(u8, name, "main")) main = @enumFromInt(index);
     }
     var compiler = try lower.Lower.init(a, graph);
+    if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
     const initial = try compiler.compile(first.?);
     try std.testing.expectEqual(compiler.functions.ptr, initial.functions.ptr);
     var executor = try vm.Vm.init(a, initial, .{});
@@ -1179,6 +1181,7 @@ test "bytecode safety preserves observations through returned reference aliases"
                 if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) break @as(@import("../4_semantics/global/graph.zig").GlobalFunctionId, @enumFromInt(index));
             } else return error.TestMissingEntry;
             var compiler = try lower.Lower.init(a, graph);
+            if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
             var executor = try vm.Vm.init(a, try compiler.compile(entry), .{});
             defer executor.deinit();
             try std.testing.expectEqual(@as(u64, 42), (try executor.run(entry, &.{}))[0].integer);
@@ -2128,8 +2131,8 @@ test "comptime evaluation releases transient proofs with a retained graph alloca
     try std.testing.expectEqual(@as(usize, 1), result.len);
     try std.testing.expectEqual(@as(i128, 42), graph.node(result[0]).content.int_literal);
     try std.testing.expectEqual(before + 1, graph.nodes.items.len);
-    // Source annotations remain borrowed from the original checked graph;
-    // evaluation publishes only its frozen constant, never scratch proof data.
+    // Evaluation publishes only its frozen constant. Semantic nodes remain
+    // unchanged and temporary execution proofs stay with the evaluator.
     for (graph.nodes.items[0..before], source.nodes.items) |retained, original|
         try std.testing.expectEqualDeep(original, retained);
 }
@@ -2443,6 +2446,7 @@ test "bytecode failed lowering does not retain host requirements" {
     defer pipeline.deinit();
     const graph = try pipeline.semantizeGlobalFiles(&files);
     var compiler = try lower.Lower.init(a, graph);
+    if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
     compiler.mode = .runtime;
     const entry = for (graph.functions.items, 0..) |function, index| {
         if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main"))
@@ -2739,6 +2743,7 @@ test "bytecode virtual tables verify receiver access descriptors" {
     for (graph.functions.items, 0..) |function, raw| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
         var compiler = try lower.Lower.init(a, graph);
+        if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         const program = try compiler.compile(@enumFromInt(raw));
         try b.verify(a, program);
         for (program.functions[raw].?.code) |instruction| if (instruction.op == .virtualize) {
@@ -3055,6 +3060,7 @@ test "VM failures retain bounded caller locations and reset clears them" {
         if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) break @enumFromInt(index);
     } else return error.MissingEntry;
     var compiler = try lower.Lower.init(a, graph);
+    if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
     compiler.mode = .runtime;
     const program = try compiler.compile(entry);
     var executor = try vm.Vm.init(a, program, .{});
@@ -3226,6 +3232,7 @@ test "registered core allocation metadata executes through ordinary generic spec
     for (graph.functions.items, 0..) |function, index| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
         var compiler = try lower.Lower.init(a, graph);
+        if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         const program = try compiler.compile(@enumFromInt(index));
         var executor = try vm.Vm.init(a, program, .{});
         defer executor.deinit();
@@ -3262,6 +3269,7 @@ test "allocation metadata retains generic cleanup evidence without checking unus
     for (graph.functions.items, 0..) |function, index| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
         var compiler = try lower.Lower.init(a, graph);
+        if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         const program = try compiler.compile(@enumFromInt(index));
         var executor = try vm.Vm.init(a, program, .{});
         defer executor.deinit();
@@ -3316,6 +3324,7 @@ test "prepared acquisition bytecode rejects altered receipt value and cleanup de
     for (graph.functions.items, 0..) |function, index| {
         if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) continue;
         var compiler = try lower.Lower.init(a, graph);
+        if (pipeline.safety_ctx) |*safety| compiler.annotations = &safety.annotations;
         compiler.mode = .runtime;
         const program = try compiler.compile(@enumFromInt(index));
         try b.verify(a, program);

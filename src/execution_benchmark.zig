@@ -71,6 +71,9 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     var code: usize = 0;
     for (session.runtime.units.items) |arena| code += arena.queryCapacity();
     var proofs: usize = 0;
+    for (session.compiler.versions.items) |version| if (version.annotations.arena) |arena| {
+        proofs += arena.queryCapacity();
+    };
     var proof = session.compiler.temporal;
     while (proof) |entry| : (proof = entry.parent) proofs += entry.arena.queryCapacity();
     var dead_frames: usize = 0;

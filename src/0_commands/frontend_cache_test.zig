@@ -49,6 +49,7 @@ fn compileWithExecution(files: []const sf.SourceFile, session: ?*ModuleCache, op
     if (failure == null) {
         var generator = try codegen.CodeGenerator.init(allocator, std.testing.io, &pipeline.global_graph.?, &diagnostics, .{});
         defer generator.deinit();
+        if (pipeline.safety_ctx) |*safety| generator.annotations = &safety.annotations;
         if (generator.generate()) |module| {
             const printed = llvm.LLVMPrintModuleToString(module);
             defer llvm.LLVMDisposeMessage(printed);

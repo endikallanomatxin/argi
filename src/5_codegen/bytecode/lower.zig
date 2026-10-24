@@ -12,6 +12,7 @@ pub const Lower = struct {
     allocator: std.mem.Allocator,
     scratch_allocator: ?std.mem.Allocator = null,
     graph: *const g.GlobalSemanticGraph,
+    annotations: *const @import("../../4_semantics/safety/annotations.zig").Annotations = &.empty,
     functions: []?*const b.Function,
     functions_published: bool = false,
     globals: std.ArrayList(b.Global) = .empty,
@@ -415,7 +416,7 @@ const FunctionLower = struct {
     fn autoDeinit(self: *FunctionLower, id: g.GlobalAutoDeinitId) anyerror!void {
         const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
         if (self.replacement) |captured| if (captured.plan.cleanup == id) {
-            if (captured.plan.initializes(self.parent.graph)) return;
+            if (captured.plan.initializes(self.parent.annotations)) return;
             if (captured.target) |target|
                 return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, target, captured.ty.?);
         };
@@ -654,7 +655,7 @@ const FunctionLower = struct {
             },
             .pointer_assignment => |x| {
                 const child = self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child;
-                if (self.parent.cleanup_types[@intFromEnum(child)] and x.checked_initialization != true and !self.trackedDestination(id, x.pointer, x.cleanup_target))
+                if (self.parent.cleanup_types[@intFromEnum(child)] and !self.parent.annotations.initializes(id) and !self.trackedDestination(id, x.pointer, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
                 try self.captureReplacement(id, target, child);
@@ -1044,6 +1045,7 @@ const FunctionLower = struct {
     fn call(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?b.Slot {
         const node = self.parent.graph.node(id);
         const x = node.content.function_call;
+        const effects = self.parent.annotations.call(id);
         if (self.parent.graph.function(x.callee).flags.is_source_location_id) return try self.traceLocation(node);
         if (self.parent.graph.function(x.callee).flags.is_source_location_resolver) {
             const literal = self.parent.graph.node(x.input).content.struct_value_literal;
@@ -1120,8 +1122,8 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .cleanup_set = .{ .place = target, .enabled = transition.enabled } });
             }
         }
-        try self.updateCallCleanups(node.source, f.output, fields, args, outputs, x.consumes_auto_deinit, x.consumed_auto_deinits, x.initialized_auto_deinits, x.outcome_cleanups);
-        if (x.initializes_auto_deinit) |value| try self.updateCallCleanup(value, true, fields, args);
+        try self.updateCallCleanups(node.source, f.output, fields, args, outputs, effects.consumes_auto_deinit, effects.consumed_auto_deinits, effects.initialized_auto_deinits, effects.outcome_cleanups);
+        if (effects.initializes_auto_deinit) |value| try self.updateCallCleanup(value, true, fields, args);
         if (outputs.len == 0) return null;
         if (outputs.len == 1) return outputs[0];
         const result = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped call result"));
@@ -1197,6 +1199,7 @@ const FunctionLower = struct {
         const node = graph.node(id);
         const call_id = node.content.virtual_call;
         const call_ = graph.virtual_calls.items[@intFromEnum(call_id)];
+        const effects = self.parent.annotations.virtualCall(call_id);
         const handle = try self.expression(call_.handle);
         const literal = graph.node(call_.input).content.struct_value_literal;
         const input = types.fields(graph, call_.input_type) orelse return error.InvalidBytecode;
@@ -1222,7 +1225,7 @@ const FunctionLower = struct {
             .method_count = call_.method_count,
         } };
         _ = try self.emit(node.source, .{ .virtual_call = invocation });
-        try self.updateCallCleanups(node.source, output, literal.fields, args, outputs, call_.consumes_auto_deinit, call_.consumed_auto_deinits, call_.initialized_auto_deinits, call_.outcome_cleanups);
+        try self.updateCallCleanups(node.source, output, literal.fields, args, outputs, effects.consumes_auto_deinit, effects.consumed_auto_deinits, effects.initialized_auto_deinits, effects.outcome_cleanups);
         if (outputs.len == 0) return null;
         if (outputs.len == 1) return outputs[0];
         const result = try self.newSlot(node.ty orelse return error.InvalidBytecode);

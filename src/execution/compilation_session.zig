@@ -42,7 +42,7 @@ const TemporalProof = struct {
         return proof;
     }
     // Retain only the final state, independently of parents and scratch facts.
-    // The caller must first move graph annotations into graph-owned storage.
+    // The caller must first publish execution annotations independently of scratch.
     fn seal(self: *TemporalProof, scratch: std.mem.Allocator) !void {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         errdefer arena.deinit();
@@ -79,12 +79,14 @@ const TemporalProof = struct {
 };
 
 pub const Version = struct {
+    annotations: @import("../4_semantics/safety/annotations.zig").Annotations = .{},
     graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph,
     stats: sema.Stats,
     unit: ?@import("../4_semantics/global/reachability.zig").FunctionSet = null,
 
     fn deinit(self: *Version, allocator: std.mem.Allocator) void {
         if (self.unit) |*unit| unit.deinit();
+        self.annotations.deinit(allocator);
         self.graph.deinit(allocator);
         self.* = undefined;
     }
@@ -351,22 +353,11 @@ fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, 
         try once_verify.verifyContinuation(proof_allocator, &result.graph, diagnostics, function, &proof.?.once);
     } else try safety.analyze();
     try @import("comptime.zig").resolve(allocator, &result.graph, diagnostics);
-    {
-        // Checked calls outlive this analysis and can be used by older virtual
-        // code units. Their annotation buffers belong to this graph version.
-        var copy: @import("../4_semantics/safety/fact_snapshot.zig").Copy = .{
-            .allocator = try result.graph.safetyAllocator(allocator),
-            .scratch = temporary.allocator(),
-        };
-        defer copy.deinit();
-        for (result.graph.nodes.items) |*node| if (node.content == .function_call) {
-            node.content.function_call = try copy.value(@TypeOf(node.content.function_call), node.content.function_call);
-        };
-        for (result.graph.virtual_calls.items) |*call| call.* = try copy.value(@TypeOf(call.*), call.*);
-    }
+    var annotations = try safety.annotations.clone(allocator);
+    errdefer annotations.deinit(allocator);
     if (proof) |owned| try owned.seal(temporary.allocator());
     result.graph.trimPoolCapacity(allocator);
-    return .{ .graph = result.graph, .stats = result.stats, .unit = result.unit };
+    return .{ .graph = result.graph, .stats = result.stats, .unit = result.unit, .annotations = annotations };
 }
 
 test "compilation session publishes checked candidates and rejects stale revisions" {
@@ -493,6 +484,7 @@ test "compilation session retains executable graph addresses across publications
     try session.accept(&first);
     const graph = &session.versions.items[0].graph;
     var compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, graph);
+    compiler.annotations = &session.versions.items[0].annotations;
     const program = try compiler.compile(@enumFromInt(0));
     // Force several version-table reallocations after bytecode captured graph.
     for (0..12) |_| {
@@ -509,6 +501,7 @@ test "compilation session retains executable graph addresses across publications
     const previous = try old_vm.invoke(@enumFromInt(0), &.{.{ .integer = 42 }});
     const identity = context.storage.context;
     var current_compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, &session.versions.items[session.versions.items.len - 1].graph);
+    current_compiler.annotations = &session.versions.items[session.versions.items.len - 1].annotations;
     const current_program = try current_compiler.compile(@enumFromInt(0));
     var current_vm = try execution.Vm.initShared(a, current_program, .{}, &context);
     defer current_vm.deinit();
@@ -726,8 +719,8 @@ fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator, retain:
     try std.testing.expect(candidate.checked != null);
     const graph = &candidate.checked.?.graph;
     var consumed: usize = 0;
-    for (graph.nodes.items) |node| if (node.content == .function_call) {
-        for (node.content.function_call.consumed_auto_deinits) |cleanup| {
+    for (graph.nodes.items, 0..) |node, index| if (node.content == .function_call) {
+        for (candidate.checked.?.annotations.call(@enumFromInt(index)).consumed_auto_deinits) |cleanup| {
             _ = graph.node(cleanup);
             consumed += 1;
         }

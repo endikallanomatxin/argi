@@ -148,6 +148,7 @@ pub const CodeGenerator = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     graph: *const graph_mod.GlobalSemanticGraph,
+    annotations: *const @import("../../4_semantics/safety/annotations.zig").Annotations = &.empty,
     unit: ?*const reachability.FunctionSet = null,
     diags: *diagnostic.Diagnostics,
     options: Options,
@@ -495,11 +496,11 @@ pub const CodeGenerator = struct {
                 // input may borrow the value being replaced at destination.
                 const result_storage = try self.stackTemporary(symbol.outputType(), 0, "call.return.storage");
                 _ = try symbol.argiSignature().?.callWithEvidence(self.builder, symbol.ref, input.value_ref, result_storage, try self.callEvidence(symbol.argiSignature().?, input.reference_view), "");
-                const result = if (call.initializes_auto_deinit != null or call.outcome_cleanups.len != 0)
+                const result = if (self.annotations.call(node_id).initializes_auto_deinit != null or self.annotations.call(node_id).outcome_cleanups.len != 0)
                     c.LLVMBuildLoad2(self.builder, symbol.outputType(), result_storage, "call.status")
                 else
                     null;
-                try self.markCallDropState(call, result, false, input.reference_view);
+                try self.markCallDropState(call, self.annotations.call(node_id), result, false, input.reference_view);
                 _ = c.LLVMBuildMemCpy(self.builder, destination, @intCast(layout.alignment), result_storage, @intCast(layout.alignment), c.LLVMConstInt(try self.nativeUIntType(), layout.size, 0));
             },
             .binding_use => {
@@ -1208,7 +1209,7 @@ pub const CodeGenerator = struct {
                 const symbol = self.functions.get(id) orelse return CodegenError.SymbolNotFound;
                 break :blk .{ .value_ref = symbol.ref, .type_ref = try self.toLLVMType(node.ty.?), .ty = node.ty.? };
             },
-            .function_call => |call| try self.genFunctionCall(call, node.source),
+            .function_call => |call| try self.genFunctionCall(node_id, call, node.source),
             .virtualize => |virtualize| try self.genVirtualize(virtualize),
             .virtual_call => |virtual_call| try self.genVirtualCall(virtual_call, null),
             .code_block, .value_sequence => |block| try self.genBlock(block),
@@ -1277,7 +1278,7 @@ pub const CodeGenerator = struct {
             .address_of => |target| try self.addressOf(node_id, target),
             .dereference => |deref| try self.dereference(deref),
             .pointer_assignment => |assignment| blk: {
-                try self.pointerAssignment(assignment);
+                try self.pointerAssignment(node_id, assignment);
                 break :blk null;
             },
 
@@ -2048,7 +2049,7 @@ pub const CodeGenerator = struct {
 
     fn prepareWriteValue(self: *CodeGenerator, value: graph_mod.GlobalNodeId, destination: WriteDestination) !TypedValue {
         if (self.replacement) |*captured| if (captured.plan.value == value) {
-            if (captured.destination != null or (destination.cleanup == null and !captured.plan.initializes(self.graph)) or
+            if (captured.destination != null or (destination.cleanup == null and !captured.plan.initializes(self.annotations)) or
                 destination.type_ref != try self.toLLVMType(captured.ty))
                 return error.InvalidReplacementDestination;
             captured.destination = destination;
@@ -2113,11 +2114,11 @@ pub const CodeGenerator = struct {
         return state;
     }
 
-    fn pointerAssignment(self: *CodeGenerator, assignment: anytype) !void {
+    fn pointerAssignment(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId, assignment: anytype) !void {
         const pointer = (try self.visitNode(assignment.pointer)) orelse return CodegenError.ValueNotFound;
         const pointer_type = self.graph.semanticType(self.graph.node(assignment.pointer).ty orelse return CodegenError.InvalidType);
         if (pointer_type != .pointer) return CodegenError.InvalidType;
-        const optional_cleanup = assignment.checked_initialization == true or
+        const optional_cleanup = self.annotations.initializes(node_id) or
             (if (self.replacement) |captured| captured.plan.value != assignment.value else true);
         const destination: WriteDestination = .{
             .address = pointer.value_ref,
@@ -2686,6 +2687,7 @@ pub const CodeGenerator = struct {
         // TODO: Normalize abstract-reference local bindings for virtual calls;
         // direct invocation through such a local can fail with InvalidType.
         const call = self.graph.virtual_calls.items[@intFromEnum(call_id)];
+        const effects = self.annotations.virtualCall(call_id);
         const handle_ptr = (try self.visitNode(call.handle)) orelse return CodegenError.ValueNotFound;
         const handle_ty = self.graph.nodes.items[@intFromEnum(call.handle)].ty orelse return CodegenError.InvalidType;
         const virtual_ty = switch (self.graph.types.items[@intFromEnum(handle_ty)]) {
@@ -2741,19 +2743,19 @@ pub const CodeGenerator = struct {
         const signature = argi_abi.Signature.initWithEvidence(input_type, output_type, try self.indirectOutput(output_fields), .{ .input = evidence_type, .output = try self.fieldsEvidenceType(output_fields) });
         if (destination) |storage| {
             _ = try signature.callWithEvidence(self.builder, method, patched_input, storage, try self.callEvidence(signature, input_evidence), "");
-            for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
-            for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
-            if (call.outcome_cleanups.len != 0) {
+            for (effects.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
+            for (effects.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
+            if (effects.outcome_cleanups.len != 0) {
                 const result = c.LLVMBuildLoad2(self.builder, output_type, storage, "virtual.cleanup.result");
-                try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields, .{ .fields = semantic_input, .evidence = input_evidence });
+                try self.markOutcomeCleanups(effects.outcome_cleanups, result, output_fields, .{ .fields = semantic_input, .evidence = input_evidence });
             }
             return null;
         }
         const returned = try self.callArgiWithEvidence(.{ .ref = method, .abi = .{ .argi = signature }, .is_extern = false }, patched_input, input_evidence, "virtual.call");
         const result = returned.value;
-        for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
-        for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
-        try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields, .{ .fields = semantic_input, .evidence = input_evidence });
+        for (effects.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
+        for (effects.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
+        try self.markOutcomeCleanups(effects.outcome_cleanups, result, output_fields, .{ .fields = semantic_input, .evidence = input_evidence });
         if (output_fields.len == 0) return null;
         if (output_fields.len == 1) {
             const field = self.graph.fields.items[output_fields.start];
@@ -2796,7 +2798,7 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = if (half) c.LLVMBuildFPTrunc(self.builder, value, result_type, "math.half.result") else value, .type_ref = result_type, .ty = ty };
     }
 
-    fn genFunctionCall(self: *CodeGenerator, call: anytype, source: primitives.SourceRef) !?TypedValue {
+    fn genFunctionCall(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId, call: anytype, source: primitives.SourceRef) !?TypedValue {
         if (self.graph.function(call.callee).flags.is_source_location_id) {
             const function = self.graph.function(call.callee);
             const ty = self.graph.fields.items[function.output.start].ty;
@@ -2834,8 +2836,8 @@ pub const CodeGenerator = struct {
         if (symbol.abi == .argi) {
             const returned = try self.callArgiWithEvidence(symbol, input.value_ref, input.reference_view, "call");
             const result = returned.value;
-            try self.markConsumedInputEvidence(call, callee, input.reference_view);
-            try self.markCallDropState(call, result, false, input.reference_view);
+            try self.markConsumedInputEvidence(call, self.annotations.call(node_id), callee, input.reference_view);
+            try self.markCallDropState(call, self.annotations.call(node_id), result, false, input.reference_view);
             // No-output Argi calls return an empty record. Preserve that unit
             // value when a checked entry binds an otherwise discarded call.
             if (callee.output.len == 0) return .{ .value_ref = result, .type_ref = symbol.outputType(), .ty = null };
@@ -2866,7 +2868,7 @@ pub const CodeGenerator = struct {
         }
         const call_value = c.LLVMBuildCall2(self.builder, symbol.abi.c.fn_type, symbol.ref, if (args.len == 0) null else args.ptr, @intCast(args.len), if (symbol.outputType() == c.LLVMVoidType()) "" else "call");
         try self.addCPlanAttributes(call_value, plan.*, true);
-        try self.markCallDropState(call, call_value, true, input.reference_view);
+        try self.markCallDropState(call, self.annotations.call(node_id), call_value, true, input.reference_view);
         const result = plan.result orelse return null;
         if (callee.safety_primitive == .raw_allocated_storage) {
             const address_type = try self.toLLVMType(result.ty);
@@ -3053,14 +3055,14 @@ pub const CodeGenerator = struct {
 
     // Post-call consumption applies to the captured argument values, never
     // reevaluated reference expressions or the reference slot's own flags.
-    fn markConsumedInputEvidence(self: *CodeGenerator, call: anytype, callee: graph_mod.Function, input_evidence: ?c.LLVMValueRef) !void {
+    fn markConsumedInputEvidence(self: *CodeGenerator, call: anytype, effects: @import("../../4_semantics/safety/annotations.zig").CallEffects, callee: graph_mod.Function, input_evidence: ?c.LLVMValueRef) !void {
         if (input_evidence) |evidence| {
             const content = self.graph.node(call.input).content;
             if (content == .struct_value_literal) {
                 const fields = content.struct_value_literal.fields;
                 for (self.graph.value_fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-                    var consumed = call.consumes_auto_deinit == field.value;
-                    for (call.consumed_auto_deinits) |target| {
+                    var consumed = effects.consumes_auto_deinit == field.value;
+                    for (effects.consumed_auto_deinits) |target| {
                         if (target == field.value) consumed = true;
                         const argument = self.graph.node(field.value).content;
                         if (argument == .address_of and argument.address_of == target) consumed = true;
@@ -3086,16 +3088,16 @@ pub const CodeGenerator = struct {
         }
     }
 
-    fn markCallDropState(self: *CodeGenerator, call: anytype, result: llvm.c.LLVMValueRef, is_extern: bool, input_evidence: ?c.LLVMValueRef) !void {
-        if (call.consumes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
-        for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
-        for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
-        if (call.outcome_cleanups.len != 0) {
+    fn markCallDropState(self: *CodeGenerator, call: anytype, effects: @import("../../4_semantics/safety/annotations.zig").CallEffects, result: llvm.c.LLVMValueRef, is_extern: bool, input_evidence: ?c.LLVMValueRef) !void {
+        if (effects.consumes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
+        for (effects.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
+        for (effects.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
+        if (effects.outcome_cleanups.len != 0) {
             const callee = self.graph.function(call.callee);
-            try self.markOutcomeCleanups(call.outcome_cleanups, result, callee.output, .{ .fields = callee.input, .evidence = input_evidence });
+            try self.markOutcomeCleanups(effects.outcome_cleanups, result, callee.output, .{ .fields = callee.input, .evidence = input_evidence });
         }
         _ = is_extern;
-        if (call.initializes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
+        if (effects.initializes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
     }
 
     const CapturedCleanupInputs = struct { fields: graph_mod.FieldRange, evidence: ?c.LLVMValueRef };
@@ -3143,7 +3145,7 @@ pub const CodeGenerator = struct {
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {
         const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         if (self.replacement) |captured| if (captured.plan.cleanup == auto_id) {
-            if (captured.plan.initializes(self.graph)) return;
+            if (captured.plan.initializes(self.annotations)) return;
             // Use exactly the address and flag range captured before the RHS.
             // Do not resolve the cleanup target again after its effects.
             const destination = captured.destination orelse return error.MissingReplacementDestination;

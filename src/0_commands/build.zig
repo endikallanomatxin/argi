@@ -375,6 +375,7 @@ fn compileResolvedPlan(
         return error.CompilationFailed;
     };
     defer generator.deinit();
+    if (pipeline.safety_ctx) |*safety| generator.annotations = &safety.annotations;
     generator.unit = if (pipeline.global_unit) |*unit| unit else null;
     const module = generator.generate() catch |err| {
         if (flags.show_semantic_graph) graph_print.print(graph);
