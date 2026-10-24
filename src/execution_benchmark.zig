@@ -114,16 +114,16 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     if (scenario == .resources and live_acquisitions != commands) return error.InvalidBenchmarkAcquisitions;
     const runtime = if (session.runtime.context.state == .fresh) 0 else session.runtime.context.arena.queryCapacity();
     std.debug.print("{s},{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d:.3},{d}", .{
-        @tagName(scenario),                   @tagName(modules),                          commands,
-        ms(total_ns),                         ms(total_ns -| backend_ns),                 ms(stats.lowering_ns),
-        ms(stats.verification_ns),            ms(stats.execution_ns),                     mib(memory.live),
-        mib(memory.peak),                     mib(semantic_graph),                        mib(code),
-        mib(proofs),                          mib(session.sources.arena.queryCapacity()), mib(session.diagnostic_arena.queryCapacity()),
-        runtime,                              dead_frames,                                stats.compiled_functions,
-        stats.compiled_instructions,          dead_frame_slot_bytes,                      live_frame_slot_bytes,
-        frame_identity_bytes,                 live_acquisitions,                          live_acquired_bytes,
-        retained_acquired_bytes,              dead_cleanup_flag_bytes,                    live_cleanup_flag_bytes,
-        session.compiler.summary_evaluations, session.compiler.summary_reuses,            session.compiler.summary_cache.entries.count(),
+        @tagName(scenario),                   @tagName(modules),                 commands,
+        ms(total_ns),                         ms(total_ns -| backend_ns),        ms(stats.lowering_ns),
+        ms(stats.verification_ns),            ms(stats.execution_ns),            mib(memory.live),
+        mib(memory.peak),                     mib(semantic_graph),               mib(code),
+        mib(proofs),                          mib(session.sources.arenaBytes()), mib(session.diagnostic_arena.queryCapacity()),
+        runtime,                              dead_frames,                       stats.compiled_functions,
+        stats.compiled_instructions,          dead_frame_slot_bytes,             live_frame_slot_bytes,
+        frame_identity_bytes,                 live_acquisitions,                 live_acquired_bytes,
+        retained_acquired_bytes,              dead_cleanup_flag_bytes,           live_cleanup_flag_bytes,
+        session.compiler.summary_evaluations, session.compiler.summary_reuses,   session.compiler.summary_cache.entries.count(),
         mib(summary_arenas),                  stats.reused_functions,
     });
     std.debug.print(",{d},{d},{d},{d:.3}\n", .{ session.compiler.bodies_checked, session.compiler.bodies_reused, session.compiler.body_cache.entries.count(), mib(body_arenas) });

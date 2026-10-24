@@ -26,6 +26,10 @@ pub const Interactive = struct {
     limits: vm.Limits,
     closed: bool = false,
     result_sequence: u64 = 0,
+    submission_depth: usize = 0,
+    source_checkpoint: ?submissions.Sources.Checkpoint = null,
+    source_revision: u64 = 0,
+    rejected_sources: ?submissions.Sources.Checkpoint = null,
     prelude: ?[]const u8 = null,
     imports: ?struct { io: std.Io, path: []const u8 } = null,
 
@@ -55,12 +59,17 @@ pub const Interactive = struct {
         self.limits = limits;
         self.closed = false;
         self.result_sequence = 0;
+        self.submission_depth = 0;
+        self.source_checkpoint = null;
+        self.rejected_sources = null;
+        self.source_revision = 0;
         self.imports = null;
         self.prelude = null;
         self.diagnostic_arena = .init(allocator);
         errdefer self.diagnostic_arena.deinit();
-        self.diagnostic_allocator = self.diagnostic_arena.allocator();
+        self.diagnostic_allocator = allocator;
         self.diagnostics = .init(&self.diagnostic_allocator, files);
+        self.diagnostics.message_allocator = self.diagnostic_arena.allocator();
         errdefer self.diagnostics.deinit();
         self.sources = .init(allocator);
         errdefer self.sources.deinit();
@@ -101,6 +110,7 @@ pub const Interactive = struct {
 
     pub fn submitStatements(self: *Interactive, statements: []const u8) !void {
         try self.beginSubmission();
+        defer self.endSubmission();
         var command = try self.sources.prepareCommand(&self.compiler, &self.diagnostics, statements);
         defer command.deinit();
         try self.runtime.executeCommand(&command.candidate);
@@ -124,6 +134,7 @@ pub const Interactive = struct {
     /// Returned presentation views are borrowed until the next session mutation.
     pub fn submitInput(self: *Interactive, source: []const u8) !?PresentedValue {
         try self.beginSubmission();
+        defer self.endSubmission();
         switch (try self.sources.classify(&self.diagnostics, source)) {
             .empty => {},
             .definitions => try self.submitDefinitions(source),
@@ -169,6 +180,7 @@ pub const Interactive = struct {
 
     pub fn submitDefinitions(self: *Interactive, source: []const u8) !void {
         try self.beginSubmission();
+        defer self.endSubmission();
         const module = try self.sources.loadModule(&self.diagnostics, source);
         var draft = try self.compiler.beginPreparation(&self.diagnostics);
         defer draft.deinit();
@@ -192,11 +204,31 @@ pub const Interactive = struct {
     fn beginSubmission(self: *Interactive) !void {
         if (self.closed) return error.InteractiveSessionClosed;
         if (self.runtime.context.state == .poisoned) return error.ExecutionContextPoisoned;
-        self.diagnostics.list.clearRetainingCapacity();
+        if (self.submission_depth == 0) {
+            self.diagnostics.list.clearRetainingCapacity();
+            _ = self.diagnostic_arena.reset(.free_all);
+            if (self.rejected_sources) |saved| {
+                self.sources.rollbackBatch(&self.diagnostics, saved);
+                self.rejected_sources = null;
+            }
+            self.source_checkpoint = try self.sources.beginBatch(&self.diagnostics);
+            self.source_revision = self.compiler.revision;
+        }
+        self.submission_depth += 1;
+    }
+
+    fn endSubmission(self: *Interactive) void {
+        std.debug.assert(self.submission_depth != 0);
+        self.submission_depth -= 1;
+        if (self.submission_depth == 0) {
+            if (self.compiler.revision == self.source_revision) self.rejected_sources = self.source_checkpoint;
+            self.source_checkpoint = null;
+        }
     }
 
     pub fn close(self: *Interactive) !void {
         try self.beginSubmission();
+        defer self.endSubmission();
         try self.cleanup();
         self.closed = true;
     }
@@ -234,6 +266,9 @@ pub const Interactive = struct {
         self.sources.deinit();
         _ = self.diagnostic_arena.reset(.free_all);
         self.diagnostics = .init(&self.diagnostic_allocator, self.initial_files);
+        self.diagnostics.message_allocator = self.diagnostic_arena.allocator();
+        self.rejected_sources = null;
+        self.source_checkpoint = null;
         self.sources = .init(self.allocator);
         self.compiler = replacement;
         transferred = true;
@@ -1573,4 +1608,42 @@ test "interactive dormant operation signatures complete at first selected use wi
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Echo#(Box).echo(.value = Box(.value = 0))")).?.value.runtime.integer);
     try std.testing.expectEqual(body, graph.function(method).body);
     try session.close();
+}
+
+fn rejectedSourceLifetimeFailures(allocator: std.mem.Allocator) !void {
+    var session: Interactive = undefined;
+    try session.init(allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("value :: Int32 = 42");
+    const accepted_modules = session.sources.modules.items.len;
+    const accepted_files = session.diagnostics.source_files.len;
+    const original = session.diagnostics.source_db.files[0].source;
+    const revision = session.compiler.revision;
+    const saved = session.compiler.semantic.relocation.graph.checkpoint();
+    for (0..2) |_| {
+        session.submitStatements("temporary :: Int32 = 7\nmissing_function()") catch |err| {
+            if (err != error.Reported) return err;
+            try std.testing.expectEqual(revision, session.compiler.revision);
+            try std.testing.expectEqualDeep(saved, session.compiler.semantic.relocation.graph.checkpoint());
+            try std.testing.expect(session.rejected_sources != null);
+            try std.testing.expect(session.diagnostics.list.items.len != 0);
+            const diagnostic = session.diagnostics.list.items[0];
+            const source = session.diagnostics.source_db.get(diagnostic.loc.file).source;
+            try std.testing.expect(std.mem.indexOf(u8, source, "missing_function()") != null);
+            try std.testing.expect(session.sources.modules.items.len <= accepted_modules + 1);
+            try std.testing.expect(session.diagnostics.source_files.len <= accepted_files + 2);
+            continue;
+        };
+        return error.RejectedSubmissionAccepted;
+    }
+    try session.submitStatements("value = 42");
+    try std.testing.expect(session.rejected_sources == null);
+    try std.testing.expectEqual(@as(usize, accepted_modules + 1), session.sources.modules.items.len);
+    try std.testing.expectEqual(@as(usize, accepted_files + 2), session.diagnostics.source_files.len);
+    try std.testing.expectEqualStrings(original, session.diagnostics.source_db.files[0].source);
+    try session.close();
+}
+
+test "interactive rejected source batches retain only the latest diagnostic and release allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, rejectedSourceLifetimeFailures, .{});
 }

@@ -725,12 +725,18 @@ and live backing 188.62 MiB. This observation does not establish an additional
 speedup: frontend work outside body verification still dominates. Cached proofs
 and all other tracked allocations were released at teardown.
 
-A Debug baseline of 1,000 rejected minimal commands takes 2,066.0 ms and retains
-6.16 MiB, despite keeping the accepted semantic graph at about 0.001 MiB. At
-100 rejections it retains 0.64 MiB. Source arenas account for 0.49 MiB at 1,000
-and diagnostic arenas for 1.12 MiB; rejected module graphs account for additional
-backing. Teardown releases it, but reclamation between rejected submissions is
-still pending. This is a known lifecycle gap, not accepted semantic growth.
+Rejected submissions retain only their latest diagnostic batch until the next
+entry. Source buffers use per-submission arenas; accepted batches remain alive
+for published code, while rejected module graphs, selection caches and source
+index tails are discarded together. Message storage is separate from persistent
+source indexes. `source_arenas_MiB` includes all live source batches;
+`diagnostic_arenas_MiB` now measures messages rather than source-index backing.
+
+A Debug run of 1,000 rejected minimal commands retains 0.038 MiB, unchanged at
+10 and 100 commands, compared with 6.16 MiB before reclamation. The accepted
+graph stays at about 0.001 MiB and teardown releases all tracked backing.
+Command time is 2,533.7 ms versus the earlier 2,066.0 ms baseline; these individual
+observations demonstrate bounded retention, not a throughput improvement.
 
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and

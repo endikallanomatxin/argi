@@ -6,12 +6,13 @@ const FileId = @import("../1_base/source_db.zig").FileId;
 const diagnostics_mod = @import("../1_base/diagnostic.zig");
 
 /// Owns immutable submitted source and syntax-free module graphs. Initialize in
-/// final storage. Diagnostics borrow source buffers, including rejected input,
-/// so this owner must outlive their use. Incremental semantic sessions borrow
+/// final storage. Diagnostics borrow source buffers, including the latest
+/// rejected batch, so this owner must outlive their use. Incremental semantic sessions borrow
 /// these modules without replaying source or retaining syntax trees.
 pub const Sources = struct {
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
+    retained_arenas: std.ArrayList(std.heap.ArenaAllocator) = .empty,
     modules: std.ArrayList(*module_sg.ModuleSemanticGraph) = .empty,
     sequence: u64 = 0,
     // A staging table only. Semantic sessions own their descriptor prefixes;
@@ -33,7 +34,50 @@ pub const Sources = struct {
         while (selections.next()) |selection| selection.deinit(self.allocator);
         self.selections.deinit(self.allocator);
         self.arena.deinit();
+        for (self.retained_arenas.items) |*arena| arena.deinit();
+        self.retained_arenas.deinit(self.allocator);
         self.* = undefined;
+    }
+
+    pub const Checkpoint = struct { modules: usize, files: usize, maps: usize };
+
+    /// A submission gets separate source backing. Published batches remain
+    /// immutable; an unpublished batch survives only through its last diagnostic.
+    pub fn beginBatch(self: *Sources, diagnostics: *const diagnostics_mod.Diagnostics) !Checkpoint {
+        if (self.arena.queryCapacity() != 0) {
+            try self.retained_arenas.append(self.allocator, self.arena);
+            self.arena = .init(self.allocator);
+        }
+        return .{ .modules = self.modules.items.len, .files = diagnostics.source_files.len, .maps = diagnostics.source_maps.len };
+    }
+
+    pub fn rollbackBatch(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, saved: Checkpoint) void {
+        while (self.modules.items.len > saved.modules) {
+            const module = self.modules.pop().?;
+            module.deinit(self.allocator);
+            self.allocator.destroy(module);
+        }
+        // Selection keys belong to diagnostic source IDs, including files that
+        // failed before a module could be built. Remove those without allocating.
+        while (true) {
+            var iterator = self.selections.keyIterator();
+            const discarded = found: {
+                while (iterator.next()) |key| if (@intFromEnum(key.*) >= saved.files) break :found key.*;
+                break :found null;
+            };
+            const key = discarded orelse break;
+            var removed = self.selections.fetchRemove(key).?.value;
+            removed.deinit(self.allocator);
+        }
+        self.module_views.clearRetainingCapacity();
+        diagnostics.truncateSources(saved.files, saved.maps);
+        _ = self.arena.reset(.free_all);
+    }
+
+    pub fn arenaBytes(self: *const Sources) usize {
+        var bytes = self.arena.queryCapacity();
+        for (self.retained_arenas.items) |arena| bytes += arena.queryCapacity();
+        return bytes;
     }
 
     pub const Command = struct {

@@ -28,6 +28,8 @@ pub const SourceMap = struct {
 /// A small *bag* allocated from an `Allocator` (an arena works well).
 pub const Diagnostics = struct {
     arena: *const std.mem.Allocator,
+    // Optional short-lived message storage; source indexes keep arena ownership.
+    message_allocator: ?std.mem.Allocator = null,
     source_files: []const sf.SourceFile, // Immutable initialized prefix.
     source_db: source_db.SourceDb,
     owned_source_files: ?[]sf.SourceFile = null,
@@ -87,14 +89,26 @@ pub const Diagnostics = struct {
         return id;
     }
 
+    /// Discard an unpublished source tail after its last diagnostic is cleared.
+    /// Accepted source IDs retain their coordinates; table capacity is reused.
+    pub fn truncateSources(self: *Diagnostics, count: usize, maps: usize) void {
+        std.debug.assert(self.owns_source_db and self.list.items.len == 0);
+        std.debug.assert(count <= self.source_files.len and maps <= self.source_maps.len);
+        for (self.source_db.files[count..]) |file| self.arena.free(file.line_starts);
+        self.source_db.files = self.source_db.files[0..count];
+        self.source_files = self.source_files[0..count];
+        self.source_maps = self.source_maps[0..maps];
+    }
+
     /// Missing source metadata must never suppress a semantic failure.
     pub fn addUnlocated(self: *Diagnostics, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
         return self.add(tok.Location.unavailable, kind, fmt, args);
     }
 
     pub fn add(self: *Diagnostics, loc: tok.Location, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
-        const txt = try std.fmt.allocPrint(self.arena.*, fmt, args);
-        errdefer self.arena.free(txt);
+        const messages = self.message_allocator orelse self.arena.*;
+        const txt = try std.fmt.allocPrint(messages, fmt, args);
+        errdefer messages.free(txt);
         try self.list.append(.{ .loc = self.presentedLocation(loc), .kind = kind, .msg = txt });
     }
 
