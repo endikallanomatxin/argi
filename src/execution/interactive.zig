@@ -1517,3 +1517,60 @@ test "interactive definitions preserve semantic identities without retaining exe
     try std.testing.expect(session.runtime.bodies.entries.get(answer).?.origin == origin);
     try session.close();
 }
+
+test "interactive generic specializations retain completed evidence while new types see later implementations" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Identify#(.T: Type): Contract = (.identify: (.value: T) -> (.result: Int32))\n" ++
+        "First: Type = (.value: Int32)\nSecond: Type = (.value: Int32)\n" ++
+        "dispatch#(.T: Type) := (.value: T) -> (.result: Int32) { result = Identify#(T).identify(.value = value) }");
+    // Definition lookup is already fixed, but concrete conformance selection
+    // must remain possible after a later implementation becomes available.
+    try session.submitDefinitions("implement#(.T: Type) Identify#(T) (.identify = (.value: T) -> (.result: Int32) { result = 7 })");
+    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("dispatch#(First)(.value = First(.value = 0))")).?.value.runtime.integer);
+    const graph = &session.compiler.semantic.relocation.graph;
+    const first = for (graph.generic_function_instances.items) |instance| {
+        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(instance.parameterized_declaration)), "dispatch")) break instance.function;
+    } else return error.MissingDispatchSpecialization;
+    const body = graph.function(first).body;
+    const proof = session.compiler.body_cache.entries.get(first);
+    try session.submitDefinitions("implement Identify#(Second) (.identify = (.value: Second) -> (.result: Int32) { result = 42 })");
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("dispatch#(Second)(.value = Second(.value = 0))")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("dispatch#(First)(.value = First(.value = 0))")).?.value.runtime.integer);
+    try std.testing.expectEqual(body, graph.function(first).body);
+    try std.testing.expect(proof == session.compiler.body_cache.entries.get(first));
+    try session.close();
+}
+
+test "interactive dormant operation signatures complete at first selected use without freezing definition evidence" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Identify#(.T: Type): Contract = (.identify: (.value: T) -> (.result: Int32))\nEcho#(.T: Type): Contract = (.echo: (.value: T) -> (.result: Int32))\nBox: Type = (.value: Int32)\nforward#(.T: Type) := (.value: T) -> (.result: Int32) { result = Identify#(T).identify(.value = value) }");
+    try session.submitDefinitions("implement Echo#(Box) (.echo = forward)");
+    const graph = &session.compiler.semantic.relocation.graph;
+    const method = for (graph.generic_function_instances.items) |instance| {
+        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(instance.parameterized_declaration)), "forward")) break instance.function;
+    } else return error.MissingForwardSignature;
+    try std.testing.expect(graph.function(method).body == null);
+    try std.testing.expect(!session.compiler.body_cache.entries.contains(method));
+    const saved = graph.checkpoint();
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("Echo#(Box).echo(.value = Box(.value = 0))"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+    try std.testing.expect(graph.function(method).body == null);
+    try std.testing.expect(!session.compiler.body_cache.entries.contains(method));
+    // Merely registering a signature has not resolved its body. The selected
+    // use can rely on evidence introduced after the generic definition.
+    try session.submitDefinitions("implement Identify#(Box) (.identify = (.value: Box) -> (.result: Int32) { result = 42 })");
+    try std.testing.expect(graph.function(method).body == null);
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Echo#(Box).echo(.value = Box(.value = 0))")).?.value.runtime.integer);
+    const body = graph.function(method).body;
+    try std.testing.expect(body != null);
+    try session.submitDefinitions("Unrelated: Type = (.flag: Bool)");
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Echo#(Box).echo(.value = Box(.value = 0))")).?.value.runtime.integer);
+    try std.testing.expectEqual(body, graph.function(method).body);
+    try session.close();
+}

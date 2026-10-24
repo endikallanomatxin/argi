@@ -74,9 +74,6 @@ Release order: [0.4](0.4.md). Supported commands/subset:
   transactional; continuations and caller temporal facts are always checked.
   Symbolic summaries retain selector and dependency hypotheses separately.
   Helper bytecode imports immutable verified origins without copying their tables.
-- Keep definition lookup separate from instantiation evidence. Delayed body
-  completion must preserve its selected context; new conformances must not
-  invalidate safety assumptions of published code.
 - Recover temporary metadata/frames only after all live dependents release them;
   preserve cross-unit virtual dispatch, references, cleanup and reset.
 - Continue measuring 10/100/1,000-command sessions, separating frontend, lowering,

@@ -69,6 +69,16 @@ An external implementation must be declared in the contract's defining module
 or the defining module of a nominal participant. Validate visible overlaps
 without giving source order or import order any priority.
 
+Incremental sessions distinguish a registered operation signature from its
+completed body. Registration alone does not freeze the body's conformance
+choices. The first selected use completes and checks the body within one
+semantic transaction. Lexical names retain their definition context; concrete
+participants can select evidence introduced after that definition. Once
+completed, the specialization keeps its body and selected evidence. New type
+arguments may produce new specializations; materializing one never rewrites
+another. Rejected materialization restores the pending signature and publishes
+neither body proofs nor executable units.
+
 ## Calling operations
 
 Qualified calls identify the operation explicitly:
