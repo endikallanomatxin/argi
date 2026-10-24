@@ -17,10 +17,12 @@ pub const Layout = struct {
         integer: struct { signed: bool },
         floating: enum { float16, float32, float64 },
         fields: []const Field,
+        choice: []const Variant,
         array: struct { element: *const Layout, length: usize, stride: usize },
     },
 
     pub const Field = struct { offset: usize, layout: *const Layout };
+    pub const Variant = struct { offset: usize, payload: ?*const Layout };
 };
 
 pub fn equal(left: *const Layout, right: *const Layout) bool {
@@ -31,6 +33,14 @@ pub fn equal(left: *const Layout, right: *const Layout) bool {
         .integer => |integer| integer.signed == right.shape.integer.signed,
         .floating => |kind| kind == right.shape.floating,
         .array => |array| array.length == right.shape.array.length and array.stride == right.shape.array.stride and equal(array.element, right.shape.array.element),
+        .choice => |variants| blk: {
+            if (variants.len != right.shape.choice.len) break :blk false;
+            for (variants, right.shape.choice) |a, c| {
+                if (a.offset != c.offset or (a.payload == null) != (c.payload == null)) break :blk false;
+                if (a.payload) |payload| if (!equal(payload, c.payload.?)) break :blk false;
+            }
+            break :blk true;
+        },
         .fields => |fields| blk: {
             if (fields.len != right.shape.fields.len) break :blk false;
             for (fields, right.shape.fields) |a, c| if (a.offset != c.offset or !equal(a.layout, c.layout)) break :blk false;
@@ -82,6 +92,18 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
         const stride = try alignOffset(element.size, element.alignment);
         if (try std.math.mul(usize, stride, length) != size) return error.UnsupportedNumericLayout;
         break :blk .{ .array = .{ .element = element, .length = length, .stride = stride } };
+    } else if (acquired and types.variants(graph, ty) != null) blk: {
+        const variants = types.variants(graph, ty).?;
+        const result = try allocator.alloc(Layout.Variant, variants.len);
+        var storage: types.ChoiceStorage = .{};
+        for (result, graph.variants.items[variants.start..][0..variants.len]) |*out, variant| {
+            const child = if (variant.payload_type) |payload| try compileDepth(allocator, graph, payload, depth + 1, acquired) else null;
+            const offset = storage.append(if (child) |payload| .{ .size = payload.size, .alignment = payload.alignment } else null);
+            out.* = .{ .offset = std.math.cast(usize, offset) orelse return error.Overflow, .payload = child };
+        }
+        const expected = storage.finish();
+        if (expected.size != size or expected.alignment != alignment) return error.UnsupportedNumericLayout;
+        break :blk .{ .choice = result };
     } else blk: {
         // Numeric unions and choices have overlapping or discriminated storage;
         // they need an explicit representation plan before byte access is valid.
@@ -101,6 +123,10 @@ fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGrap
     const result = try allocator.create(Layout);
     const has_references = switch (shape) {
         .reference, .virtual_reference => true,
+        .choice => |variants| blk: {
+            for (variants) |variant| if (variant.payload) |payload| if (payload.has_references) break :blk true;
+            break :blk false;
+        },
         .array => |array| array.length != 0 and array.element.has_references,
         .fields => |fields| blk: {
             for (fields) |field| if (field.layout.has_references) break :blk true;
@@ -122,7 +148,7 @@ fn alignOffset(value: usize, alignment: usize) !usize {
 pub fn readByte(layout: *const Layout, value: b.Value, offset: usize, endian: std.builtin.Endian) anyerror!u8 {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
-        .reference, .virtual_reference => error.ExecutionInvalidReference,
+        .reference, .virtual_reference, .choice => error.ExecutionInvalidReference,
         .boolean => if (value == .boolean) @intFromBool(value.boolean) else error.ExecutionInvalidReference,
         .integer, .floating => blk: {
             const bits = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
@@ -264,7 +290,7 @@ pub fn encodeFloat(layout: *const Layout, value: b.Value, bytes: []u8, endian: s
 pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
     if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
     return switch (layout.shape) {
-        .reference, .virtual_reference => error.ExecutionInvalidReference,
+        .reference, .virtual_reference, .choice => error.ExecutionInvalidReference,
         .boolean => if (value == .boolean) .{ .boolean = byte & 1 != 0 } else error.ExecutionInvalidReference,
         .integer, .floating => blk: {
             const previous = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;

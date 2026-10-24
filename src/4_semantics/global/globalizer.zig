@@ -408,6 +408,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
             .projected => |place| .{ .projected = .{ .binding = globalBinding(o, place.binding), .target = globalNode(o, place.target) } },
             .indirect => |id| .{ .indirect = globalNode(o, id) },
         },
+        .allow_untracked_complete = value.allow_untracked_complete,
         .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
         .input = if (value.input) |id| globalNode(o, id) else null,
         .self_field_index = value.self_field_index,
@@ -837,7 +838,7 @@ test "globalizer relocates cleanup storage identities without inventing indirect
         try module.semantic.auto_deinits.appendSlice(a, &.{
             .{ .storage = .{ .binding = @enumFromInt(0) }, .deinit_fn = null },
             .{ .storage = .{ .projected = .{ .binding = @enumFromInt(0), .target = @enumFromInt(0) } }, .deinit_fn = null },
-            .{ .storage = .{ .indirect = @enumFromInt(0) }, .deinit_fn = null },
+            .{ .storage = .{ .indirect = @enumFromInt(0) }, .deinit_fn = null, .allow_untracked_complete = true },
         });
     }
     var relocated = try relocate(a, &modules, .strict);
@@ -847,5 +848,6 @@ test "globalizer relocates cleanup storage identities without inventing indirect
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(1)), cleanups[4].ownerBinding().?);
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), cleanups[4].targetNode().?);
     try std.testing.expect(cleanups[5].ownerBinding() == null);
+    try std.testing.expect(cleanups[5].allow_untracked_complete);
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), cleanups[5].targetNode().?);
 }

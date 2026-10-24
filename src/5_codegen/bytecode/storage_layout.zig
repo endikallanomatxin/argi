@@ -26,6 +26,15 @@ fn matchesNode(layout: Layout, index: usize, physical: *const @import("numeric_l
     const node = layout.nodes[index];
     return switch (physical.shape) {
         .reference, .virtual_reference, .boolean, .integer, .floating => node.kind == .leaf,
+        .choice => |variants| blk: {
+            if (node.kind != .choice or node.count != variants.len or node.first > layout.nodes.len or variants.len > layout.nodes.len - node.first) break :blk false;
+            for (variants, 0..) |variant, child| {
+                if (variant.payload) |payload| {
+                    if (!matchesNode(layout, node.first + child, payload, depth + 1)) break :blk false;
+                } else if (layout.nodes[node.first + child].kind != .payloadless) break :blk false;
+            }
+            break :blk true;
+        },
         .fields => |fields| blk: {
             if (fields.len == 0) break :blk node.kind == .leaf;
             if (node.kind != .record or node.count != fields.len or node.first > layout.nodes.len or fields.len > layout.nodes.len - node.first) break :blk false;

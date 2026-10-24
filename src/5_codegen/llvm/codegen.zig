@@ -1602,7 +1602,7 @@ pub const CodeGenerator = struct {
             null;
         const optional_cleanup = if (self.replacement) |captured| captured.plan.value != store.value else true;
         const cleanup = if (store.cleanup_target) |target|
-            try self.capturedReferenceCleanup(.{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(try self.toLLVMType(store.field_type), 0), .reference_view = projected_view }, target, optional_cleanup)
+            try self.capturedReferenceCleanup(.{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(try self.toLLVMType(store.field_type), 0), .reference_view = projected_view }, target, optional_cleanup, null)
         else if (self.dropStateForNode(store.struct_ptr)) |parent|
             parent.project(self.builder, store.field_index)
         else
@@ -2078,12 +2078,13 @@ pub const CodeGenerator = struct {
         return state;
     }
 
-    // Only a proven lexical referent supplies fallback flags. A reference
-    // slot's own flags never establish its pointee's identity. Runtime views
-    // retain the complete owner so ancestor activation uses that same identity.
-    fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId, optional: bool) !?DropState {
+    // Fallback flags require a proven lexical referent or the plan's explicit
+    // trusted complete-value promise. A reference slot's flags never establish
+    // its pointee's identity. Existing runtime evidence always takes precedence.
+    fn capturedReferenceCleanup(self: *CodeGenerator, pointer: TypedValue, target: graph_mod.GlobalNodeId, optional: bool, fallback: ?DropState) !?DropState {
         const lexical = if (@import("../../4_semantics/global/lexical_storage.zig").root(self.graph, target) != null) self.dropStateForNode(target) else null;
-        if (lexical == null) {
+        const available = lexical orelse fallback;
+        if (available == null) {
             const view = pointer.reference_view orelse return null;
             const ty = self.graph.node(target).ty orelse return CodegenError.InvalidType;
             const flags = try reference_evidence.cleanupPointer(self.builder, view);
@@ -2098,17 +2099,17 @@ pub const CodeGenerator = struct {
             }
             return try self.referenceCleanupState(view, ty);
         }
-        var state = lexical.?;
+        var state = available.?;
         if (pointer.reference_view) |view| {
             const flags = try reference_evidence.cleanupPointer(self.builder, view);
             const absent = c.LLVMBuildIsNull(self.builder, flags, "reference.cleanup.absent");
-            const fallback = try self.dropRuntimeOwner(state);
+            const fallback_owner = try self.dropRuntimeOwner(state);
             const owner = try reference_evidence.runtimeOwner(self.builder, view);
             state = try DropState.fromPointer(self.allocator, self.graph, &self.cleanup_counts, state.ty, c.LLVMBuildSelect(self.builder, absent, state.flag_ref, flags, "reference.cleanup.flags"));
             state.runtime_owner = .{
-                .flags = c.LLVMBuildSelect(self.builder, absent, fallback.flags, owner.flags, "reference.owner.flags"),
-                .refresh = c.LLVMBuildSelect(self.builder, absent, fallback.refresh, owner.refresh, "reference.owner.refresh"),
-                .offset = c.LLVMBuildSelect(self.builder, absent, fallback.offset, owner.offset, "reference.owner.offset"),
+                .flags = c.LLVMBuildSelect(self.builder, absent, fallback_owner.flags, owner.flags, "reference.owner.flags"),
+                .refresh = c.LLVMBuildSelect(self.builder, absent, fallback_owner.refresh, owner.refresh, "reference.owner.refresh"),
+                .offset = c.LLVMBuildSelect(self.builder, absent, fallback_owner.offset, owner.offset, "reference.owner.offset"),
             };
         }
         return state;
@@ -2123,7 +2124,7 @@ pub const CodeGenerator = struct {
         const destination: WriteDestination = .{
             .address = pointer.value_ref,
             .type_ref = try self.toLLVMType(pointer_type.pointer.child),
-            .cleanup = try self.capturedReferenceCleanup(pointer, assignment.cleanup_target orelse assignment.pointer, optional_cleanup),
+            .cleanup = try self.capturedReferenceCleanup(pointer, assignment.cleanup_target orelse assignment.pointer, optional_cleanup, null),
             .cleanup_optional = optional_cleanup,
             .references = if (pointer.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else if (assignment.cleanup_target) |target| try self.referenceStorageForNode(target) else null,
             .reference_type = try self.optionalReferenceValueType(pointer_type.pointer.child),
@@ -2815,7 +2816,6 @@ pub const CodeGenerator = struct {
         if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input, callee.safety_primitive);
         if (callee.safety_primitive == .trusted_opaque_move_out) return self.opaqueTake(call.input);
         if (callee.safety_primitive == .trusted_opaque_relocate) return self.opaqueRelocate(call.input);
-        if (callee.safety_primitive == .trusted_opaque_drop) return self.opaqueDrop(call.input, callee);
         var indirect_signature: ?ExternSignature = null;
         defer if (indirect_signature) |signature| {
             signature.plan.deinit(self.allocator);
@@ -2979,40 +2979,6 @@ pub const CodeGenerator = struct {
         return null;
     }
 
-    fn opaqueDrop(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId, primitive: graph_mod.Function) !?TypedValue {
-        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) {
-            .struct_value_literal => |literal| literal,
-            else => return CodegenError.InvalidType,
-        };
-        const slot_ty = self.graph.fields.items[primitive.input.start].ty;
-        const child = switch (self.graph.semanticType(slot_ty)) {
-            .pointer => |pointer| pointer.child,
-            else => return CodegenError.InvalidType,
-        };
-        const destructor = (try types.deinitFunctionForInput(self.graph, child, primitive.input)) orelse return null;
-        const self_field = self.graph.functions.items[@intFromEnum(destructor)].input;
-        var self_index: ?u32 = null;
-        // The associated value identifies the receiver even when a capability
-        // precedes it or the signature uses a name other than self.
-        for (self.graph.fields.items[self_field.start..][0..self_field.len], 0..) |field, index| {
-            const pointer = switch (self.graph.semanticType(field.ty)) {
-                .pointer => |value| value,
-                else => continue,
-            };
-            if (pointer.mutability == .read_write and types.equal(self.graph, pointer.child, child)) {
-                self_index = @intCast(index);
-                break;
-            }
-        }
-        const transition = @import("../../4_semantics/primitives/registry.zig").opaqueCleanupTransition(primitive.safety_primitive) orelse return CodegenError.InvalidType;
-        if (transition.input >= input.fields.len) return CodegenError.InvalidType;
-        const field = self.graph.value_fields.items[input.fields.start + transition.input];
-        const slot = (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
-        try self.callDeinit(destructor, input_id, self_index orelse return CodegenError.InvalidType, slot.value_ref, slot.reference_view);
-        if (slot.reference_view) |view| try self.setReferentCleanup(view, child, transition.enabled);
-        return null;
-    }
-
     fn buildDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, entry_builder: llvm.c.LLVMBuilderRef) !DropState {
         return DropState.allocate(self.allocator, self.graph, &self.cleanup_counts, ty, entry_builder);
     }
@@ -3151,7 +3117,15 @@ pub const CodeGenerator = struct {
             const destination = captured.destination orelse return error.MissingReplacementDestination;
             return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, destination.address, captured.ty, destination.cleanup.?, destination.references);
         };
-        if (auto.storage == .indirect) return error.UnsupportedCleanupEvidence;
+        if (auto.storage == .indirect) {
+            const target = auto.targetNode() orelse return error.InvalidCleanupPlan;
+            const pointer = try self.addressablePointer(target);
+            const complete = if (auto.allow_untracked_complete) try self.buildDropState(self.graph.node(target).ty.?, self.builder) else null;
+            if (complete) |state| self.storeDropState(state, true);
+            const drop = try self.capturedReferenceCleanup(pointer, target, false, complete) orelse return error.UnsupportedCleanupEvidence;
+            const references = if (pointer.reference_view) |view| try reference_evidence.referencesPointer(self.builder, view) else null;
+            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, pointer.value_ref, self.graph.node(target).ty.?, drop, references);
+        }
         if (auto.targetNode()) |target| {
             const drop = self.dropStateForNode(target) orelse return CodegenError.InvalidType;
             const pointer = try self.addressablePointer(target);

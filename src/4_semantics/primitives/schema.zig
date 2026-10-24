@@ -464,6 +464,9 @@ pub fn AutoDeinit(comptime Ids: type) type {
             projected: struct { binding: Ids.BindingId, target: Ids.NodeId },
             indirect: Ids.NodeId,
         },
+        /// Trusted raw storage may promise a complete value without attached
+        /// cleanup evidence. Existing evidence always takes precedence.
+        allow_untracked_complete: bool = false,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,

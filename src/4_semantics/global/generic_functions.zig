@@ -3363,9 +3363,6 @@ pub const Resolver = struct {
                                 }
                             }
                         }
-                        if (module_path == null and std.mem.eql(u8, name, "deinit") and
-                            self.parameterized.safety_primitive == .trusted_opaque_drop)
-                            return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
                         return err;
                     };
                 };

@@ -284,15 +284,6 @@ const State = struct {
                 if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 try self.includeFunction(call.callee);
-                const callee = self.graph.functions.items[@intFromEnum(call.callee)];
-                if (callee.safety_primitive == .trusted_opaque_drop and callee.input.len != 0) {
-                    const slot_ty = self.graph.fields.items[callee.input.start].ty;
-                    if (self.graph.resolvedSemanticType(slot_ty)) |semantic| switch (semantic) {
-                        .pointer => |pointer| if (try types.deinitFunctionForInput(self.graph, pointer.child, callee.input)) |destructor|
-                            try self.includeCleanupFunction(destructor),
-                        else => {},
-                    };
-                }
             },
             .virtualize => |id| {
                 try self.functions.virtualizes.put(id, {});

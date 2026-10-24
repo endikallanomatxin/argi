@@ -288,7 +288,14 @@ pub const Storage = struct {
                     view.offset = try std.math.add(usize, view.offset, try std.math.mul(usize, index, array.stride));
                     view.layout = array.element;
                 },
-                .variant => return error.ExecutionInvalidReference,
+                .variant => |index| {
+                    if (view.layout.shape != .choice or index >= view.layout.shape.choice.len) return error.ExecutionInvalidReference;
+                    const tag = try @import("acquired_values.zig").choiceTag(self, view.handle, view.offset, view.layout, view.endian);
+                    if (tag != index) return error.ExecutionInactiveVariant;
+                    const variant = view.layout.shape.choice[index];
+                    view.offset = try std.math.add(usize, view.offset, variant.offset);
+                    view.layout = variant.payload orelse return error.ExecutionInactiveVariant;
+                },
             }
         }
         _ = try self.acquisitions.range(self, view.handle, view.offset, view.layout.size, view.layout.alignment);
@@ -334,6 +341,20 @@ pub const Storage = struct {
         if (depth > path.len) return error.ExecutionValueDepthLimit;
         switch (layout.shape) {
             .reference, .virtual_reference => try record.clear(path[0..depth]),
+            .choice => |variants| {
+                if (overlappingRanges(base, 4, offset, length)) return record.clear(path[0..depth]);
+                const value = record.storedValue(path[0..depth]) catch |err| switch (err) {
+                    error.ExecutionUninitializedStorage => return,
+                    else => return err,
+                };
+                if (value != .choice or value.choice.variant >= variants.len) return error.ExecutionInvalidReference;
+                const variant = variants[value.choice.variant];
+                if (variant.payload) |payload| {
+                    if (depth == path.len) return error.ExecutionValueDepthLimit;
+                    path[depth] = .{ .variant = value.choice.variant };
+                    try invalidateReferenceBytes(record, payload, base + variant.offset, offset, length, path, depth + 1);
+                }
+            },
             .fields => |fields| {
                 if (depth == path.len) return error.ExecutionValueDepthLimit;
                 for (fields, 0..) |field, index| {
@@ -735,6 +756,8 @@ pub const Storage = struct {
     pub fn choiceTag(self: *Storage, reference: v.Reference) !u32 {
         try self.validateContext(reference);
         _ = try self.frameValues(reference.frame);
+        if (try self.acquiredView(reference)) |view|
+            return @import("acquired_values.zig").choiceTag(self, view.handle, view.offset, view.layout, view.endian);
         const frame = &self.frames.items[@intFromEnum(reference.frame)];
         if (reference.byte_view != null or frame.duration == .static or frame.duration == .acquired) return error.ExecutionInvalidReference;
         const value = if (frame.partial_storage.getPtr(reference.root)) |record|
@@ -2481,6 +2504,41 @@ test "prepared acquired references retain siblings and revoke only physically ov
     try std.testing.expectError(error.ExecutionReleasedAcquisition, storage.read(second));
 }
 
+test "acquired choice tag writes revoke reference evidence without reviving old payloads" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const caller = try storage.enter(1);
+    try (try storage.slots(caller)).put(0, .{ .integer = 42 });
+    const reference: v.Reference = .{ .context = storage.context, .frame = caller, .root = 0, .path = &.{}, .mutability = .read_only };
+    const pointer: numeric.Layout = .{ .size = 8, .alignment = 8, .has_references = true, .shape = .{ .reference = .read_only } };
+    const number: numeric.Layout = .{ .size = 8, .alignment = 8, .shape = .{ .integer = .{ .signed = false } } };
+    const physical: numeric.Layout = .{ .size = 24, .alignment = 8, .has_references = true, .shape = .{ .choice = &.{ .{ .offset = 8, .payload = &pointer }, .{ .offset = 16, .payload = &number } } } };
+    const logical: partial.Layout = .{ .nodes = &.{ .{ .kind = .choice, .first = 1, .count = 2, .span = 3 }, .{ .offset = 1 }, .{ .offset = 2 } } };
+    const handle = try storage.acquisitions.acquire(&storage, 48, 8);
+    const prepared = try storage.reserveAcquiredReceipt(handle, 0, &physical, .little, logical, null, 2, 0);
+    const first = try storage.borrowAcquiredElement(prepared, 0, .read_write);
+    const second = try storage.borrowAcquiredElement(prepared, 1, .read_write);
+    var payload: b.Value = .{ .reference = reference };
+    const value: b.Value = .{ .choice = .{ .variant = 0, .payload = &payload } };
+    try storage.store(first, value);
+    try storage.store(second, value);
+    const snapshot = try storage.read(first);
+    // Bytes belonging to an inactive alternative cannot revoke the active loan.
+    try storage.acquisitions.write(&storage, handle, 16, &.{9});
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read((try storage.read(first)).choice.payload.?.reference)).integer);
+    // Even writing the same discriminant revokes the old typed evidence.
+    try storage.acquisitions.write(&storage, handle, 0, &.{0});
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(first));
+    try storage.acquisitions.write(&storage, handle, 0, &.{1});
+    try storage.acquisitions.write(&storage, handle, 0, &.{0});
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(first));
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read((try storage.read(second)).choice.payload.?.reference)).integer);
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read(snapshot.choice.payload.?.reference)).integer);
+    try storage.store(first, value);
+    try std.testing.expectEqual(@as(u64, 42), (try storage.read((try storage.read(first)).choice.payload.?.reference)).integer);
+}
+
 test "prepared acquired virtual values retain one selected witness and invalidate both physical words" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -2537,4 +2595,52 @@ test "prepared acquired mutable references preserve permission without upgrading
     try storage.store(retained, .{ .integer = 42 });
     try std.testing.expectEqual(@as(u64, 42), (try storage.read(mutable)).integer);
     try std.testing.expectError(error.ExecutionInvalidReference, storage.numericBytes(slot, &physical, .little));
+}
+
+test "acquired choices use initialized tags and only the selected physical payload" {
+    const wide: numeric.Layout = .{ .size = 8, .alignment = 8, .shape = .{ .integer = .{ .signed = false } } };
+    const narrow: numeric.Layout = .{ .size = 2, .alignment = 2, .shape = .{ .integer = .{ .signed = false } } };
+    const layout: numeric.Layout = .{ .size = 24, .alignment = 8, .shape = .{ .choice = &.{
+        .{ .offset = 8, .payload = &wide },
+        .{ .offset = 16, .payload = &narrow },
+        .{ .offset = 18, .payload = null },
+    } } };
+    for ([_]std.builtin.Endian{ .little, .big }) |endian| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var storage = try Storage.init(arena.allocator(), 100);
+        const region = try storage.acquisitions.acquire(&storage, layout.size, layout.alignment);
+        const root = try storage.acquiredReference(region, 0, &layout, endian, .read_write, null);
+        try std.testing.expectError(error.ExecutionUninitializedStorage, storage.choiceTag(root));
+        const payload: b.Value = .{ .integer = 42 };
+        try storage.store(root, .{ .choice = .{ .variant = 0, .payload = &payload } });
+        try std.testing.expectEqual(@as(u32, 0), try storage.choiceTag(root));
+        try std.testing.expectEqual(@as(u64, 42), (try storage.read(root)).choice.payload.?.integer);
+        var active = root;
+        active.path = &.{.{ .variant = 0 }};
+        try std.testing.expectEqual(@as(u64, 42), (try storage.read(active)).integer);
+        var other = root;
+        other.path = &.{.{ .variant = 1 }};
+        try std.testing.expectError(error.ExecutionInactiveVariant, storage.read(other));
+        var raw: [1]u8 = undefined;
+        try std.testing.expectError(error.ExecutionUninitializedStorage, storage.acquisitions.read(&storage, region, 4, &raw));
+        try std.testing.expectError(error.ExecutionUninitializedStorage, storage.acquisitions.read(&storage, region, 16, &raw));
+        const malformed: b.Value = .{ .boolean = true };
+        try std.testing.expectError(error.ExecutionInvalidReference, storage.store(root, .{ .choice = .{ .variant = 1, .payload = &malformed } }));
+        try std.testing.expectEqual(@as(u32, 0), try storage.choiceTag(root));
+        try std.testing.expectEqual(@as(u64, 42), (try storage.read(active)).integer);
+        var tag: [4]u8 = undefined;
+        std.mem.writeInt(u32, &tag, 1, endian);
+        try storage.acquisitions.write(&storage, region, 0, &tag);
+        try std.testing.expectEqual(@as(u32, 1), try storage.choiceTag(root));
+        try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(root));
+        try storage.store(other, .{ .integer = 22 });
+        try std.testing.expectEqual(@as(u64, 22), (try storage.read(root)).choice.payload.?.integer);
+        try storage.store(root, .{ .choice = .{ .variant = 2, .payload = null } });
+        try std.testing.expect((try storage.read(root)).choice.payload == null);
+        try std.testing.expectError(error.ExecutionUninitializedStorage, storage.acquisitions.read(&storage, region, 16, &raw));
+        std.mem.writeInt(u32, &tag, 99, endian);
+        try storage.acquisitions.write(&storage, region, 0, &tag);
+        try std.testing.expectError(error.ExecutionInvalidReference, storage.choiceTag(root));
+    }
 }

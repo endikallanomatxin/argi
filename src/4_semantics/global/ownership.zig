@@ -107,6 +107,9 @@ pub const Resolver = struct {
         const body = function.body orelse return true;
         try self.materializeOutputInitializers(function, body);
         if (!self.functionReadyForCleanup(function, body)) return false;
+        if (function.safety_primitive == .trusted_opaque_drop) {
+            try self.materializeOpaqueDrop(function_id, function, body);
+        }
         // Determine possible replacement before adding cleanup sequences. In
         // particular, an unaddressed output's first initialization has no old
         // owner and must not instantiate a destructor solely to skip it later.
@@ -136,6 +139,34 @@ pub const Resolver = struct {
         const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
         try self.finalizeBlock(body, &active, &defers, &visible, &.{}, function_id, @intCast(@intFromEnum(module)));
         return true;
+    }
+
+    // The trusted boundary changes the caller's ownership facts, but destruction
+    // itself uses the same selected plan as lexical and replacement cleanup.
+    fn materializeOpaqueDrop(self: *Resolver, function_id: global_sg.GlobalFunctionId, function: global_sg.Function, body: global_sg.GlobalBlockId) !void {
+        if (self.graph.blocks.items[@intFromEnum(body)].nodes.len != 0) return;
+        if (function.input_bindings.len != 1) return error.InvalidCleanupTarget;
+        const binding = self.graph.binding_refs.items[function.input_bindings.start];
+        const record = self.graph.binding(binding);
+        const pointer = switch (self.graph.semanticType(record.ty)) {
+            .pointer => |value| value,
+            else => return error.InvalidCleanupTarget,
+        };
+        const address = try self.appendNode(record.source, record.ty, .{ .binding_use = binding });
+        const target = try self.appendNode(record.source, pointer.child, .{ .dereference = .{ .pointer = address, .ty = pointer.child, .pointer_type = record.ty } });
+        const visible = try self.allocator.dupe(global_sg.GlobalBindingId, self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]);
+        defer self.allocator.free(visible);
+        const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
+        var plan = try self.buildAutoDeinit(.{ .indirect = target }, target, pointer.child, reach_context.Context.fromGlobal(visible, function_id), @intFromEnum(module)) orelse return;
+        plan.allow_untracked_complete = true;
+        const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);
+        try self.graph.auto_deinits.append(self.allocator, plan);
+        const cleanup = try self.appendNode(record.source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
+        const start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.append(self.allocator, cleanup);
+        var updated = self.graph.blocks.items[@intFromEnum(body)];
+        updated.nodes = .{ .start = start, .len = 1 };
+        try self.graph.setBlock(self.allocator, body, updated);
     }
 
     // Output defaults execute in declaration order before source statements.

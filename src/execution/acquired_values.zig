@@ -54,9 +54,9 @@ fn readWithEvidence(storage: *Storage, handle: Handle, offset: usize, layout: *c
     var empty: []Value = &.{};
     switch (layout.shape) {
         .reference, .virtual_reference, .boolean, .integer, .floating => return readValidated(storage, handle, offset, layout, endian, &empty, evidence),
-        .fields, .array => {},
+        .fields, .array, .choice => {},
     }
-    const cells = try readableCells(storage, handle, offset, layout, evidence);
+    const cells = try readableCells(storage, handle, offset, layout, endian, evidence);
     if (cells > storage.limit -| storage.cells) return error.ExecutionMemoryLimit;
     // One backing allocation owns the entire numeric snapshot. Nested values
     // contain views into it, so allocation failure cannot leave partial trees.
@@ -71,9 +71,19 @@ fn readWithEvidence(storage: *Storage, handle: Handle, offset: usize, layout: *c
     return value;
 }
 
+pub fn choiceTag(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian) !u32 {
+    if (layout.shape != .choice) return error.ExecutionInvalidReference;
+    _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
+    var bytes: [4]u8 = undefined;
+    try storage.acquisitions.read(storage, handle, offset, &bytes);
+    const tag = std.mem.readInt(u32, &bytes, endian);
+    if (tag >= layout.shape.choice.len) return error.ExecutionInvalidReference;
+    return tag;
+}
+
 // Inspect typed leaves only: record padding is neither a value nor required to
 // be initialized. Failed reads publish no snapshots and consume no cell quota.
-fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, evidence: ?*Evidence) anyerror!usize {
+fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *const Layout, endian: std.builtin.Endian, evidence: ?*Evidence) anyerror!usize {
     _ = try storage.acquisitions.range(storage, handle, offset, layout.size, layout.alignment);
     return switch (layout.shape) {
         .reference, .virtual_reference => blk: {
@@ -84,6 +94,16 @@ fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *cons
             try storage.acquisitions.requireInitialized(storage, handle, offset, layout.size);
             break :blk 0;
         },
+        .choice => |variants| blk: {
+            const tag = try choiceTag(storage, handle, offset, layout, endian);
+            const selected = variants[tag];
+            const payload = selected.payload orelse break :blk 0;
+            if (evidence) |path| try path.push(.{ .variant = tag });
+            defer if (evidence) |path| {
+                path.len -= 1;
+            };
+            break :blk std.math.add(usize, 1, try readableCells(storage, handle, offset + selected.offset, payload, endian, evidence)) catch error.ExecutionMemoryLimit;
+        },
         .fields => |fields| blk: {
             var count: usize = fields.len;
             for (fields, 0..) |field, index| {
@@ -91,7 +111,7 @@ fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *cons
                 defer if (evidence) |selected| {
                     selected.len -= 1;
                 };
-                count = std.math.add(usize, count, try readableCells(storage, handle, offset + field.offset, field.layout, evidence)) catch return error.ExecutionMemoryLimit;
+                count = std.math.add(usize, count, try readableCells(storage, handle, offset + field.offset, field.layout, endian, evidence)) catch return error.ExecutionMemoryLimit;
             }
             break :blk count;
         },
@@ -102,7 +122,7 @@ fn readableCells(storage: *Storage, handle: Handle, offset: usize, layout: *cons
                 defer if (evidence) |selected| {
                     selected.len -= 1;
                 };
-                count = std.math.add(usize, count, try readableCells(storage, handle, offset + index * array.stride, array.element, evidence)) catch return error.ExecutionMemoryLimit;
+                count = std.math.add(usize, count, try readableCells(storage, handle, offset + index * array.stride, array.element, endian, evidence)) catch return error.ExecutionMemoryLimit;
             }
             break :blk count;
         },
@@ -124,6 +144,19 @@ fn readValidated(storage: *Storage, handle: Handle, offset: usize, layout: *cons
             var bytes: [8]u8 = undefined;
             try storage.acquisitions.read(storage, handle, offset, bytes[0..layout.size]);
             break :blk try @import("../5_codegen/bytecode/numeric_layout.zig").decodeFloat(layout, bytes[0..layout.size], endian);
+        },
+        .choice => |variants| blk: {
+            const tag = try choiceTag(storage, handle, offset, layout, endian);
+            const selected = variants[tag];
+            const child = selected.payload orelse break :blk .{ .choice = .{ .variant = tag, .payload = null } };
+            const payload = &remaining.*[0];
+            remaining.* = remaining.*[1..];
+            if (evidence) |path| try path.push(.{ .variant = tag });
+            defer if (evidence) |path| {
+                path.len -= 1;
+            };
+            payload.* = try readValidated(storage, handle, offset + selected.offset, child, endian, remaining, evidence);
+            break :blk .{ .choice = .{ .variant = tag, .payload = payload } };
         },
         .fields => |fields| blk: {
             const values = remaining.*[0..fields.len];
@@ -193,6 +226,18 @@ fn walkWrite(storage: *Storage, handle: Handle, offset: usize, layout: *const La
             var bytes: [8]u8 = undefined;
             try @import("../5_codegen/bytecode/numeric_layout.zig").encodeFloat(layout, value, bytes[0..layout.size], endian);
             if (commit) try storage.acquisitions.write(storage, handle, offset, bytes[0..layout.size]);
+        },
+        .choice => |variants| {
+            if (value != .choice or value.choice.variant >= variants.len) return error.ExecutionInvalidReference;
+            const selected = variants[value.choice.variant];
+            if ((selected.payload == null) != (value.choice.payload == null)) return error.ExecutionInvalidReference;
+            if (commit) try storage.acquisitions.forgetBytes(storage, handle, offset, layout.size);
+            if (selected.payload) |payload| try walkWrite(storage, handle, offset + selected.offset, payload, value.choice.payload.?.*, endian, commit);
+            if (commit) {
+                var bytes: [4]u8 = undefined;
+                std.mem.writeInt(u32, &bytes, value.choice.variant, endian);
+                try storage.acquisitions.write(storage, handle, offset, &bytes);
+            }
         },
         .fields => |fields| {
             if (value != .record or value.record.len != fields.len) return error.ExecutionInvalidReference;

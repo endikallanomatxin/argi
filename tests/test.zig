@@ -15046,3 +15046,43 @@ test "feature_tests/execution/257_partial_choice_payload_storage" {
     try runExpect("tests/feature_tests/execution/257_partial_choice_payload_storage", 42);
     try vmExpect("tests/feature_tests/execution/257_partial_choice_payload_storage", 42, null);
 }
+
+test "feature_tests/execution/258_acquired_choice_virtual_witness" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/258_acquired_choice_virtual_witness");
+    try runExpect("tests/feature_tests/execution/258_acquired_choice_virtual_witness", 42);
+    try vmExpect("tests/feature_tests/execution/258_acquired_choice_virtual_witness", 42, null);
+}
+
+test "feature_tests/execution/259_acquired_choice_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/259_acquired_choice_resources");
+    try runExpect("tests/feature_tests/execution/259_acquired_choice_resources", 42);
+    try vmExpect("tests/feature_tests/execution/259_acquired_choice_resources", 42, null);
+}
+
+test "argi repl retains acquired choice cleanup identities across submissions" {
+    const commands =
+        \\Counter: Type = (.drops: Int32 = 0)
+        \\Resource: Type = (.counter: $&Counter, .id: Int32)
+        \\Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
+        \\implement Deinit#(Resource) (
+        \\    .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + self&.id }
+        \\)
+        \\counter :: Counter = Counter()
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = allocator))
+        \\raw ::= raw_pointer#(.t: Choice)(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot#(.t: Choice)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\value :: Choice = ..pair(.left = (.counter = $&counter, .id = 11), .right = (.counter = $&counter, .id = 31))
+        \\filled ::= trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = ~value)
+        \\dropped ::= trusted_opaque_drop(.slot = slot)
+        \\emptied ::= trusted_opaque_mark_empty(.storage = $&memory)
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n");
+}
+
+test "feature_tests/execution/260_acquired_choice_array_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/260_acquired_choice_array_replacement");
+    try runExpect("tests/feature_tests/execution/260_acquired_choice_array_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/260_acquired_choice_array_replacement", 42, null);
+}

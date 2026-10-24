@@ -492,7 +492,10 @@ const FunctionLower = struct {
             if (captured.target) |target|
                 return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, target, captured.ty.?);
         };
-        if (auto.storage == .indirect) return self.parent.reject(self.parent.source, "indirect cleanup identity transport");
+        if (auto.storage == .indirect) {
+            const target = auto.targetNode() orelse return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?);
+        }
         if (auto.targetNode()) |target| {
             if (try self.nodeDrop(target) == null) return error.InvalidBytecode;
             return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?);

@@ -234,44 +234,6 @@ pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.
     return deinitFunction(graph, ty) != null;
 }
 
-/// Opaque drops use selected Deinit evidence and check its capability inputs
-/// against the supplied arguments.
-pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value_type: graph_mod.GlobalTypeId, supplied: graph_mod.FieldRange) error{AmbiguousOpaqueDestructor}!?graph_mod.GlobalFunctionId {
-    var found: ?graph_mod.GlobalFunctionId = null;
-    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
-    var operations = contract_evidence.materializedOperations(graph, contract);
-    while (operations.next()) |selected| {
-        const id = selected.materializedFunction(graph) orelse continue;
-        const function = graph.function(id);
-        if (!function.flags.is_deinit) continue;
-        const participant = selected.participant(graph, 0) orelse continue;
-        if (!equal(graph, participant, value_type)) continue;
-        var self_matches = false;
-        var arguments_match = true;
-        for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |expected, index| {
-            const name = graph.text(expected.name);
-            const is_receiver = index == 0;
-            if (is_receiver) {
-                self_matches = true;
-                continue;
-            }
-            var provided = false;
-            for (graph.fields.items[supplied.start..][0..supplied.len]) |actual| {
-                if (!std.mem.eql(u8, name, graph.text(actual.name))) continue;
-                provided = true;
-                if (!equal(graph, expected.ty, actual.ty)) arguments_match = false;
-                break;
-            }
-            if (!provided and expected.default_value == null) arguments_match = false;
-            if (!arguments_match) break;
-        }
-        if (!self_matches or !arguments_match) continue;
-        if (found != null and found.? != id) return error.AmbiguousOpaqueDestructor;
-        found = id;
-    }
-    return found;
-}
-
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {
     if (graph.isTypeUnresolved(ty)) return null;
     for (graph.generic_instances.items) |instance| if (instance.type_id == ty) return instance;
@@ -463,24 +425,32 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
     return .{ .size = alignForward(offset, alignment), .alignment = alignment };
 }
 
+/// Regular-choice ABI shared with execution descriptors: an i32 tag followed
+/// by one physical field per alternative. Payloadless fields occupy one byte.
+pub const ChoiceStorage = struct {
+    offset: u64 = 4,
+    alignment: u64 = 4,
+
+    pub fn append(self: *ChoiceStorage, payload: ?Layout) u64 {
+        const field = payload orelse Layout{ .size = 1, .alignment = 1 };
+        self.offset = alignForward(self.offset, field.alignment);
+        const offset = self.offset;
+        self.offset += field.size;
+        self.alignment = @max(self.alignment, field.alignment);
+        return offset;
+    }
+
+    pub fn finish(self: ChoiceStorage) Layout {
+        return .{ .size = alignForward(self.offset, self.alignment), .alignment = self.alignment };
+    }
+};
+
 fn choiceLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.VariantRange, kind: primitives.ChoiceLayout) LayoutError!Layout {
     if (kind == .c_enum) return .{ .size = 4, .alignment = 4 };
-    // Keep the current ABI exactly: regular choices are a tag followed by one
-    // storage field per variant (rather than a payload union).
-    var offset: u64 = 4;
-    var alignment: u64 = 4;
-    for (graph.variants.items[range.start..][0..range.len]) |variant| {
-        // LLVM retains an i8 field for a variant without a payload.
-        // Include it in offsets and copy sizes even though it carries no value.
-        const layout: Layout = if (variant.payload_type) |payload_ty|
-            try layoutOf(graph, payload_ty)
-        else
-            .{ .size = 1, .alignment = 1 };
-        offset = alignForward(offset, layout.alignment);
-        offset += layout.size;
-        alignment = @max(alignment, layout.alignment);
-    }
-    return .{ .size = alignForward(offset, alignment), .alignment = alignment };
+    var storage: ChoiceStorage = .{};
+    for (graph.variants.items[range.start..][0..range.len]) |variant|
+        _ = storage.append(if (variant.payload_type) |payload| try layoutOf(graph, payload) else null);
+    return storage.finish();
 }
 
 fn alignForward(value: u64, alignment: u64) u64 {
@@ -598,7 +568,6 @@ test "cleanup queries require selected Deinit evidence" {
         .flags = .{ .is_deinit = true },
     });
     try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
-    try std.testing.expectEqual(@as(?graph_mod.GlobalFunctionId, null), try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 0 }));
 
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
     try graph.function_refs.append(allocator, @enumFromInt(0));
@@ -620,7 +589,6 @@ test "cleanup queries require selected Deinit evidence" {
     });
     try std.testing.expect(hasDestructor(&graph, @enumFromInt(0)));
     try std.testing.expect(!hasDestructor(&graph, @enumFromInt(1)));
-    try std.testing.expectEqual(@as(?graph_mod.GlobalFunctionId, @enumFromInt(0)), try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 0 }));
 }
 
 test "global semantic types expose structural fields and variants" {
