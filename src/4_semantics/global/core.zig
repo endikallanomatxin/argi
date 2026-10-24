@@ -48,21 +48,12 @@ pub const Resolver = struct {
     // to revisit when a callee gains a transitive reached input. Retain their
     // lexical context until the signatures reach the semantizing fixed point.
     reached_calls: std.ArrayList(ReachedCall) = .empty,
-    // Reached defaults extend existing function interfaces in place. Graph
-    // checkpoints truncate appended pools but cannot undo these interface edits.
-    reached_signature_changes: std.ArrayList(ReachedSignatureChange) = .empty,
     const ReachedCall = struct {
         callee: global_sg.GlobalFunctionId,
         input: global_sg.GlobalNodeId,
         skip_receiver: bool,
         owner: ?global_sg.GlobalFunctionId,
         visible: []global_sg.GlobalBindingId,
-    };
-
-    const ReachedSignatureChange = struct {
-        owner: global_sg.GlobalFunctionId,
-        input: global_sg.FieldRange,
-        bindings: global_sg.BindingRange,
     };
 
     pub const SessionNamespace = struct {
@@ -98,20 +89,6 @@ pub const Resolver = struct {
         }
     }
 
-    pub fn rollback_reached_signatures(self: *Resolver, count: usize) void {
-        var index = self.reached_signature_changes.items.len;
-        while (index > count) {
-            index -= 1;
-            const change = self.reached_signature_changes.items[index];
-            // A graph rollback may already have discarded a new owner.
-            if (@intFromEnum(change.owner) >= self.graph.functions.items.len) continue;
-            const owner = &self.graph.functions.items[@intFromEnum(change.owner)];
-            owner.input = change.input;
-            owner.input_bindings = change.bindings;
-        }
-        self.reached_signature_changes.shrinkRetainingCapacity(count);
-    }
-
     pub fn rollbackReachedCalls(self: *Resolver, count: usize) void {
         for (self.reached_calls.items[count..]) |call| self.allocator.free(call.visible);
         self.reached_calls.shrinkRetainingCapacity(count);
@@ -120,7 +97,6 @@ pub const Resolver = struct {
     pub fn deinitReachedCalls(self: *Resolver) void {
         self.rollbackReachedCalls(0);
         self.reached_calls.deinit(self.allocator);
-        self.reached_signature_changes.deinit(self.allocator);
     }
 
     // Instantiation and cleanup can resolve calls before a callee acquires
@@ -1590,11 +1566,9 @@ pub const Resolver = struct {
         else
             null;
         const calls = self.reached_calls.items.len;
-        const signatures = self.reached_signature_changes.items.len;
         var published = false;
         defer if (!published) {
             self.rollbackReachedCalls(calls);
-            self.rollback_reached_signatures(signatures);
             transaction.rollback();
             if (effects) |checkpoint| self.argument_defaults.?.rollback(self.argument_defaults.?.context, checkpoint);
         };
@@ -1776,7 +1750,7 @@ pub const Resolver = struct {
         default_node: global_sg.GlobalNodeId,
     ) !?global_sg.GlobalNodeId {
         const resolved_owner = owner_id orelse return null;
-        const owner = &self.graph.functions.items[@intFromEnum(resolved_owner)];
+        const owner = self.graph.function(resolved_owner);
         const owner_name = self.graph.text(self.graph.declarations.items[@intFromEnum(owner.declaration)].name);
         if (std.mem.eql(u8, owner_name, "main") and !std.mem.eql(u8, self.graph.text(reached_field.name), "error_tracer")) return null;
 
@@ -1823,13 +1797,10 @@ pub const Resolver = struct {
         const binding_start: u32 = @intCast(self.graph.binding_refs.items.len);
         try self.graph.binding_refs.appendSlice(self.allocator, copied_bindings);
         try self.graph.binding_refs.append(self.allocator, binding_id);
-        try self.reached_signature_changes.append(self.allocator, .{
-            .owner = resolved_owner,
-            .input = old_input,
-            .bindings = old_bindings,
-        });
-        owner.input = .{ .start = field_start, .len = old_input.len + 1 };
-        owner.input_bindings = .{ .start = binding_start, .len = old_bindings.len + 1 };
+        var completed = owner;
+        completed.input = .{ .start = field_start, .len = old_input.len + 1 };
+        completed.input_bindings = .{ .start = binding_start, .len = old_bindings.len + 1 };
+        try self.graph.setFunction(self.allocator, resolved_owner, completed);
 
         const node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.allocator, .{
@@ -2490,7 +2461,6 @@ test "reached signature rollback restores interfaces before discarded pools are 
     }
     try std.testing.expectEqual(@as(u32, 2), graph.functions.items[0].input_bindings.len);
     graph.rollback(allocator, saved);
-    resolver.rollback_reached_signatures(0);
     try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input.len);
     try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input_bindings.len);
     try std.testing.expectEqual(@as(usize, 0), graph.binding_refs.items.len);

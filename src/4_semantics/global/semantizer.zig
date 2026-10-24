@@ -2293,7 +2293,7 @@ fn diagnoseUnresolvedQualifiedTypes(
 
 fn resolveQualifiedChoiceOptions(core: *core_mod.Resolver, diagnostics: ?*diagnostics_mod.Diagnostics) !bool {
     const graph = core.graph;
-    for (graph.variants.items) |*variant| {
+    for (graph.variants.items, 0..) |variant, index| {
         const qualifier = variant.qualifier orelse continue;
         const source = variant.source;
         if (source.file_index >= graph.files.items.len) return error.InvalidChoiceOptionSource;
@@ -2319,8 +2319,10 @@ fn resolveQualifiedChoiceOptions(core: *core_mod.Resolver, diagnostics: ?*diagno
                 return true;
             }
         }
-        variant.option_decl = found orelse return error.UnknownChoiceOption;
-        variant.qualifier = null;
+        var resolved = variant;
+        resolved.option_decl = found orelse return error.UnknownChoiceOption;
+        resolved.qualifier = null;
+        try graph.setVariant(core.allocator, @enumFromInt(index), resolved);
     }
     return false;
 }

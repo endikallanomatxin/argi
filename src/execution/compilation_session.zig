@@ -837,9 +837,9 @@ test "unit selection preserves pending binding types for later materialization" 
     try std.testing.expect(selected.checked.?.unit.?.contains(helper));
     try std.testing.expect(!selected.checked.?.graph.isBindingTypeUnresolved(pending.?));
     try std.testing.expect(checked.graph.isBindingTypeUnresolved(pending.?));
-    try std.testing.expect(selected.semantic.?.relocation.graph.checkpoint().function_completions_len != 0);
+    try std.testing.expect(selected.semantic.?.relocation.graph.checkpoint().function_rewrites_len != 0);
     try session.accept(&selected);
-    try std.testing.expectEqual(@as(usize, 0), session.semantic.relocation.graph.checkpoint().function_completions_len);
+    try std.testing.expectEqual(@as(usize, 0), session.semantic.relocation.graph.checkpoint().function_rewrites_len);
     try std.testing.expect(!diagnostics.hasErrors());
 }
 

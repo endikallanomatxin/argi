@@ -499,7 +499,7 @@ pub const Resolver = struct {
         // Access nodes keep the effective runtime representation in their
         // type. This is what lets later reach traversal and codegen stay
         // entirely static once the backing implementer is known.
-        for (self.graph.nodes.items) |*node| {
+        for (self.graph.nodes.items, 0..) |node, raw| {
             const access = switch (node.content) {
                 .struct_field_access => |value| value,
                 else => continue,
@@ -513,7 +513,7 @@ pub const Resolver = struct {
             if (access.field_index >= fields.len) return error.InvalidContractFieldIndex;
             const effective = (self.graph.fields.items[fields.start + access.field_index]).ty;
             if (node.ty == null or !global_types.equal(self.graph, node.ty.?, effective)) {
-                node.ty = effective;
+                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), effective);
                 changed = true;
             }
         }
@@ -2056,11 +2056,13 @@ pub const Resolver = struct {
             }
             const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
             try self.graph.function_refs.appendSlice(self.allocator, operations.items);
-            self.graph.contract_conformances.items[index].operations = .{ .start = operation_start, .len = @intCast(operations.items.len) };
+            var completed = self.graph.contract_conformances.items[index];
+            completed.operations = .{ .start = operation_start, .len = @intCast(operations.items.len) };
             // Empty marker contracts are validated too. Keep retrying markers
             // with unresolved arguments so projection/alias resolution cannot
             // hide a later bound failure or duplicate participant tuple.
-            self.graph.contract_conformances.items[index].declaration_validated = operations.items.len != 0 or self.conformanceArgumentsReady(conformance);
+            completed.declaration_validated = operations.items.len != 0 or self.conformanceArgumentsReady(conformance);
+            try self.graph.setContractConformance(self.allocator, @intCast(index), completed);
         }
     }
 

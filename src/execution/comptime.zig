@@ -86,7 +86,7 @@ const Context = struct {
             .binding_use, .binary_operation, .comparison, .struct_field_access, .array_index => try self.expressionConstant(id, 0),
             else => return error.UnsupportedCompileTimeExpression,
         };
-        self.graph.nodes.items[@intFromEnum(id)] = self.graph.node(result);
+        try self.graph.setNode(self.allocator, id, self.graph.node(result));
         self.states[index] = .done;
     }
 

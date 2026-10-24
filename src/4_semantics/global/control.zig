@@ -268,7 +268,9 @@ pub const Resolver = struct {
             .source = source,
             .value = @intCast(choice.variants.len),
         });
-        self.graph.types.items[@intFromEnum(ty)].inferred_choice.variants = .{ .start = start, .len = choice.variants.len + 1 };
+        var completed = self.graph.semanticType(ty);
+        completed.inferred_choice.variants = .{ .start = start, .len = choice.variants.len + 1 };
+        try self.graph.resolveType(self.allocator, ty, completed);
     }
 
     fn resolveChoiceTest(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {

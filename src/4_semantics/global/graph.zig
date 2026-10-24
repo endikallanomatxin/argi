@@ -202,17 +202,33 @@ pub const GlobalSemanticGraph = struct {
         binding_type_resolution_len: usize,
         type_rewrites_len: usize,
         binding_rewrites_len: usize,
-        function_completions_len: usize,
+        function_rewrites_len: usize,
         virtual_completions_len: usize,
         node_rewrites_len: usize,
         block_rewrites_len: usize,
+        error_context_rewrites_len: usize,
+        conformance_rewrites_len: usize,
+        variant_rewrites_len: usize,
+        error_propagation_rewrites_len: usize,
         safety_arena: ?*std.heap.ArenaAllocator,
     };
 
-    const MutationFrontier = struct { types: usize, bindings: usize, virtual_registries: usize, nodes: usize, blocks: usize, depth: usize };
+    const MutationFrontier = struct {
+        types: usize,
+        bindings: usize,
+        virtual_registries: usize,
+        nodes: usize,
+        blocks: usize,
+        error_propagations: usize,
+        error_contexts: usize,
+        contract_conformances: usize,
+        variants: usize,
+        functions: usize,
+        depth: usize,
+    };
 
-    /// Coordinates pool tails and type/binding completions. Other resolver
-    /// mutations still require the resolver's side-effect checkpoint.
+    /// Coordinates pool tails and journals for older semantic slots. Resolver
+    /// worklists and caches still require the enclosing side-effect checkpoint.
     pub const Transaction = struct {
         graph: *GlobalSemanticGraph,
         allocator: std.mem.Allocator,
@@ -244,7 +260,19 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn beginTransaction(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) Transaction {
         const parent = self.mutation_frontier;
-        const frontier: MutationFrontier = .{ .types = self.types.items.len, .bindings = self.bindings.items.len, .virtual_registries = self.virtual_registries.items.len, .nodes = self.nodes.items.len, .blocks = self.blocks.items.len, .depth = if (parent) |value| value.depth + 1 else 1 };
+        const frontier: MutationFrontier = .{
+            .types = self.types.items.len,
+            .bindings = self.bindings.items.len,
+            .virtual_registries = self.virtual_registries.items.len,
+            .nodes = self.nodes.items.len,
+            .blocks = self.blocks.items.len,
+            .error_propagations = self.error_propagations.items.len,
+            .error_contexts = self.error_contexts.items.len,
+            .contract_conformances = self.contract_conformances.items.len,
+            .variants = self.variants.items.len,
+            .functions = self.functions.items.len,
+            .depth = if (parent) |value| value.depth + 1 else 1,
+        };
         const saved = self.checkpoint();
         self.mutation_frontier = frontier;
         // New immutable metadata belongs to this scope. A child never appends
@@ -259,7 +287,11 @@ pub const GlobalSemanticGraph = struct {
     };
 
     const ConstructionState = struct {
-        function_completions: std.ArrayList(GlobalFunctionId) = .empty,
+        function_rewrites: std.ArrayList(struct { id: GlobalFunctionId, previous: Function }) = .empty,
+        error_propagation_rewrites: std.ArrayList(struct { id: GlobalErrorPropagationId, previous: ErrorPropagation }) = .empty,
+        variant_rewrites: std.ArrayList(struct { id: GlobalVariantId, previous: ChoiceVariant }) = .empty,
+        conformance_rewrites: std.ArrayList(struct { index: u32, previous: ContractConformance }) = .empty,
+        error_context_rewrites: std.ArrayList(struct { id: GlobalErrorContextId, previous: ErrorContext }) = .empty,
         block_rewrites: std.ArrayList(struct { id: GlobalBlockId, previous: Block }) = .empty,
         node_rewrites: std.ArrayList(struct { id: GlobalNodeId, previous: Node }) = .empty,
         virtual_completions: std.ArrayList(struct { id: GlobalVirtualRegistryId, previous: VirtualMethodRegistry }) = .empty,
@@ -277,10 +309,14 @@ pub const GlobalSemanticGraph = struct {
         }) = .empty,
 
         fn deinit(self: *ConstructionState, allocator: std.mem.Allocator) void {
-            self.function_completions.deinit(allocator);
+            self.function_rewrites.deinit(allocator);
             self.virtual_completions.deinit(allocator);
             self.node_rewrites.deinit(allocator);
             self.block_rewrites.deinit(allocator);
+            self.error_context_rewrites.deinit(allocator);
+            self.conformance_rewrites.deinit(allocator);
+            self.variant_rewrites.deinit(allocator);
+            self.error_propagation_rewrites.deinit(allocator);
             self.type_resolution.deinit(allocator);
             self.binding_type_resolution.deinit(allocator);
             self.type_rewrites.deinit(allocator);
@@ -482,10 +518,14 @@ pub const GlobalSemanticGraph = struct {
             .binding_type_resolution_len = self.construction.binding_type_resolution.items.len,
             .type_rewrites_len = self.construction.type_rewrites.items.len,
             .binding_rewrites_len = self.construction.binding_rewrites.items.len,
-            .function_completions_len = self.construction.function_completions.items.len,
+            .function_rewrites_len = self.construction.function_rewrites.items.len,
             .virtual_completions_len = self.construction.virtual_completions.items.len,
             .node_rewrites_len = self.construction.node_rewrites.items.len,
             .block_rewrites_len = self.construction.block_rewrites.items.len,
+            .error_context_rewrites_len = self.construction.error_context_rewrites.items.len,
+            .conformance_rewrites_len = self.construction.conformance_rewrites.items.len,
+            .variant_rewrites_len = self.construction.variant_rewrites.items.len,
+            .error_propagation_rewrites_len = self.construction.error_propagation_rewrites.items.len,
             .safety_arena = self.safety_arena,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
@@ -501,7 +541,7 @@ pub const GlobalSemanticGraph = struct {
     /// Type rewrites restore payloads and resolution flags in write order,
     /// including canonical arguments. Binding types and function completions
     /// are restored before their referenced pools shrink.
-    /// Other in-place mutations of pre-existing entries remain outside this checkpoint.
+    /// Resolver-owned worklists and caches remain outside this graph checkpoint.
     pub fn rollback(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         self.discardIndexedTail(allocator, saved.indexed_functions, saved.indexed_declarations);
@@ -514,8 +554,25 @@ pub const GlobalSemanticGraph = struct {
             const previous = self.construction.virtual_completions.pop().?;
             self.virtual_registries.items[@intFromEnum(previous.id)] = previous.previous;
         }
-        while (self.construction.function_completions.items.len > saved.function_completions_len) {
-            self.functions.items[@intFromEnum(self.construction.function_completions.pop().?)].body = null;
+        while (self.construction.function_rewrites.items.len > saved.function_rewrites_len) {
+            const rewrite = self.construction.function_rewrites.pop().?;
+            self.functions.items[@intFromEnum(rewrite.id)] = rewrite.previous;
+        }
+        while (self.construction.error_propagation_rewrites.items.len > saved.error_propagation_rewrites_len) {
+            const rewrite = self.construction.error_propagation_rewrites.pop().?;
+            self.error_propagations.items[@intFromEnum(rewrite.id)] = rewrite.previous;
+        }
+        while (self.construction.variant_rewrites.items.len > saved.variant_rewrites_len) {
+            const rewrite = self.construction.variant_rewrites.pop().?;
+            self.variants.items[@intFromEnum(rewrite.id)] = rewrite.previous;
+        }
+        while (self.construction.conformance_rewrites.items.len > saved.conformance_rewrites_len) {
+            const rewrite = self.construction.conformance_rewrites.pop().?;
+            self.contract_conformances.items[rewrite.index] = rewrite.previous;
+        }
+        while (self.construction.error_context_rewrites.items.len > saved.error_context_rewrites_len) {
+            const rewrite = self.construction.error_context_rewrites.pop().?;
+            self.error_contexts.items[@intFromEnum(rewrite.id)] = rewrite.previous;
         }
         while (self.construction.block_rewrites.items.len > saved.block_rewrites_len) {
             const rewrite = self.construction.block_rewrites.pop().?;
@@ -837,14 +894,22 @@ pub const GlobalSemanticGraph = struct {
         self.construction.type_rewrites = .empty;
         self.construction.binding_rewrites.deinit(allocator);
         self.construction.binding_rewrites = .empty;
-        self.construction.function_completions.deinit(allocator);
-        self.construction.function_completions = .empty;
+        self.construction.function_rewrites.deinit(allocator);
+        self.construction.function_rewrites = .empty;
         self.construction.virtual_completions.deinit(allocator);
         self.construction.virtual_completions = .empty;
         self.construction.node_rewrites.deinit(allocator);
         self.construction.node_rewrites = .empty;
         self.construction.block_rewrites.deinit(allocator);
         self.construction.block_rewrites = .empty;
+        self.construction.error_context_rewrites.deinit(allocator);
+        self.construction.error_context_rewrites = .empty;
+        self.construction.conformance_rewrites.deinit(allocator);
+        self.construction.conformance_rewrites = .empty;
+        self.construction.variant_rewrites.deinit(allocator);
+        self.construction.variant_rewrites = .empty;
+        self.construction.error_propagation_rewrites.deinit(allocator);
+        self.construction.error_propagation_rewrites = .empty;
     }
 
     fn ensureTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
@@ -864,7 +929,7 @@ pub const GlobalSemanticGraph = struct {
             if (@intFromEnum(entry.binding) >= self.bindings.items.len or @intFromEnum(entry.value) >= self.nodes.items.len)
                 return error.InvalidFunctionCompletion;
         }
-        try self.construction.function_completions.ensureUnusedCapacity(allocator, 1);
+        try self.construction.function_rewrites.ensureUnusedCapacity(allocator, 1);
         try self.construction.binding_rewrites.ensureUnusedCapacity(allocator, defaults.len);
         for (defaults) |entry| {
             const slot = &self.bindings.items[@intFromEnum(entry.binding)];
@@ -875,8 +940,53 @@ pub const GlobalSemanticGraph = struct {
             });
             slot.initialization = entry.value;
         }
-        self.construction.function_completions.appendAssumeCapacity(id);
+        self.construction.function_rewrites.appendAssumeCapacity(.{ .id = id, .previous = self.functions.items[raw] });
         self.functions.items[raw].body = body;
+    }
+
+    /// Signature completion shares the body's ordered history; fields of one
+    /// function must not be restored by independent journals in a fixed order.
+    pub fn setFunction(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalFunctionId, value: Function) !void {
+        const raw = @intFromEnum(id);
+        const previous = self.functions.items[raw];
+        if (previous.body != null and previous.body != value.body) return error.FunctionBodyAlreadyCompleted;
+        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.functions)
+            try self.construction.function_rewrites.append(allocator, .{ .id = id, .previous = previous });
+        self.functions.items[raw] = value;
+    }
+
+    pub fn setInferredErrorReasons(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalFunctionId, reasons: ?GlobalTypeId) !void {
+        var updated = self.function(id);
+        if (updated.inferred_error_reasons == reasons) return;
+        updated.inferred_error_reasons = reasons;
+        try self.setFunction(allocator, id, updated);
+    }
+
+    pub fn setErrorPropagation(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalErrorPropagationId, value: ErrorPropagation) !void {
+        const raw = @intFromEnum(id);
+        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.error_propagations)
+            try self.construction.error_propagation_rewrites.append(allocator, .{ .id = id, .previous = self.error_propagations.items[raw] });
+        self.error_propagations.items[raw] = value;
+    }
+
+    pub fn setErrorContext(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalErrorContextId, value: ErrorContext) !void {
+        const raw = @intFromEnum(id);
+        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.error_contexts)
+            try self.construction.error_context_rewrites.append(allocator, .{ .id = id, .previous = self.error_contexts.items[raw] });
+        self.error_contexts.items[raw] = value;
+    }
+
+    pub fn setContractConformance(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, index: u32, value: ContractConformance) !void {
+        if (self.mutation_frontier == null or index < self.mutation_frontier.?.contract_conformances)
+            try self.construction.conformance_rewrites.append(allocator, .{ .index = index, .previous = self.contract_conformances.items[index] });
+        self.contract_conformances.items[index] = value;
+    }
+
+    pub fn setVariant(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalVariantId, value: ChoiceVariant) !void {
+        const raw = @intFromEnum(id);
+        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.variants)
+            try self.construction.variant_rewrites.append(allocator, .{ .id = id, .previous = self.variants.items[raw] });
+        self.variants.items[raw] = value;
     }
 
     pub fn setNodeType(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalNodeId, ty: ?GlobalTypeId) !void {
@@ -1508,7 +1618,7 @@ fn completeFunctionWithAllocationFailures(allocator: std.mem.Allocator) !void {
     errdefer {
         std.debug.assert(graph.function(@enumFromInt(0)).body == null);
         std.debug.assert(graph.binding(@enumFromInt(0)).initialization.? == @as(GlobalNodeId, @enumFromInt(0)));
-        std.debug.assert(graph.construction.function_completions.items.len == saved.function_completions_len);
+        std.debug.assert(graph.construction.function_rewrites.items.len == saved.function_rewrites_len);
     }
     try graph.completeFunctionBody(allocator, @enumFromInt(0), @enumFromInt(0), &.{.{ .binding = @enumFromInt(0), .value = @enumFromInt(1) }});
     graph.rollback(allocator, saved);
@@ -1938,6 +2048,73 @@ test "binding and block completions share ordered rollback with function default
             try std.testing.expectEqualDeep(original_block, graph.blocks.items[0]);
             try std.testing.expect(graph.function(@enumFromInt(0)).body == null);
             try std.testing.expect(graph.isBindingTypeUnresolved(@enumFromInt(0)));
+            try std.testing.expectEqualDeep(saved, graph.checkpoint());
+        }
+    }.run, .{});
+}
+
+test "function signatures bodies and propagated cleanup restore one enclosing decision" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var graph: GlobalSemanticGraph = .{};
+            defer graph.deinit(a);
+            const original: Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } };
+            const propagation = std.mem.zeroes(ErrorPropagation);
+            const context = std.mem.zeroes(ErrorContext);
+            const conformance = std.mem.zeroes(ContractConformance);
+            const variant = std.mem.zeroes(ChoiceVariant);
+            try graph.functions.append(a, original);
+            try graph.error_propagations.append(a, propagation);
+            try graph.error_contexts.append(a, context);
+            try graph.contract_conformances.append(a, conformance);
+            try graph.variants.append(a, variant);
+            try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 0 } });
+            try graph.types.append(a, .{ .builtin = .Int32 });
+            const saved = graph.checkpoint();
+            var outer = graph.beginTransaction(a);
+            defer outer.deinit();
+            errdefer {
+                outer.rollback();
+                std.debug.assert(std.meta.eql(original, graph.function(@enumFromInt(0))));
+                std.debug.assert(std.meta.eql(propagation, graph.error_propagations.items[0]));
+                std.debug.assert(std.meta.eql(context, graph.error_contexts.items[0]));
+                std.debug.assert(std.meta.eql(conformance, graph.contract_conformances.items[0]));
+                std.debug.assert(std.meta.eql(variant, graph.variants.items[0]));
+                std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
+            }
+            try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0) });
+            var extended = original;
+            extended.input.len = 1;
+            try graph.setFunction(a, @enumFromInt(0), extended);
+            try graph.completeFunctionBody(a, @enumFromInt(0), @enumFromInt(0), &.{});
+            var child = graph.beginTransaction(a);
+            defer child.deinit();
+            try graph.setInferredErrorReasons(a, @enumFromInt(0), @enumFromInt(0));
+            var updated_propagation = propagation;
+            updated_propagation.ok_value_field_index = 1;
+            try graph.setErrorPropagation(a, @enumFromInt(0), updated_propagation);
+            var updated_context = context;
+            updated_context.ok_value_field_index = 2;
+            try graph.setErrorContext(a, @enumFromInt(0), updated_context);
+            var validated = conformance;
+            try graph.function_refs.append(a, @enumFromInt(0));
+            validated.operations = .{ .start = 0, .len = 1 };
+            validated.declaration_validated = true;
+            try graph.setContractConformance(a, 0, validated);
+            var resolved_variant = variant;
+            resolved_variant.option_decl = @enumFromInt(0);
+            try graph.setVariant(a, @enumFromInt(0), resolved_variant);
+            child.commit();
+            var invalid = graph.function(@enumFromInt(0));
+            invalid.body = null;
+            try std.testing.expectError(error.FunctionBodyAlreadyCompleted, graph.setFunction(a, @enumFromInt(0), invalid));
+            for (0..64) |_| try graph.functions.append(a, original);
+            outer.rollback();
+            try std.testing.expectEqualDeep(original, graph.function(@enumFromInt(0)));
+            try std.testing.expectEqualDeep(propagation, graph.error_propagations.items[0]);
+            try std.testing.expectEqualDeep(context, graph.error_contexts.items[0]);
+            try std.testing.expectEqualDeep(conformance, graph.contract_conformances.items[0]);
+            try std.testing.expectEqualDeep(variant, graph.variants.items[0]);
             try std.testing.expectEqualDeep(saved, graph.checkpoint());
         }
     }.run, .{});

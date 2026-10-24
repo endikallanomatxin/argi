@@ -178,7 +178,6 @@ pub const Context = struct {
             try namespace.declarations.appendSlice(allocator, previous.declarations.items);
             try namespace.assumptions.appendSlice(allocator, previous.assumptions.items);
         }
-        try self.core.reached_signature_changes.appendSlice(allocator, source.core.reached_signature_changes.items);
         try self.expressions.session_bindings.appendSlice(allocator, source.expressions.session_bindings.items);
         self.expressions.continuation_function = source.expressions.continuation_function;
         self.generics.pointer_types = try source.generics.pointer_types.clone(allocator);

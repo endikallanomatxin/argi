@@ -96,7 +96,6 @@ pub const Resolver = struct {
         execution_requests: ?usize = null,
         ownership: ?[2]usize = null,
         reached_calls: usize = 0,
-        reached_signatures: usize = 0,
         contracts: ?contract_mod.Resolver.ResolutionCheckpoint = null,
         comptime_failure: ?generic_mod.ComptimeFailure = null,
     };
@@ -140,7 +139,7 @@ pub const Resolver = struct {
     }
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
-        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .reached_signatures = self.core.reached_signature_changes.items.len };
+        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len };
         if (self.generics.checkpoint_execution) |checkpoint|
             saved.execution_requests = checkpoint(self.generics.execution_context.?);
         if (self.ownership_context) |context| {
@@ -159,7 +158,6 @@ pub const Resolver = struct {
         }
         self.generics.comptime_failure = saved.comptime_failure;
         self.core.rollbackReachedCalls(saved.reached_calls);
-        self.core.rollback_reached_signatures(saved.reached_signatures);
         if (saved.contracts) |checkpoint|
             if (self.nested_call_context) |contracts|
                 contracts.rollbackResolution(checkpoint);
@@ -2431,8 +2429,10 @@ pub const Resolver = struct {
             try self.resolver.graph.fields.appendSlice(self.resolver.allocator, fields.items);
             const binding_start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
             try self.resolver.graph.binding_refs.appendSlice(self.resolver.allocator, bindings.items);
-            self.resolver.graph.functions.items[@intFromEnum(function_id)].input = .{ .start = field_start, .len = @intCast(fields.items.len) };
-            self.resolver.graph.functions.items[@intFromEnum(function_id)].input_bindings = .{ .start = binding_start, .len = @intCast(bindings.items.len) };
+            var completed = self.resolver.graph.function(function_id);
+            completed.input = .{ .start = field_start, .len = @intCast(fields.items.len) };
+            completed.input_bindings = .{ .start = binding_start, .len = @intCast(bindings.items.len) };
+            try self.resolver.graph.setFunction(self.resolver.allocator, function_id, completed);
         }
 
         fn instantiateNode(self: *InstanceContext, id: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {

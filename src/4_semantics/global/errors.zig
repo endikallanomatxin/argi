@@ -39,17 +39,17 @@ pub const Resolver = struct {
         // every invocation, but resolve each signature only once while its
         // reason summaries converge. Only scratch capacity survives the pass.
         self.reason_candidates.clearRetainingCapacity();
-        for (self.graph.functions.items, 0..) |*function, raw| {
+        for (self.graph.functions.items, 0..) |function, raw| {
             const id: global_sg.GlobalFunctionId = @enumFromInt(raw);
             // A newly specialized open signature may be inspected before its
             // call joins the execution graph. Preserve those signature roots.
             if (reachable) |set| if (!set.contains(id) and !function.flags.uses_inferred_error_reasons) continue;
-            const declared = self.functionReasonType(function.*) orelse {
-                function.inferred_error_reasons = null;
+            const declared = self.functionReasonType(function) orelse {
+                try self.graph.setInferredErrorReasons(self.allocator, id, null);
                 continue;
             };
             if (function.body == null) {
-                if (function.inferred_error_reasons == null) function.inferred_error_reasons = declared;
+                if (function.inferred_error_reasons == null) try self.graph.setInferredErrorReasons(self.allocator, id, declared);
                 continue;
             }
             try self.reason_candidates.append(self.allocator, .{ .function = id, .declared = declared });
@@ -68,7 +68,7 @@ pub const Resolver = struct {
     }
 
     fn inferOne(self: *Resolver, function_id: global_sg.GlobalFunctionId, declared: global_sg.GlobalTypeId) !bool {
-        const function = &self.graph.functions.items[@intFromEnum(function_id)];
+        const function = self.graph.function(function_id);
         const body = function.body.?;
         const collected = &self.collected_reasons;
         collected.clearRetainingCapacity();
@@ -77,14 +77,14 @@ pub const Resolver = struct {
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
             if (self.graph.binding(binding).initialization) |value| {
                 try self.markErrableNode(value, collected);
-                try self.collectNode(function.*, value, collected);
+                try self.collectNode(function, value, collected);
             }
         }
-        try self.collectBlock(function.*, body, collected);
+        try self.collectBlock(function, body, collected);
 
         if (function.flags.uses_inferred_error_reasons) {
             const changed = try self.replaceOpenReasons(declared, collected.items);
-            function.inferred_error_reasons = declared;
+            try self.graph.setInferredErrorReasons(self.allocator, function_id, declared);
             return changed;
         }
         // Explicit contracts expose only their declared reasons. Nested
@@ -109,7 +109,7 @@ pub const Resolver = struct {
         }
         collected.shrinkRetainingCapacity(retained);
         if (self.sameReasonSet(function.inferred_error_reasons, collected.items)) return false;
-        function.inferred_error_reasons = try self.makeReasonSubset(declared, collected.items);
+        try self.graph.setInferredErrorReasons(self.allocator, function_id, try self.makeReasonSubset(declared, collected.items));
         return true;
     }
 
@@ -271,7 +271,9 @@ pub const Resolver = struct {
         if (self.sameReasonSet(ty, wanted)) return false;
         const start: u32 = @intCast(self.graph.variants.items.len);
         for (wanted) |id| try self.graph.variants.append(self.allocator, self.graph.variants.items[@intFromEnum(id)]);
-        self.graph.types.items[@intFromEnum(ty)].inferred_choice.variants = .{ .start = start, .len = @intCast(wanted.len) };
+        var completed = self.graph.semanticType(ty);
+        completed.inferred_choice.variants = .{ .start = start, .len = @intCast(wanted.len) };
+        try self.graph.resolveType(self.allocator, ty, completed);
         return true;
     }
 
@@ -409,19 +411,23 @@ pub const Resolver = struct {
         for (self.graph.nodes.items, 0..) |node, raw| {
             switch (node.content) {
                 .error_propagation => |id| {
-                    const propagation = &self.graph.error_propagations.items[@intFromEnum(id)];
+                    const propagation = self.graph.error_propagations.items[@intFromEnum(id)];
                     const index = singleFieldIndex(self.graph, propagation.ok_payload_type);
                     if (index != propagation.ok_value_field_index) {
-                        propagation.ok_value_field_index = index;
+                        var updated = propagation;
+                        updated.ok_value_field_index = index;
+                        try self.graph.setErrorPropagation(self.allocator, id, updated);
                         try self.graph.setNodeType(self.allocator, @enumFromInt(raw), unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type);
                         changed = true;
                     }
                 },
                 .error_context => |id| {
-                    const propagation = &self.graph.error_contexts.items[@intFromEnum(id)];
+                    const propagation = self.graph.error_contexts.items[@intFromEnum(id)];
                     const index = singleFieldIndex(self.graph, propagation.ok_payload_type);
                     if (index != propagation.ok_value_field_index) {
-                        propagation.ok_value_field_index = index;
+                        var updated = propagation;
+                        updated.ok_value_field_index = index;
+                        try self.graph.setErrorContext(self.allocator, id, updated);
                         try self.graph.setNodeType(self.allocator, @enumFromInt(raw), unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type);
                         changed = true;
                     }
@@ -584,10 +590,12 @@ pub const Resolver = struct {
         for (0..target_choice.variants.len) |offset|
             try self.graph.variants.append(self.allocator, self.graph.variants.items[target_choice.variants.start + @as(u32, @intCast(offset))]);
         try self.graph.variants.appendSlice(self.allocator, additions.items);
-        self.graph.types.items[@intFromEnum(target_id)].inferred_choice.variants = .{
+        var completed = self.graph.semanticType(target_id);
+        completed.inferred_choice.variants = .{
             .start = new_start,
             .len = target_choice.variants.len + @as(u32, @intCast(additions.items.len)),
         };
+        try self.graph.resolveType(self.allocator, target_id, completed);
     }
 
     pub fn validContextType(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {

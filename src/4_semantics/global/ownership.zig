@@ -453,14 +453,18 @@ pub const Resolver = struct {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
                 try self.finalizeExpressionCleanup(propagation.errable_value, active, defers, visible, owner_function, module_index);
                 const cleanup = try self.appendCleanup(active, defers);
-                self.graph.error_propagations.items[@intFromEnum(propagation_id)].cleanup_nodes = cleanup;
+                var updated = propagation;
+                updated.cleanup_nodes = cleanup;
+                try self.graph.setErrorPropagation(self.allocator, propagation_id, updated);
             },
             .error_context => |context_id| {
                 const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
                 try self.finalizeExpressionCleanup(context.errable_value, active, defers, visible, owner_function, module_index);
                 try self.finalizeExpressionCleanup(context.context, active, defers, visible, owner_function, module_index);
                 const cleanup = try self.appendCleanup(active, defers);
-                self.graph.error_contexts.items[@intFromEnum(context_id)].cleanup_nodes = cleanup;
+                var updated = context;
+                updated.cleanup_nodes = cleanup;
+                try self.graph.setErrorContext(self.allocator, context_id, updated);
             },
             .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index),
             .assignment => |assignment| {

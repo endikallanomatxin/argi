@@ -70,7 +70,7 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
         break :pointer id;
     };
     const name = try graph.addString(allocator, "ffi");
-    for (graph.functions.items) |*function| {
+    for (graph.functions.items, 0..) |function, raw| {
         if (!function.flags.is_c_abi or function.flags.has_declared_body or function.flags.has_foreign_capability) continue;
         // Publish the signature only once all backing pools are ready. A failed
         // allocation leaves this function unchanged and earlier imports intact.
@@ -97,9 +97,11 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
         const binding_start: u32 = @intCast(graph.binding_refs.items.len);
         try graph.binding_refs.appendSlice(allocator, old_bindings);
         try graph.binding_refs.append(allocator, binding);
-        function.input = .{ .start = field_start, .len = function.input.len + 1 };
-        function.input_bindings = .{ .start = binding_start, .len = function.input_bindings.len + 1 };
-        function.flags.has_foreign_capability = true;
+        var completed = function;
+        completed.input = .{ .start = field_start, .len = function.input.len + 1 };
+        completed.input_bindings = .{ .start = binding_start, .len = function.input_bindings.len + 1 };
+        completed.flags.has_foreign_capability = true;
+        try graph.setFunction(allocator, @enumFromInt(raw), completed);
     }
 }
 
