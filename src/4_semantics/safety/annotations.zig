@@ -95,6 +95,20 @@ pub const Annotations = struct {
         }
     }
 
+    /// Combine independently checked bodies without borrowing their temporary
+    /// buffers. Repeated observations retain the conservative initialization join.
+    pub fn merge(self: *Annotations, allocator: std.mem.Allocator, source: *const Annotations) !void {
+        var writes = source.writes.iterator();
+        while (writes.next()) |entry| try self.recordInitialization(allocator, entry.key_ptr.*, entry.value_ptr.*);
+        if (source.calls.count() == 0 and source.virtual_calls.count() == 0) return;
+        var copy: @import("fact_snapshot.zig").Copy = .{ .allocator = try self.storageAllocator(allocator), .scratch = allocator };
+        defer copy.deinit();
+        var calls = source.calls.iterator();
+        while (calls.next()) |entry| try self.calls.put(allocator, entry.key_ptr.*, try copy.value(CallEffects, entry.value_ptr.*));
+        var virtuals = source.virtual_calls.iterator();
+        while (virtuals.next()) |entry| try self.virtual_calls.put(allocator, entry.key_ptr.*, try copy.value(CallEffects, entry.value_ptr.*));
+    }
+
     pub fn clone(self: *const Annotations, allocator: std.mem.Allocator) !Annotations {
         var result: Annotations = .{};
         errdefer result.deinit(allocator);

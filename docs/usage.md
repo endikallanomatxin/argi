@@ -711,6 +711,19 @@ retained backing remains 17.63 MiB, since these tiny bodies already fit inside
 per-unit arena blocks. These are individual observations. Repeated Safety body
 checking and dead runtime frames remain separate sources of work and memory.
 
+Incremental Safety also publishes per-function body proofs. Each proof owns its
+execution annotations and snapshots of the converged summaries and virtual
+signatures it consulted; a changed hypothesis forces checking again. The REPL
+continuation and each call's temporal facts are always checked. The counters
+`bodies_checked`, `bodies_reused`, `body_proof_entries` and
+`body_proof_arenas_MiB` distinguish this work from summary inference.
+
+In one Debug run of 100 resource commands, 27 bodies were checked and 5,573 proofs
+reused, retaining 106 proofs in 0.567 MiB of arenas. Command time was 33,630.3 ms
+and live backing 188.62 MiB. This observation does not establish an additional
+speedup: frontend work outside body verification still dominates. Cached proofs
+and all other tracked allocations were released at teardown.
+
 VM runtime failures include up to 64 active source frames, starting at the
 failing instruction and followed by `called from` locations. CLI execution and
 REPL submissions share this presentation. Compile-time failures retain these

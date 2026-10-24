@@ -16,6 +16,7 @@ fn allocateNamespace() !bytecode.SessionNamespace {
 const once_verify = @import("../4_semantics/global/once_verify.zig");
 
 const Safety = @import("../4_semantics/safety/checker.zig").SafetyChecker;
+const BodyCache = @import("../4_semantics/safety/body_cache.zig");
 const SummaryCache = @import("../4_semantics/safety/summary_cache.zig");
 
 // Candidate analysis can borrow preceding facts. Publication copies only its
@@ -81,6 +82,7 @@ const TemporalProof = struct {
 
 pub const CheckedUnit = struct {
     summaries: SummaryCache.Batch = .{},
+    bodies: BodyCache.Batch = .{},
     safety_stats: Safety.Stats = .{},
     annotations: @import("../4_semantics/safety/annotations.zig").Annotations = .{},
     graph: *const @import("../4_semantics/global/graph.zig").GlobalSemanticGraph,
@@ -89,6 +91,7 @@ pub const CheckedUnit = struct {
 
     fn deinit(self: *CheckedUnit, allocator: std.mem.Allocator) void {
         self.summaries.deinit(allocator);
+        self.bodies.deinit(allocator);
         self.annotations.deinit(allocator);
         self.* = undefined;
     }
@@ -104,11 +107,14 @@ pub const CompilationSession = struct {
     allocator: std.mem.Allocator,
     semantic: *sema.Session,
     summary_cache: SummaryCache.Store,
+    body_cache: BodyCache.Store,
     revision: u64 = 0,
     namespace: bytecode.SessionNamespace,
     temporal: ?*TemporalProof = null,
     summary_evaluations: u64 = 0,
     summary_reuses: u64 = 0,
+    bodies_checked: u64 = 0,
+    bodies_reused: u64 = 0,
 
     pub const Candidate = struct {
         allocator: std.mem.Allocator,
@@ -165,7 +171,7 @@ pub const CompilationSession = struct {
         try semantic.init(allocator, modules, options);
         errdefer semantic.deinit();
         try semantic.advance();
-        return .{ .allocator = allocator, .semantic = semantic, .summary_cache = .init(allocator, &semantic.relocation.graph), .namespace = try allocateNamespace() };
+        return .{ .allocator = allocator, .semantic = semantic, .summary_cache = .init(allocator, &semantic.relocation.graph), .body_cache = .init(allocator, &semantic.relocation.graph), .namespace = try allocateNamespace() };
     }
 
     /// Fork a prepared module template, retaining its graph identities and
@@ -175,11 +181,12 @@ pub const CompilationSession = struct {
         errdefer allocator.destroy(semantic);
         try template.fork(semantic, allocator, diagnostics);
         errdefer semantic.deinit();
-        return .{ .allocator = allocator, .semantic = semantic, .summary_cache = .init(allocator, &semantic.relocation.graph), .namespace = try allocateNamespace() };
+        return .{ .allocator = allocator, .semantic = semantic, .summary_cache = .init(allocator, &semantic.relocation.graph), .body_cache = .init(allocator, &semantic.relocation.graph), .namespace = try allocateNamespace() };
     }
 
     pub fn deinit(self: *CompilationSession) void {
         if (self.temporal) |proof| proof.release();
+        self.body_cache.deinit();
         self.summary_cache.deinit();
         self.semantic.deinit();
         self.allocator.destroy(self.semantic);
@@ -256,7 +263,7 @@ pub const CompilationSession = struct {
         if (continuation) |function| try candidate.retainContinuationBindings(function);
         const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
         errdefer if (proof) |owned| owned.release();
-        var checked = try checkUnit(candidate, self.allocator, diagnostics, continuation, proof, &self.summary_cache);
+        var checked = try checkUnit(candidate, self.allocator, diagnostics, continuation, proof, &self.summary_cache, &self.body_cache);
         errdefer checked.deinit(self.allocator);
         const checked_unit = try self.allocator.create(CheckedUnit);
         checked_unit.* = checked;
@@ -274,12 +281,16 @@ pub const CompilationSession = struct {
             return error.StaleCompilationCandidate;
         if (self.revision == std.math.maxInt(u64)) return error.CompilationRevisionLimit;
         try self.summary_cache.reserve(&candidate.checked.?.summaries);
+        try self.body_cache.reserve(&candidate.checked.?.bodies);
         candidate.transaction.?.commit();
         candidate.transaction = null;
         // Evaluation preserves this work queue until its transaction commits.
         self.semantic.relocation.graph.comptime_requests.clearRetainingCapacity();
         const checked = candidate.checked.?;
         self.summary_cache.commit(&checked.summaries);
+        self.body_cache.commit(&checked.bodies);
+        self.bodies_checked += checked.safety_stats.bodies_checked;
+        self.bodies_reused += checked.safety_stats.bodies_reused;
         self.summary_evaluations += checked.safety_stats.summary_evaluations;
         self.summary_reuses += checked.safety_stats.summary_reused;
         checked.deinit(self.allocator);
@@ -302,7 +313,7 @@ pub const CompilationSession = struct {
 
 // Finalization and checking operate in the caller's coordinated transaction.
 // The graph stays owned by Session; only execution proofs belong to this unit.
-fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, proof: ?*TemporalProof, cache: *const SummaryCache.Store) !CheckedUnit {
+fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, proof: ?*TemporalProof, cache: *const SummaryCache.Store, bodies_cache: *const BodyCache.Store) !CheckedUnit {
     const stats = try semantic.completeUnit();
     const graph = &semantic.relocation.graph;
     const unit: ?*const @import("../4_semantics/global/reachability.zig").FunctionSet = if (semantic.reachable) |*selected| selected else null;
@@ -315,6 +326,8 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
         owned.state.deinit();
         owned.state.init(owned.arena.allocator());
     };
+    var bodies: BodyCache.Batch = .{};
+    errdefer bodies.deinit(allocator);
     var summaries: SummaryCache.Batch = .{ .excluded_function = continuation };
     errdefer summaries.deinit(allocator);
     const proof_allocator = temporary.allocator();
@@ -330,6 +343,8 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
     var safety = Safety.init(proof_allocator, diagnostics, graph);
     safety.graph_allocator = allocator;
     safety.unit = unit;
+    safety.body_cache = bodies_cache;
+    safety.body_publication = &bodies;
     safety.summary_cache = cache;
     safety.summary_publication = &summaries;
     defer safety.deinit();
@@ -352,7 +367,7 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
     var annotations = try safety.annotations.clone(allocator);
     errdefer annotations.deinit(allocator);
     if (proof) |owned| try owned.seal(temporary.allocator());
-    return .{ .graph = graph, .stats = stats, .unit = unit, .annotations = annotations, .summaries = summaries, .safety_stats = safety.stats };
+    return .{ .graph = graph, .stats = stats, .unit = unit, .annotations = annotations, .summaries = summaries, .bodies = bodies, .safety_stats = safety.stats };
 }
 
 test "compilation session publishes checked candidates and rejects stale revisions" {
@@ -1045,6 +1060,8 @@ fn reuseSummariesWithAllocationFailures(allocator: std.mem.Allocator) !void {
         try std.testing.expect(rejected.checked.?.safety_stats.summary_evaluations != 0);
         try std.testing.expect(rejected.checked.?.summaries.entries.items.len != 0);
         try std.testing.expectEqual(@as(usize, 0), session.summary_cache.entries.count());
+        try std.testing.expectEqual(@as(usize, 0), session.body_cache.entries.count());
+        try std.testing.expect(rejected.checked.?.bodies.entries.items.len != 0);
     }
     try std.testing.expectEqualDeep(saved, graph.checkpoint());
     try std.testing.expectEqual(@as(usize, 0), session.summary_cache.entries.count());
@@ -1053,12 +1070,16 @@ fn reuseSummariesWithAllocationFailures(allocator: std.mem.Allocator) !void {
     try session.accept(&cold);
     try std.testing.expect(!session.summary_cache.entries.contains(@enumFromInt(0)));
     const helper = session.summary_cache.entries.get(@enumFromInt(1)).?;
+    const body = session.body_cache.entries.get(@enumFromInt(1)).?;
+    try std.testing.expect(!session.body_cache.entries.contains(@enumFromInt(0)));
     const revision = session.summary_cache.next_revision;
     {
         var rejected = try session.prepareContinuation(&.{module}, &diagnostics, @enumFromInt(0));
         defer rejected.deinit();
         try std.testing.expectEqual(@as(u64, 1), rejected.checked.?.safety_stats.summary_evaluations);
         try std.testing.expect(rejected.checked.?.safety_stats.summary_reused != 0);
+        try std.testing.expectEqual(@as(usize, 1), rejected.checked.?.safety_stats.bodies_reused);
+        try std.testing.expectEqual(@as(usize, 0), rejected.checked.?.safety_stats.bodies_checked);
     }
     try std.testing.expectEqual(revision, session.summary_cache.next_revision);
     try std.testing.expect(helper == session.summary_cache.entries.get(@enumFromInt(1)).?);
@@ -1066,8 +1087,10 @@ fn reuseSummariesWithAllocationFailures(allocator: std.mem.Allocator) !void {
     defer warm.deinit();
     try std.testing.expectEqual(@as(u64, 1), warm.checked.?.safety_stats.summary_evaluations);
     try std.testing.expect(warm.checked.?.safety_stats.summary_reused != 0);
+    try std.testing.expectEqual(@as(usize, 1), warm.checked.?.safety_stats.bodies_reused);
     try session.accept(&warm);
     try std.testing.expect(helper == session.summary_cache.entries.get(@enumFromInt(1)).?);
+    try std.testing.expect(body == session.body_cache.entries.get(@enumFromInt(1)).?);
     try std.testing.expect(!diagnostics.hasErrors());
 }
 

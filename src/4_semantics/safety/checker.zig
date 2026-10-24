@@ -41,6 +41,8 @@ pub const SafetyChecker = struct {
         summary_evaluations: u64 = 0,
         summary_changes: u64 = 0,
         summary_reused: usize = 0,
+        bodies_checked: usize = 0,
+        bodies_reused: usize = 0,
         functions: usize = 0,
         calls: usize = 0,
         state_clones: u64 = 0,
@@ -268,6 +270,8 @@ pub const SafetyChecker = struct {
     annotations: @import("annotations.zig").Annotations = .{},
     summary_cache: ?*const @import("summary_cache.zig").Store = null,
     summary_publication: ?*@import("summary_cache.zig").Batch = null,
+    body_cache: ?*const @import("body_cache.zig").Store = null,
+    body_publication: ?*@import("body_cache.zig").Batch = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -376,17 +380,7 @@ pub const SafetyChecker = struct {
                 if (self.collect_stats) self.stats.functions += 1;
                 continue;
             };
-            var namespace: facts.Tracker.RootNamespace = .{};
-            defer namespace.deinit(self.allocator);
-            var state = FunctionState.init(self.allocator);
-            state.tracker.namespace = &namespace;
-            defer state.deinit();
-            try self.seedFunctionInputs(id, function, &state);
-            try self.call_stack.append(id);
-            defer _ = self.call_stack.pop();
-            try self.validateBlock(id, function.body.?, &state, null);
-            if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);
-            if (self.collect_stats) self.stats.functions += 1;
+            try self.checkIndependentBody(id, function, &engine);
         }
         if (self.collect_stats) {
             self.stats.virtual_summary_ns = inference.virtual_summary_ns;
@@ -396,6 +390,49 @@ pub const SafetyChecker = struct {
             const cache = self.summary_cache orelse return error.MissingSafetySummaryCache;
             try cache.stage(batch, &engine, &inference.requested_selectors, &inference.cache_reused);
         }
+    }
+
+    fn checkIndependentBody(self: *SafetyChecker, id: graph_mod.GlobalFunctionId, function: graph_mod.Function, engine: *summary_engine.Engine) !void {
+        if (self.body_cache) |cache| {
+            if (cache.graph != self.graph) return error.ForeignSafetyBodyCache;
+            if (cache.lookup(id, engine)) |proof| {
+                try self.annotations.merge(self.allocator, &proof.annotations);
+                self.stats.bodies_reused += 1;
+                return;
+            }
+        }
+        // Keep function-relative execution proofs separate from annotations
+        // already established for the continuation and other helper bodies.
+        var outer: ?@import("annotations.zig").Annotations = null;
+        if (self.body_cache != null) {
+            outer = self.annotations;
+            self.annotations = .{};
+            engine.beginInference(id);
+        }
+        defer if (outer) |saved| {
+            self.annotations.deinit(self.allocator);
+            self.annotations = saved;
+            engine.current = null;
+        };
+        var namespace: facts.Tracker.RootNamespace = .{};
+        defer namespace.deinit(self.allocator);
+        var state = FunctionState.init(self.allocator);
+        state.tracker.namespace = &namespace;
+        defer state.deinit();
+        const before = self.diagnostics.list.items.len;
+        try self.seedFunctionInputs(id, function, &state);
+        try self.call_stack.append(id);
+        defer _ = self.call_stack.pop();
+        try self.validateBlock(id, function.body.?, &state, null);
+        if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);
+        if (self.body_cache != null) try engine.endInference();
+        if (self.diagnostics.list.items.len == before) if (self.body_publication) |batch| {
+            const cache = self.body_cache orelse return error.MissingSafetyBodyCache;
+            if (!function.flags.is_comptime_entry) try cache.stage(batch, id, engine, &self.annotations);
+        };
+        if (outer) |*saved| try saved.merge(self.allocator, &self.annotations);
+        self.stats.bodies_checked += 1;
+        if (self.collect_stats) self.stats.functions += 1;
     }
 
     fn validateSelectedSafetyContracts(self: *SafetyChecker, inference: *summary_infer.Infer) !void {

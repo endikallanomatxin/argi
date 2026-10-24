@@ -69,11 +69,11 @@ Release order: [0.4](0.4.md). Supported commands/subset:
 - Keep cleanup projection identities bounded when rechecking previously completed
   bodies. Compile-time evaluation now discards its projections through nested
   graph transactions before publishing constant outputs.
-- Reuse verified Safety bodies only with stable hypotheses; symbolic summaries
-  now retain selector, callee and virtual-contract dependencies in transactional
-  publications. Keep temporal caller checks independent. Helper bytecode now
-  imports immutable verified origins, retaining their host, global and session
-  tables without copying them into subsequent units.
+- Safety body proofs now retain their execution annotations and the converged
+  function/virtual hypotheses consulted during checking. Publications are
+  transactional; continuations and caller temporal facts are always checked.
+  Symbolic summaries retain selector and dependency hypotheses separately.
+  Helper bytecode imports immutable verified origins without copying their tables.
 - Keep definition lookup separate from instantiation evidence. Delayed body
   completion must preserve its selected context; new conformances must not
   invalidate safety assumptions of published code.

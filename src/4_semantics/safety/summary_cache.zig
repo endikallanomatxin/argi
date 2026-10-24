@@ -179,7 +179,7 @@ pub const Store = struct {
     }
 };
 
-fn virtualsMatch(graph: *const g.GlobalSemanticGraph, dependencies: []const VirtualDependency) bool {
+pub fn virtualsMatch(graph: *const g.GlobalSemanticGraph, dependencies: []const VirtualDependency) bool {
     for (dependencies) |dependency| {
         if (@intFromEnum(dependency.registry) >= graph.virtual_registries.items.len or
             !declarationEql(dependency.signature, graph.virtual_registries.items[@intFromEnum(dependency.registry)])) return false;
