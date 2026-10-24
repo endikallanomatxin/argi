@@ -4,8 +4,6 @@ Release: [0.4](0.4.md). Current behavior: [usage](../docs/usage.md#experimental-
 
 ## Compile-time host
 
-- Extend `System` entries to generic templates through the existing staged
-  materialization path; preserve compile-time captures and branch selection.
 - Audit host-entry rollback and repeated evaluation in persistent sessions.
 - Keep external reads disabled until their build dependencies are recorded.
   The initial host policy provides empty arguments, stdout/stderr and VM allocation.

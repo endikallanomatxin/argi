@@ -61,8 +61,8 @@ pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const st
     var input_buffer: [64 * 1024]u8 = undefined;
     var input = std.Io.File.stdin().reader(io, &input_buffer);
     var output_buffer: [4096]u8 = undefined;
-    var output = std.Io.File.stdout().writer(io, &output_buffer);
-    var error_output = std.Io.File.stderr().writer(io, &.{});
+    var output = std.Io.File.stdout().writerStreaming(io, &output_buffer);
+    var error_output = std.Io.File.stderr().writerStreaming(io, &.{});
     defer error_output.interface.flush() catch {};
     var host_output = @import("../execution/host_output.zig").Output{ .writer = &output.interface, .error_writer = &error_output.interface };
     const host_bindings = host_output.bindings();

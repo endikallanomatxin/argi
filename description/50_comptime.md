@@ -97,7 +97,8 @@ external inputs must be tracked as build dependencies before enabling them.
 > acquisition scope, independently of the REPL runtime scope. Arguments are empty;
 > filesystem, environment, stdin, network, process, clock and entropy operations
 > remain disabled. Register build dependencies before enabling external reads.
-> `System` entries in generic templates remain incomplete.
+> Generic `System` entries use the same staged materialization and selected
+> captures, including dependent types, output defaults and nested entries.
 > Persistent sessions retain successful entry results. Rejected runtime captures
 > and aborted compile-time entries publish no session revision and do not poison
 > the accepted runtime state; reset starts a fresh execution context.

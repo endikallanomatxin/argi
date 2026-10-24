@@ -251,14 +251,15 @@ integer results can supply type shapes and compile-time parameters through stage
 semantic resolution. Computed `#if` in function bodies uses the same evaluator;
 only the selected arm is materialized for each specialization. See [compile-time computation](../description/50_comptime.md).
 
-Concrete `#run (.system: System)` entries construct and clean their resources in
+`#run (.system: System)` entries construct and clean their resources in
 an ordinary checked scope. They enable stdout/stderr adapters and context-owned
 allocation; the entry must explicitly assume its writer, allocator and tracer.
 Each invocation has an independent acquisition scope. Host arguments are empty.
 Filesystem, environment, stdin, network, processes, clock and entropy calls are
 not enabled; unavailable adapters reject evaluation before any host operation runs.
 External reads require build-dependency tracking before they can be enabled.
-`System` entries in generic templates remain pending.
+Generic entries retain their specialization parameters and selected captures;
+rejected runtime captures publish no interactive revision.
 
 Execution is limited to one million instructions, 128 nested calls, and one
 million cumulative value cells by default. `argi run --vm` and `argi repl` accept

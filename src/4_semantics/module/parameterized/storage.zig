@@ -33,6 +33,7 @@ pub const ParameterizedFunction = struct {
     // A concrete identity may retain its body here when conditional compilation
     // needs staged materialization; it is never a generic dispatch candidate.
     is_comptime_entry: bool = false,
+    is_comptime_host_entry: bool = false,
     concrete_function: ?entities.ModuleFunctionId = null,
     declaration: entities.ModuleDeclId,
     parameters: primitives.Range(ComptimeParameterId),

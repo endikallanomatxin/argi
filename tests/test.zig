@@ -15333,3 +15333,38 @@ test "argi repl evaluates independent System entries" {
     ;
     try expectReplFixture(null, commands, "_0 = 42\n");
 }
+
+test "feature_tests/execution/279_generic_comptime_system_entry" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/279_generic_comptime_system_entry");
+    try runExpect("tests/feature_tests/execution/279_generic_comptime_system_entry", 42);
+    try vmExpect("tests/feature_tests/execution/279_generic_comptime_system_entry", 42, null);
+}
+
+test "feature_tests/execution/280X_generic_system_runtime_capture" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/280X_generic_system_runtime_capture", "#run arguments must be compile-time constants", "failed without a diagnostic");
+}
+
+test "argi repl preserves generic System specializations after rejected captures" {
+    const commands =
+        \\calculate#(.T: Int8, .n = 41)()
+        \\captured_local#(.n = 42)()
+        \\selected_capture#(.n = 42)(.runtime_value = 7)
+        \\bad ::= selected_capture#(.n = 41)(.runtime_value = 7)
+        \\default_host#(.n = 42)()
+        \\tuple_host#(.n = 41)()
+        \\allocate_host#(.n = 42)()
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n_3 = 42\n_4 = 42\n_5 = 42\n", "#run arguments must be compile-time constants");
+}
+
+test "argi repl recovers from aborted allocated System evaluations" {
+    const commands =
+        \\allocate_host#(.n = 41)()
+        \\failed ::= abort_host#(.n = 42)()
+        \\allocate_host#(.n = 42)()
+        \\captured_local#(.n = 42)()
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n", "#run evaluation aborted");
+}

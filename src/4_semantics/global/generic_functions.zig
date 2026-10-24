@@ -97,6 +97,8 @@ pub const Resolver = struct {
         ownership: ?@import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
         reached_calls: usize = 0,
         type_caches: [2]usize,
+        capture_nodes: usize,
+        capture_bindings: usize,
         contracts: ?contract_mod.Resolver.ResolutionCheckpoint = null,
         comptime_failure: ?generic_mod.ComptimeFailure = null,
     };
@@ -140,7 +142,7 @@ pub const Resolver = struct {
     }
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
-        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .type_caches = self.generics.checkpointCaches() };
+        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .type_caches = self.generics.checkpointCaches(), .capture_nodes = self.graph.nodes.items.len, .capture_bindings = self.graph.bindings.items.len };
         if (self.generics.checkpoint_execution) |checkpoint|
             saved.execution_requests = checkpoint(self.generics.execution_context.?);
         if (self.ownership_context) |context| {
@@ -153,6 +155,16 @@ pub const Resolver = struct {
     }
 
     pub fn rollbackSideEffects(self: *Resolver, saved: SideEffectCheckpoint) void {
+        // Nested entry instantiation can forward a selected capture through
+        // live outer contexts. Their maps must not retain provisional IDs.
+        var instance = self.active_instance;
+        while (instance) |context| : (instance = context.active_parent) {
+            while (context.entry_captures.items.len != 0 and
+                @intFromEnum(context.entry_captures.items[context.entry_captures.items.len - 1].binding) >= saved.capture_bindings)
+                _ = context.entry_captures.pop();
+            context.node_map.discardValuesFrom(@enumFromInt(saved.capture_nodes));
+            context.binding_map.discardValuesFrom(@enumFromInt(saved.capture_bindings));
+        }
         if (saved.execution_requests) |count| {
             if (self.generics.rollback_execution) |rollback|
                 rollback(self.generics.execution_context.?, count);
@@ -1951,6 +1963,7 @@ pub const Resolver = struct {
                 .has_declared_body = located.parameterized.body != null,
                 .is_generic_instantiation = true,
                 .is_comptime_entry = located.parameterized.is_comptime_entry,
+                .is_comptime_host_entry = located.parameterized.is_comptime_host_entry,
                 .uses_inferred_error_reasons = inferred_errors,
                 // A contract template has no runtime ABI; its inferred
                 // instance does, once every generic parameter is concrete.
@@ -2386,7 +2399,7 @@ pub const Resolver = struct {
             const module = &self.resolver.modules[self.module_index];
             const storage = &module.semantic.parameterized_storage.ir;
             const expression = storage.pending.items[@intFromEnum(storage.nodes.items[@intFromEnum(id)].pending)].resolve_expression;
-            const value = switch (expression.detail) {
+            var value = switch (expression.detail) {
                 .none => try self.entryCaptureSource(storage.node_refs.items[expression.operands.start]),
                 .capture_module_value => |value_node| globalizer.globalNode(self.resolver.offsets[self.module_index], value_node),
                 .capture_owner => |owner| blk: {
@@ -2399,17 +2412,55 @@ pub const Resolver = struct {
                 },
                 else => return error.InvalidParameterizedEntryCapture,
             };
+            const name = try self.resolver.graph.addString(self.resolver.allocator, module.text(expression.name.?));
+            const source = self.resolver.sourceFor(self.module_index, expression.source);
+            value = try self.forwardEntryCapture(name, source, value);
+            const node = try self.captureEntryValue(name, source, value);
+            try self.node_map.put(self.resolver.allocator, @intFromEnum(id), node);
+            return node;
+        }
+
+        fn forwardEntryCapture(self: *InstanceContext, name: primitives.StringRange, source: primitives.SourceRef, original: global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
+            var scopes: std.ArrayList(*InstanceContext) = .empty;
+            defer scopes.deinit(self.resolver.allocator);
+            var current = self.active_parent;
+            const content = self.resolver.graph.node(original).content;
+            while (current) |parent| : (current = parent.active_parent) {
+                const function = parent.function orelse break;
+                if (content == .binding_use) {
+                    var owned = parent.binding_map.containsValue(content.binding_use);
+                    for (parent.entry_captures.items) |capture| if (capture.binding == content.binding_use) {
+                        owned = true;
+                        break;
+                    };
+                    if (owned) break;
+                }
+                if (!self.resolver.graph.function(function).flags.is_comptime_entry) break;
+                try scopes.append(self.resolver.allocator, parent);
+            }
+            var value = original;
+            var index = scopes.items.len;
+            while (index != 0) {
+                index -= 1;
+                value = try scopes.items[index].captureEntryValue(name, source, value);
+            }
+            return value;
+        }
+
+        fn captureEntryValue(self: *InstanceContext, name: primitives.StringRange, source: primitives.SourceRef, value: global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
+            const content = self.resolver.graph.node(value).content;
+            for (self.entry_captures.items) |capture| {
+                if ((content == .binding_use and content.binding_use == capture.binding) or
+                    (capture.field.default_value == value and std.mem.eql(u8, self.resolver.graph.text(capture.field.name), self.resolver.graph.text(name))))
+                    return self.resolver.core.appendNode(source, capture.field.ty, .{ .binding_use = capture.binding });
+            }
             const ty = self.resolver.graph.node(value).ty orelse return error.UnresolvedCompileTimeCaptureType;
             if (self.resolver.graph.isTypeUnresolved(ty)) return error.UnresolvedCompileTimeCaptureType;
             if (self.function == null) return value;
-            const name = try self.resolver.graph.addString(self.resolver.allocator, module.text(expression.name.?));
-            const source = self.resolver.sourceFor(self.module_index, expression.source);
             const binding: global_sg.GlobalBindingId = @enumFromInt(self.resolver.graph.bindings.items.len);
             try self.resolver.graph.bindings.append(self.resolver.allocator, .{ .name = name, .source = source, .ty = ty, .mutability = .constant });
             try self.entry_captures.append(self.resolver.allocator, .{ .binding = binding, .field = .{ .name = name, .source = source, .ty = ty, .default_value = value } });
-            const node = try self.resolver.core.appendNode(source, ty, .{ .binding_use = binding });
-            try self.node_map.put(self.resolver.allocator, @intFromEnum(id), node);
-            return node;
+            return self.resolver.core.appendNode(source, ty, .{ .binding_use = binding });
         }
 
         fn publishEntryCaptures(self: *InstanceContext) !void {
@@ -3824,4 +3875,58 @@ test "comparison negation patches its destination after node storage grows" {
     try std.testing.expectEqual(primitives.ComparisonOperator.equal, comparison.operator);
     try std.testing.expect(graph.node(comparison.left).content.bool_literal);
     try std.testing.expect(!graph.node(comparison.right).content.bool_literal);
+}
+
+test "speculative entry capture rollback restores live parent contexts before IDs are reused" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    const literal: global_sg.Node = .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } };
+    try graph.nodes.append(allocator, literal);
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(allocator);
+    try module.semantic.parameterized_storage.ir.nodes.appendNTimes(allocator, undefined, 2);
+    try module.semantic.parameterized_storage.ir.bindings.appendNTimes(allocator, undefined, 2);
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var core: core_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{} };
+    defer core.deinit();
+    var generics: generic_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{}, .core = &core, .generics = &generics };
+    var substitutions: generic_mod.Resolver.Bindings = .{ .types = &.{}, .ints = &.{} };
+    var parent = Resolver.InstanceContext.init(&resolver, 0, std.mem.zeroes(parameterized_storage.ParameterizedFunction), &substitutions);
+    defer parent.deinit();
+    parent.function = @enumFromInt(0);
+    var child = Resolver.InstanceContext.init(&resolver, 0, std.mem.zeroes(parameterized_storage.ParameterizedFunction), &substitutions);
+    defer child.deinit();
+    child.active_parent = &parent;
+    resolver.active_instance = &child;
+    const name = try graph.addString(allocator, "value");
+    const retained = try parent.captureEntryValue(name, source, @enumFromInt(0));
+    const retained_binding = graph.node(retained).content.binding_use;
+    try parent.node_map.put(allocator, 0, retained);
+    try parent.binding_map.put(allocator, 0, retained_binding);
+
+    var speculation = resolver.beginSpeculation();
+    defer speculation.deinit();
+    const provisional_value: global_sg.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(allocator, literal);
+    const provisional = try parent.captureEntryValue(name, source, provisional_value);
+    const provisional_binding = graph.node(provisional).content.binding_use;
+    try parent.node_map.put(allocator, 1, provisional);
+    try parent.binding_map.put(allocator, 1, provisional_binding);
+    speculation.rollback();
+    try std.testing.expectEqual(@as(usize, 1), parent.entry_captures.items.len);
+    try std.testing.expectEqual(retained, parent.node_map.get(0).?);
+    try std.testing.expectEqual(retained_binding, parent.binding_map.get(0).?);
+    try std.testing.expectEqual(null, parent.node_map.get(1));
+    try std.testing.expectEqual(null, parent.binding_map.get(1));
+
+    try std.testing.expectEqual(@intFromEnum(provisional_value), graph.nodes.items.len);
+    try graph.nodes.append(allocator, literal);
+    const retried = try parent.captureEntryValue(name, source, provisional_value);
+    try std.testing.expectEqual(provisional, retried);
+    try std.testing.expectEqual(@as(usize, 2), parent.entry_captures.items.len);
 }

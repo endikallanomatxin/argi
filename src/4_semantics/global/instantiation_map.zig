@@ -28,6 +28,21 @@ pub fn Map(comptime Value: type) type {
             return page[index % page_len];
         }
 
+        pub fn discardValuesFrom(self: *Self, first: Value) void {
+            for (self.pages) |page| if (page) |values| {
+                for (values) |*stored| if (stored.*) |value| {
+                    if (@intFromEnum(value) >= @intFromEnum(first)) stored.* = null;
+                };
+            };
+        }
+
+        pub fn containsValue(self: *const Self, value: Value) bool {
+            for (self.pages) |page| if (page) |values| {
+                for (values) |stored| if (stored != null and stored.? == value) return true;
+            };
+            return false;
+        }
+
         pub fn put(self: *Self, allocator: std.mem.Allocator, index: usize, value: Value) !void {
             std.debug.assert(index < self.limit);
             if (self.pages.len == 0) {
