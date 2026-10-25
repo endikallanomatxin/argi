@@ -120,3 +120,20 @@ These are individual instrumented observations, not a cross-platform throughput 
 The allocation-failure regression proves unconstrained functions/types can be checked
 without allocating substitutions. Rejection and late-specialization fixtures retain
 coverage of constrained functions and later evidence.
+
+### Diagnose relevant node kinds before testing reachability
+
+Completion profiling now separates input and value diagnostics. In a Debug
+100-call prelude session these groups initially took 5,190 ms and 2,925 ms.
+Filtering by the diagnostic's node kinds before consulting the selected-unit hash
+set reduced value diagnostics to 668 ms in a subsequent run. The contract/runtime
+binding check also now rejects ordinary types before searching every function's
+input/output bindings for the interface exception. With both changes, the groups
+measured 423 ms and 792 ms respectively. Graph iteration and diagnostic order stay
+unchanged; every relevant selected node still receives the same checks. No state,
+cache, or validation exemption is added. The observations are individual Debug
+runs, not stable throughput guarantees.
+
+Keep the distinction between candidate filtering and validation caching: the
+former removes work that cannot affect a result, while the latter would need
+explicit dependencies and rollback rules.

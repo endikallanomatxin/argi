@@ -2486,10 +2486,13 @@ pub const Resolver = struct {
     }
 
     pub fn runtimeBindingContract(self: *const Resolver, binding_id: global_sg.GlobalBindingId) ?ContractUse {
-        if (self.isFunctionInterfaceBinding(binding_id)) return null;
         const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
         if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) return null;
-        return self.contractUse(binding.ty);
+        // Ordinary bindings cannot violate the contract/runtime boundary. Only
+        // contract-typed bindings need the interface exception and its lookup.
+        const use = self.contractUse(binding.ty) orelse return null;
+        if (self.isFunctionInterfaceBinding(binding_id)) return null;
+        return use;
     }
 
     pub fn contractUse(self: *const Resolver, ty: global_sg.GlobalTypeId) ?ContractUse {

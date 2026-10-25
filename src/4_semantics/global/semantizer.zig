@@ -1040,18 +1040,22 @@ pub const Session = struct {
             return error.InvalidVirtualSignature;
         }
 
-        if (try diagnoseArrayAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
-            return error.Reported;
+        {
+            const diagnostics_profile = if (core.scan_profile) |profile| profile.begin(.completion_input_diagnostics) else null;
+            defer if (diagnostics_profile) |m| m.finish(false);
+            if (try diagnoseArrayAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+                return error.Reported;
 
-        if (options.diagnostics) |diagnostics| {
-            if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseContractRuntimeBindings(&relocation.graph, contracts, diagnostics))
-                return error.Reported;
-            if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
-                return error.Reported;
+            if (options.diagnostics) |diagnostics| {
+                if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseContractRuntimeBindings(&relocation.graph, contracts, diagnostics))
+                    return error.Reported;
+                if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
+                    return error.Reported;
+            }
         }
 
         const remaining = worklists.remaining(reachable);
@@ -1122,25 +1126,29 @@ pub const Session = struct {
             return error.UnsupportedGlobalSemantic;
         }
 
-        if (try diagnoseInvalidMatchPayloadCopies(
-            allocator,
-            &relocation.graph,
-            ownership,
-            reachable,
-            options.diagnostics,
-        ))
-            return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
+        {
+            const diagnostics_profile = if (core.scan_profile) |profile| profile.begin(.completion_value_diagnostics) else null;
+            defer if (diagnostics_profile) |m| m.finish(false);
+            if (try diagnoseInvalidMatchPayloadCopies(
+                allocator,
+                &relocation.graph,
+                ownership,
+                reachable,
+                options.diagnostics,
+            ))
+                return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
 
-        try @import("record_literals.zig").checkRequiredFields(&relocation.graph, reachable, options.diagnostics);
+            try @import("record_literals.zig").checkRequiredFields(&relocation.graph, reachable, options.diagnostics);
 
-        if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
-            return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
+            if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+                return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
 
-        if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
-            return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
+            if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
+                return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
 
-        if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
-            return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
+            if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
+                return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
+        }
 
         if (options.diagnostics) |diagnostics|
             if (try contracts.findGenericTypeConstraintFailure()) |failure| {
@@ -1698,6 +1706,10 @@ fn diagnoseArrayAssignments(
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.nodes.items, 0..) |node, raw| {
+        switch (node.content) {
+            .binding_declaration, .assignment, .array_store, .pointer_assignment => {},
+            else => continue,
+        }
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(id)) continue;
         const value, const expected = switch (node.content) {
@@ -1742,6 +1754,10 @@ fn diagnoseInvalidNumericAssignments(
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.nodes.items, 0..) |node, raw| {
+        switch (node.content) {
+            .binding_declaration, .struct_value_literal, .array_literal, .assignment, .array_store, .pointer_assignment => {},
+            else => continue,
+        }
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(id)) continue;
         const value, const expected = switch (node.content) {
@@ -1907,6 +1923,10 @@ fn diagnoseInvalidComparisons(
 ) !bool {
     const graph = core.graph;
     for (graph.nodes.items, 0..) |node, raw| {
+        switch (node.content) {
+            .comparison => {},
+            else => continue,
+        }
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(id)) continue;
         const comparison = switch (node.content) {
@@ -1959,6 +1979,10 @@ fn diagnoseInvalidPointerOperations(
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.nodes.items, 0..) |node, raw| {
+        switch (node.content) {
+            .pointer_assignment, .array_index, .array_store => {},
+            else => continue,
+        }
         const node_id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(node_id)) continue;
         switch (node.content) {
@@ -2044,7 +2068,6 @@ fn diagnoseInvalidPointerOperations(
     }
     for (graph.bindings.items, 0..) |destination, raw| {
         const destination_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
-        if (reachable) |set| if (!set.containsBinding(destination_id)) continue;
         const initialization = destination.initialization orelse continue;
         const node = graph.node(initialization);
         const child = switch (node.content) {
@@ -2057,6 +2080,7 @@ fn diagnoseInvalidPointerOperations(
             else => continue,
         };
         if (pointer.mutability != .read_write) continue;
+        if (reachable) |set| if (!set.containsBinding(destination_id)) continue;
         const binding = switch (graph.node(child).content) {
             .binding_use => |value| value,
             else => continue,
