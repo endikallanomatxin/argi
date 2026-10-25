@@ -1,6 +1,6 @@
 -- Collection operations retain one identity per capability.
 Indexable#(.Collection: Type): Contract = (
-    .Item : Type
+    .Item          : Type
     .length        : (.self: &Collection) -> (.count: UIntNative)
     .get_reference : (.self: &Collection, .index: UIntNative) -> (
         .result : Errable#(&Item, (..out_of_bounds))

@@ -88,17 +88,17 @@ _tuple_set(
 implement Init#(
     Python,
     (
-        .ffi : $&ForeignFunctionInterface,
-        .program_name : StringView = "python3",
-        .home         : StringView = "",
+        .ffi          : $&ForeignFunctionInterface,
+        .program_name : StringView                  = "python3",
+        .home         : StringView                  = "",
     )
 ) (
     .Result : Type = Errable#(Python, (..python_initialization_failed))
     .init   = (
         .args : (
-            .ffi : $&ForeignFunctionInterface,
-            .program_name : StringView = "python3",
-            .home         : StringView = "",
+            .ffi          : $&ForeignFunctionInterface,
+            .program_name : StringView                  = "python3",
+            .home         : StringView                  = "",
         )
     ) -> (.result: Result) {
         ffi ::= args.ffi
@@ -109,7 +109,7 @@ implement Init#(
         handle ::= _start(
             .program        = byte_data(.text = program_name).reference
             .program_length = byte_length(&program_name).count
-            .home = byte_data(.text = home).reference
+            .home           = byte_data(.text = home).reference
             .home_length    = byte_length(&home).count
         ).handle
 
@@ -292,7 +292,7 @@ _no_keywords() -> (.value: ?&Object) := { value = ..none }
 _call_from_view(
     .self      : &Object,
     .arguments : ArrayView#(.t: &Object) = _no_arguments(),
-    .keywords  : ?&Object = _no_keywords()
+    .keywords  : ?&Object                = _no_keywords()
 ) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._python&._ffi
     tuple ::= _tuple(

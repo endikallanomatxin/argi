@@ -109,7 +109,7 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
     (
         .left      : &DynamicMatrix#(.t: t),
         .right     : &DynamicMatrix#(.t: t),
-        .allocator : $&Provider = reach allocator
+        .allocator : $&Provider              = reach allocator
     )
 ) (
     .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
@@ -117,7 +117,7 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
         .args : (
             .left      : &DynamicMatrix#(.t: t),
             .right     : &DynamicMatrix#(.t: t),
-            .allocator : $&Provider = reach allocator
+            .allocator : $&Provider              = reach allocator
         )
     ) -> (.result: Result) {
         left ::= args.left
@@ -150,7 +150,7 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Multiply#(
     (
         .left      : &DynamicMatrix#(.t: t),
         .right     : &DynamicMatrix#(.t: t),
-        .allocator : $&Provider = reach allocator
+        .allocator : $&Provider              = reach allocator
     )
 ) (
     .Result   : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
@@ -158,7 +158,7 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Multiply#(
         .args : (
             .left      : &DynamicMatrix#(.t: t),
             .right     : &DynamicMatrix#(.t: t),
-            .allocator : $&Provider = reach allocator
+            .allocator : $&Provider              = reach allocator
         )
     ) -> (.result: Result) {
         left ::= args.left
@@ -306,7 +306,7 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
     (
         .left      : &DynamicVector#(.t: t),
         .right     : &DynamicVector#(.t: t),
-        .allocator : $&Provider = reach allocator
+        .allocator : $&Provider              = reach allocator
     )
 ) (
     .Result : Type = Errable#(DynamicVector#(.t: t), (..dimension_mismatch, ..out_of_memory))
@@ -314,7 +314,7 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
         .args : (
             .left      : &DynamicVector#(.t: t),
             .right     : &DynamicVector#(.t: t),
-            .allocator : $&Provider = reach allocator
+            .allocator : $&Provider              = reach allocator
         )
     ) -> (.result: Result) {
         left ::= args.left

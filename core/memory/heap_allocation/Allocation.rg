@@ -37,7 +37,7 @@ Allocation: Type = (
     -- A granted prefix may be smaller than the acquisition being released.
     ._release_size : UIntNative
     ._slot_extent  : ?_AllocationSlotExtent
-    ._slot_state   : UIntNative = 0
+    ._slot_state   : UIntNative             = 0
 )
 
 -- Compiler-owned temporal boundary used after a physical allocator has
@@ -51,7 +51,7 @@ trusted_establish_allocation(
     .size        : UIntNative,
     .alignment   : UIntNative,
     .deallocator : Virtual#(.contract: Deallocator),
-    .anchor      : &Any = erase_reference#(.t: UInt8)(
+    .anchor      : &Any        = erase_reference#(.t: UInt8)(
         .base = &allocation_static_anchor
     ).reference,
 ) -> (.allocation: Allocation) := {
@@ -61,10 +61,10 @@ trusted_establish_allocation(
     if storage % alignment != 0 { abort }
     if storage + size < storage { abort }
     allocation = (
-        .data = raw_pointer#(.t: UInt8)(.address = storage).raw
-        .size = size
-        .alignment = alignment
-        .anchor = anchor
+        .data               = raw_pointer#(.t: UInt8)(.address = storage).raw
+        .size               = size
+        .alignment          = alignment
+        .anchor             = anchor
         .deallocator        = deallocator
         ._storage_address   = storage
         ._storage_size      = size
@@ -82,7 +82,7 @@ establish_allocation(
     .size        : UIntNative,
     .alignment   : UIntNative,
     .deallocator : Virtual#(.contract: Deallocator),
-    .anchor      : &Any = erase_reference#(.t: UInt8)(
+    .anchor      : &Any             = erase_reference#(.t: UInt8)(
         .base = &allocation_static_anchor
     ).reference,
 ) -> (.allocation: Allocation) := {

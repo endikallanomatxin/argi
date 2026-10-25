@@ -23,8 +23,8 @@ DirectoryWalker: Type = (
 implement#(.Provider: Type: Allocator) Init#(
     DirectoryWalker,
     (
-        .self : &FileSystem = reach file_system,
-        .path : StringView,
+        .self          : &FileSystem = reach file_system,
+        .path          : StringView,
         .maximum_depth : UIntNative  = 64,
         .allocator     : $&Provider  = reach allocator,
     )
@@ -32,8 +32,8 @@ implement#(.Provider: Type: Allocator) Init#(
     .Result : Type = Errable#(DirectoryWalker, _FilesystemReasons)
     .init   = (
         .args : (
-            .self : &FileSystem = reach file_system,
-            .path : StringView,
+            .self          : &FileSystem = reach file_system,
+            .path          : StringView,
             .maximum_depth : UIntNative  = 64,
             .allocator     : $&Provider  = reach allocator,
         )

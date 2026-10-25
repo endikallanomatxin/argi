@@ -3,17 +3,15 @@
 -- containment proof. Relative leading parents remain, rooted parents clamp
 -- at the root, and Windows drive-relative prefixes retain their meaning.
 normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .view      : StringView,
-    .allocator : $&AllocatorType = reach allocator
-) -> (
-    .result : Errable#(Path, (..invalid_path, ..out_of_memory))
-) := {
+    .view: StringView, .allocator: $&AllocatorType = reach allocator
+) -> (.result: Errable#(Path, (..invalid_path, ..out_of_memory))) := {
     assume allocator
     index :: UIntNative = 0
 
     while index < view._length {
         if unwrap_or_abort(.value = bytes_get(.view = &view, .index = index)) == 0 {
-            result = ..error(.reason = ..invalid_path) return
+            result = ..error(.reason = ..invalid_path)
+            return
         }
         index = index + 1
     }
@@ -25,7 +23,8 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
             a ::= unwrap_or_abort(.value = bytes_get(.view = &view, .index = 0))
             b ::= unwrap_or_abort(.value = bytes_get(.view = &view, .index = 1))
             if path_is_separator(.byte = a).ok and path_is_separator(.byte = b).ok and root <= 1 {
-                result = ..error(.reason = ..invalid_path) return
+                result = ..error(.reason = ..invalid_path)
+                return
             }
             if prefix == 0 and b == 58 and [[a >= 65 and a <= 90] or [a >= 97 and a <= 122]] {
                 prefix = 2
@@ -38,9 +37,12 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
     while index < view._length {
         while index < view._length {
-            if path_is_separator(
-                .byte = unwrap_or_abort(.value = bytes_get(.view = &view, .index = index))
-            ).ok == false {
+            if [
+                path_is_separator(
+                    .byte = unwrap_or_abort(.value = bytes_get(.view = &view, .index = index))
+                ).ok
+                == false
+            ] {
                 break
             }
             index = index + 1
@@ -55,15 +57,16 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
             index = index + 1
         }
         if start == index { break }
-        part ::= unwrap_or_abort(
-            .value = slice(view, .start = start, .count = index - start)
-        )
+        part ::= unwrap_or_abort(.value = slice(view, .start = start, .count = index - start))
         if part == "." { continue }
         if part == ".." {
             count ::= length(&parts).count
             if count > 0 {
                 last ::= unwrap_or_abort(.value = get(&parts, .index = count - 1))
-                if last != ".." { removed ::= pop($&parts) continue }
+                if last != ".." {
+                    removed ::= pop($&parts)
+                    continue
+                }
             }
             if root > 0 { continue }
         }
@@ -85,9 +88,12 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
     while index < length(&parts).count {
         if index > 0 or root > 0 {
             if text._length > 0 {
-                if unwrap_or_abort(
-                    .value = bytes_get(.view = &view(&text), .index = text._length - 1)
-                ) != 47 {
+                if [
+                    unwrap_or_abort(
+                        .value = bytes_get(.view = &view(&text), .index = text._length - 1)
+                    )
+                    != 47
+                ] {
                     _string_push_byte($&text, .byte = 47, .allocator = allocator)!
                 }
             }

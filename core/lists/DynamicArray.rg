@@ -234,9 +234,9 @@ _grow_dynamic_array#(.t: Type, .Provider: Type: Allocator)(
                 )
                 _trusted_uninit_relocate#(.t: t)(
                     .source_allocation      = &array&._allocation
-                    .source = old_slot
+                    .source                 = old_slot
                     .destination_allocation = &new_allocation
-                    .destination = new_slot
+                    .destination            = new_slot
                 )
                 i = i + 1
             }
@@ -317,9 +317,9 @@ insert_growing#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         )
         _trusted_uninit_relocate#(.t: t)(
             .source_allocation      = &self&._allocation
-            .source = source_slot
+            .source                 = source_slot
             .destination_allocation = &self&._allocation
-            .destination = destination_slot
+            .destination            = destination_slot
         )
         cursor = source_index
     }
@@ -540,9 +540,9 @@ implement#(.t: Type) Removable#(DynamicArray#(.t: t)) (
             )
             _trusted_uninit_relocate#(.t: t)(
                 .source_allocation      = &self&._allocation
-                .source = source_slot
+                .source                 = source_slot
                 .destination_allocation = &self&._allocation
-                .destination = destination_slot
+                .destination            = destination_slot
             )
             cursor = cursor + one
         }

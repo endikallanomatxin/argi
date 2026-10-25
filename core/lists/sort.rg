@@ -1,6 +1,6 @@
 -- Restore a max heap whose children below root are already heaps.
 _sift_down#(
-    .t : Type: ImplicitlyCopyable,
+    .t          : Type: ImplicitlyCopyable,
     .policy     : Type: OrderPolicy#(policy, t),
     .Collection : Type: MutableIndexable#(.Item: t)
 ) := (.self: $&Collection, .order: &policy, .start: UIntNative, .count: UIntNative) -> () {
@@ -29,7 +29,7 @@ _sift_down#(
 -- Iterative heapsort uses constant auxiliary space and never resizes storage.
 -- Policy-equivalent elements can change relative order.
 sort#(
-    .t : Type: ImplicitlyCopyable,
+    .t          : Type: ImplicitlyCopyable,
     .policy     : Type: OrderPolicy#(policy, t),
     .Collection : Type: MutableIndexable#(.Item: t)
 ) := (.self: $&Collection, .order: &policy) -> () {

@@ -5,9 +5,9 @@
 ..invalid_cli_schema
 
 CliSpec: Type = (
-    .name : StringView,
+    .name          : StringView,
     .short_name    : StringView  = "",
-    .help : StringView  = "",
+    .help          : StringView  = "",
     .value_name    : StringView  = "",
     .required      : Bool        = false,
     .repeatable    : Bool        = false,
@@ -44,8 +44,8 @@ CliReasons: Type = (
 parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
     .source    : &t,
     .specs     : ArrayView#(.t: CliSpec),
-    .start     : UIntNative = 0,
-    .allocator : $&AllocatorType = reach allocator
+    .start     : UIntNative               = 0,
+    .allocator : $&AllocatorType          = reach allocator
 ) -> (.result: Errable#(CliMatches, CliReasons)) := {
     assume allocator
     count ::= length(&specs).count

@@ -268,9 +268,9 @@ _map_reserve_hash_map#(
             )(.allocation = &entries, .index = destination)
             _trusted_uninit_relocate#(.t: HashMapEntry#(.key: key, .value: value))(
                 .source_allocation      = &self&._table._entries
-                .source = source_slot
+                .source                 = source_slot
                 .destination_allocation = &entries
-                .destination = destination_slot
+                .destination            = destination_slot
             )
             _trusted_dynamic_array_set(
                 .array = $&slots

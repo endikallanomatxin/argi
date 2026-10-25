@@ -34,7 +34,7 @@ read_uint16_at(.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: B
 
 write_uint16_at(
     .bytes  : MutableArrayView#(.t: UInt8),
-    .offset : UIntNative = 0,
+    .offset : UIntNative                    = 0,
     .value  : UInt16,
     .order  : ByteOrder
 ) -> (.result: Errable#(Void, (..out_of_bounds))) := {
@@ -85,7 +85,7 @@ read_uint32_at(.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: B
 
 write_uint32_at(
     .bytes  : MutableArrayView#(.t: UInt8),
-    .offset : UIntNative = 0,
+    .offset : UIntNative                    = 0,
     .value  : UInt32,
     .order  : ByteOrder
 ) -> (.result: Errable#(Void, (..out_of_bounds))) := {
@@ -136,7 +136,7 @@ read_uint64_at(.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: B
 
 write_uint64_at(
     .bytes  : MutableArrayView#(.t: UInt8),
-    .offset : UIntNative = 0,
+    .offset : UIntNative                    = 0,
     .value  : UInt64,
     .order  : ByteOrder
 ) -> (.result: Errable#(Void, (..out_of_bounds))) := {

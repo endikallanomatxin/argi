@@ -11,7 +11,7 @@ ErrorTracer#(.Tracer: Type): Contract = (
 
 add_context := (
     .context      : StringView,
-    .location     : SourceLocationId = error_location_id(),
+    .location     : SourceLocationId                   = error_location_id(),
     .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
 ) -> () {
     ErrorTracer#().add_context(.self = error_tracer, .location = location, .context = context)

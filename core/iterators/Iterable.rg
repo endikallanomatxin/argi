@@ -5,13 +5,13 @@ Iterable#(.Collection: Type): Contract = (
 )
 
 ReferenceIterable#(.Collection: Type): Contract = (
-    .Item : Type
-    .IteratorType : Type
+    .Item                  : Type
+    .IteratorType          : Type
     .to_reference_iterator : (.value: &Collection) -> (.iterator: IteratorType)
 )
 
 MutableReferenceIterable#(.Collection: Type): Contract = (
-    .Item : Type
+    .Item         : Type
     .IteratorType : Type
     .to_mutable_reference_iterator : (.value: $&Collection) -> (.iterator: IteratorType)
 )

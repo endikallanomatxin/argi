@@ -35,7 +35,7 @@ _nanoseconds_UnixTimestamp(.self: &UnixTimestamp) -> (.value: UInt32) := {
 }
 
 implement NanosecondCount#(UnixTimestamp) (
-    .Count : Type = UInt32
+    .Count            : Type = UInt32
     .nanosecond_count = _nanoseconds_UnixTimestamp
 )
 

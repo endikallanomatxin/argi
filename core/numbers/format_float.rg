@@ -849,10 +849,10 @@ _FloatExactDigits: Type = (
 )
 
 _FloatEncoding: Type = (
-    .bits : UInt64
+    .bits           : UInt64
     .fraction_unit  : UInt64
     .exponent_limit : UInt64
-    .bias : Int32
+    .bias           : Int32
 )
 
 _float_encoding#(.Value: Type: _FloatRepresentation#(Value)) := (.value: Value) -> (

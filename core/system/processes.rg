@@ -110,10 +110,10 @@ _process_inherit() -> (.value: ProcessStreamMode) := { value = ..inherit }
 spawn(
     .executable : StringView,
     .arguments  : ArrayView#(.t: StringView) = _process_no_arguments(),
-    .stdin      : ProcessStreamMode = _process_inherit(),
-    .stdout     : ProcessStreamMode = _process_inherit(),
-    .stderr     : ProcessStreamMode = _process_inherit(),
-    .self       : &ProcessManager = reach proc_man,
+    .stdin      : ProcessStreamMode          = _process_inherit(),
+    .stdout     : ProcessStreamMode          = _process_inherit(),
+    .stderr     : ProcessStreamMode          = _process_inherit(),
+    .self       : &ProcessManager            = reach proc_man,
 ) -> (
     .result : Errable#(
         Process, (..invalid_process_argument, ..out_of_memory, ..process_spawn_failed)

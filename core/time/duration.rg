@@ -46,7 +46,7 @@ duration_from_seconds(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_o
 _nanoseconds_Duration(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds }
 
 implement NanosecondCount#(Duration) (
-    .Count : Type = UInt64
+    .Count            : Type = UInt64
     .nanosecond_count = _nanoseconds_Duration
 )
 

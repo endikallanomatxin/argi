@@ -10,10 +10,10 @@ implement _FloatRepresentation#(Float16) (
             .base = &value
         ).reference&
         encoding = (
-            .bits = bits | convert#(.to: UInt64)(_)
+            .bits           = bits | convert#(.to: UInt64)(_)
             .fraction_unit  = 1024
             .exponent_limit = 32
-            .bias = 15
+            .bias           = 15
         )
     }
 
@@ -32,10 +32,10 @@ implement _FloatRepresentation#(Float32) (
             .base = &value
         ).reference&
         encoding = (
-            .bits = bits | convert#(.to: UInt64)(_)
+            .bits           = bits | convert#(.to: UInt64)(_)
             .fraction_unit  = 8388608
             .exponent_limit = 256
-            .bias = 127
+            .bias           = 127
         )
     }
 
@@ -54,10 +54,10 @@ implement _FloatRepresentation#(Float64) (
             .base = &value
         ).reference&
         encoding = (
-            .bits = bits
+            .bits           = bits
             .fraction_unit  = 4503599627370496
             .exponent_limit = 2048
-            .bias = 1023
+            .bias           = 1023
         )
     }
 

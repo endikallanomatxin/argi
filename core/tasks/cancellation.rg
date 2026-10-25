@@ -37,7 +37,7 @@ is_cancelled(.self: CancellationToken) -> (.value: Bool) := {
 
 CancellationContext: Type = (
     .token    : ?CancellationToken = ..none,
-    .deadline : ?Deadline = ..none
+    .deadline : ?Deadline          = ..none
 )
 
 implement ImplicitlyCopyable#(CancellationContext) ()

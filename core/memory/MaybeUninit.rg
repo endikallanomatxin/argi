@@ -124,9 +124,9 @@ _trusted_uninit_take#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUninit#(.
 -- this trusted ownership transition.
 _trusted_uninit_relocate#(.t: Type)(
     .source_allocation      : &Allocation,
-    .source : MaybeUninit#(.t: t),
+    .source                 : MaybeUninit#(.t: t),
     .destination_allocation : &Allocation,
-    .destination : MaybeUninit#(.t: t),
+    .destination            : MaybeUninit#(.t: t),
 ) -> () := {
     source_index: ?UIntNative = ..some(.value = source._index)
     destination_index: ?UIntNative = ..some(.value = destination._index)

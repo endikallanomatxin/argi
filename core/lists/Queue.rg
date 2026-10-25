@@ -12,6 +12,6 @@ QueueInsertion#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contr
     .push   : (
         .self      : $&Collection,
         .value     : Queue#(Collection).Item,
-        .allocator : $&Provider = reach allocator
+        .allocator : $&Provider               = reach allocator
     ) -> (.result: Result)
 )
