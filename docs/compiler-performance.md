@@ -107,3 +107,16 @@ minimal-session speedup to core-heavy programs. Raw run logs are local under
 Next investigate the remaining resolution/completion work in core-heavy sessions
 and the other accumulated verifier traversals. This change addresses repeated
 linear module ownership searches, not general incremental verification.
+
+### Constraint validation without unused substitutions
+
+The optional resolution profile also separates generic function/type constraints,
+participant conformance validation, virtual registry closure and choice annotations.
+In a Debug run of 100 calls with the prelude, generic function constraint checking
+used 1,682 ms. Skipping substitution-environment allocation for signatures with no
+constraints reduced that phase to 391 ms in a subsequent run. Constrained signatures
+still bind arguments and check every constraint; no validated-state cache is added.
+These are individual instrumented observations, not a cross-platform throughput claim.
+The allocation-failure regression proves unconstrained functions/types can be checked
+without allocating substitutions. Rejection and late-specialization fixtures retain
+coverage of constrained functions and later evidence.

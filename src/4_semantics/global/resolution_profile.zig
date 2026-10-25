@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const Pass = enum { binding_types, assignment_values, dereferences, addresses, generic_types, error_candidates, checkpoint, resolution, completion, unit_verification, checking };
+pub const Pass = enum { binding_types, assignment_values, dereferences, addresses, generic_types, error_candidates, checkpoint, resolution, completion, unit_verification, checking, generic_function_constraints, generic_type_constraints, conformance_validation, virtual_registry_closure, choice_annotations };
 
 /// Optional diagnostic counters, owned by the benchmark rather than semantic
 /// transactions. Rejected/speculative work remains observable after rollback.

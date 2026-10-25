@@ -1005,7 +1005,11 @@ pub const Session = struct {
         const ownership = &resolvers.ownership;
         const staged_execution = &resolvers.staged_execution;
         try contracts.validateGenericFunctionInstances();
-        try control.annotateChoiceTests();
+        {
+            const annotations = if (core.scan_profile) |profile| profile.begin(.choice_annotations) else null;
+            defer if (annotations) |m| m.finish(false);
+            try control.annotateChoiceTests();
+        }
 
         if (control.for_each_failure) |failure| {
             if (options.diagnostics) |diagnostics| {
