@@ -151,6 +151,10 @@ pub const CompilationSession = struct {
             self.* = undefined;
         }
 
+        pub fn finishContinuation(self: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, function: @import("../4_semantics/global/graph.zig").GlobalFunctionId) !Candidate {
+            return self.owner.finishPreparation(self, modules, diagnostics, function, null, false);
+        }
+
         pub fn finishDefinitions(self: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
             return self.owner.finishPreparation(self, modules, diagnostics, null, null, true);
         }

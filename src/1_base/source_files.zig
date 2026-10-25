@@ -23,7 +23,10 @@ const ResolvedImport = struct {
     resolved_dir: []u8,
 };
 
+pub const ImportAlias = struct { name: []const u8, dir: []const u8 };
+
 pub const CoreResolutionOptions = struct {
+    import_aliases: []const ImportAlias = &.{},
     explicit_sysroot: ?[]const u8 = null,
     environ_map: ?*const std.process.Environ.Map = null,
     fallback_core_dir: []const u8 = "core",
@@ -368,19 +371,24 @@ fn collectModuleImports(
     imports: *ImportList,
     target: @import("target.zig").Config,
 ) !void {
+    return collectModuleImportsWithAliases(alloc, io, sources, imports, target, &.{});
+}
+
+fn collectModuleImportsWithAliases(alloc: *const std.mem.Allocator, io: std.Io, sources: []const SourceFile, imports: *ImportList, target: @import("target.zig").Config, retained_aliases: []const ImportAlias) !void {
     for (sources) |source| try collectImportDirsFromSource(alloc, io, source.path, source.code, imports, target);
-    if (imports.items.len == 0) return;
+    if (imports.items.len == 0 and retained_aliases.len == 0) return;
     var arena = std.heap.ArenaAllocator.init(alloc.*);
     defer arena.deinit();
     const temporary = arena.allocator();
     const Token = @import("../2_tokens/token.zig");
     const Scan = struct { source: SourceFile, tokens: Token.View };
-    const Alias = struct { name: []const u8, dir: []const u8 };
+    const Alias = ImportAlias;
     var scans: std.ArrayList(Scan) = .empty;
     var aliases: std.ArrayList(Alias) = .empty;
+    try aliases.appendSlice(temporary, retained_aliases);
     for (sources) |source| {
         var error_offset: usize = 0;
-        const selected = try @import("target_selection.zig").select(temporary, source.code, target, &error_offset);
+        const selected = try @import("target_selection.zig").selectImports(temporary, source.code, target, &error_offset);
         var diagnostics = @import("diagnostic.zig").Diagnostics.init(&temporary, &.{source});
         var lexer = @import("../2_tokens/tokenizer.zig").Tokenizer.init(temporary, &diagnostics, selected, diagnostics.source_db.fileId(0));
         const tokens = lexer.tokenize() catch continue; // Ordinary parsing diagnoses invalid sources.
@@ -954,7 +962,7 @@ pub fn collectImportedModules(
     defer arena.deinit();
     const scratch = arena.allocator();
     var imports = ImportList.init(scratch);
-    try collectImportDirsFromSource(&scratch, io, source.path, source.code, &imports, options.target);
+    try collectModuleImportsWithAliases(&scratch, io, &.{source}, &imports, options.target, options.import_aliases);
     var visited = DirSet.init(scratch);
     var ordered_seen = DirSet.init(scratch);
     for (retained_dirs) |dir| {
@@ -972,8 +980,14 @@ pub fn collectImportedModules(
         try collectModuleOrder(&scratch, io, entry.resolved_dir, null, null, options.source_overrides, &ordered_seen, &ordered, options.target);
     var files = std.array_list.Managed(SourceFile).init(scratch);
     var seen = DirSet.init(scratch);
-    for (ordered.items) |dir|
+    for (ordered.items) |dir| {
+        const before = files.items.len;
         try collectRgFilesInDir(&scratch, io, &files, dir, null, &seen, options.source_overrides);
+        if (files.items.len == before) try files.append(.{
+            .path = try std.fs.path.join(scratch, &.{ dir, ".argi-empty-module.rg" }),
+            .code = "",
+        });
+    }
     var result = std.array_list.Managed(SourceFile).init(alloc.*);
     errdefer freeList(alloc, &result);
     for (files.items) |file| {

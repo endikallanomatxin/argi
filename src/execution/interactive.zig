@@ -108,10 +108,27 @@ pub const Interactive = struct {
         self.* = undefined;
     }
 
+    fn prepareCommand(self: *Interactive, source: []const u8, origin: ?submissions.Sources.SourceOrigin) !submissions.Sources.PreparedCommand {
+        var draft = try self.compiler.beginPreparation(&self.diagnostics);
+        defer draft.deinit();
+        const semantic = draft.semantic.?;
+        const first_module = semantic.modules.len;
+        if (self.imports) |loader| {
+            try self.sources.loadImports(&self.diagnostics, loader.io, loader.path, source, semantic, self.options.target);
+            try self.sources.selectModules(&self.diagnostics, semantic, first_module, loader.io, self.options.target);
+        }
+        const command = try self.sources.loadCommandOrigin(&self.diagnostics, source, origin);
+        const modules = try self.sources.appendModuleViews(semantic.modules, command.module);
+        const base = semantic.relocation.graph.functions.items.len;
+        const raw = try std.math.add(usize, base, @intFromEnum(command.function));
+        const function: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(std.math.cast(u32, raw) orelse return error.SubmissionIdentityLimit);
+        return .{ .candidate = try draft.finishContinuation(modules, &self.diagnostics, function), .function = function };
+    }
+
     pub fn submitStatements(self: *Interactive, statements: []const u8) !void {
         try self.beginSubmission();
         defer self.endSubmission();
-        var command = try self.sources.prepareCommand(&self.compiler, &self.diagnostics, statements);
+        var command = try self.prepareCommand(statements, null);
         defer command.deinit();
         try self.runtime.executeCommand(&command.candidate);
     }
@@ -143,7 +160,7 @@ pub const Interactive = struct {
                 const name = try self.nextResultName();
                 const statement = try std.fmt.allocPrint(self.allocator, "{s} := {s}\n", .{ name, source });
                 defer self.allocator.free(statement);
-                var command = try self.sources.prepareCommandOrigin(&self.compiler, &self.diagnostics, statement, .{
+                var command = try self.prepareCommand(statement, .{
                     .text = source,
                     .offset = name.len + " := ".len,
                 });
@@ -186,14 +203,13 @@ pub const Interactive = struct {
         defer draft.deinit();
         const semantic = draft.semantic.?;
         const first_module = semantic.modules.len;
-        if (module.semantic.module_aliases.items.len != 0) {
-            const loader = self.imports orelse {
-                try self.diagnostics.add(.{ .file = self.diagnostics.source_db.fileId(self.diagnostics.source_files.len - 1), .offset = 0 }, .semantic, "interactive imports require a configured source loader", .{});
-                return error.Reported;
-            };
+        if (self.imports) |loader| {
             try self.sources.loadImports(&self.diagnostics, loader.io, loader.path, source, semantic, self.options.target);
             try self.sources.selectModules(&self.diagnostics, semantic, first_module, loader.io, self.options.target);
             try self.sources.resolveSubmissionImports(module, loader.io, loader.path);
+        } else if (module.semantic.module_aliases.items.len != 0) {
+            try self.diagnostics.add(.{ .file = self.diagnostics.source_db.fileId(self.diagnostics.source_files.len - 1), .offset = 0 }, .semantic, "interactive imports require a configured source loader", .{});
+            return error.Reported;
         }
         const prefix = try self.sources.appendModuleViews(semantic.modules, module);
         var candidate = try draft.finishDefinitions(prefix, &self.diagnostics);

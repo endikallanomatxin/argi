@@ -15550,3 +15550,38 @@ test "feature_tests/execution/281_nominal_scalar_representations" {
     try expectSuccessfulBuild("tests/feature_tests/execution/281_nominal_scalar_representations");
     try run("tests/feature_tests/execution/281_nominal_scalar_representations");
 }
+
+test "argi repl discovers public submodules from retained import aliases" {
+    const commands =
+        \\root := import("./tests/feature_tests/modules/32_public_submodules/tree")
+        \\root.branch.leaf.answer()
+        \\root.branch.leaf.identity#(.T: Int32)(42)
+        \\:begin
+        \\answer := () -> (.value: Int32) { value = root.branch.leaf.answer() }
+        \\:end
+        \\answer()
+        \\:reset
+        \\root := import("./tests/feature_tests/modules/32_public_submodules/tree")
+        \\root.branch.leaf.answer()
+        \\:begin
+        \\enabled := () -> (.value: Bool) { value = true }
+        \\selected := () -> (.value: Int32) {
+        \\    #if enabled() { value = root.branch.leaf.answer() }
+        \\    #else { value = 0 }
+        \\}
+        \\:end
+        \\selected()
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n_1 = 42\n_2 = 42\n_0 = 42\n_1 = 42\n");
+}
+
+test "argi repl rolls back newly discovered submodules after rejection" {
+    const commands =
+        \\root := import("./tests/feature_tests/modules/32_public_submodules/tree")
+        \\root.branch.leaf.answer() + missing()
+        \\root.branch.leaf.answer()
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic(null, commands, "_1 = 42\n", "no function named 'missing' exists");
+}

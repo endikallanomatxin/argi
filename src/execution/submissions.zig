@@ -94,7 +94,7 @@ pub const Sources = struct {
 
     pub const SourceOrigin = struct { text: []const u8, offset: usize };
 
-    fn loadCommandOrigin(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8, origin: ?SourceOrigin) !Command {
+    pub fn loadCommandOrigin(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8, origin: ?SourceOrigin) !Command {
         const a = self.arena.allocator();
         const name = try std.fmt.allocPrint(a, "_session_command_{d}", .{self.sequence});
         const header = try std.fmt.allocPrint(a, "{s} := () -> () {{\n", .{name});
@@ -270,7 +270,23 @@ pub const Sources = struct {
         const dirs = try a.alloc([]const u8, session.modules.len);
         defer a.free(dirs);
         for (dirs, session.modules) |*dir, module| dir.* = module.module_dir;
-        var files = try sf.collectImportedModules(&a, io, .{ .path = importer_path, .code = source }, dirs, .{ .target = target });
+        var aliases: std.ArrayList(sf.ImportAlias) = .empty;
+        defer aliases.deinit(a);
+        const graph = &session.relocation.graph;
+        if (session.resolvers.core.session_namespace) |namespace| {
+            for (graph.module_aliases.items) |alias| {
+                var visible = false;
+                for (namespace.declarations.items) |declaration| if (declaration == alias.declaration) {
+                    visible = true;
+                    break;
+                };
+                if (visible) try aliases.append(a, .{
+                    .name = graph.text(graph.declaration(alias.declaration).name),
+                    .dir = graph.text(graph.modules.items[@intFromEnum(alias.target)].dir),
+                });
+            }
+        }
+        var files = try sf.collectImportedModules(&a, io, .{ .path = importer_path, .code = source }, dirs, .{ .target = target, .import_aliases = aliases.items });
         defer sf.freeList(&a, &files);
         var start: usize = 0;
         while (start < files.items.len) {
