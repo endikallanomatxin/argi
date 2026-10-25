@@ -243,7 +243,7 @@ Raw pointers, C enums, complete trace reporting,
 partial choice initialization before selecting a complete variant, owning globals,
 closures,
 general foreign calls,
-and System capabilities are not yet supported. Unsupported constructs in reachable
+and runtime `System` entrypoints are not yet supported by `run --vm`. Unsupported constructs in reachable
 function bodies are rejected
 before execution, including constructs on untaken branches. Integer arithmetic
 wraps at the declared width, matching native execution and constant evaluation.
