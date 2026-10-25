@@ -23,8 +23,10 @@ The low-level alignment must be a nonzero power of two. Implementations check
 this precondition and `abort` if it is violated; an invalid alignment is not
 `..out_of_memory`. The typed `allocate#(.t: T)(.count)` helper computes the
 size and alignment from `T`, checks multiplication overflow, and still returns
-raw `Allocation` storage. A zero-size allocation is valid. Allocation failure
-returns no storage, safe reference, or cleanup obligation.
+raw `Allocation` storage. It privately retains the requested element size and
+count, including a zero count or zero-sized elements; this metadata establishes
+no occupancy or cleanup obligation. A zero-size allocation is valid. Allocation
+failure returns no storage, safe reference, or cleanup obligation.
 
 A zero-size allocation provides no accessible bytes. An allocator may reserve
 internal padding for it, but that padding does not authorize a nonzero-size
@@ -32,7 +34,7 @@ slot. The allocation may still be released normally.
 
 ## Raw storage and typed slots
 
-`Allocation.data` is a non-dereferenceable `RawPointer<UInt8>`. An
+`Allocation.data` is a non-dereferenceable `RawPointer#(UInt8)`. An
 `Allocation` records size, alignment, a temporal anchor, and the means to
 release its storage. Its type alone does not determine whether the allocation
 has an independent lifetime or inherits one from an arena.
@@ -50,8 +52,20 @@ Allocation : Type = (
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative
     ._release_size: UIntNative
+    ._slot_extent: ?_AllocationSlotExtent
+    ._slot_state: UIntNative = 0
 )
 ```
+
+Typed allocation requests retain their element size and count. When the selected
+representation needs cleanup or reference companions, the allocator request also
+reserves a private prefix for them. Public data and size describe only the payload;
+physical cleanup releases the original acquisition, including that prefix.
+The private slot-state handle travels with the receipt. Preparing it does not
+initialize elements or activate destruction. Borrowing selects an existing slot
+identity and requires no additional metadata allocation. Cleanup conformance
+selection precedes preparation, including generic types allocated before their
+first value is constructed in a later REPL command.
 
 The private storage fields retain the address, extent, and alignment certified
 by the allocator at establishment. Public receipt fields describe a requested
@@ -118,9 +132,12 @@ checking `index < length`. Empty slots cannot be exposed as `&T` or `$&T`.
 
 `allocation_slot<T>(allocation, index)` selects a complete, aligned slot inside
 both the declared extent and the allocation's private certified extent. It
-rejects arithmetic wrap and invalid bounds with a runtime trap. The result is
-`MaybeUninit<T>`, not `&T` or `$&T`: selection cannot read, write, or destroy a
-`T`. The handle's address is private, and its validity depends on the allocation
+rejects arithmetic wrap and invalid bounds with a runtime trap. If a typed
+request retained the same element size, selection also checks its logical count.
+Zero-sized selection requires that retained extent: byte bounds alone cannot
+authorize any logical zero-sized position. Nonzero reinterpretations continue
+to check physical byte bounds. The result is `MaybeUninit<T>`, not `&T` or
+`$&T`: selection cannot read, write, or destroy a `T`. The handle's address is private, and its validity depends on the allocation
 and backing anchor. Copies and forwarding retain those dependencies. Ending
 the allocation or resetting its backing region invalidates the handle.
 `uninit_slot_address<T>(slot)` exposes an integer address without certifying
@@ -133,6 +150,13 @@ Slot selection is repeatable: selecting the same index twice or copying a
 and lifetime validity, not exclusive ownership or permission to initialize.
 Consuming one handle does not revoke the others. Making the handle move-only
 would therefore not, by itself, establish exclusive slot authority.
+
+The handle retains its logical index separately from its byte address. Distinct
+zero-sized elements can share an address while naming different positions.
+Trusted establishment from a handle carries that index and checks that it
+corresponds to the address and satisfies the retained logical bound when
+applicable. This position adds no occupancy or cleanup authority;
+raw establishment without an index cannot recover it from an address.
 
 The storage owner controls occupancy through private state. Ordinary operations
 request a transition from that owner; they cannot assert occupancy by supplying

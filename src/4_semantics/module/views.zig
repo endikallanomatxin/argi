@@ -30,6 +30,11 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     const declaration = graph.declarations.items[raw];
     if (declaration.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
     const semantic = findDeclarationSemantic(graph, id);
+    const domain_count: u32 = if (declaration.kind == .contract_type) count: {
+        for (graph.semantic.parameterized_storage.contract_definitions.items) |definition|
+            if (definition.declaration == id) break :count @intCast(definition.domains.len);
+        break :count 0;
+    } else 0;
 
     return .{
         .kind = declaration.kind,
@@ -41,6 +46,7 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
         .struct_fields = if (declaration.struct_fields) |range| .{ .start = range.start, .len = range.len } else null,
         .choice_variants = if (declaration.choice_variants) |range| .{ .start = range.start, .len = range.len } else null,
         .generic_parameter_count = declaration.generic_parameter_count,
+        .contract_domain_count = domain_count,
         .struct_layout = if (semantic) |value| value.struct_layout else .regular,
         .choice_layout = if (semantic) |value| value.choice_layout else .regular,
     };
@@ -97,7 +103,7 @@ pub fn fieldView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Modul
 fn constructionField(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId, field: graph_mod.Field) !entities.Field {
     if (field.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
     const semantic = findFieldSemantic(graph, id);
-    if (field.has_default and (semantic == null or semantic.?.default_value == null))
+    if (field.has_default and (semantic == null or (semantic.?.default_value == null and !semantic.?.default_at_entry)))
         return error.ModuleFieldDefaultNotLowered;
     return .{
         .name = field.name,

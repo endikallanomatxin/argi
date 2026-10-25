@@ -142,9 +142,11 @@ _trusted_dynamic_array_element_reference#(.t: Type)(
 ) -> (.pointer: &t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
+    slot_index: ?UIntNative = ..some(.value = slot._index)
     mutable ::= trusted_establish_allocation_slot#(.t: t)(
         .allocation = &array&._allocation
         .slot       = slot._raw
+        .index      = slot_index
         .anchor     = array&._allocation.anchor
     ).reference
     pointer = read_reference#(.t: t)(.base = mutable).reference
@@ -155,9 +157,11 @@ _trusted_dynamic_array_element_mutable_reference#(.t: Type)(
 ) -> (.pointer: $&t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
+    slot_index: ?UIntNative = ..some(.value = slot._index)
     pointer = trusted_establish_allocation_slot#(.t: t)(
         .allocation = &array&._allocation
         .slot       = slot._raw
+        .index      = slot_index
         .anchor     = array&._allocation.anchor
     ).reference
 }
@@ -230,9 +234,9 @@ _grow_dynamic_array#(.t: Type, .Provider: Type: Allocator)(
                 )
                 _trusted_uninit_relocate#(.t: t)(
                     .source_allocation      = &array&._allocation
-                    .source = old_slot
+                    .source                 = old_slot
                     .destination_allocation = &new_allocation
-                    .destination = new_slot
+                    .destination            = new_slot
                 )
                 i = i + 1
             }
@@ -313,9 +317,9 @@ insert_growing#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         )
         _trusted_uninit_relocate#(.t: t)(
             .source_allocation      = &self&._allocation
-            .source = source_slot
+            .source                 = source_slot
             .destination_allocation = &self&._allocation
-            .destination = destination_slot
+            .destination            = destination_slot
         )
         cursor = source_index
     }
@@ -536,9 +540,9 @@ implement#(.t: Type) Removable#(DynamicArray#(.t: t)) (
             )
             _trusted_uninit_relocate#(.t: t)(
                 .source_allocation      = &self&._allocation
-                .source = source_slot
+                .source                 = source_slot
                 .destination_allocation = &self&._allocation
-                .destination = destination_slot
+                .destination            = destination_slot
             )
             cursor = cursor + one
         }

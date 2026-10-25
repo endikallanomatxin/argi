@@ -10,6 +10,8 @@ const reach_context = @import("reach_context.zig");
 const global_types = @import("types.zig");
 const standard_contracts = @import("standard_contracts.zig");
 const primitives = @import("../primitives/schema.zig");
+const cleanup_activation = @import("../safety/cleanup_activation.zig");
+const lexical_storage = @import("lexical_storage.zig");
 
 pub const Stats = struct {
     copies: u32 = 0,
@@ -31,6 +33,14 @@ const ResolvedDestructor = struct {
 };
 
 pub const Resolver = struct {
+    pub const ParameterizedCheckpoint = struct {
+        deferred: usize,
+        defers: u32,
+        auto_nodes: usize,
+        replacements: usize,
+        empty_block: ?global_sg.GlobalBlockId,
+    };
+
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -40,7 +50,16 @@ pub const Resolver = struct {
     deferred: std.ArrayList(Deferred) = .empty,
     denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
+    replacement_candidates: std.AutoHashMapUnmanaged(global_sg.GlobalNodeId, void) = .empty,
+    replacement_rewrites: std.ArrayList(global_sg.GlobalNodeId) = .empty,
+
     empty_block: ?global_sg.GlobalBlockId = null,
+    // Only the designated command's direct declarations have session duration.
+    // Nested blocks and initializer temporaries retain ordinary lexical cleanup.
+    continuation_function: ?global_sg.GlobalFunctionId = null,
+    // Earlier session storage is visible to checked replacement planning, but
+    // must not enter this command's lexical cleanup list.
+    continuation_bindings: std.ArrayList(global_sg.GlobalBindingId) = .empty,
     loop_cleanup_base: ?struct { active: usize, defers: usize } = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
@@ -55,6 +74,9 @@ pub const Resolver = struct {
     pub fn deinit(self: *Resolver) void {
         self.deferred.deinit(self.allocator);
         self.auto_nodes.deinit(self.allocator);
+        self.continuation_bindings.deinit(self.allocator);
+        self.replacement_candidates.deinit(self.allocator);
+        self.replacement_rewrites.deinit(self.allocator);
     }
 
     pub fn tryResolve(
@@ -83,9 +105,24 @@ pub const Resolver = struct {
     pub fn finalizeFunctionBody(self: *Resolver, function_id: global_sg.GlobalFunctionId) !bool {
         const function = self.graph.functions.items[@intFromEnum(function_id)];
         const body = function.body orelse return true;
+        try self.materializeOutputInitializers(function, body);
         if (!self.functionReadyForCleanup(function, body)) return false;
+        if (function.safety_primitive == .trusted_opaque_drop) {
+            try self.materializeOpaqueDrop(function_id, function, body);
+        }
+        // Determine possible replacement before adding cleanup sequences. In
+        // particular, an unaddressed output's first initialization has no old
+        // owner and must not instantiate a destructor solely to skip it later.
+        var activation_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer activation_arena.deinit();
+        var activation = try cleanup_activation.collect(activation_arena.allocator(), self.graph, function_id);
+        defer activation.deinit();
+        var replacements = activation.replacements.keyIterator();
+        while (replacements.next()) |node| try self.markReplacement(node.*);
         var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer visible.deinit(self.allocator);
+        if (self.continuation_function == function_id)
+            try visible.appendSlice(self.allocator, self.continuation_bindings.items);
         try visible.appendSlice(
             self.allocator,
             self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len],
@@ -102,6 +139,69 @@ pub const Resolver = struct {
         const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
         try self.finalizeBlock(body, &active, &defers, &visible, &.{}, function_id, @intCast(@intFromEnum(module)));
         return true;
+    }
+
+    // The trusted boundary changes the caller's ownership facts, but destruction
+    // itself uses the same selected plan as lexical and replacement cleanup.
+    fn materializeOpaqueDrop(self: *Resolver, function_id: global_sg.GlobalFunctionId, function: global_sg.Function, body: global_sg.GlobalBlockId) !void {
+        if (self.graph.blocks.items[@intFromEnum(body)].nodes.len != 0) return;
+        if (function.input_bindings.len != 1) return error.InvalidCleanupTarget;
+        const binding = self.graph.binding_refs.items[function.input_bindings.start];
+        const record = self.graph.binding(binding);
+        const pointer = switch (self.graph.semanticType(record.ty)) {
+            .pointer => |value| value,
+            else => return error.InvalidCleanupTarget,
+        };
+        const address = try self.appendNode(record.source, record.ty, .{ .binding_use = binding });
+        const target = try self.appendNode(record.source, pointer.child, .{ .dereference = .{ .pointer = address, .ty = pointer.child, .pointer_type = record.ty } });
+        const visible = try self.allocator.dupe(global_sg.GlobalBindingId, self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]);
+        defer self.allocator.free(visible);
+        const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
+        var plan = try self.buildAutoDeinit(.{ .indirect = target }, target, pointer.child, reach_context.Context.fromGlobal(visible, function_id), @intFromEnum(module)) orelse return;
+        plan.allow_untracked_complete = true;
+        const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);
+        try self.graph.auto_deinits.append(self.allocator, plan);
+        const cleanup = try self.appendNode(record.source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
+        const start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.append(self.allocator, cleanup);
+        var updated = self.graph.blocks.items[@intFromEnum(body)];
+        updated.nodes = .{ .start = start, .len = 1 };
+        try self.graph.setBlock(self.allocator, body, updated);
+    }
+
+    // Output defaults execute in declaration order before source statements.
+    // Represent them as ordinary first writes, so lifetime effects, once calls,
+    // summaries and cleanup all consume the same ordered graph. Backends must
+    // not perform another implicit initialization before these writes.
+    fn materializeOutputInitializers(self: *Resolver, function: global_sg.Function, body_id: global_sg.GlobalBlockId) !void {
+        const bindings = self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len];
+        var defaults: u32 = 0;
+        for (bindings) |binding| if (self.graph.binding(binding).initialization != null) {
+            defaults += 1;
+        };
+        if (defaults == 0) return;
+        const body = self.graph.blocks.items[@intFromEnum(body_id)];
+        const start = std.math.cast(u32, self.graph.node_refs.items.len) orelse return error.SemanticGraphTooLarge;
+        const count = std.math.add(u32, defaults, body.nodes.len) catch return error.SemanticGraphTooLarge;
+        _ = std.math.add(u32, start, count) catch return error.SemanticGraphTooLarge;
+        try self.graph.node_refs.ensureUnusedCapacity(self.allocator, count);
+        for (bindings) |binding| {
+            const record = self.graph.binding(binding);
+            const value = record.initialization orelse continue;
+            const write = try self.appendNode(record.source, null, .{ .assignment = .{ .binding = binding, .value = value } });
+            self.graph.node_refs.appendAssumeCapacity(write);
+        }
+        self.graph.node_refs.appendSliceAssumeCapacity(self.graph.node_refs.items[body.nodes.start..][0..body.nodes.len]);
+        {
+            var updated = self.graph.blocks.items[@intFromEnum(body_id)];
+            updated.nodes = .{ .start = start, .len = count };
+            try self.graph.setBlock(self.allocator, body_id, updated);
+        }
+        for (bindings) |binding| {
+            var updated = self.graph.bindings.items[@intFromEnum(binding)];
+            updated.initialization = null;
+            try self.graph.setBinding(self.allocator, binding, updated);
+        }
     }
 
     fn functionReadyForCleanup(
@@ -127,7 +227,7 @@ pub const Resolver = struct {
                 .binding_declaration => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .binding_use => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .assignment => |assignment| if (self.graph.isBindingTypeUnresolved(assignment.binding)) return false,
-                .code_block, .value_sequence => |child| if (!self.blockReadyForCleanup(child)) return false,
+                .code_block, .value_sequence, .replacement => |child| if (!self.blockReadyForCleanup(child)) return false,
                 .if_statement => |statement| {
                     if (!self.blockReadyForCleanup(statement.then_block)) return false;
                     if (statement.else_block) |child|
@@ -137,8 +237,11 @@ pub const Resolver = struct {
                 .for_statement => |statement| {
                     if (statement.init) |init| {
                         const init_node = self.graph.nodes.items[@intFromEnum(init)];
-                        if (init_node.content == .code_block or init_node.content == .value_sequence) {
-                            const initialization_block = if (init_node.content == .value_sequence) init_node.content.value_sequence else init_node.content.code_block;
+                        if (init_node.content == .code_block or init_node.content == .value_sequence or init_node.content == .replacement) {
+                            const initialization_block = switch (init_node.content) {
+                                .value_sequence, .replacement, .code_block => |child| child,
+                                else => unreachable,
+                            };
                             if (!self.blockReadyForCleanup(initialization_block)) return false;
                         }
                     }
@@ -172,15 +275,31 @@ pub const Resolver = struct {
         try self.registerDefer(marker, deferred_value);
     }
 
-    pub fn parameterizedCheckpoint(context: *anyopaque) [2]usize {
+    pub fn parameterizedCheckpoint(context: *anyopaque) ParameterizedCheckpoint {
         const self: *Resolver = @ptrCast(@alignCast(context));
-        return .{ self.deferred.items.len, self.stats.defers };
+        return .{ .deferred = self.deferred.items.len, .defers = self.stats.defers, .auto_nodes = self.auto_nodes.items.len, .replacements = self.replacement_rewrites.items.len, .empty_block = self.empty_block };
     }
 
-    pub fn rollbackParameterizedCheckpoint(context: *anyopaque, saved: [2]usize) void {
+    pub fn rollbackParameterizedCheckpoint(context: *anyopaque, saved: ParameterizedCheckpoint) void {
         const self: *Resolver = @ptrCast(@alignCast(context));
-        self.deferred.shrinkRetainingCapacity(saved[0]);
-        self.stats.defers = @intCast(saved[1]);
+        self.deferred.shrinkRetainingCapacity(saved.deferred);
+        self.auto_nodes.shrinkRetainingCapacity(saved.auto_nodes);
+        while (self.replacement_rewrites.items.len > saved.replacements)
+            std.debug.assert(self.replacement_candidates.remove(self.replacement_rewrites.pop().?));
+        self.empty_block = saved.empty_block;
+        self.stats.defers = saved.defers;
+    }
+
+    fn markReplacement(self: *Resolver, node: global_sg.GlobalNodeId) !void {
+        if (self.replacement_candidates.contains(node)) return;
+        try self.replacement_rewrites.ensureUnusedCapacity(self.allocator, 1);
+        try self.replacement_candidates.put(self.allocator, node, {});
+        self.replacement_rewrites.appendAssumeCapacity(node);
+    }
+
+    pub fn commitReplacements(self: *Resolver) void {
+        self.replacement_rewrites.deinit(self.allocator);
+        self.replacement_rewrites = .empty;
     }
 
     fn registerDefer(self: *Resolver, marker: global_sg.GlobalNodeId, deferred_value: global_sg.GlobalNodeId) !void {
@@ -192,17 +311,23 @@ pub const Resolver = struct {
     fn resolveCopy(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
         const source = globalizer.globalNode(o, value.value);
         const target = globalizer.globalNode(o, value.node);
+        return self.resolveGlobalCopy(source, target);
+    }
+
+    /// Resolve implicit copying identically for lowered and inherited inputs.
+    pub fn resolveGlobalCopy(self: *Resolver, source: global_sg.GlobalNodeId, target: global_sg.GlobalNodeId) !bool {
         const ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return false;
+        if (self.graph.isTypeUnresolved(ty)) return false;
         // Index syntax can resolve to an operator call after lowering has
         // inserted an implicit copy. The call already produces a fresh value;
         // copying its result would require a spurious copy of owned outputs.
         if (self.graph.nodes.items[@intFromEnum(source)].content == .function_call) {
-            self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
+            try self.graph.setNode(self.allocator, target, self.graph.nodes.items[@intFromEnum(source)]);
             return true;
         }
         if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) {
             const original = self.graph.nodes.items[@intFromEnum(source)];
-            self.graph.nodes.items[@intFromEnum(target)] = original;
+            try self.graph.setNode(self.allocator, target, original);
             self.stats.copies += 1;
             return true;
         }
@@ -219,25 +344,25 @@ pub const Resolver = struct {
                 // Stabilizing a produced value must preserve its transfer into
                 // a consuming argument. Repeated consumption remains a move
                 // error, while borrows still use the temporary's storage.
-                self.graph.nodes.items[@intFromEnum(target)] = .{
+                try self.graph.setNode(self.allocator, target, .{
                     .source = self.graph.nodes.items[@intFromEnum(source)].source,
                     .ty = ty,
                     .content = .{ .move_value = source },
-                };
+                });
                 return true;
             }
             if (self.denied_copy == null) self.denied_copy = .{
                 .source = self.graph.nodes.items[@intFromEnum(source)].source,
                 .ty = ty,
             };
-            self.graph.nodes.items[@intFromEnum(target)] = .{
+            try self.graph.setNode(self.allocator, target, .{
                 .source = self.graph.nodes.items[@intFromEnum(source)].source,
                 .ty = ty,
                 .content = .{ .denied_implicit_copy = source },
-            };
+            });
             return true;
         }
-        self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
+        try self.graph.setNode(self.allocator, target, self.graph.nodes.items[@intFromEnum(source)]);
         self.stats.copies += 1;
         return true;
     }
@@ -289,7 +414,7 @@ pub const Resolver = struct {
         }
         const content = self.graph.node(id).content;
         switch (content) {
-            .code_block, .value_sequence => {}, // Their own blocks retain lexical scope.
+            .code_block, .value_sequence, .replacement => {}, // Their own blocks retain lexical scope.
             .struct_value_literal => |literal| {
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
                     try self.collectDefaultTemporaries(field.value, output);
@@ -345,6 +470,158 @@ pub const Resolver = struct {
         }
     }
 
+    // An aggregate/call cannot take ownership of an operand until all later
+    // operands have evaluated successfully. Keep evaluated operands in ordinary
+    // lexical owners across possible early exits, then move them into the result.
+    fn mayExitExpression(self: *const Resolver, id: global_sg.GlobalNodeId, depth: usize) bool {
+        if (depth > 128) return true;
+        return switch (self.graph.node(id).content) {
+            .error_propagation, .error_context, .return_statement, .break_statement, .continue_statement, .testing_expect_error => true,
+            .struct_value_literal => |literal| blk: {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                    if (self.mayExitExpression(field.value, depth + 1)) break :blk true;
+                break :blk false;
+            },
+            inline .list_literal, .array_literal => |literal| blk: {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child|
+                    if (self.mayExitExpression(child, depth + 1)) break :blk true;
+                break :blk false;
+            },
+            .binding_declaration => |binding| if (self.graph.binding(binding).initialization) |value| self.mayExitExpression(value, depth + 1) else false,
+            .code_block, .value_sequence, .replacement => |body| self.mayExitBlock(body, depth + 1),
+            .if_statement => |value| self.mayExitExpression(value.condition, depth + 1) or self.mayExitBlock(value.then_block, depth + 1) or
+                (if (value.else_block) |body| self.mayExitBlock(body, depth + 1) else false),
+            .while_statement, .for_statement, .switch_statement => true,
+            .virtual_call => |index| blk: {
+                const call = self.graph.virtual_calls.items[@intFromEnum(index)];
+                break :blk self.mayExitExpression(call.handle, depth + 1) or self.mayExitExpression(call.input, depth + 1);
+            },
+            .nullable_unwrap_or => |index| blk: {
+                const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(index)];
+                break :blk self.mayExitExpression(unwrap.nullable_value, depth + 1) or self.mayExitExpression(unwrap.fallback_value, depth + 1);
+            },
+            else => |content| self.mayExitOperands(content, depth + 1),
+        };
+    }
+
+    fn mayExitBlock(self: *const Resolver, id: global_sg.GlobalBlockId, depth: usize) bool {
+        const block = self.graph.blocks.items[@intFromEnum(id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node|
+            if (self.mayExitExpression(node, depth + 1)) return true;
+        return if (block.ret_val) |value| self.mayExitExpression(value, depth + 1) else false;
+    }
+
+    fn mayExitOperands(self: *const Resolver, value: anytype, depth: usize) bool {
+        const T = @TypeOf(value);
+        if (T == global_sg.GlobalNodeId) return self.mayExitExpression(value, depth);
+        return switch (@typeInfo(T)) {
+            .optional => if (value) |child| self.mayExitOperands(child, depth) else false,
+            .@"struct" => |info| blk: {
+                inline for (info.fields) |field| if (self.mayExitOperands(@field(value, field.name), depth)) break :blk true;
+                break :blk false;
+            },
+            .@"union" => switch (value) {
+                inline else => |child| self.mayExitOperands(child, depth),
+            },
+            else => false,
+        };
+    }
+
+    fn needsStagedFields(self: *const Resolver, fields: primitives.Range(global_sg.GlobalValueFieldId)) bool {
+        if (fields.len < 2) return false;
+        for (self.graph.value_fields.items[fields.start + 1 ..][0 .. fields.len - 1]) |field|
+            if (self.mayExitExpression(field.value, 0)) return true;
+        return false;
+    }
+
+    fn stageOperand(self: *Resolver, value: global_sg.GlobalNodeId, statements: *std.ArrayList(global_sg.GlobalNodeId)) !global_sg.GlobalNodeId {
+        const node = self.graph.node(value);
+        const ty = node.ty orelse return error.UnresolvedAggregateOperand;
+        const binding: global_sg.GlobalBindingId = @enumFromInt(self.graph.bindings.items.len);
+        try self.graph.bindings.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, "#evaluated_operand"),
+            .source = node.source,
+            .ty = ty,
+            .mutability = .constant,
+            .initialization = value,
+        });
+        try statements.append(self.allocator, try self.appendNode(node.source, null, .{ .binding_declaration = binding }));
+        const use = try self.appendNode(node.source, ty, .{ .binding_use = binding });
+        return self.appendNode(node.source, ty, .{ .move_value = use });
+    }
+
+    fn stageFields(self: *Resolver, range: primitives.Range(global_sg.GlobalValueFieldId), statements: *std.ArrayList(global_sg.GlobalNodeId)) !primitives.Range(global_sg.GlobalValueFieldId) {
+        const fields = try self.allocator.dupe(global_sg.ValueField, self.graph.value_fields.items[range.start..][0..range.len]);
+        defer self.allocator.free(fields);
+        for (fields) |*field| field.value = try self.stageOperand(field.value, statements);
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.appendSlice(self.allocator, fields);
+        return .{ .start = start, .len = range.len };
+    }
+
+    fn stageCompound(self: *Resolver, id: global_sg.GlobalNodeId) !bool {
+        var node = self.graph.node(id);
+        var statements: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+        defer statements.deinit(self.allocator);
+        switch (node.content) {
+            .struct_value_literal => |*literal| {
+                if (!self.needsStagedFields(literal.fields)) return false;
+                literal.fields = try self.stageFields(literal.fields, &statements);
+            },
+            .function_call => |*call| {
+                var input = self.graph.node(call.input);
+                if (input.content != .struct_value_literal or !self.needsStagedFields(input.content.struct_value_literal.fields)) return false;
+                if (call.callee_value) |value| call.callee_value = try self.stageOperand(value, &statements);
+                input.content.struct_value_literal.fields = try self.stageFields(input.content.struct_value_literal.fields, &statements);
+                call.input = try self.appendNode(input.source, input.ty, input.content);
+            },
+            .virtual_call => |index| {
+                var call = self.graph.virtual_calls.items[@intFromEnum(index)];
+                var input = self.graph.node(call.input);
+                if (input.content != .struct_value_literal or !self.needsStagedFields(input.content.struct_value_literal.fields)) return false;
+                call.handle = try self.stageOperand(call.handle, &statements);
+                const range = input.content.struct_value_literal.fields;
+                const fields = try self.allocator.dupe(global_sg.ValueField, self.graph.value_fields.items[range.start..][0..range.len]);
+                defer self.allocator.free(fields);
+                // The receiver is evaluated through handle, not again through
+                // its input field. Preserve that single evaluation in the plan.
+                for (fields, 0..) |*field, position|
+                    field.value = if (position == call.self_input_index) call.handle else try self.stageOperand(field.value, &statements);
+                const start: u32 = @intCast(self.graph.value_fields.items.len);
+                try self.graph.value_fields.appendSlice(self.allocator, fields);
+                input.content.struct_value_literal.fields = .{ .start = start, .len = range.len };
+                call.input = try self.appendNode(input.source, input.ty, input.content);
+                const staged: global_sg.GlobalVirtualCallId = @enumFromInt(self.graph.virtual_calls.items.len);
+                try self.graph.virtual_calls.append(self.allocator, call);
+                node.content = .{ .virtual_call = staged };
+            },
+            inline .list_literal, .array_literal => |*literal| {
+                if (literal.elements.len < 2) return false;
+                const elements = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]);
+                defer self.allocator.free(elements);
+                var needed = false;
+                for (elements[1..]) |element| if (self.mayExitExpression(element, 0)) {
+                    needed = true;
+                    break;
+                };
+                if (!needed) return false;
+                for (elements) |*element| element.* = try self.stageOperand(element.*, &statements);
+                const start: u32 = @intCast(self.graph.node_refs.items.len);
+                try self.graph.node_refs.appendSlice(self.allocator, elements);
+                literal.elements = .{ .start = start, .len = @intCast(elements.len) };
+            },
+            else => return false,
+        }
+        const result = try self.appendNode(node.source, node.ty, node.content);
+        try statements.append(self.allocator, result);
+        const start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.appendSlice(self.allocator, statements.items);
+        const body: global_sg.GlobalBlockId = @enumFromInt(self.graph.blocks.items.len);
+        try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = @intCast(statements.items.len) }, .ret_val = result });
+        try self.graph.setNodeContent(self.allocator, id, .{ .value_sequence = body });
+        return true;
+    }
+
     fn finalizeExpressionCleanup(
         self: *Resolver,
         node_id: global_sg.GlobalNodeId,
@@ -354,8 +631,10 @@ pub const Resolver = struct {
         owner_function: global_sg.GlobalFunctionId,
         module_index: usize,
     ) anyerror!void {
+        _ = try self.stageCompound(node_id);
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
+            .replacement => {}, // Already finalized when the transition was built.
             .code_block, .value_sequence => |block| {
                 // Expressions may contain conditional statement effects. Give
                 // their blocks the same lexical cleanup context as source
@@ -385,17 +664,30 @@ pub const Resolver = struct {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
                 try self.finalizeExpressionCleanup(propagation.errable_value, active, defers, visible, owner_function, module_index);
                 const cleanup = try self.appendCleanup(active, defers);
-                self.graph.error_propagations.items[@intFromEnum(propagation_id)].cleanup_nodes = cleanup;
+                var updated = propagation;
+                updated.cleanup_nodes = cleanup;
+                try self.graph.setErrorPropagation(self.allocator, propagation_id, updated);
             },
             .error_context => |context_id| {
                 const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
                 try self.finalizeExpressionCleanup(context.errable_value, active, defers, visible, owner_function, module_index);
                 try self.finalizeExpressionCleanup(context.context, active, defers, visible, owner_function, module_index);
                 const cleanup = try self.appendCleanup(active, defers);
-                self.graph.error_contexts.items[@intFromEnum(context_id)].cleanup_nodes = cleanup;
+                var updated = context;
+                updated.cleanup_nodes = cleanup;
+                try self.graph.setErrorContext(self.allocator, context_id, updated);
             },
             .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index),
-            .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index),
+            .assignment => |assignment| {
+                const value = try self.bindingReplacement(node_id, assignment.binding, assignment.value, visible, owner_function, module_index);
+                {
+                    var updated = self.graph.node(node_id);
+                    updated.content.assignment.value = value;
+                    try self.graph.setNode(self.allocator, node_id, updated);
+                }
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                if (value != assignment.value) try self.wrapReplacement(node_id);
+            },
             .function_call => |call| {
                 if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
                 try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index);
@@ -445,13 +737,61 @@ pub const Resolver = struct {
                 try self.finalizeExpressionCleanup(access.index, active, defers, visible, owner_function, module_index);
             },
             .array_store => |store| {
-                try self.finalizeExpressionCleanup(store.array_ptr, active, defers, visible, owner_function, module_index);
-                try self.finalizeExpressionCleanup(store.index, active, defers, visible, owner_function, module_index);
-                try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
+                // An indexed destination is an evaluated reference, not a
+                // lexical cleanup path. Normalize it to the ordinary indirect
+                // write so capture, replacement and activation share one plan.
+                const source = self.graph.node(node_id).source;
+                const element = try self.appendNode(source, store.element_type, .{ .array_index = .{
+                    .array_ptr = store.array_ptr,
+                    .index = store.index,
+                    .element_type = store.element_type,
+                    .array_type = store.array_type,
+                } });
+                const pointer = try self.appendNode(source, try self.core.pointerType(store.element_type, .read_write), .{ .address_of = element });
+                const pointer_type = self.graph.node(pointer).ty.?;
+                const target = try self.appendNode(source, store.element_type, .{ .dereference = .{ .pointer = pointer, .pointer_type = pointer_type, .ty = store.element_type } });
+                try self.markReplacement(node_id);
+                const value = try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
+                if (value != store.value) {
+                    try self.graph.setNodeContent(self.allocator, node_id, .{ .pointer_assignment = .{ .pointer = pointer, .value = value, .cleanup_target = target } });
+                    try self.finalizeExpressionCleanup(pointer, active, defers, visible, owner_function, module_index);
+                    try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                    try self.wrapReplacement(node_id);
+                } else {
+                    try self.finalizeExpressionCleanup(store.array_ptr, active, defers, visible, owner_function, module_index);
+                    try self.finalizeExpressionCleanup(store.index, active, defers, visible, owner_function, module_index);
+                    try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
+                }
             },
             .struct_field_store => |store| {
                 try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index);
-                try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
+                const parent = try self.lexicalAddressTarget(store.struct_ptr, visible);
+                {
+                    const base = parent orelse try self.appendNode(self.graph.node(node_id).source, store.struct_type, .{ .dereference = .{ .pointer = store.struct_ptr, .pointer_type = self.graph.node(store.struct_ptr).ty.?, .ty = store.struct_type } });
+                    const fields = global_types.fields(self.graph, store.struct_type) orelse return error.InvalidCleanupTarget;
+                    const field = self.graph.fields.items[fields.start + store.field_index];
+                    const target = try self.appendNode(self.graph.node(node_id).source, store.field_type, .{ .struct_field_access = .{
+                        .value = base,
+                        .field_name = field.name,
+                        .field_index = store.field_index,
+                    } });
+                    {
+                        var updated = self.graph.node(node_id);
+                        updated.content.struct_field_store.cleanup_target = target;
+                        try self.graph.setNode(self.allocator, node_id, updated);
+                    }
+                    const value = if (parent != null)
+                        try self.projectedReplacement(node_id, target, store.value, visible, owner_function, module_index)
+                    else
+                        try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
+                    {
+                        var updated = self.graph.node(node_id);
+                        updated.content.struct_field_store.value = value;
+                        try self.graph.setNode(self.allocator, node_id, updated);
+                    }
+                    try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                    if (value != store.value) try self.wrapReplacement(node_id);
+                }
             },
             .binary_operation => |operation| {
                 try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index);
@@ -467,7 +807,25 @@ pub const Resolver = struct {
             },
             .pointer_assignment => |assignment| {
                 try self.finalizeExpressionCleanup(assignment.pointer, active, defers, visible, owner_function, module_index);
-                try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index);
+                const lexical = try self.lexicalAddressTarget(assignment.pointer, visible);
+                const child = self.graph.semanticType(self.graph.node(assignment.pointer).ty.?).pointer.child;
+                const target = lexical orelse try self.appendNode(self.graph.node(node_id).source, child, .{ .dereference = .{ .pointer = assignment.pointer, .pointer_type = self.graph.node(assignment.pointer).ty.?, .ty = child } });
+                {
+                    var updated = self.graph.node(node_id);
+                    updated.content.pointer_assignment.cleanup_target = target;
+                    try self.graph.setNode(self.allocator, node_id, updated);
+                }
+                const value = if (lexical != null)
+                    try self.projectedReplacement(node_id, target, assignment.value, visible, owner_function, module_index)
+                else
+                    try self.indirectReplacement(node_id, target, assignment.value, visible, owner_function, module_index);
+                {
+                    var updated = self.graph.node(node_id);
+                    updated.content.pointer_assignment.value = value;
+                    try self.graph.setNode(self.allocator, node_id, updated);
+                }
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                if (value != assignment.value) try self.wrapReplacement(node_id);
             },
             .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers, visible, owner_function, module_index),
 
@@ -479,6 +837,126 @@ pub const Resolver = struct {
             },
             else => {},
         }
+    }
+
+    /// Evaluate the replacement into a lexical owner before destroying the old
+    /// value. The sequence is ordinary checked graph code: destructor effects,
+    /// auxiliary arguments, failure cleanup, and the final move remain visible
+    /// to every consumer rather than being invented by either backend.
+    fn bindingReplacement(
+        self: *Resolver,
+        node_id: global_sg.GlobalNodeId,
+        binding: global_sg.GlobalBindingId,
+        value: global_sg.GlobalNodeId,
+        visible: []const global_sg.GlobalBindingId,
+        owner_function: global_sg.GlobalFunctionId,
+        module_index: usize,
+    ) !global_sg.GlobalNodeId {
+        if (!self.replacement_candidates.contains(node_id)) return value;
+        try self.prepareAutoDeinit(binding, reach_context.Context.fromGlobal(visible, owner_function), module_index);
+        const original_cleanup = self.autoDeinitNode(binding) orelse return value;
+        // Each replacement has its own activation identity. An output's first
+        // assignment cannot destroy an old value, while a later one may.
+        const original_id = self.graph.node(original_cleanup).content.auto_deinit_binding;
+        const plan = self.graph.auto_deinits.items[@intFromEnum(original_id)];
+        const cleanup_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
+        try self.graph.auto_deinits.append(self.allocator, plan);
+        const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = cleanup_id });
+        return self.replacementValue(value, self.graph.binding(binding).ty, cleanup);
+    }
+
+    fn lexicalAddressTarget(self: *Resolver, pointer: global_sg.GlobalNodeId, visible: []const global_sg.GlobalBindingId) !?global_sg.GlobalNodeId {
+        const raw = lexical_storage.addressedTarget(self.graph, pointer) orelse return null;
+        const target = try self.lexicalTarget(raw);
+        const root = lexical_storage.root(self.graph, target) orelse return null;
+        return if (std.mem.indexOfScalar(global_sg.GlobalBindingId, visible, root) != null) target else null;
+    }
+
+    // Materialize only a pure projection for cleanup metadata. The write keeps
+    // its original pointer operand, preserving validity and evaluation order.
+    fn lexicalTarget(self: *Resolver, target: global_sg.GlobalNodeId) anyerror!global_sg.GlobalNodeId {
+        const node = self.graph.node(target);
+        return switch (node.content) {
+            .binding_use => target,
+            .struct_field_access => |field| blk: {
+                const parent = try self.lexicalTarget(field.value);
+                if (parent == field.value) break :blk target;
+                var projected = field;
+                projected.value = parent;
+                break :blk try self.appendNode(node.source, node.ty, .{ .struct_field_access = projected });
+            },
+            .dereference => |value| try self.lexicalTarget(lexical_storage.addressedTarget(self.graph, value.pointer) orelse return error.InvalidCleanupTarget),
+            else => error.InvalidCleanupTarget,
+        };
+    }
+
+    fn projectedReplacement(
+        self: *Resolver,
+        node_id: global_sg.GlobalNodeId,
+        target: global_sg.GlobalNodeId,
+        value: global_sg.GlobalNodeId,
+        visible: []const global_sg.GlobalBindingId,
+        owner_function: global_sg.GlobalFunctionId,
+        module_index: usize,
+    ) !global_sg.GlobalNodeId {
+        if (!self.replacement_candidates.contains(node_id)) return value;
+        const binding = lexical_storage.root(self.graph, target) orelse return value;
+        // Module-level storage has no lexical cleanup activation.
+        if (std.mem.indexOfScalar(global_sg.GlobalBindingId, visible, binding) == null) return value;
+        const context = reach_context.Context.fromGlobal(visible, owner_function);
+        try self.prepareAutoDeinit(binding, context, module_index);
+        const ty = self.graph.node(target).ty orelse return value;
+        const plan = try self.buildAutoDeinit(
+            .{ .projected = .{ .binding = binding, .target = target } },
+            target,
+            ty,
+            context,
+            module_index,
+        ) orelse return value;
+        const id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
+        try self.graph.auto_deinits.append(self.allocator, plan);
+        const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
+        return self.replacementValue(value, ty, cleanup);
+    }
+
+    fn indirectReplacement(self: *Resolver, node_id: global_sg.GlobalNodeId, target: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId, visible: []const global_sg.GlobalBindingId, owner_function: global_sg.GlobalFunctionId, module_index: usize) !global_sg.GlobalNodeId {
+        if (!self.replacement_candidates.contains(node_id)) return value;
+        const ty = self.graph.node(target).ty orelse return value;
+        const plan = try self.buildAutoDeinit(.{ .indirect = target }, target, ty, reach_context.Context.fromGlobal(visible, owner_function), module_index) orelse return value;
+        const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);
+        try self.graph.auto_deinits.append(self.allocator, plan);
+        const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
+        return self.replacementValue(value, ty, cleanup);
+    }
+
+    fn wrapReplacement(self: *Resolver, id: global_sg.GlobalNodeId) !void {
+        const original = self.graph.node(id);
+        const write = try self.appendNode(original.source, original.ty, original.content);
+        const start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.append(self.allocator, write);
+        const block: global_sg.GlobalBlockId = @enumFromInt(self.graph.blocks.items.len);
+        try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = 1 }, .ret_val = write });
+        try self.graph.setNodeContent(self.allocator, id, .{ .replacement = block });
+    }
+
+    fn replacementValue(self: *Resolver, value: global_sg.GlobalNodeId, ty: global_sg.GlobalTypeId, cleanup: global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
+        const source = self.graph.node(value).source;
+        const temporary: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
+        try self.graph.bindings.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, "_replacement"),
+            .source = source,
+            .ty = ty,
+            .initialization = value,
+            .mutability = .constant,
+        });
+        const declaration = try self.appendNode(source, null, .{ .binding_declaration = temporary });
+        const use = try self.appendNode(source, ty, .{ .binding_use = temporary });
+        const result = try self.appendNode(source, ty, .{ .move_value = use });
+        const start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.appendSlice(self.allocator, &.{ declaration, cleanup, result });
+        const block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+        try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = 3 }, .ret_val = result });
+        return self.appendNode(source, ty, .{ .value_sequence = block });
     }
 
     fn finalizeBlock(
@@ -533,9 +1011,9 @@ pub const Resolver = struct {
             }
             try rebuilt.append(self.allocator, node_id);
             const content = self.graph.node(node_id).content;
-            if (content != .code_block and content != .value_sequence)
+            if (content != .code_block and content != .value_sequence and content != .replacement)
                 try self.finalizeExpressionCleanup(node_id, active.items, defers.items, visible.items, owner_function, module_index);
-            const node = &self.graph.nodes.items[@intFromEnum(node_id)];
+            const node = self.graph.node(node_id);
             if (self.deferValue(node_id)) |deferred_value| {
                 // The marker is a no-op, but the deferred body still owns
                 // branch-local bindings and nested deferred actions.
@@ -551,9 +1029,16 @@ pub const Resolver = struct {
                         reach_context.Context.fromGlobal(visible.items, owner_function),
                         module_index,
                     );
-                    try active.append(self.allocator, binding);
+                    const persistent = self.continuation_function == owner_function and
+                        self.graph.function(owner_function).body == block_id;
+                    if (!persistent) try active.append(self.allocator, binding);
                 },
-                .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
+                .return_statement => {
+                    const cleanup = try self.appendCleanup(active.items, defers.items);
+                    var updated = node;
+                    updated.content.return_statement.cleanup = cleanup;
+                    try self.graph.setNode(self.allocator, node_id, updated);
+                },
                 .code_block, .value_sequence => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
                 .if_statement => |statement| {
                     try self.finalizeBlock(statement.then_block, &active, &defers, &visible, &.{}, owner_function, module_index);
@@ -612,8 +1097,35 @@ pub const Resolver = struct {
 
         const start: u32 = @intCast(self.graph.node_refs.items.len);
         try self.graph.node_refs.appendSlice(self.allocator, rebuilt.items);
-        self.graph.blocks.items[@intFromEnum(block_id)].nodes = .{ .start = start, .len = @intCast(rebuilt.items.len) };
+        {
+            var updated = self.graph.blocks.items[@intFromEnum(block_id)];
+            updated.nodes = .{ .start = start, .len = @intCast(rebuilt.items.len) };
+            try self.graph.setBlock(self.allocator, block_id, updated);
+        }
         if (local_cleanup.items.len != 0) self.stats.cleanup_edges += @intCast(local_cleanup.items.len);
+    }
+
+    /// Reuse selected cleanup in reverse binding order for an explicit session
+    /// exit. This selects no new destructor and publishes no runtime behavior.
+    /// The coordinator must check the resulting exit command against retained
+    /// temporal facts before executing it or discarding session storage.
+    pub fn selectedSessionCleanup(self: *const Resolver, allocator: std.mem.Allocator, bindings: []const global_sg.GlobalBindingId) ![]global_sg.GlobalNodeId {
+        var result: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+        errdefer result.deinit(allocator);
+        var index = bindings.len;
+        while (index != 0) {
+            index -= 1;
+            const binding = bindings[index];
+            if (std.mem.indexOfScalar(global_sg.GlobalBindingId, bindings[0..index], binding) != null) return error.DuplicateSessionBinding;
+            var found = false;
+            for (self.auto_nodes.items) |entry| if (entry.binding == binding) {
+                found = true;
+                if (entry.node) |node| try result.append(allocator, node);
+                break;
+            };
+            if (!found) return error.UnknownSessionCleanup;
+        }
+        return result.toOwnedSlice(allocator);
     }
 
     fn appendCleanup(
@@ -646,6 +1158,39 @@ pub const Resolver = struct {
         return null;
     }
 
+    /// Reuse lexical evidence without bypassing implicit-copy permission or
+    /// allowing an inherited assumption to override a local binding.
+    pub fn inheritAssumedFields(
+        self: *Resolver,
+        source: primitives.SourceRef,
+        original: primitives.Range(global_sg.GlobalValueFieldId),
+        assumptions: []const global_sg.GlobalBindingId,
+        visible: []const global_sg.GlobalBindingId,
+    ) !primitives.Range(global_sg.GlobalValueFieldId) {
+        if (assumptions.len == 0) return original;
+        var fields: std.ArrayList(global_sg.ValueField) = .empty;
+        defer fields.deinit(self.allocator);
+        try fields.appendSlice(self.allocator, self.graph.value_fields.items[original.start..][0..original.len]);
+        for (assumptions) |binding| {
+            const value = self.graph.binding(binding);
+            var shadowed = false;
+            for (fields.items) |field| {
+                if (std.mem.eql(u8, self.graph.text(field.name), self.graph.text(value.name))) shadowed = true;
+            }
+            for (visible) |local| {
+                if (local != binding and std.mem.eql(u8, self.graph.text(self.graph.binding(local).name), self.graph.text(value.name))) shadowed = true;
+            }
+            if (shadowed) continue;
+            const use = try self.appendNode(source, value.ty, .{ .binding_use = binding });
+            const copy = try self.appendNode(source, value.ty, .{ .binding_use = binding });
+            if (!try self.resolveGlobalCopy(use, copy)) return error.InvalidSafetyContinuation;
+            try fields.append(self.allocator, .{ .name = value.name, .value = copy });
+        }
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.appendSlice(self.allocator, fields.items);
+        return .{ .start = start, .len = @intCast(fields.items.len) };
+    }
+
     fn prepareAutoDeinit(
         self: *Resolver,
         binding: global_sg.GlobalBindingId,
@@ -660,7 +1205,23 @@ pub const Resolver = struct {
         if (record.cleanup_arguments) |input| {
             cleanup_context.global.assumed_fields = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields;
         }
-        const descriptor = try self.buildAutoDeinit(binding, target, record.ty, cleanup_context, module_index);
+        if (self.continuation_function != null and context.ownerFunction() == self.continuation_function) {
+            if (self.core.session_namespace) |namespace| {
+                cleanup_context.global.assumed_fields = try self.inheritAssumedFields(
+                    record.source,
+                    cleanup_context.global.assumed_fields,
+                    namespace.assumptions.items,
+                    context.global.visible_bindings,
+                );
+            }
+        }
+        const descriptor = try self.buildAutoDeinit(
+            .{ .binding = binding },
+            target,
+            record.ty,
+            cleanup_context,
+            module_index,
+        );
         var cleanup_node: ?global_sg.GlobalNodeId = null;
         if (descriptor) |resolved| {
             const auto_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
@@ -668,14 +1229,17 @@ pub const Resolver = struct {
             cleanup_node = try self.appendNode(record.source, try self.builtin(.Void), .{ .auto_deinit_binding = auto_id });
             self.stats.auto_deinits += 1;
         }
-        if (record.deferred_initialization)
-            self.graph.bindings.items[@intFromEnum(binding)].reinitialize_cleanup = cleanup_node;
+        if (record.deferred_initialization) {
+            var updated = self.graph.bindings.items[@intFromEnum(binding)];
+            updated.reinitialize_cleanup = cleanup_node;
+            try self.graph.setBinding(self.allocator, binding, updated);
+        }
         try self.auto_nodes.append(self.allocator, .{ .binding = binding, .node = cleanup_node });
     }
 
     fn buildAutoDeinit(
         self: *Resolver,
-        binding: global_sg.GlobalBindingId,
+        storage: @FieldType(global_sg.AutoDeinit, "storage"),
         target: global_sg.GlobalNodeId,
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
@@ -684,17 +1248,24 @@ pub const Resolver = struct {
         // References never own their pointee.
         if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
+            // A complete aggregate can later lose fields or payload members
+            // through a borrow. Keep its structural alternative from the start:
+            // incomplete storage cannot run the nominal whole-value destructor.
             return .{
-                .binding = binding,
+                .storage = storage,
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
+                .fields = if (global_types.fields(self.graph, ty) != null or global_types.variants(self.graph, ty) != null or global_types.arrayElement(self.graph, ty) != null)
+                    try self.buildAutoChildren(target, ty, context, module_index)
+                else
+                    .{ .start = 0, .len = 0 },
             };
         }
 
         const children = try self.buildAutoChildren(target, ty, context, module_index);
         if (children.len == 0) return null;
-        return .{ .binding = binding, .deinit_fn = null, .fields = children };
+        return .{ .storage = storage, .deinit_fn = null, .fields = children };
     }
 
     fn buildAutoField(
@@ -712,6 +1283,10 @@ pub const Resolver = struct {
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
+                .fields = if (global_types.fields(self.graph, ty) != null or global_types.variants(self.graph, ty) != null or global_types.arrayElement(self.graph, ty) != null)
+                    try self.buildAutoChildren(target, ty, context, module_index)
+                else
+                    .{ .start = 0, .len = 0 },
             };
         }
         const children = try self.buildAutoChildren(target, ty, context, module_index);
@@ -731,7 +1306,20 @@ pub const Resolver = struct {
         const source = self.graph.node(target).source;
         // Choices own only their active payload. Preserve the variant projection
         // in cleanup metadata so every consumer observes the same condition.
-        if (global_types.variants(self.graph, ty)) |variants| {
+        if (global_types.arrayElement(self.graph, ty)) |element| {
+            const length = global_types.arrayLength(self.graph, ty).?;
+            if (length != 0) {
+                const pointer_type = try self.core.pointerType(ty, .read_write);
+                const pointer = try self.appendNode(source, pointer_type, .{ .address_of = target });
+                const index = try self.appendNode(source, try self.builtin(.UIntNative), .{ .int_literal = 0 });
+                const projected = try self.appendNode(source, element, .{ .array_index = .{ .array_ptr = pointer, .index = index, .element_type = element, .array_type = ty } });
+                if (try self.buildAutoField(0, projected, element, context, module_index)) |selected| {
+                    var child = selected;
+                    child.repeat_count = length;
+                    try children.append(self.allocator, child);
+                }
+            }
+        } else if (global_types.variants(self.graph, ty)) |variants| {
             for (0..variants.len) |index| {
                 const id: global_sg.GlobalVariantId = @enumFromInt(variants.start + @as(u32, @intCast(index)));
                 const variant = self.graph.variants.items[@intFromEnum(id)];
@@ -805,6 +1393,11 @@ pub const Resolver = struct {
         if (standard_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
             if (try dispatch.contracts.implements(target_ty, declaration)) {
                 const input = try self.singleNamedInput("self", address, source);
+                if (context == .global) {
+                    var updated = self.graph.node(input);
+                    updated.content.struct_value_literal.assumed_fields = context.global.assumed_fields;
+                    try self.graph.setNode(self.allocator, input, updated);
+                }
                 var participants = [_]global_sg.GlobalTypeId{target_ty};
                 const node = try dispatch.contracts.callOperationCandidate(module_index, .{
                     .declaration = declaration,
@@ -907,11 +1500,11 @@ pub const Resolver = struct {
             self.empty_block = id;
             break :blk id;
         };
-        self.graph.nodes.items[@intFromEnum(marker)] = .{
+        try self.graph.setNode(self.allocator, marker, .{
             .source = source,
             .ty = try self.builtin(.Void),
             .content = .{ .code_block = block },
-        };
+        });
     }
 
     fn builtin(self: *Resolver, wanted: primitives.BuiltinType) !global_sg.GlobalTypeId {
@@ -1034,13 +1627,36 @@ test "parameterized defer checkpoint restores resolver side effects" {
 
     try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(1), .value = @enumFromInt(2) });
     resolver.stats.defers = 1;
+    resolver.empty_block = @enumFromInt(7);
     const saved = Resolver.parameterizedCheckpoint(&resolver);
 
     try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(3), .value = @enumFromInt(4) });
     resolver.stats.defers = 2;
+    resolver.empty_block = @enumFromInt(8);
+    try resolver.markReplacement(@enumFromInt(33));
+    try resolver.auto_nodes.append(allocator, .{ .binding = @enumFromInt(0), .node = @enumFromInt(34) });
     Resolver.rollbackParameterizedCheckpoint(&resolver, saved);
+    try std.testing.expectEqual(@as(global_sg.GlobalBlockId, @enumFromInt(7)), resolver.empty_block.?);
+    try std.testing.expectEqual(@as(usize, 0), resolver.auto_nodes.items.len);
+    try std.testing.expect(!resolver.replacement_candidates.contains(@enumFromInt(33)));
 
     try std.testing.expectEqual(@as(usize, 1), resolver.deferred.items.len);
     try std.testing.expectEqual(@as(u32, 1), resolver.stats.defers);
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(resolver.deferred.items[0].marker));
+}
+
+test "session exit cleanup reuses selected nodes in reverse declaration order" {
+    const a = std.testing.allocator;
+    var resolver: Resolver = .{ .allocator = a, .graph = undefined, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    try resolver.auto_nodes.appendSlice(a, &.{
+        .{ .binding = @enumFromInt(0), .node = @enumFromInt(10) },
+        .{ .binding = @enumFromInt(1), .node = null },
+        .{ .binding = @enumFromInt(2), .node = @enumFromInt(12) },
+    });
+    const nodes = try resolver.selectedSessionCleanup(a, &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) });
+    defer a.free(nodes);
+    try std.testing.expectEqualSlices(global_sg.GlobalNodeId, &.{ @enumFromInt(12), @enumFromInt(10) }, nodes);
+    try std.testing.expectError(error.DuplicateSessionBinding, resolver.selectedSessionCleanup(a, &.{ @enumFromInt(0), @enumFromInt(0) }));
+    try std.testing.expectError(error.UnknownSessionCleanup, resolver.selectedSessionCleanup(a, &.{@enumFromInt(9)}));
 }

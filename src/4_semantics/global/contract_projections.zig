@@ -121,13 +121,14 @@ pub fn resolveAssociatedTypes(self: *Resolver) !void {
                     defer bindings.deinit(self.allocator);
                     break :blk self.generics.instantiateParameterizedType(module_index, computed, &bindings);
                 } else resolveAssociatedType(self, globalizer.globalType(o, reference.projection_base.?), module.text(reference.name), self.sourceFor(module_index, reference.source))) catch |err| switch (err) {
+                    error.ComptimeExecutionPending => continue,
                     error.UnresolvedAssociatedType => {
                         remaining += 1;
                         continue;
                     },
                     else => return err,
                 };
-                try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(result)]);
+                try self.graph.resolveType(self.allocator, destination, self.graph.types.items[@intFromEnum(result)]);
                 changed = true;
             }
         }

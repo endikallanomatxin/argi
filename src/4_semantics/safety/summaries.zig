@@ -16,17 +16,22 @@ pub const Engine = struct {
     allocator: std.mem.Allocator,
     summaries: std.AutoHashMap(graph.GlobalFunctionId, facts.SafetySummary),
     dependents: DependentMap,
+    dependencies: DependentMap,
+    virtual_dependencies: std.AutoHashMap(graph.GlobalFunctionId, std.array_list.Managed(graph.GlobalVirtualRegistryId)),
     worklist: std.array_list.Managed(graph.GlobalFunctionId),
     dirty: std.AutoHashMap(graph.GlobalFunctionId, void),
     next_work: usize = 0,
     current: ?graph.GlobalFunctionId = null,
     dependency_error: ?anyerror = null,
+    retain_dependencies: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Engine {
         return .{
             .allocator = allocator,
             .summaries = std.AutoHashMap(graph.GlobalFunctionId, facts.SafetySummary).init(allocator),
             .dependents = DependentMap.init(allocator),
+            .dependencies = DependentMap.init(allocator),
+            .virtual_dependencies = .init(allocator),
             .worklist = FunctionList.init(allocator),
             .dirty = std.AutoHashMap(graph.GlobalFunctionId, void).init(allocator),
         };
@@ -36,6 +41,12 @@ pub const Engine = struct {
         var values = self.dependents.valueIterator();
         while (values.next()) |list| list.deinit();
         self.dependents.deinit();
+        var dependencies = self.dependencies.valueIterator();
+        while (dependencies.next()) |list| list.deinit();
+        self.dependencies.deinit();
+        var virtuals = self.virtual_dependencies.valueIterator();
+        while (virtuals.next()) |list| list.deinit();
+        self.virtual_dependencies.deinit();
         self.summaries.deinit();
         self.worklist.deinit();
         self.dirty.deinit();
@@ -93,15 +104,30 @@ pub const Engine = struct {
         try self.worklist.append(function);
     }
 
+    pub fn addDependency(self: *Engine, dependent: graph.GlobalFunctionId, dependency: graph.GlobalFunctionId) !void {
+        const callers = try self.dependents.getOrPut(dependency);
+        if (!callers.found_existing) callers.value_ptr.* = FunctionList.init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalFunctionId, callers.value_ptr.items, dependent) == null) try callers.value_ptr.append(dependent);
+        if (!self.retain_dependencies) return;
+        const required = try self.dependencies.getOrPut(dependent);
+        if (!required.found_existing) required.value_ptr.* = FunctionList.init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalFunctionId, required.value_ptr.items, dependency) == null) try required.value_ptr.append(dependency);
+    }
+
+    pub fn addVirtualDependency(self: *Engine, dependent: graph.GlobalFunctionId, registry: graph.GlobalVirtualRegistryId) !void {
+        const required = try self.virtual_dependencies.getOrPut(dependent);
+        if (!required.found_existing) required.value_ptr.* = .init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalVirtualRegistryId, required.value_ptr.items, registry) == null) try required.value_ptr.append(registry);
+    }
+
+    pub fn observeVirtual(self: *Engine, registry: graph.GlobalVirtualRegistryId) !void {
+        if (!self.retain_dependencies) return;
+        if (self.current) |dependent| try self.addVirtualDependency(dependent, registry);
+    }
+
     fn recordDependency(self: *Engine, dependency: graph.GlobalFunctionId) void {
         const dependent = self.current orelse return;
-        const entry = self.dependents.getOrPut(dependency) catch |err| {
-            self.dependency_error = err;
-            return;
-        };
-        if (!entry.found_existing) entry.value_ptr.* = FunctionList.init(self.allocator);
-        for (entry.value_ptr.items) |existing| if (existing == dependent) return;
-        entry.value_ptr.append(dependent) catch |err| {
+        self.addDependency(dependent, dependency) catch |err| {
             self.dependency_error = err;
         };
     }
@@ -158,6 +184,10 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         if (left.origin != right.origin or !left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
     }
     if (!domainsEql(a.invalidated_domains, b.invalidated_domains)) return false;
+    if (a.storage_observations.len != b.storage_observations.len or a.storage_observation_conflicts.len != b.storage_observation_conflicts.len) return false;
+    for (a.storage_observations, b.storage_observations) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.storage_observation_conflicts, b.storage_observation_conflicts) |left, right|
+        if (!inputPathEql(left.consumed, right.consumed) or !inputPathEql(left.observed, right.observed)) return false;
     if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
     for (a.storage_capability_conflicts, b.storage_capability_conflicts) |left, right|
         if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
@@ -252,6 +282,8 @@ fn domainsEql(a: []const facts.InputDomain, b: []const facts.InputDomain) bool {
 
 fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
     if (!inputPathEql(a.target, b.target) or
+        a.initialization != b.initialization or
+        a.reference_refresh != b.reference_refresh or
         a.initializedness != b.initializedness or
         a.ends_previous_roots != b.ends_previous_roots or
         a.refreshes_storage_generation != b.refreshes_storage_generation or
@@ -259,6 +291,11 @@ fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
         a.opaque_ownership != b.opaque_ownership or
         a.may_repopulate_opaque_storage != b.may_repopulate_opaque_storage or
         !valueEffectEql(a.value, b.value)) return false;
+    if ((a.reference_targets == null) != (b.reference_targets == null)) return false;
+    if (a.reference_targets) |paths| {
+        if (paths.len != b.reference_targets.?.len) return false;
+        for (paths, b.reference_targets.?) |left, right| if (!inputPathEql(left, right)) return false;
+    }
     if ((a.opaque_storage == null) != (b.opaque_storage == null)) return false;
     if (a.opaque_storage) |left| if (!inputPathEql(left, b.opaque_storage.?)) return false;
     return true;
@@ -268,6 +305,20 @@ fn inputPathEql(a: facts.InputPath, b: facts.InputPath) bool {
     if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
     for (a.projections, b.projections) |left, right| if (!std.meta.eql(left, right)) return false;
     return true;
+}
+
+test "summary equality retains ordered storage observations and caller alias obligations" {
+    const first = facts.InputPath{ .input_index = 0 };
+    const second = facts.InputPath{ .input_index = 1, .projections = &.{.{ .field = 0 }} };
+    const observed = facts.SafetySummary{ .storage_observations = &.{second} };
+    try std.testing.expect(!summaryEql(.{}, observed));
+    var constrained = observed;
+    constrained.storage_observation_conflicts = &.{.{ .consumed = first, .observed = second }};
+    try std.testing.expect(!summaryEql(observed, constrained));
+    var reversed = constrained;
+    reversed.storage_observation_conflicts = &.{.{ .consumed = second, .observed = first }};
+    try std.testing.expect(!summaryEql(constrained, reversed));
+    try std.testing.expect(summaryEql(constrained, constrained));
 }
 
 test "opaque storage summary identity includes its receiver domain" {
@@ -446,4 +497,18 @@ test "outcome guard refresh preserves general conjunctions and replaces stale ma
     try std.testing.expectEqual(@as(u32, 4), refreshed.guarded_effects[1].effects.input_post_states[0].target.input_index);
     try std.testing.expectEqual(@as(usize, 0), stale.input_post_states.len);
     try std.testing.expect(summaryEql(refreshed, try refreshOutcomeGuards(allocator, refreshed)));
+}
+
+test "summary equality distinguishes stored reference identities from lifetime facts" {
+    const slot: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} };
+    const left: facts.InputPath = .{ .input_index = 1 };
+    const right: facts.InputPath = .{ .input_index = 2 };
+    const unknown: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized }} };
+    const first: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{left} }} };
+    const second: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{right} }} };
+    try std.testing.expect(!summaryEql(unknown, first));
+    try std.testing.expect(!summaryEql(first, second));
+    try std.testing.expect(summaryEql(first, first));
+    const refreshed: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{left}, .reference_refresh = true }} };
+    try std.testing.expect(!summaryEql(first, refreshed));
 }

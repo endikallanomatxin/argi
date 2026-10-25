@@ -2,10 +2,19 @@ const std = @import("std");
 const graph_mod = @import("graph.zig");
 const payload = @import("../semantic_payload_verify.zig");
 const verify = @import("../semantic_verify.zig");
+const lexical_storage = @import("lexical_storage.zig");
+const types = @import("types.zig");
 
 pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
-    try require(graph.constructionStateEmpty());
+    return verifyUnit(graph, null);
+}
+
+pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @import("reachability.zig").FunctionSet) !void {
+    // Readiness is a property of the selected semantic data, not of whether
+    // an incremental owner has released its resolution bookkeeping.
+    try require(!graph.hasUnresolvedTypes());
     const bounds = makeBounds(graph);
+    for (graph.comptime_requests.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
     try verifyModulePartitions(graph);
     for (graph.argument_defaults.items) |recipe| {
         try require(recipe.module_index < graph.modules.items.len);
@@ -21,6 +30,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.module_aliases.items) |alias| {
         try require(verify.idFits(alias.owner, graph.modules.items.len));
         try require(verify.idFits(alias.target, graph.modules.items.len));
+        try require(graph.modules.items[@intFromEnum(alias.target)].namespace == null);
         try require(verify.idFits(alias.declaration, graph.declarations.items.len));
         try require(graph.moduleForDeclaration(alias.declaration) == alias.owner);
         try require(alias.source.file_index < graph.files.items.len);
@@ -41,9 +51,23 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.fields.items) |value| try payload.field(graph_mod.Ids, value, bounds);
     for (graph.variants.items) |value| try payload.variant(graph_mod.Ids, value, bounds);
     for (graph.generic_arguments.items) |value| try payload.genericArgument(graph_mod.Ids, value, bounds);
-    for (graph.functions.items) |value| try payload.function(graph_mod.Ids, value, bounds);
+    for (graph.functions.items, 0..) |value, raw| {
+        try payload.function(graph_mod.Ids, value, bounds);
+        if (value.body != null and (unit == null or unit.?.contains(@enumFromInt(raw)))) for (graph.binding_refs.items[value.output_bindings.start..][0..value.output_bindings.len]) |binding|
+            try require(graph.binding(binding).initialization == null);
+    }
     try verifyGenericFunctionInstances(graph);
-    for (graph.bindings.items) |value| try payload.binding(graph_mod.Ids, value, bounds);
+    for (graph.bindings.items, 0..) |value, raw| {
+        const id: graph_mod.GlobalBindingId = @enumFromInt(raw);
+        if (graph.isBindingTypeUnresolved(id)) {
+            try require(unit != null and !unit.?.containsBinding(id));
+            try payload.bindingMetadata(graph_mod.Ids, value, bounds);
+        } else try payload.binding(graph_mod.Ids, value, bounds);
+    }
+    for (graph.block_assumptions.items) |value| {
+        try require(verify.idFits(value.block, graph.blocks.items.len));
+        try require(verify.rangeFits(value.bindings, graph.binding_refs.items.len));
+    }
     for (graph.blocks.items) |value| try payload.block(graph_mod.Ids, value, bounds);
     for (graph.value_fields.items) |value| try payload.valueField(graph_mod.Ids, value, bounds);
     for (graph.switch_cases.items) |value| try payload.switchCase(graph_mod.Ids, value, bounds);
@@ -57,18 +81,6 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
             for (contract.dependencies) |dependency| try require(dependency.output_index < contract.output_count);
             for (contract.referents) |referent| try require(referent.output_index < contract.output_count);
             for (contract.domain_dependencies) |dependency| try require(dependency.output_index < contract.output_count);
-        }
-        for (graph.function_refs.items[value.implementations.start..][0..value.implementations.len]) |method| {
-            try require(verify.idFits(method, graph.functions.items.len));
-            try require(value.receiver_input_index < graph.function(method).input.len);
-            if (value.safety_contract) |contract| {
-                try require(contract.output_count == graph.function(method).output.len);
-                for (contract.invalidates) |index| try require(index < graph.function(method).input.len);
-                for (contract.dependencies) |dependency| try require(dependency.input_index < graph.function(method).input.len);
-                for (contract.referents) |referent| try require(referent.input_index < graph.function(method).input.len);
-                for (contract.domain_dependencies) |dependency| try require(dependency.input.input_index < graph.function(method).input.len);
-                for (contract.invalidated_domains) |domain| try require(domain.input_index < graph.function(method).input.len);
-            }
         }
     }
     for (graph.contract_conformances.items) |value| {
@@ -124,7 +136,14 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
             try require(transfer.input_index < method.input.len);
         }
     }
-    for (graph.virtualizes.items) |value| try payload.virtualize(graph_mod.Ids, value, bounds);
+    for (graph.virtualizes.items) |value| {
+        try payload.virtualize(graph_mod.Ids, value, bounds);
+        try require(value.methods.len == value.safety_methods.len);
+        for (graph.function_refs.items[value.methods.start..][0..value.methods.len], graph.virtual_registry_refs.items[value.safety_methods.start..][0..value.safety_methods.len]) |method, registry| {
+            try require(verify.idFits(registry, graph.virtual_registries.items.len));
+            try verifyVirtualImplementation(graph, graph.virtual_registries.items[@intFromEnum(registry)], method);
+        }
+    }
     for (graph.virtual_calls.items) |value| {
         try payload.virtualCall(graph_mod.Ids, value, bounds);
         try require(graph.virtual_registries.items[@intFromEnum(value.safety_methods)].receiver_input_index == value.self_input_index);
@@ -144,6 +163,61 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (graph.virtual_registry_refs.items) |id| try require(verify.idFits(id, graph.virtual_registries.items.len));
     for (graph.roots.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
+
+    try verifyWriteCleanupTargets(graph);
+    for (graph.nodes.items, 0..) |node, index| {
+        const replacement = @import("replacement.zig");
+        const id: graph_mod.GlobalNodeId = @enumFromInt(index);
+        if (node.content == .replacement) _ = try replacement.plan(graph, id);
+    }
+}
+
+fn verifyVirtualImplementation(graph: *const graph_mod.GlobalSemanticGraph, descriptor: graph_mod.VirtualMethodRegistry, method: graph_mod.GlobalFunctionId) !void {
+    try require(verify.idFits(method, graph.functions.items.len));
+    const function = graph.function(method);
+    try require(descriptor.receiver_input_index < function.input.len);
+    if (descriptor.safety_contract) |contract| {
+        try require(contract.output_count == function.output.len);
+        for (contract.invalidates) |index| try require(index < function.input.len);
+        for (contract.dependencies) |dependency| try require(dependency.input_index < function.input.len);
+        for (contract.referents) |referent| try require(referent.input_index < function.input.len);
+        for (contract.domain_dependencies) |dependency| try require(dependency.input.input_index < function.input.len);
+        for (contract.invalidated_domains) |domain| try require(domain.input_index < function.input.len);
+    }
+}
+
+fn verifyWriteCleanupTargets(graph: *const graph_mod.GlobalSemanticGraph) !void {
+    // Cleanup metadata must prove the actual destination without evaluating a
+    // second address expression or following a retargetable reference slot.
+    for (graph.nodes.items) |node| switch (node.content) {
+        .pointer_assignment => |write| if (write.cleanup_target) |target| {
+            const destination = graph.node(target).content;
+            if (destination == .dereference and destination.dereference.pointer == write.pointer) {
+                // Exact operand identity describes an evaluated destination;
+                // owning transitions additionally require a replacement plan.
+            } else {
+                const actual = lexical_storage.addressedTarget(graph, write.pointer) orelse return error.InvalidGlobalSemanticGraph;
+                try require(lexical_storage.root(graph, target) != null);
+                try require(lexical_storage.equal(graph, actual, target));
+            }
+            const pointer_type = graph.semanticType(graph.node(write.pointer).ty orelse return error.InvalidGlobalSemanticGraph);
+            try require(pointer_type == .pointer);
+            try require(types.equal(graph, pointer_type.pointer.child, graph.node(target).ty orelse return error.InvalidGlobalSemanticGraph));
+        },
+        .struct_field_store => |write| if (write.cleanup_target) |target| {
+            const field = graph.node(target).content;
+            try require(field == .struct_field_access);
+            try require(field.struct_field_access.field_index == write.field_index);
+            const base = graph.node(field.struct_field_access.value).content;
+            if (base != .dereference or base.dereference.pointer != write.struct_ptr) {
+                const actual = lexical_storage.addressedTarget(graph, write.struct_ptr) orelse return error.InvalidGlobalSemanticGraph;
+                try require(lexical_storage.root(graph, target) != null);
+                try require(lexical_storage.equal(graph, actual, field.struct_field_access.value));
+            }
+            try require(types.equal(graph, write.field_type, graph.node(target).ty orelse return error.InvalidGlobalSemanticGraph));
+        },
+        else => {},
+    };
 }
 
 fn verifySymbols(graph: *const graph_mod.GlobalSemanticGraph) !void {
@@ -266,6 +340,13 @@ fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
     var declaration_cursor: usize = 0;
     for (graph.modules.items, 0..) |module, module_index| {
         try require(verify.stringFits(module.dir, graph.strings.items));
+        if (module.namespace) |namespace| {
+            try require(@intFromEnum(namespace) < module_index);
+            const owner = graph.modules.items[@intFromEnum(namespace)];
+            try require(owner.namespace == null);
+            try require(owner.is_bundled_core == module.is_bundled_core);
+            try require(std.mem.eql(u8, graph.text(owner.dir), graph.text(module.dir)));
+        }
         try require(module.files.start == file_cursor);
         try require(module.declarations.start == declaration_cursor);
         try require(verify.rangeFits(module.files, graph.files.items.len));
@@ -344,4 +425,59 @@ test "global verifier rejects unmaterialized compact sugar types" {
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
     try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyGlobal(&graph));
+}
+
+test "global verifier requires cleanup targets to prove the written storage" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const value_type: graph_mod.GlobalTypeId = @enumFromInt(0);
+    const pointer_type: graph_mod.GlobalTypeId = @enumFromInt(1);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = value_type, .mutability = .read_write } },
+        .{ .builtin = .Bool },
+    });
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.bindings.appendSlice(allocator, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = value_type, .mutability = .variable },
+        .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = value_type, .mutability = .variable },
+        .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = pointer_type, .mutability = .constant, .initialization = @enumFromInt(1) },
+    });
+    try graph.nodes.appendSlice(allocator, &.{
+        .{ .source = source, .ty = value_type, .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = pointer_type, .content = .{ .address_of = @enumFromInt(0) } },
+        .{ .source = source, .ty = pointer_type, .content = .{ .binding_use = @enumFromInt(2) } },
+        .{ .source = source, .ty = value_type, .content = .{ .binding_use = @enumFromInt(1) } },
+        .{ .source = source, .ty = value_type, .content = .{ .int_literal = 42 } },
+        .{ .source = source, .ty = null, .content = .{ .pointer_assignment = .{ .pointer = @enumFromInt(2), .value = @enumFromInt(4), .cleanup_target = @enumFromInt(0) } } },
+    });
+    try verifyWriteCleanupTargets(&graph);
+    graph.nodes.items[5].content.pointer_assignment.cleanup_target = @enumFromInt(3);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.nodes.items[5].content.pointer_assignment.cleanup_target = @enumFromInt(0);
+    graph.bindings.items[2].mutability = .variable;
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.bindings.items[2].mutability = .constant;
+    graph.bindings.items[2].initialization = @enumFromInt(2);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.bindings.items[2].initialization = @enumFromInt(1);
+    graph.nodes.items[0].ty = @enumFromInt(2);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.nodes.items[0].ty = value_type;
+    const evaluated: graph_mod.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(allocator, .{ .source = source, .ty = value_type, .content = .{ .dereference = .{ .pointer = @enumFromInt(2), .pointer_type = pointer_type, .ty = value_type } } });
+    graph.nodes.items[5].content.pointer_assignment.cleanup_target = evaluated;
+    try verifyWriteCleanupTargets(&graph);
+    graph.nodes.items[@intFromEnum(evaluated)].content.dereference.pointer = @enumFromInt(1);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.nodes.items[5].content.pointer_assignment.cleanup_target = @enumFromInt(0);
+    try graph.binding_refs.append(allocator, @enumFromInt(2));
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .input_bindings = .{ .start = 0, .len = 1 },
+    });
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
 }

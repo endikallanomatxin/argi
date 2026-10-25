@@ -6,9 +6,9 @@ Compare#(.Left: Type, .Right: Type): Contract = (
 
 CompareRelations#(.Left: Type, .Right: Type): Contract = (
     Compare#(Left, Right)
-    .less_than : (.left: Left, .right: Right) -> (.ok: Bool)
+    .less_than             : (.left: Left, .right: Right) -> (.ok: Bool)
     .less_than_or_equal    : (.left: Left, .right: Right) -> (.ok: Bool)
-    .greater_than : (.left: Left, .right: Right) -> (.ok: Bool)
+    .greater_than          : (.left: Left, .right: Right) -> (.ok: Bool)
     .greater_than_or_equal : (.left: Left, .right: Right) -> (.ok: Bool)
 )
 

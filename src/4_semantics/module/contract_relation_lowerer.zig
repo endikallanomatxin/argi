@@ -165,14 +165,16 @@ const Context = struct {
             operations = .{ .start = operation_start, .len = @intCast(self.graph.semantic.parameterized_storage.contract_operations.items.len - operation_start) };
             break :blk try self.publishConformanceArguments(arguments.items);
         };
-        try self.graph.semantic.parameterized_storage.contract_conformances.append(self.allocator, .{
+        try self.graph.semantic.parameterized_storage.contract_conformances.ensureUnusedCapacity(self.allocator, 1);
+        const domains = try self.lowerDomainMappings(relation.domain_mapping);
+        self.graph.semantic.parameterized_storage.contract_conformances.appendAssumeCapacity(.{
             .parameters = parameters,
             .operations = operations,
             .contract_ref = reference,
             .participants = participants,
             .associated_arguments = associated,
             .source = self.sourceRef(node),
-            .domains = try self.lowerDomainMappings(relation.domain_mapping),
+            .domains = domains,
         });
     }
 
@@ -230,12 +232,14 @@ const Context = struct {
         const node = optional orelse return &.{};
         var result: std.ArrayList(parameterized_storage.DomainMapping) = .empty;
         defer result.deinit(self.allocator);
+        errdefer for (result.items) |domain| domain.deinit(self.allocator);
         for (self.tree.codeBlock(node).?.statements) |statement| {
             const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
             const call = self.tree.functionCall(clause) orelse return error.InvalidStorageDomainMapping;
             if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null) return error.InvalidStorageDomainMapping;
             var paths: std.ArrayList(parameterized_storage.DomainMapping.Path) = .empty;
             defer paths.deinit(self.allocator);
+            errdefer for (paths.items) |path| self.allocator.free(path.fields);
             for (self.tree.structValueLiteral(call.input).?.fields) |argument| {
                 const field = self.tree.valueField(argument).?;
                 if (field.name_token != null) return error.InvalidStorageDomainMapping;
@@ -243,11 +247,14 @@ const Context = struct {
                 defer names.deinit(self.allocator);
                 try self.lowerDomainPath(field.value, &names);
                 if (names.items.len == 0) return error.InvalidStorageDomainMapping;
-                try paths.append(self.allocator, .{ .fields = try names.toOwnedSlice(self.allocator) });
+                try paths.ensureUnusedCapacity(self.allocator, 1);
+                paths.appendAssumeCapacity(.{ .fields = try names.toOwnedSlice(self.allocator) });
             }
             if (paths.items.len == 0) return error.InvalidStorageDomainMapping;
-            try result.append(self.allocator, .{
-                .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)),
+            try result.ensureUnusedCapacity(self.allocator, 1);
+            const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token));
+            result.appendAssumeCapacity(.{
+                .name = name,
                 .paths = try paths.toOwnedSlice(self.allocator),
             });
         }

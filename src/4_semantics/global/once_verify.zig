@@ -3,6 +3,25 @@ const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 const tok = @import("../../2_tokens/token.zig");
 const graph_mod = @import("graph.zig");
 
+/// Retained semantic consumption, independent of executor storage. A rejected
+/// compilation discards its fork; accepted commands extend the same root graph.
+pub const Uses = std.AutoHashMap(graph_mod.GlobalFunctionId, FirstUse);
+
+/// `uses` belongs to a speculative candidate; discard that fork on failure.
+pub fn verifyContinuation(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, entry: graph_mod.GlobalFunctionId, uses: *Uses) !void {
+    var state = State{
+        .allocator = allocator,
+        .graph = graph,
+        .diagnostics = diagnostics,
+        .seen_once = uses.*,
+        .active_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+    };
+    defer uses.* = state.seen_once;
+    defer state.active_functions.deinit();
+    try state.walkFunction(entry);
+    if (state.had_error) return error.Reported;
+}
+
 pub fn verify(
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
@@ -53,9 +72,10 @@ const State = struct {
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
     diagnostics: *diagnostics_mod.Diagnostics,
-    seen_once: std.AutoHashMap(graph_mod.GlobalFunctionId, FirstUse),
+    seen_once: Uses,
     active_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     current_function: ?graph_mod.GlobalFunctionId = null,
+    visited_nodes: ?*std.AutoHashMapUnmanaged(graph_mod.GlobalNodeId, void) = null,
     had_error: bool = false,
 
     fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
@@ -66,8 +86,13 @@ const State = struct {
         const previous = self.current_function;
         self.current_function = function_id;
         defer self.current_function = previous;
-        for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
-            if (field.default_value) |default| try self.walkNode(default);
+        var visited: std.AutoHashMapUnmanaged(graph_mod.GlobalNodeId, void) = .empty;
+        defer visited.deinit(self.allocator);
+        const previous_nodes = self.visited_nodes;
+        self.visited_nodes = &visited;
+        defer self.visited_nodes = previous_nodes;
+        // Completed call inputs evaluate defaults in their caller. Declaration
+        // defaults are metadata, not additional executions in the callee.
         const body = function.body orelse return;
         try self.walkBlock(body);
     }
@@ -79,6 +104,11 @@ const State = struct {
     }
 
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
+        // Lowered temporary preparation can share one effect node with the
+        // value sequence that yields it. A new function visit gets a fresh set,
+        // so separate calls through the same helper still consume separately.
+        const visited = try self.visited_nodes.?.getOrPut(self.allocator, node_id);
+        if (visited.found_existing) return;
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
             .function_address => {},
@@ -104,17 +134,15 @@ const State = struct {
             .assignment => |assignment| try self.walkNode(assignment.value),
             .auto_deinit_binding => |auto_id| {
                 const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
+                if (auto.targetNode()) |target| try self.walkNode(target);
                 if (auto.input) |input| try self.walkNode(input);
                 if (auto.deinit_fn) |callee| try self.walkCall(node_id, callee);
             },
+            // Cleanup targets describe already-evaluated argument identities.
+            // Only the ordinary callee/input nodes execute at this boundary.
             .function_call => |call| {
                 if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
-                if (call.consumes_auto_deinit) |value| try self.walkNode(value);
-                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
-                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
-                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
-                if (call.initializes_auto_deinit) |value| try self.walkNode(value);
                 try self.walkCall(node_id, call.callee);
             },
             .virtualize => |id| {
@@ -125,15 +153,17 @@ const State = struct {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
-                if (call.consumes_auto_deinit) |value| try self.walkNode(value);
-                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
-                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
-                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
-                const registry = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)];
-                for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |callee|
+                const evidence = @import("contract_evidence.zig");
+                const contract = evidence.virtualContractType(self.graph, call) orelse return error.InvalidVirtualContract;
+                var candidates: evidence.PossibleVirtualMethods = .{ .graph = self.graph, .contract = contract, .method_index = call.method_index };
+                var seen: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, void) = .empty;
+                defer seen.deinit(self.allocator);
+                while (candidates.next()) |callee| {
+                    if ((try seen.getOrPut(self.allocator, callee)).found_existing) continue;
                     try self.walkCall(node_id, callee);
+                }
             },
-            .code_block, .value_sequence => |block| try self.walkBlock(block),
+            .code_block, .value_sequence, .replacement => |block| try self.walkBlock(block),
             .list_literal => |literal| {
                 for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value|
                     try self.walkNode(value);
@@ -241,6 +271,18 @@ const State = struct {
 
     fn walkCall(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
+        if (function.flags.is_comptime_host_entry) {
+            // Every explicit host entry owns its acquisition scope, including
+            // nested entries executed within the same VM invocation.
+            const outer = self.seen_once;
+            self.seen_once = Uses.init(self.allocator);
+            defer {
+                self.seen_once.deinit();
+                self.seen_once = outer;
+            }
+            try self.walkFunction(callee);
+            return;
+        }
         if (function.flags.is_once and !try self.consumeOnce(call_node, callee)) return;
         try self.walkFunction(callee);
     }
@@ -255,8 +297,8 @@ const State = struct {
         const declaration = self.graph.declarations.items[@intFromEnum(self.graph.functions.items[@intFromEnum(callee)].declaration)];
         const first_node = self.graph.nodes.items[@intFromEnum(result.value_ptr.node)];
         const current_node = self.graph.nodes.items[@intFromEnum(call_node)];
-        const first_location = self.location(first_node.source);
-        const current_location = self.location(current_node.source);
+        const first_location = self.diagnostics.presentedLocation(self.location(first_node.source));
+        const current_location = self.diagnostics.presentedLocation(self.location(current_node.source));
         const first_position = self.diagnostics.lineColumn(first_location);
         try self.diagnostics.add(
             current_location,
@@ -275,18 +317,7 @@ const State = struct {
     }
 
     fn location(self: *const State, source: @import("../primitives/schema.zig").SourceRef) tok.Location {
-        if (@as(usize, source.file_index) < self.graph.files.items.len) {
-            const graph_file = self.graph.files.items[source.file_index];
-            const module = self.graph.modules.items[@intFromEnum(graph_file.module)];
-            const wanted_dir = self.graph.text(module.dir);
-            const wanted_name = self.graph.text(graph_file.path);
-            for (self.diagnostics.source_files, 0..) |file, index| {
-                if (!std.mem.eql(u8, std.fs.path.basename(file.path), wanted_name)) continue;
-                const dir = std.fs.path.dirname(file.path) orelse ".";
-                if (!std.mem.eql(u8, dir, wanted_dir)) continue;
-                return .{ .file = @enumFromInt(@as(u32, @intCast(index))), .offset = source.offset };
-            }
-        }
+        if (@import("source_location.zig").find(self.graph, &self.diagnostics.source_db, source)) |found| return found;
         const fallback: u32 = if (self.diagnostics.source_files.len == 0)
             0
         else

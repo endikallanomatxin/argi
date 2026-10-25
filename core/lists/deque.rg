@@ -57,9 +57,9 @@ reserve#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         new_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &new_allocation, .index = index)
         _trusted_uninit_relocate#(.t: t)(
             .source_allocation      = &self&._ring._allocation
-            .source = old_slot
+            .source                 = old_slot
             .destination_allocation = &new_allocation
-            .destination = new_slot
+            .destination            = new_slot
         )
         index = index + 1
     }

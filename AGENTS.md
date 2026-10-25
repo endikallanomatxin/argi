@@ -239,7 +239,22 @@ feature first.
   symbolic consumption identities/state; preserve copies, joins and loop equality
   without changing their shared borrow root or inventing concrete pointee places.
   Symbolic consumption targets only whole unknown pointers, never aggregate
-  envelopes or opaque domains. Reject uninitialized/repeated destruction.
+  envelopes or opaque domains. Unknown references in by-value input records
+  use separate function-local SymbolicPointeeIds for each reference leaf, including
+  nested records; they are not binding IDs or proof of disjointness. Preserve
+  explicit empty sibling facts. Summary effects inspect the projected slot type
+  before treating it as referent storage. Opaque-transfer obligations for unknown
+  input roots remain in caller-relative summaries; concrete lexical/acquired
+  loans must still be checked at the caller. Direct input references separate backing validity
+  from the observed value generation. Explicit straight-line reinitialization
+  renews only its selected reference after RHS evaluation. Historical aliases
+  stay stale; distinct consumption identities still carry caller-side alias
+  obligations, so ending a shared generation alone cannot forbid consuming
+  another input. Reject uninitialized/repeated destruction. Pointer writes retain
+  a definite-initialization proof only when every visited incoming state agrees.
+  Symbolic call cleanup targets retain evaluated input identities. Bytecode flag
+  updates use those argument snapshots and affect referents, never reference slots.
+  Owning writes without that proof still require a checked replacement plan.
   Erased receiver consumption stays unsupported until runtime cleanup identities
   exist. Destructor declarations use only Deinit; `TypeName deinit(...)` is
   rejected with a migration diagnostic. Cleanup has no nominal destructor
@@ -321,7 +336,69 @@ feature first.
   one extra scratch byte and destroy partial owners on error. Reserve bounded
   capacity before consuming a chunk.
 
+- Local whole-binding replacement evaluates its RHS into a lexical owner, runs the
+  selected cleanup of the previous value, and moves the replacement into place.
+  A checked `replacement` node owns one complete write, including its destination,
+  lexical preparation, selected old-value cleanup and commit. Its shared plan
+  verifier checks their order and exact owner/projection identity. Generic value
+  sequences alone carry no replacement semantics. Safety/summaries traverse the
+  ordinary write and preparation nodes. Both backends consume the complete plan.
+  Native writes capture address, type and cleanup state before RHS emission;
+  selected cleanup and commit use that same destination. Nested replacements
+  restore the outer capture. Scope-exit cleanup keeps its separate identity.
+  Ownership finalization uses cleanup activation to omit destruction for proven
+  first initialization. Preserve temporary provenance in value-sequence summaries;
+  a sequence result must not skip the bindings that establish its dependencies.
+  A block's ret_val can also be its last statement: execute/collect its effects
+  once, retaining its value across following cleanup. Statically rooted local
+  record fields use the same checked replacement sequence
+  and a projected cleanup target; only that field changes generation and cleanup
+  activation. Constant local reference aliases retain a proven lexical
+  cleanup_target on writes; evaluate the original pointer, and update the target's
+  cleanup flags, never the reference slot's. The global verifier checks this proof.
+  Reference-only bodies that solely forward an input preserve its lexical identity
+  through ordinary/generic calls. Use the selected input binding and completed
+  argument order; preserve call execution and safety, never substitute defaults.
+  Retargetable/unknown aliases and indexed replacement still require an evaluated
+  destination and shared cleanup identity. VM lowering rejects owning writes
+  through unresolved aliases and indexed storage until those identities are modeled.
+  A reference field's cleanup flag describes its slot, never its referent.
+  Bytecode cleanup flags are attached to sorted owner slots through the shared
+  immutable cleanup layouts and start false on frame entry. Projections select
+  preorder flag ranges; no runtime table enumerates field or variant paths. Their dense namespace and byte buffers
+  are separate from typed value slots; they never establish value initialization.
+  Reuse call buffers only when both value and flag counts match. Lifecycle
+  queries can address vacant storage without reading its value; following pointers and indices still reads
+  initialized operands. Reference copies retain target identity, while value
+  copies never copy cleanup obligations. Keep general indirect replacement
+  rejected until selected plans and native evidence transport are implemented.
+  Native addresses do not identify cleanup obligations: zero-sized siblings
+  may share an address. Both backends use `5_codegen/cleanup_layout.zig` for
+  field/variant shape; transport evidence by owner/projection identity rather
+  than recovering it from a physical pointer. Payloadless variants have no
+  child storage or cleanup flag.
+  Native flags occupy one contiguous preorder block per owner. A projected
+  DropState is a view of its subrange; bulk updates must preserve siblings.
+  Cleanup layout counts are cached per retained graph and checked for overflow.
+  Both backends allocate flags only for bindings referenced by checked cleanup
+  plans; ordinary locals without cleanup obligations need no flag storage.
+  Immutable record literals can establish reference-field targets through their
+  selected initializers. Preserve the original pointer evaluation and renew only
+  the reference used for replacement, never sibling fields or record copies.
+  Call post-states distinguish preserved, possible and definite initialization;
+  an initialized post-state alone can preserve the entry value. Only definite
+  writes reactivate unavailable caller cleanup unconditionally. Conditional
+  initialization uses represented result outcomes and must not enable cleanup
+  on paths that preserve vacant storage.
+  Call reinitialization renews the selected argument reference slot, including
+  explicit dereference paths through copied or borrowed records; sibling fields
+  and earlier record copies retain their old generations.
+
 - Structural automatic cleanup follows record fields and active choice payloads.
+  Vacant local records retain selected field cleanup beneath nominal Deinit as
+  an incomplete-value fallback. Whole destruction clears all child flags before
+  that walk; summaries join the two alternatives instead of sequencing them.
+  Cleanup branch proofs retain current generation guards and never revive old aliases.
   AutoDeinitField keeps variant projections distinct from record fields; preserve
   that distinction in summary substitution, checker state branches, relocation,
   and codegen. Moving a match payload disables the source choice's cleanup.

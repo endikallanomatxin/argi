@@ -106,8 +106,8 @@ implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) Ma
 implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MutableMapLookup#(
     HashMap#(.key: key, .value: value, .policy: policy)
 ) (
-    .Query : Type = HashPolicy#(policy, key).Query
-    .Value : Type = value
+    .Query                 : Type = HashPolicy#(policy, key).Query
+    .Value                 : Type = value
     .get_mutable_reference = _map_get_mutable_reference_hash_map
 )
 

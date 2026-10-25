@@ -5,17 +5,13 @@ Hashable#(.Key: Type, .State: Type: Hasher#(State)): Contract = (
 )
 
 _hash_unsigned#(.State: Type: Hasher#(State))(
-    .value  : UInt64,
-    .count  : UIntNative,
-    .hasher : $&State
+    .value: UInt64, .count: UIntNative, .hasher: $&State
 ) -> () := {
     storage ::= zeroed#(.t: [8]UInt8)()
     remaining ::= value
     index :: UIntNative = 0
     while index < count {
-        storage[index] = unwrap_or_abort(
-            .value = [[remaining % 256] | convert#(.to: UInt8)(_)]
-        )
+        storage[index] = unwrap_or_abort(.value = [[remaining % 256] | convert#(.to: UInt8)(_)])
         remaining = remaining / 256
         index = index + 1
     }
@@ -23,11 +19,7 @@ _hash_unsigned#(.State: Type: Hasher#(State))(
     Hasher#(State).write_bytes(hasher, .bytes = bytes)
 }
 
-_hash_signed#(.State: Type: Hasher#(State))(
-    .value  : Int64,
-    .count  : UIntNative,
-    .hasher : $&State
-) -> (
+_hash_signed#(.State: Type: Hasher#(State))(.value: Int64, .count: UIntNative, .hasher: $&State) -> (
 ) := {
     bits :: UInt64 = 0
     if value >= 0 {
@@ -45,83 +37,83 @@ _hash_text#(.State: Type: Hasher#(State))(.text: StringView, .hasher: $&State) -
     Hasher#(State).write_bytes(hasher, .bytes = string_bytes(.text = text))
 }
 
-implement#(.State: Type: Hasher#(State)) Hashable#(StringView, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(StringView, State) (
     .hash_into = (.key: &StringView, .hasher: $&State) -> () {
         _hash_text(.text = key&, .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(String, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(String, State) (
     .hash_into = (.key: &String, .hasher: $&State) -> () {
         _hash_text(.text = view(key), .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(UInt8, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(UInt8, State) (
     .hash_into = (.key: &UInt8, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: UInt64)(_)
         _hash_unsigned(.value = value, .count = 1, .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(UInt16, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(UInt16, State) (
     .hash_into = (.key: &UInt16, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: UInt64)(_)
         _hash_unsigned(.value = value, .count = 2, .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(UInt32, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(UInt32, State) (
     .hash_into = (.key: &UInt32, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: UInt64)(_)
         _hash_unsigned(.value = value, .count = 4, .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(UInt64, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(UInt64, State) (
     .hash_into = (.key: &UInt64, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: UInt64)(_)
         _hash_unsigned(.value = value, .count = 8, .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(UIntNative, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(UIntNative, State) (
     .hash_into = (.key: &UIntNative, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: UInt64)(_)
         #if target_pointer_bits(64) {
             _hash_unsigned(.value = value, .count = 8, .hasher = hasher)
-        }#else {
+        } #else {
             #if target_pointer_bits(32) {
                 _hash_unsigned(.value = value, .count = 4, .hasher = hasher)
-            }#else {
+            } #else {
                 _hash_unsigned(.value = value, .count = 2, .hasher = hasher)
             }
         }
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(Int8, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(Int8, State) (
     .hash_into = (.key: &Int8, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: Int64)(_)
         _hash_signed(.value = value, .count = 1, .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(Int16, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(Int16, State) (
     .hash_into = (.key: &Int16, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: Int64)(_)
         _hash_signed(.value = value, .count = 2, .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(Int32, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(Int32, State) (
     .hash_into = (.key: &Int32, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: Int64)(_)
         _hash_signed(.value = value, .count = 4, .hasher = hasher)
     }
 )
 
-implement#(.State: Type: Hasher#(State)) Hashable#(Int64, State)(
+implement#(.State: Type: Hasher#(State)) Hashable#(Int64, State) (
     .hash_into = (.key: &Int64, .hasher: $&State) -> () {
         value ::= key&| convert#(.to: Int64)(_)
         _hash_signed(.value = value, .count = 8, .hasher = hasher)

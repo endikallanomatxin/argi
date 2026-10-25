@@ -1,11 +1,11 @@
 const std = @import("std");
-const llvm = @import("../5_codegen/llvm.zig");
+const llvm = @import("../5_codegen/llvm/llvm.zig");
 const c = llvm.c;
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
-const link = @import("../5_codegen/link.zig");
+const link = @import("../5_codegen/llvm/link.zig");
 const frontend = @import("frontend_pipeline.zig");
-const codegen = @import("../5_codegen/codegen.zig");
+const codegen = @import("../5_codegen/llvm/codegen.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
 const types = @import("../4_semantics/global/types.zig");
 const graph_print = @import("../4_semantics/global/print.zig");
@@ -375,6 +375,8 @@ fn compileResolvedPlan(
         return error.CompilationFailed;
     };
     defer generator.deinit();
+    if (pipeline.safety_ctx) |*safety| generator.annotations = &safety.annotations;
+    generator.unit = if (pipeline.global_unit) |*unit| unit else null;
     const module = generator.generate() catch |err| {
         if (flags.show_semantic_graph) graph_print.print(graph);
         dumpDiagnostics(&diagnostics, flags);

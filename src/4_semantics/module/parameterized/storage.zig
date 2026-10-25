@@ -30,6 +30,11 @@ pub const ContractConstraint = struct {
 };
 
 pub const ParameterizedFunction = struct {
+    // A concrete identity may retain its body here when conditional compilation
+    // needs staged materialization; it is never a generic dispatch candidate.
+    is_comptime_entry: bool = false,
+    is_comptime_host_entry: bool = false,
+    concrete_function: ?entities.ModuleFunctionId = null,
     declaration: entities.ModuleDeclId,
     parameters: primitives.Range(ComptimeParameterId),
     input: ir.ParameterizedTypeId,
@@ -75,6 +80,11 @@ pub const DomainMapping = struct {
     name: primitives.StringRange,
     paths: []const Path,
     pub const Path = struct { fields: []const primitives.StringRange };
+
+    pub fn deinit(self: DomainMapping, allocator: std.mem.Allocator) void {
+        for (self.paths) |path| allocator.free(path.fields);
+        allocator.free(self.paths);
+    }
 };
 
 // Tuple evidence keeps selector arguments separate from associated outputs.
@@ -114,7 +124,12 @@ pub const Storage = struct {
         self.parameterized_functions.deinit(allocator);
         self.parameterized_types.deinit(allocator);
         self.contract_requirements.deinit(allocator);
+        for (self.contract_definitions.items) |definition| allocator.free(definition.domains);
         self.contract_definitions.deinit(allocator);
+        for (self.contract_conformances.items) |conformance| {
+            for (conformance.domains) |domain| domain.deinit(allocator);
+            allocator.free(conformance.domains);
+        }
         self.contract_conformances.deinit(allocator);
         self.contract_operations.deinit(allocator);
         self.* = .{};

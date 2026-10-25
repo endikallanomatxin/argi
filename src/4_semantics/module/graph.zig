@@ -75,6 +75,7 @@ pub const Declaration = struct {
 
 pub const FileOffsets = struct {
     path: StringRange,
+    content_hash: ?u64 = null,
     declaration_base: u32,
     declaration_count: u32,
     type_reference_base: u32,
@@ -86,6 +87,13 @@ pub const Symbol = struct {
     declarations: DeclarationRange,
 };
 
+/// Closed condition recipe retained independently of FileSyntaxTree. Source
+/// offsets identify its directive in the loader's immutable selection plan.
+pub const ModuleCondition = struct {
+    source: primitives.SourceRef,
+    expression: @import("parameterized/ir.zig").ParameterizedNodeId,
+};
+
 /// Compact semantic storage owned by one module directory. Source-file indices
 /// and source offsets in construction tables are provenance only. Durable
 /// bodies and semantic identities live in `semantic` using Module* IDs.
@@ -94,6 +102,10 @@ pub const ModuleSemanticGraph = struct {
     module_dir: []const u8 = "",
     is_bundled_core: bool = false,
     declarations: std.ArrayList(Declaration) = .empty,
+    /// Compiler-generated declarations form a trailing partition, outside the
+    /// source-file partitions and public symbol index. Each retains source
+    /// provenance in its ordinary declaration record.
+    generated_declaration_count: u32 = 0,
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(ModuleDeclId) = .empty,
     types: std.ArrayList(ModuleType) = .empty,
@@ -107,6 +119,7 @@ pub const ModuleSemanticGraph = struct {
     type_references: std.ArrayList(TypeReference) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
     semantic: module_storage.Storage = .{},
+    conditions: std.ArrayList(ModuleCondition) = .empty,
 
     pub fn deinit(self: *ModuleSemanticGraph, allocator: std.mem.Allocator) void {
         allocator.free(self.module_dir);
@@ -124,6 +137,7 @@ pub const ModuleSemanticGraph = struct {
         self.type_references.deinit(allocator);
         self.file_offsets.deinit(allocator);
         self.semantic.deinit(allocator);
+        self.conditions.deinit(allocator);
         self.* = .{};
     }
 
@@ -160,7 +174,7 @@ pub const ModuleSemanticGraph = struct {
             self.strings.items.len +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.file_offsets.items.len * @sizeOf(FileOffsets) +
-            self.semantic.storageBytes();
+            self.conditions.items.len * @sizeOf(ModuleCondition) + self.semantic.storageBytes();
     }
 
     fn addString(self: *ModuleSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
@@ -250,6 +264,14 @@ pub const ModuleSemanticGraphBuilder = struct {
             try discoverFile(self.allocator, &self.graph, file, @intCast(module_file_index));
             self.graph.file_offsets.appendAssumeCapacity(.{
                 .path = try self.graph.addString(self.allocator, std.fs.path.basename(file.path)),
+                // Selected source fragments retain the original buffer's version.
+                .content_hash = if (file.diagnostics) |diagnostics| blk: {
+                    if (@intFromEnum(file.tree.file_id) < diagnostics.source_db.files.len) {
+                        const original = diagnostics.source_db.get(file.tree.file_id);
+                        if (std.mem.eql(u8, original.path, file.path)) break :blk original.content_hash;
+                    }
+                    break :blk @import("../../1_base/source_db.zig").contentHash(file.source);
+                } else @import("../../1_base/source_db.zig").contentHash(file.source),
                 .declaration_base = declaration_base,
                 .declaration_count = @intCast(self.graph.declarations.items.len - declaration_base),
                 .type_reference_base = type_reference_base,

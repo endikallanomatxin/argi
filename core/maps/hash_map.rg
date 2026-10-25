@@ -170,9 +170,11 @@ _hash_entry#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
     slot ::= _trusted_uninit_slot#(.t: HashMapEntry#(.key: key, .value: value))(
         .allocation = &self&._table._entries, .index = index
     )
+    slot_index: ?UIntNative = ..some(.value = slot._index)
     entry = trusted_establish_allocation_slot#(.t: HashMapEntry#(.key: key, .value: value))(
         .allocation = &self&._table._entries
         .slot       = slot._raw
+        .index      = slot_index
         .anchor     = self&._table._entries.anchor
     ).reference
 }
@@ -266,9 +268,9 @@ _map_reserve_hash_map#(
             )(.allocation = &entries, .index = destination)
             _trusted_uninit_relocate#(.t: HashMapEntry#(.key: key, .value: value))(
                 .source_allocation      = &self&._table._entries
-                .source = source_slot
+                .source                 = source_slot
                 .destination_allocation = &entries
-                .destination = destination_slot
+                .destination            = destination_slot
             )
             _trusted_dynamic_array_set(
                 .array = $&slots

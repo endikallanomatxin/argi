@@ -6,6 +6,6 @@ Pair2#(.a: Type, .b: Type): Type = (
 )
 
 main() -> (.status_code: Int32) := {
-    p: Pair2#(.a: Int32, .b: UnicodeScalar) = (.a = 20, .b = 'X')
+    p: Pair2#(.a: Int32, .b: UnicodeScalar) = (.x = 20, .y = 'X')
     status_code = p.x
 }

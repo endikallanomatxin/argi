@@ -8,7 +8,7 @@ Hasher#(.State: Type): Contract = (
 -- https://www.ietf.org/archive/id/draft-eastlake-fnv-25.html
 StandardHasher: Type = (._state: UInt64)
 
-implement Init#(StandardHasher, (.seed: UInt64 = 14695981039346656037))(
+implement Init#(StandardHasher, (.seed: UInt64 = 14695981039346656037)) (
     .Result : Type = StandardHasher
     .init   = (.args: (.seed: UInt64 = 14695981039346656037)) -> (.result: Result) {
         result = (._state = args.seed)
@@ -44,7 +44,7 @@ _hash_fnv_byte(.state: UInt64, .byte: UInt8) -> (.result: UInt64) := {
     result = [high_product % 4294967296] * 4294967296 + low_product % 4294967296
 }
 
-implement Hasher#(StandardHasher)(
+implement Hasher#(StandardHasher) (
     .write_bytes = (.self: $&StandardHasher, .bytes: ArrayView#(UInt8)) -> () {
         index :: UIntNative = 0
         while index < length(&bytes) {
@@ -56,12 +56,15 @@ implement Hasher#(StandardHasher)(
     .finish = (.self: &StandardHasher) -> (.hash: UIntNative) {
         #if target_pointer_bits(64) {
             hash = self&._state | convert#(.to: UIntNative)(_)
-        }#else {
+        } #else {
             -- Fold into the native width rather than discard the upper bits.
             radix :: UInt64 = 1
             width ::= size_of(.type = UIntNative) * 8
             index :: UIntNative = 0
-            while index < width { radix = radix * 2 index = index + 1 }
+            while index < width {
+                radix = radix * 2
+                index = index + 1
+            }
             remaining ::= self&._state
             folded :: UInt64 = 0
             while remaining != 0 {

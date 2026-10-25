@@ -34,6 +34,8 @@ pub const View = struct {
 };
 
 pub const Location = struct {
+    pub const unavailable: Location = .{ .file = .unknown, .offset = 0 };
+
     file: source_db.FileId,
     offset: u32,
 };

@@ -13,7 +13,6 @@ const module_sg = @import("../4_semantics/module/graph.zig");
 const module_semantizer = @import("../4_semantics/module/semantizer.zig");
 const global_sg = @import("../4_semantics/global/graph.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
-const module_linker = @import("../4_semantics/global/module_linker.zig");
 const global_once_verify = @import("../4_semantics/global/once_verify.zig");
 const module_test_declaration_verify = @import("../4_semantics/module/test_declaration_verify.zig");
 const global_safety_checker = @import("../4_semantics/safety/checker.zig");
@@ -24,6 +23,7 @@ pub const FrontendPipeline = struct {
         selected_test_name: ?[]const u8 = null,
         implicit_testing_module_dir: ?[]const u8 = null,
         exhaustive_function_bodies: bool = false,
+        root_selection: global_semantizer.RootSelection = .program,
     };
 
     pub const Options = struct {
@@ -41,6 +41,9 @@ pub const FrontendPipeline = struct {
     options: Options,
     source_db: *const source_db.SourceDb,
     syntax_files: std.array_list.Managed(st.FileSyntaxTree),
+    // Borrow original source buffers; rendered selections never replace the
+    // source database. Computed decisions survive tokenization for the loader.
+    source_selections: std.ArrayList(@import("../1_base/target_selection.zig").Prepared) = .empty,
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
     module_entries: std.ArrayList(*cache.ModuleCache.Entry) = .empty,
@@ -53,6 +56,7 @@ pub const FrontendPipeline = struct {
     /// can be materialized by this pipeline anymore.
     global_graph: ?global_sg.GlobalSemanticGraph = null,
     global_stats: global_semantizer.Stats = .{},
+    global_unit: ?@import("../4_semantics/global/reachability.zig").FunctionSet = null,
     global_safety_stats: global_safety_checker.SafetyChecker.Stats = .{},
     safety_ctx: ?global_safety_checker.SafetyChecker = null,
     safety_ns: u64 = 0,
@@ -63,6 +67,9 @@ pub const FrontendPipeline = struct {
     entry_source: ?[]const u8 = null,
     entry_path: ?[]const u8 = null,
     entry_file: ?source_db.FileId = null,
+    staged_arena: ?*std.heap.ArenaAllocator = null,
+    prepared_session: ?*global_semantizer.Session = null,
+    deferred_entry: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -88,6 +95,8 @@ pub const FrontendPipeline = struct {
         self.module_arenas.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
+        for (self.source_selections.items) |*selection| selection.deinit(self.allocator);
+        self.source_selections.deinit(self.allocator);
         self.syntax_root_list.deinit();
         if (self.entry_source) |value| self.allocator.free(value);
         if (self.entry_path) |value| self.allocator.free(value);
@@ -97,25 +106,33 @@ pub const FrontendPipeline = struct {
         self.clearModuleGraphs();
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.clearRetainingCapacity();
+        for (self.source_selections.items) |*selection| selection.deinit(self.allocator);
+        self.source_selections.clearRetainingCapacity();
+        try self.syntax_files.ensureTotalCapacity(files.len);
+        try self.source_selections.ensureTotalCapacity(self.allocator, files.len);
 
         for (files, 0..) |source_file, index| {
             var error_offset: usize = 0;
-            const selected = @import("../1_base/target_selection.zig").select(self.allocator, source_file.code, self.options.target, &error_offset) catch |err| {
+            var prepared = @import("../1_base/target_selection.zig").Prepared.init(self.allocator, source_file.code, self.options.target, &error_offset, .computed) catch |err| {
+                if (err == error.OutOfMemory) return err;
                 try self.diagnostics.add(.{ .file = self.source_db.fileId(index), .offset = @intCast(error_offset) }, .syntax, "invalid target selection: {s}", .{@import("../1_base/target_selection.zig").errorMessage(err)});
                 return err;
             };
-            defer self.allocator.free(selected);
+            errdefer prepared.deinit(self.allocator);
+            const selected = try prepared.syntax(self.allocator);
+            defer selected.deinit(self.allocator);
             var tokenizer_ctx = tokenizer.Tokenizer.init(
                 self.allocator,
                 self.diagnostics,
-                selected,
+                selected.source,
                 self.source_db.fileId(index),
             );
             defer tokenizer_ctx.deinit();
             _ = try tokenizer_ctx.tokenize();
             var file = st.FileSyntaxTree.initOwnedTokens(self.source_db.fileId(index), tokenizer_ctx.takeTokens());
             errdefer file.deinit(self.allocator);
-            try self.syntax_files.append(file);
+            self.syntax_files.appendAssumeCapacity(file);
+            self.source_selections.appendAssumeCapacity(prepared);
         }
     }
 
@@ -185,9 +202,59 @@ pub const FrontendPipeline = struct {
         return roots;
     }
 
-    /// Produce and safety-check the final indexed semantic graph. This is the
-    /// sole semantic output API of the frontend.
-    pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
+    /// Test discovery only executes closed source-selection requests. It never
+    /// selects main or a test body as an executable root. Ordinary files keep
+    /// the parser-only discovery path; computed declarations use the shared
+    /// staged loader and retain their selected syntax for the caller.
+    pub fn prepareTestDiscovery(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
+        if (self.options.semantizing.root_selection != .requests_only) return error.InvalidDiscoveryRootSelection;
+        _ = try self.parseFiles(files);
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        var computed = false;
+        scan: for (self.syntax_files.items) |*file| for (file.roots) |root| {
+            if (file.ifStatement(root)) |conditional| if (conditional.comptime_selection) {
+                computed = true;
+                break :scan;
+            };
+        };
+        if (computed) {
+            self.deferred_entry = false;
+            try self.buildGlobalGraph();
+        }
+    }
+
+    /// Prepare an immutable semantic template for persistent execution. The
+    /// pipeline owns it and all borrowed source/module artifacts. Consumers
+    /// fork the template; neither commands nor reset mutate its frozen choices.
+    pub fn prepareSessionFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_semantizer.Session {
+        const previous = self.options.semantizing;
+        self.options.semantizing.root_selection = .requests_only;
+        self.options.semantizing.exhaustive_function_bodies = false;
+        defer self.options.semantizing = previous;
+        try self.prepareFiles(files, false);
+        try self.buildModuleGraphs();
+        const session = try self.allocator.create(global_semantizer.Session);
+        errdefer self.allocator.destroy(session);
+        const computed = for (self.module_graphs.items) |module| {
+            if (module.conditions.items.len != 0) break true;
+        } else false;
+        if (computed) {
+            try self.prepareStagedSession(session);
+        } else {
+            try session.init(self.allocator, self.module_graphs.items, .{ .target = self.options.target, .root_selection = .requests_only, .exhaustive_function_bodies = false, .diagnostics = self.diagnostics });
+            errdefer session.deinit();
+            try session.advance();
+        }
+        errdefer session.deinit();
+        // Validate pending conditions directly. Completion keeps the session
+        // open, including dormant bindings needed by later submissions.
+        _ = try session.completeUnit();
+        session.relocation.graph.commitCompletions(self.allocator);
+        self.prepared_session = session;
+        return session;
+    }
+
+    fn prepareFiles(self: *FrontendPipeline, files: []const sf.SourceFile, include_entry: bool) !void {
         _ = try self.parseFiles(files);
         // Syntax diagnostics are terminal for this compilation. Continuing into
         // ModuleSema/GlobalSema can only manufacture secondary unresolved work
@@ -200,12 +267,30 @@ pub const FrontendPipeline = struct {
             self.options.semantizing.include_tests,
             self.options.semantizing.selected_test_name,
         );
-        try self.appendProgramEntry();
+        var computed_module = false;
+        for (self.syntax_files.items) |*file| for (file.roots) |root| {
+            if (file.ifStatement(root)) |conditional| if (conditional.comptime_selection) {
+                computed_module = true;
+            };
+        };
+        self.deferred_entry = include_entry and computed_module;
+        if (include_entry and !computed_module) try self.appendProgramEntry();
         try self.validateFunctionSignatures();
         try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);
         if (self.diagnostics.hasErrors()) return error.Reported;
+    }
+
+    /// Produce and safety-check the final indexed semantic graph.
+    pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
+        try self.prepareFiles(files, true);
         try self.buildGlobalGraph();
         try self.analyzeGlobalSafety();
+        // Initial source execution consumes finalized dependencies. Keep the
+        // request table until this boundary so caching and specialization cannot
+        // silently turn #run into an ordinary runtime call. Staged type/value
+        // resolution must eventually schedule these same requests earlier.
+        try @import("../execution/comptime.zig").resolve(self.allocator, &self.global_graph.?, self.diagnostics);
+        self.global_graph.?.comptime_requests.clearRetainingCapacity();
         return &self.global_graph.?;
     }
 
@@ -221,8 +306,24 @@ pub const FrontendPipeline = struct {
         // Bootstrap reporting only when requested. Creating FFI/terminal
         // owners in otherwise pure entries changes once and capability checks.
         var needs_reporting = self.options.semantizing.selected_test_name != null;
-        for (self.syntax_files.items) |*file| for (file.tokens.items(.content)) |content| {
-            if (content == .triple_bang) needs_reporting = true;
+        for (self.syntax_files.items) |*file| for (file.tokens.items(.content), 0..) |content, token_index| {
+            if (content != .triple_bang) continue;
+            const offset = file.tokenLocation(@enumFromInt(token_index)).offset;
+            // Retained original trees still contain module directives. Their
+            // selected declarations live in separate fragment trees; only those
+            // declarations can introduce entry reporting requirements.
+            const deferred = for (file.roots) |root| {
+                const conditional = file.ifStatement(root) orelse continue;
+                if (!conditional.comptime_selection) continue;
+                const file_index = @intFromEnum(file.file_id);
+                if (file_index >= self.source_selections.items.len) continue;
+                const selection = &self.source_selections.items[file_index];
+                for (selection.plan.branches.items) |branch| {
+                    if (branch.extent.start == file.location(root).offset and offset >= branch.extent.start and offset < branch.extent.end) break;
+                } else continue;
+                break true;
+            } else false;
+            if (!deferred) needs_reporting = true;
         };
         for (self.syntax_files.items) |*file| {
             const source = self.source_db.get(file.file_id);
@@ -288,7 +389,9 @@ pub const FrontendPipeline = struct {
         else
             try std.fmt.allocPrint(self.allocator, "__main_result ::= {s}({s})", .{ target, call_args });
         defer self.allocator.free(call);
-        const with_output = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_OUTPUT__", output);
+        const with_system = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_SYSTEM_SCOPE__", @embedFile("system_scope.rg"));
+        defer self.allocator.free(with_system);
+        const with_output = try std.mem.replaceOwned(u8, self.allocator, with_system, "__ARGI_OUTPUT__", output);
         defer self.allocator.free(with_output);
         const with_tracer = try std.mem.replaceOwned(u8, self.allocator, with_output, "__ARGI_TRACER_SETUP__", tracer);
         defer self.allocator.free(with_tracer);
@@ -346,6 +449,7 @@ pub const FrontendPipeline = struct {
         self.safety_ctx = null;
         const graph = &self.global_graph.?;
         self.safety_ctx = global_safety_checker.SafetyChecker.init(self.allocator, self.diagnostics, graph);
+        self.safety_ctx.?.unit = if (self.global_unit) |*unit| unit else null;
         if (self.options.collect_stats) self.safety_ctx.?.enableStats(self.io);
         const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         try self.safety_ctx.?.analyze();
@@ -353,7 +457,7 @@ pub const FrontendPipeline = struct {
         self.global_safety_stats = self.safety_ctx.?.stats;
     }
 
-    fn buildGlobalGraph(self: *FrontendPipeline) !void {
+    fn buildModuleGraphs(self: *FrontendPipeline) !void {
         const module_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         self.clearModuleGraphs();
         errdefer self.clearModuleGraphs();
@@ -512,17 +616,25 @@ pub const FrontendPipeline = struct {
         };
 
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
+    }
 
+    fn buildGlobalGraph(self: *FrontendPipeline) !void {
+        try self.buildModuleGraphs();
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
+        const has_conditions = for (self.module_graphs.items) |module| {
+            if (module.conditions.items.len != 0) break true;
+        } else false;
+        const result = if (has_conditions) try self.buildStagedGlobalGraph() else try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
             .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
+            .root_selection = self.options.semantizing.root_selection,
             .diagnostics = self.diagnostics,
             .profile_io = if (self.options.collect_stats) self.io else null,
         });
         self.global_graph = result.graph;
         self.global_stats = result.stats;
+        self.global_unit = result.unit;
         try global_once_verify.verify(
             self.allocator,
             &self.global_graph.?,
@@ -530,6 +642,147 @@ pub const FrontendPipeline = struct {
             self.options.semantizing.selected_test_name,
         );
         self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
+    }
+
+    fn buildStagedGlobalGraph(self: *FrontendPipeline) !global_semantizer.Result {
+        var session: global_semantizer.Session = undefined;
+        try self.prepareStagedSession(&session);
+        defer session.deinit();
+        return session.finish();
+    }
+
+    fn prepareStagedSession(self: *FrontendPipeline, session: *global_semantizer.Session) !void {
+        const arena = try self.allocator.create(std.heap.ArenaAllocator);
+        arena.* = .init(self.allocator);
+        self.staged_arena = arena;
+        const a = arena.allocator();
+        var modules: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
+        try modules.appendSlice(a, self.module_graphs.items);
+        try session.init(self.allocator, modules.items, .{
+            .target = self.options.target,
+            .selected_test_name = self.options.semantizing.selected_test_name,
+            .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
+            .root_selection = self.options.semantizing.root_selection,
+            .diagnostics = self.diagnostics,
+        });
+        errdefer session.deinit();
+        var loader = SelectionLoader{ .pipeline = self, .allocator = a, .modules = &modules };
+        try @import("../4_semantics/global/module_selection.zig").resolve(a, session, 0, &loader);
+        try module_test_declaration_verify.validate(self.syntax_files.items, self.source_db, self.diagnostics, self.options.semantizing.include_tests, self.options.semantizing.selected_test_name);
+        if (self.deferred_entry) {
+            const before = self.syntax_files.items.len;
+            try self.appendProgramEntry();
+            if (self.syntax_files.items.len != before) {
+                const file = &self.syntax_files.items[before];
+                const input = module_sg.FileInput{ .path = self.entry_path.?, .tree = file, .source = self.entry_source.?, .is_entry = true, .diagnostics = self.diagnostics };
+                const result = try module_semantizer.buildForTarget(a, self.options.entry_module_dir.?, &.{input}, self.options.target);
+                const owner = for (modules.items, 0..) |module, index| {
+                    if (std.mem.eql(u8, module.module_dir, self.options.entry_module_dir.?)) break @as(global_sg.GlobalModuleId, @enumFromInt(index));
+                } else return error.InvalidEntryModule;
+                try modules.append(a, result.graph);
+                try session.appendModuleFragment(modules.items, owner);
+            }
+        }
+        try self.validateFunctionSignatures();
+        try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        try session.advance();
+    }
+
+    const SelectionLoader = struct {
+        pipeline: *FrontendPipeline,
+        allocator: std.mem.Allocator,
+        modules: *std.ArrayList(module_sg.ModuleSemanticGraph),
+
+        pub fn materialize(self: *SelectionLoader, session: *global_semantizer.Session, module_index: usize, condition: module_sg.ModuleCondition, decision: bool) !void {
+            const pipeline = self.pipeline;
+            const a = self.allocator;
+            const module = session.modules[module_index];
+            const path = try std.fs.path.join(a, &.{ module.module_dir, module.text(module.file_offsets.items[condition.source.file_index].path) });
+            const file_id = pipeline.source_db.findVersion(path, module.file_offsets.items[condition.source.file_index].content_hash) orelse return error.InvalidModuleConditionSource;
+            const selection = &pipeline.source_selections.items[@intFromEnum(file_id)];
+            const branch = for (selection.plan.branches.items, 0..) |candidate, branch_index| {
+                if (candidate.extent.start == condition.source.offset) break @as(@import("../1_base/conditional_source.zig").BranchId, @enumFromInt(branch_index));
+            } else return error.InvalidModuleConditionSource;
+            try selection.resolve(branch, decision);
+            const rendered = try selection.fragment(a, branch, true);
+            const imports = try selection.fragment(a, branch, false);
+            try pipeline.discoverSelectedImports(a, session, self.modules, path, imports.source);
+            const fragment = try pipeline.buildSelectedFragment(a, path, file_id, rendered.source, module.is_bundled_core);
+            try self.modules.append(a, fragment);
+            try session.appendModuleFragment(self.modules.items, @enumFromInt(module_index));
+        }
+    };
+
+    fn discoverSelectedImports(self: *FrontendPipeline, a: std.mem.Allocator, session: *global_semantizer.Session, modules: *std.ArrayList(module_sg.ModuleSemanticGraph), path: []const u8, source: []const u8) !void {
+        if (sf.firstImportDirectiveOffset(source) == null) return;
+        const dirs = try a.alloc([]const u8, modules.items.len);
+        for (dirs, modules.items) |*dir, module| dir.* = module.module_dir;
+        const loaded = try sf.collectImportedModules(&a, self.io, .{ .path = path, .code = source }, dirs, .{ .target = self.options.target, .source_overrides = self.diagnostics.source_files });
+        try self.syntax_files.ensureUnusedCapacity(loaded.items.len);
+        var start: usize = 0;
+        while (start < loaded.items.len) {
+            const dir = std.fs.path.dirname(loaded.items[start].path) orelse ".";
+            var end = start + 1;
+            while (end < loaded.items.len and std.mem.eql(u8, std.fs.path.dirname(loaded.items[end].path) orelse ".", dir)) : (end += 1) {}
+            var inputs: std.ArrayList(module_sg.FileInput) = .empty;
+            try inputs.ensureTotalCapacity(a, end - start);
+            for (loaded.items[start..end]) |file| {
+                const file_id = try self.diagnostics.appendSource(file);
+                var offset: usize = 0;
+                var selection = @import("../1_base/target_selection.zig").Prepared.init(self.allocator, file.code, self.options.target, &offset, .computed) catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    try self.diagnostics.add(.{ .file = file_id, .offset = @intCast(offset) }, .syntax, "invalid target selection: {s}", .{@import("../1_base/target_selection.zig").errorMessage(err)});
+                    return error.Reported;
+                };
+                errdefer selection.deinit(self.allocator);
+                const rendered = try selection.syntax(a);
+                var tokens = tokenizer.Tokenizer.init(self.allocator, self.diagnostics, rendered.source, file_id);
+                defer tokens.deinit();
+                _ = try tokens.tokenize();
+                var parser = syntaxer.Syntaxer.initFile(self.allocator, st.FileSyntaxTree.initOwnedTokens(file_id, tokens.takeTokens()), rendered.source, self.diagnostics);
+                defer parser.deinit();
+                var tree = try parser.parse();
+                errdefer tree.deinit(self.allocator);
+                try self.validateSelectedSyntax(&tree);
+                if (@intFromEnum(file_id) != self.source_selections.items.len) return error.InvalidModuleConditionSource;
+                try self.source_selections.append(self.allocator, selection);
+                self.syntax_files.appendAssumeCapacity(tree);
+                inputs.appendAssumeCapacity(.{ .path = file.path, .tree = &self.syntax_files.items[self.syntax_files.items.len - 1], .source = file.code, .diagnostics = self.diagnostics });
+            }
+            const built = try module_semantizer.buildForTarget(a, dir, inputs.items, self.options.target);
+            try modules.append(a, built.graph);
+            try session.appendModules(modules.items);
+            start = end;
+        }
+    }
+
+    fn buildSelectedFragment(self: *FrontendPipeline, a: std.mem.Allocator, path: []const u8, file_id: source_db.FileId, source: []const u8, bundled: bool) !module_sg.ModuleSemanticGraph {
+        var tokens = tokenizer.Tokenizer.init(self.allocator, self.diagnostics, source, file_id);
+        defer tokens.deinit();
+        _ = try tokens.tokenize();
+        var parser = syntaxer.Syntaxer.initFile(self.allocator, st.FileSyntaxTree.initOwnedTokens(file_id, tokens.takeTokens()), source, self.diagnostics);
+        defer parser.deinit();
+        var tree = try parser.parse();
+        errdefer tree.deinit(self.allocator);
+        try self.validateSelectedSyntax(&tree);
+        const input = module_sg.FileInput{ .path = path, .tree = &tree, .source = source, .is_bundled_core = bundled, .diagnostics = self.diagnostics };
+        const result = try module_semantizer.buildForTarget(a, std.fs.path.dirname(path) orelse ".", &.{input}, self.options.target);
+        try self.syntax_files.append(tree);
+        return result.graph;
+    }
+
+    fn validateSelectedSyntax(self: *FrontendPipeline, tree: *const st.FileSyntaxTree) !void {
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        try module_test_declaration_verify.validate(&.{tree.*}, self.source_db, self.diagnostics, self.options.semantizing.include_tests, self.options.semantizing.selected_test_name);
+        const source = self.source_db.get(tree.file_id).source;
+        for (tree.roots) |root| {
+            const function = tree.functionDeclaration(root) orelse continue;
+            try self.validateFunctionSignatureFields(tree, source, function.input, "input");
+            try self.validateFunctionSignatureFields(tree, source, function.output, "output");
+        }
+        try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, &.{tree.*}, self.source_db, self.diagnostics);
+        if (self.diagnostics.hasErrors()) return error.Reported;
     }
 
     const ModuleJob = struct {
@@ -596,8 +849,15 @@ pub const FrontendPipeline = struct {
     }
 
     fn clearModuleGraphs(self: *FrontendPipeline) void {
+        if (self.prepared_session) |session| {
+            session.deinit();
+            self.allocator.destroy(session);
+            self.prepared_session = null;
+        }
         if (self.safety_ctx) |*ctx| ctx.deinit();
         self.safety_ctx = null;
+        if (self.global_unit) |*unit| unit.deinit();
+        self.global_unit = null;
         if (self.global_graph) |*graph| graph.deinit(self.allocator);
         self.global_graph = null;
         if (self.options.module_cache != null) {
@@ -611,6 +871,11 @@ pub const FrontendPipeline = struct {
             self.module_arenas.clearRetainingCapacity();
         }
         self.module_graphs.clearRetainingCapacity();
+        if (self.staged_arena) |arena| {
+            arena.deinit();
+            self.allocator.destroy(arena);
+            self.staged_arena = null;
+        }
     }
 
     pub fn moduleSemanticStorageBytes(self: *const FrontendPipeline) usize {

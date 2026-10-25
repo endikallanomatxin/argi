@@ -12,6 +12,14 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     if (graph.semantic.local_semantics_complete and canonicalize_storage.hasConstructionPrefixes(graph))
         return error.CompletedModuleRetainsCompatibilityStorage;
     try parameterized_state.verifyParameterizedForms(graph);
+    for (graph.conditions.items, 0..) |condition, index| {
+        if (condition.source.file_index >= graph.file_offsets.items.len or
+            !verify.idFits(condition.expression, graph.semantic.parameterized_storage.ir.nodes.items.len))
+            return error.InvalidModuleCondition;
+        for (graph.conditions.items[0..index]) |previous| {
+            if (std.meta.eql(previous.source, condition.source)) return error.InvalidModuleCondition;
+        }
+    }
     try generic_instances.verifyGenericInstances(graph, graph.semantic.local_semantics_complete);
     for (graph.semantic.external_refs.items) |reference| {
         if (reference.generic_arguments) |arguments| {

@@ -43,8 +43,13 @@ _trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (
 -- Runtime guards check alignment and both the declared and authenticated
 -- byte extents. The allocator proves the physical region at establishment;
 -- callers cannot expand it by editing the public receipt fields.
+-- An explicit index retains the selected logical position and must agree with
+-- the address. An omitted index is raw establishment, without slot identity.
 trusted_establish_allocation_slot#(.t: Type)(
-    .allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any
+    .allocation : &Allocation,
+    .slot       : RawPointer#(.t: t),
+    .anchor     : &Any,
+    .index      : ?UIntNative         = ..none
 ) -> (.reference: $&t) := {
     _require_allocation_slot_range(
         .allocation = allocation
@@ -52,6 +57,20 @@ trusted_establish_allocation_slot#(.t: Type)(
         .size       = size_of(.type = t)
         .alignment  = alignment_of(.type = t)
     )
+    match index {
+        ..some selection {
+            _require_allocation_slot_index#(.t: t)(
+                .allocation = allocation, .index = selection.value
+            )
+            expected ::= _reference_offset_address(
+                .address      = allocation&.data.address
+                .elements     = selection.value
+                .element_size = size_of(.type = t)
+            ).result
+            if slot.address != expected { abort }
+        }
+        ..none {}
+    }
     reference = __trusted_reference_from_address#(.to: $&t)(.address = slot.address)
 }
 
@@ -72,4 +91,21 @@ _require_allocation_slot_range(
     if size > allocation&.size - offset { abort }
     if alignment == 0 { abort }
     if address % alignment != 0 { abort }
+}
+
+-- Byte extents cannot bound zero-sized slots. Typed requests retain their
+-- logical count privately; raw byte allocations have no such logical extent.
+-- Nonzero reinterpretations still use the checked physical byte range.
+_require_allocation_slot_index#(.t: Type)(.allocation: &Allocation, .index: UIntNative) -> () := {
+    element_size ::= size_of(.type = t)
+    match allocation&._slot_extent {
+        ..some extent {
+            if extent.value.element_size == element_size {
+                if index >= extent.value.count { abort }
+            } else {
+                if element_size == 0 { abort }
+            }
+        }
+        ..none { if element_size == 0 { abort } }
+    }
 }

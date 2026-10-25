@@ -77,6 +77,8 @@ pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo
 
 pub const IntExpression = union(enum) {
     literal: i64,
+    // Retain ordinary executable IR for staged compile-time evaluation.
+    execution: ParameterizedNodeId,
     parameter: ComptimeParameterId,
     projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     binary: struct {
@@ -142,6 +144,7 @@ pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
 
 pub const PendingExpressionKind = enum(u8) {
+    entry_capture,
     unknown_identifier,
     comptime_parameter,
     pipe,
@@ -161,6 +164,7 @@ pub const PendingExpressionKind = enum(u8) {
     comparison,
     logical,
     if_statement,
+    comptime_if,
     while_statement,
     for_each,
     match,
@@ -177,6 +181,8 @@ pub const PendingExpressionKind = enum(u8) {
 };
 
 pub const PendingExpressionDetail = union(enum(u8)) {
+    capture_module_value: entities.ModuleNodeId,
+    capture_owner: ?entities.ModuleFunctionId,
     none,
     comptime_parameter: ComptimeParameterId,
     binary: primitives.BinaryOperator,
@@ -188,6 +194,7 @@ pub const PendingExpressionDetail = union(enum(u8)) {
 };
 
 pub const PendingExpression = struct {
+    comptime_run: bool = false,
     contract_type: ?ParameterizedTypeId = null,
     requires_errable: bool = false,
     kind: PendingExpressionKind,

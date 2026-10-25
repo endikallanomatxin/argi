@@ -105,9 +105,20 @@ pub const OutputVariantEffect = struct {
 
 /// Symbolic post-state of a Place reached through a function input.
 pub const PlacePostState = struct {
+    /// Whether this exit establishes a value independently of entry occupancy.
+    /// An initialized post-state alone may simply preserve the incoming value.
+    pub const Initialization = enum { preserved, possible, definite };
+
     target: InputPath,
+    initialization: Initialization = .preserved,
     initializedness: value_state.Initializedness,
     value: ValueEffect = .{},
+    /// Proven entry-relative destinations of the reference stored in this slot.
+    /// Lifetime dependencies alone never establish these identities.
+    reference_targets: ?[]const InputPath = null,
+    /// This selected reference access observes the destination's post-value;
+    /// unrelated copies continue observing their entry generation.
+    reference_refresh: bool = false,
     ends_previous_roots: bool = false,
     refreshes_storage_generation: bool = false,
     requires_available_destination: bool = false,
@@ -134,6 +145,13 @@ pub const StorageCapabilityUse = struct {
 pub const StorageCapabilityConflict = struct {
     first: InputPath,
     second: InputPath,
+};
+
+/// A later observation must not alias storage whose value was already ended.
+/// Coordinates are caller-relative; distinct inputs do not prove disjointness.
+pub const StorageObservationConflict = struct {
+    consumed: InputPath,
+    observed: InputPath,
 };
 
 pub const FreshStorageCapabilityState = struct {
@@ -164,6 +182,8 @@ pub const SafetySummary = struct {
     outputs: []const ValueEffect = &.{},
     storage_capability_uses: []const StorageCapabilityUse = &.{},
     storage_capability_conflicts: []const StorageCapabilityConflict = &.{},
+    storage_observations: []const InputPath = &.{},
+    storage_observation_conflicts: []const StorageObservationConflict = &.{},
     required_live_inputs: []const InputPath = &.{},
     /// Using stored elements requires their hidden external dependencies;
     /// merely accessing or freeing allocation metadata does not.

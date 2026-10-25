@@ -1,8 +1,11 @@
 -- A handle to storage for one T. The bytes are not a T until the owner
 -- explicitly initializes the slot. The handle adds no per-slot state to the
 -- allocation; an owning collection records occupancy in its own invariant.
+-- Keep the logical index as well as the address: zero-sized elements share
+-- bytes but remain distinct selected positions. Neither field proves occupancy.
 MaybeUninit#(.t: Type): Type = (
-    ._raw : RawPointer#(.t: t)
+    ._raw   : RawPointer#(.t: t)
+    ._index : UIntNative
 )
 
 -- Checked selection publishes a storage handle, never an initialized T.
@@ -11,6 +14,7 @@ MaybeUninit#(.t: Type): Type = (
 allocation_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) -> (
     .slot : MaybeUninit#(.t: t)
 ) := {
+    _require_allocation_slot_index#(.t: t)(.allocation = allocation, .index = index)
     address ::= _reference_offset_address(
         .address      = allocation&.data.address
         .elements     = index
@@ -22,7 +26,10 @@ allocation_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) -> (
         .size       = size_of(.type = t)
         .alignment  = alignment_of(.type = t)
     )
-    raw_slot :: MaybeUninit#(.t: t) = (._raw = raw_pointer#(.t: t)(.address = address).raw)
+    raw_slot :: MaybeUninit#(.t: t) = (
+        ._raw   = raw_pointer#(.t: t)(.address = address).raw
+        ._index = index
+    )
     anchored ::= depend_on#(.t: MaybeUninit#(.t: t))(
         .value = raw_slot, .on = allocation&.anchor
     ).result
@@ -46,7 +53,7 @@ _trusted_uninit_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) ->
         .elements     = index
         .element_size = size_of(.type = t)
     ).result
-    slot = (._raw = raw_pointer#(.t: t)(.address = address).raw)
+    slot = (._raw = raw_pointer#(.t: t)(.address = address).raw, ._index = index)
 }
 
 -- Only an owner that has established occupancy may turn a slot handle into
@@ -56,8 +63,12 @@ _trusted_uninit_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) ->
 _trusted_uninit_borrow_ro#(.t: Type)(.allocation: &Allocation, .slot: MaybeUninit#(.t: t)) -> (
     .reference : &t
 ) := {
+    index: ?UIntNative = ..some(.value = slot._index)
     mutable ::= trusted_establish_allocation_slot#(.t: t)(
-        .allocation = allocation, .slot = slot._raw, .anchor = allocation&.anchor
+        .allocation = allocation
+        .slot       = slot._raw
+        .anchor     = allocation&.anchor
+        .index      = index
     ).reference
     reference = read_reference#(.t: t)(.base = mutable).reference
 }
@@ -65,8 +76,12 @@ _trusted_uninit_borrow_ro#(.t: Type)(.allocation: &Allocation, .slot: MaybeUnini
 _trusted_uninit_borrow_rw#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUninit#(.t: t)) -> (
     .reference : $&t
 ) := {
+    index: ?UIntNative = ..some(.value = slot._index)
     reference = trusted_establish_allocation_slot#(.t: t)(
-        .allocation = allocation, .slot = slot._raw, .anchor = allocation&.anchor
+        .allocation = allocation
+        .slot       = slot._raw
+        .anchor     = allocation&.anchor
+        .index      = index
     ).reference
 }
 
@@ -75,8 +90,12 @@ _trusted_uninit_borrow_rw#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUnin
 _trusted_uninit_write#(.t: Type)(
     .allocation: $&Allocation, .slot: MaybeUninit#(.t: t), .value: t
 ) -> () := {
+    index: ?UIntNative = ..some(.value = slot._index)
     destination ::= trusted_establish_allocation_slot#(.t: t)(
-        .allocation = allocation, .slot = slot._raw, .anchor = allocation&.anchor
+        .allocation = allocation
+        .slot       = slot._raw
+        .anchor     = allocation&.anchor
+        .index      = index
     ).reference
     trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
         .storage = allocation, .destination = destination, .source = ~value
@@ -88,8 +107,12 @@ _trusted_uninit_write#(.t: Type)(
 _trusted_uninit_take#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUninit#(.t: t)) -> (
     .value : t
 ) := {
+    index: ?UIntNative = ..some(.value = slot._index)
     source ::= trusted_establish_allocation_slot#(.t: t)(
-        .allocation = allocation, .slot = slot._raw, .anchor = allocation&.anchor
+        .allocation = allocation
+        .slot       = slot._raw
+        .anchor     = allocation&.anchor
+        .index      = index
     ).reference
     value = trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
         .storage = allocation, .slot = source
@@ -101,18 +124,22 @@ _trusted_uninit_take#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUninit#(.
 -- this trusted ownership transition.
 _trusted_uninit_relocate#(.t: Type)(
     .source_allocation      : &Allocation,
-    .source : MaybeUninit#(.t: t),
+    .source                 : MaybeUninit#(.t: t),
     .destination_allocation : &Allocation,
-    .destination : MaybeUninit#(.t: t),
+    .destination            : MaybeUninit#(.t: t),
 ) -> () := {
+    source_index: ?UIntNative = ..some(.value = source._index)
+    destination_index: ?UIntNative = ..some(.value = destination._index)
     source_ref ::= trusted_establish_allocation_slot#(.t: t)(
         .allocation = source_allocation
         .slot       = source._raw
+        .index      = source_index
         .anchor     = source_allocation&.anchor
     ).reference
     destination_ref ::= trusted_establish_allocation_slot#(.t: t)(
         .allocation = destination_allocation
         .slot       = destination._raw
+        .index      = destination_index
         .anchor     = destination_allocation&.anchor
     ).reference
     trusted_opaque_relocate(.source = source_ref, .destination = destination_ref)

@@ -17,9 +17,9 @@ implement Deinit#(CsvRecord) (
 -- bare CR is invalid outside quotes. Empty input has no records; a blank line
 -- contains one empty field. Encoding and width validation belong to the consumer.
 CsvReader: Type = (
-    ._text : StringView,
-    ._position : UIntNative,
-    ._ended : Bool,
+    ._text               : StringView,
+    ._position           : UIntNative,
+    ._ended              : Bool,
     .maximum_field_bytes : UIntNative,
     .maximum_fields      : UIntNative
 )
@@ -27,7 +27,7 @@ CsvReader: Type = (
 implement Init#(
     CsvReader,
     (
-        .text : StringView,
+        .text                : StringView,
         .maximum_field_bytes : UIntNative  = 1048576,
         .maximum_fields      : UIntNative  = 1024,
     )
@@ -35,7 +35,7 @@ implement Init#(
     .Result : Type = CsvReader
     .init   = (
         .args : (
-            .text : StringView,
+            .text                : StringView,
             .maximum_field_bytes : UIntNative  = 1048576,
             .maximum_fields      : UIntNative  = 1024,
         )
@@ -45,9 +45,9 @@ implement Init#(
         maximum_fields ::= args.maximum_fields
 
         result = (
-            ._text = text
-            ._position = 0
-            ._ended = false
+            ._text               = text
+            ._position           = 0
+            ._ended              = false
             .maximum_field_bytes = maximum_field_bytes
             .maximum_fields      = maximum_fields
         )

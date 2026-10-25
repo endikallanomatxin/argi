@@ -2,8 +2,8 @@ const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
-const codegen = @import("../5_codegen/codegen.zig");
-const llvm = @import("../5_codegen/llvm.zig").c;
+const codegen = @import("../5_codegen/llvm/codegen.zig");
+const llvm = @import("../5_codegen/llvm/llvm.zig").c;
 const ModuleCache = frontend.cache.ModuleCache;
 
 const Result = struct {
@@ -49,6 +49,7 @@ fn compileWithExecution(files: []const sf.SourceFile, session: ?*ModuleCache, op
     if (failure == null) {
         var generator = try codegen.CodeGenerator.init(allocator, std.testing.io, &pipeline.global_graph.?, &diagnostics, .{});
         defer generator.deinit();
+        if (pipeline.safety_ctx) |*safety| generator.annotations = &safety.annotations;
         if (generator.generate()) |module| {
             const printed = llvm.LLVMPrintModuleToString(module);
             defer llvm.LLVMDisposeMessage(printed);
@@ -608,6 +609,48 @@ test "frontend module cache preserves shared unary conformance selection" {
     try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "constraint") != null);
 }
 
+test "frontend module cache preserves generated compile-time entry provenance" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/execution/152_anonymous_comptime_entry/main.rg", std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(source);
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = source },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
+    {
+        var cold = ModuleCache.init(std.testing.allocator, .{});
+        defer cold.deinit();
+        try cold.enablePersistence(std.testing.io, root);
+        const result = try expectCleanEquivalent(&files, &cold);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+        try std.testing.expectEqual(@as(usize, 0), cold.disk_write_failures);
+    }
+    var warm = ModuleCache.init(std.testing.allocator, .{});
+    defer warm.deinit();
+    try warm.enablePersistence(std.testing.io, root);
+    const result = try expectCleanEquivalent(&files, &warm);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+    try std.testing.expectEqual(@as(usize, 2), result.hits);
+    try std.testing.expectEqual(@as(usize, 0), result.misses);
+    try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
+    const changed = try std.mem.replaceOwned(u8, std.testing.allocator, source, "local ::= 42", "local ::= missing()");
+    defer std.testing.allocator.free(changed);
+    try std.testing.expect(!std.mem.eql(u8, source, changed));
+    var invalid = files;
+    invalid[0].code = changed;
+    const rejected = try expectCleanEquivalent(&invalid, &warm);
+    defer rejected.deinit();
+    try std.testing.expect(rejected.failure != null);
+    const restored = try expectCleanEquivalent(&files, &warm);
+    defer restored.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), restored.failure);
+}
+
 test "frontend module cache preserves scoped implementation bodies" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -724,4 +767,184 @@ test "parallel module semantics permits inline execution when async is unavailab
     defer serial.deinit();
     try std.testing.expectEqual(null, parallel.failure);
     try std.testing.expectEqualStrings(serial.ir, parallel.ir);
+}
+
+test "module frontend initializes interactive execution without a program entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const files = [_]sf.SourceFile{.{
+        .path = "/interactive_core/main.rg",
+        .code = "answer := () -> (.result: Int32) { result = 42 }\n",
+        .origin = .bundled_core,
+    }};
+    var diagnostics = diag.Diagnostics.init(&allocator, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), prepared.modules.len);
+    try std.testing.expect(pipeline.global_graph == null);
+    var session: @import("../execution/interactive.zig").Interactive = undefined;
+    try session.initPrepared(allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    try session.submitStatements("value ::= answer()");
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const stored = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(binding).?);
+    try std.testing.expectEqual(@as(i128, 42), (try stored.get(0)).integer);
+    try session.close();
+}
+
+fn retainFrontendSelections(allocator: std.mem.Allocator) !void {
+    const source = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { selected := import(\"./later\") } #else { discarded := import(\"./missing\") }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.parseFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), pipeline.source_selections.items.len);
+    var selected = &pipeline.source_selections.items[0];
+    const pending = try selected.imports(allocator);
+    defer pending.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), pending.pending.len);
+    try selected.resolve(pending.pending[0], true);
+    const rendered = try selected.imports(allocator);
+    defer rendered.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.source, "./later") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.source, "./missing") == null);
+    try std.testing.expectEqualStrings(source, pipeline.source_db.get(pipeline.source_db.fileId(0)).source);
+    // Retokenizing starts a fresh decision owner instead of reusing a previous
+    // compilation's choice for unchanged source offsets.
+    _ = try pipeline.parseFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), pipeline.source_selections.items.len);
+    try std.testing.expect(pipeline.source_selections.items[0].decisions[0] == null);
+}
+
+test "frontend retains source selection plans and releases failed preparation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFrontendSelections, .{});
+}
+
+test "frontend evaluates module conditions before selecting main and program entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "noop_error_tracer :: () = ()\nchoose := () -> (.ok: Bool) { ok = true }\n#if choose() { main := () -> (.status_code: Int32) { status_code = 42 } } #else { main := () -> () { missing()!!! } }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .entry_module_dir = "/project" });
+    defer pipeline.deinit();
+    const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+        try diagnostics.dump();
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 1), (try @constCast(graph).functionsNamed(a, "main")).len);
+    try std.testing.expectEqual(@as(usize, 1), (try @constCast(graph).functionsNamed(a, "__argi_entry")).len);
+}
+
+test "frontend module condition cache reuse preserves selected declarations" {
+    const files = [_]sf.SourceFile{.{
+        .path = "/project/main.rg",
+        .code = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { main := () -> (.status_code: Int32) { status_code = 42 } } #else { main := () -> () { missing() } }",
+    }};
+    var cache = ModuleCache.init(std.testing.allocator, .{});
+    defer cache.deinit();
+    const first = try expectCleanEquivalent(&files, &cache);
+    defer first.deinit();
+    const second = try expectCleanEquivalent(&files, &cache);
+    defer second.deinit();
+    try std.testing.expectEqual(@as(usize, 1), second.hits);
+}
+
+fn stagedFrontendAllocationFailures(allocator: std.mem.Allocator) !void {
+    const source = "#if true { main := () -> (.status_code: Int32) { status_code = 42 } }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    // Frontend safety facts share the invocation arena, as in CLI compilation.
+    // Inject failure into arena growth and verify the whole invocation releases.
+    var invocation = std.heap.ArenaAllocator.init(allocator);
+    defer invocation.deinit();
+    var pipeline = frontend.FrontendPipeline.init(invocation.allocator(), std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.semantizeGlobalFiles(&files);
+}
+
+test "staged frontend releases failed module condition preparation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, stagedFrontendAllocationFailures, .{});
+}
+
+test "computed test discovery excludes main and dormant test bodies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { missing_main() }\n#if choose() { test selected() -> () := { missing_test() } } #else { test discarded() -> () := {} }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .semantizing = .{ .root_selection = .requests_only, .exhaustive_function_bodies = true } });
+    defer pipeline.deinit();
+    try pipeline.prepareTestDiscovery(&files);
+    var count: usize = 0;
+    for (pipeline.syntax_files.items) |*file| for (file.roots) |root| {
+        const declaration = file.testDeclaration(root) orelse continue;
+        try std.testing.expectEqualStrings("selected", file.tokenText(&diagnostics.source_db, declaration.function.name_token));
+        count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expect(!diagnostics.hasErrors());
+}
+
+test "prepared interactive modules retain selected namespaces across commands and reset" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { unused_main() }\n#if choose() { answer := () -> (.result: Int32) { result = 42 } } #else { missing := import(\"./missing\") }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source, .origin = .bundled_core }};
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(&files);
+    const node_count = prepared.relocation.graph.nodes.items.len;
+    var session: @import("../execution/interactive.zig").Interactive = undefined;
+    try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    try session.submitStatements("value ::= answer()");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("value")).?.value.runtime.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitStatements("bad ::= missing()"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.reset();
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.runtime.integer);
+    try std.testing.expectEqual(node_count, prepared.relocation.graph.nodes.items.len);
+    try session.close();
+}
+
+fn preparedSessionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const files = [_]sf.SourceFile{.{
+        .path = "/project/main.rg",
+        .code = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { answer := () -> (.value: Int32) { value = 42 } }",
+    }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    var invocation = std.heap.ArenaAllocator.init(allocator);
+    defer invocation.deinit();
+    var pipeline = frontend.FrontendPipeline.init(invocation.allocator(), std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.prepareSessionFiles(&files);
+}
+
+test "prepared interactive modules release failed template construction" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, preparedSessionAllocationFailures, .{});
 }

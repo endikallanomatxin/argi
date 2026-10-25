@@ -104,9 +104,15 @@ pub fn function(comptime Ids: type, value: primitives.Function(Ids), bounds: Bou
 }
 
 pub fn binding(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bounds) !void {
+    try require(verify.idFits(value.ty, bounds.types));
+    try bindingMetadata(Ids, value, bounds);
+}
+
+/// Storage identity and initializer links can be checked before a dormant
+/// binding's type is completed. The caller checks its resolution state.
+pub fn bindingMetadata(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bounds) !void {
     try require(verify.stringFits(value.name, bounds.strings));
     try require(verify.sourceFits(value.source, bounds.files));
-    try require(verify.idFits(value.ty, bounds.types));
     try require(verify.optionalIdFits(value.initialization, bounds.nodes));
     try require(verify.optionalIdFits(value.reinitialize_cleanup, bounds.nodes));
     try require(verify.optionalIdFits(value.cleanup_arguments, bounds.nodes));
@@ -136,20 +142,23 @@ pub fn switchPayload(comptime Ids: type, value: primitives.Switch(Ids), bounds: 
 }
 
 pub fn autoDeinitField(comptime Ids: type, value: primitives.AutoDeinitField(Ids), bounds: Bounds) !void {
+    if (value.repeat_count != null) try require(!value.is_variant and value.field_index == 0);
     try require(verify.optionalIdFits(value.deinit_fn, bounds.functions));
     try require(verify.optionalIdFits(value.input, bounds.nodes));
     try require(verify.rangeFits(value.fields, bounds.auto_deinit_fields));
 }
 
 pub fn autoDeinit(comptime Ids: type, value: primitives.AutoDeinit(Ids), bounds: Bounds) !void {
-    try require(verify.idFits(value.binding, bounds.bindings));
+    if (value.targetNode()) |id| try require(verify.idFits(id, bounds.nodes));
+    if (value.ownerBinding()) |id| try require(verify.idFits(id, bounds.bindings));
     try require(verify.optionalIdFits(value.deinit_fn, bounds.functions));
     try require(verify.optionalIdFits(value.input, bounds.nodes));
     try require(verify.rangeFits(value.fields, bounds.auto_deinit_fields));
 }
 
 pub fn virtualRegistry(comptime Ids: type, value: primitives.VirtualMethodRegistry(Ids), bounds: Bounds) !void {
-    try require(verify.rangeFits(value.implementations, bounds.function_refs));
+    if (value.contract_input_count) |count| try require(value.receiver_input_index < count);
+    try require(verify.optionalIdFits(value.contract_output_type, bounds.types));
 }
 
 pub fn virtualize(comptime Ids: type, value: primitives.Virtualize(Ids), bounds: Bounds) !void {
@@ -169,10 +178,6 @@ pub fn virtualCall(comptime Ids: type, value: primitives.VirtualCall(Ids), bound
     try require(verify.idFits(value.input_type, bounds.types));
     try require(verify.idFits(value.output_type, bounds.types));
     try require(verify.idFits(value.safety_methods, bounds.virtual_registries));
-    try require(verify.optionalIdFits(value.consumes_auto_deinit, bounds.nodes));
-    for (value.consumed_auto_deinits) |node_id| try require(verify.idFits(node_id, bounds.nodes));
-    for (value.initialized_auto_deinits) |node_id| try require(verify.idFits(node_id, bounds.nodes));
-    for (value.outcome_cleanups) |cleanup| try require(verify.idFits(cleanup.place, bounds.nodes));
 }
 
 pub fn reachAlternative(comptime Ids: type, value: primitives.ReachAlternative(Ids), bounds: Bounds) !void {
@@ -248,15 +253,10 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.callee, bounds.functions));
             try require(verify.optionalIdFits(item.callee_value, bounds.nodes));
             try require(verify.idFits(item.input, bounds.nodes));
-            try require(verify.optionalIdFits(item.consumes_auto_deinit, bounds.nodes));
-            for (item.consumed_auto_deinits) |node_id| try require(verify.idFits(node_id, bounds.nodes));
-            for (item.initialized_auto_deinits) |node_id| try require(verify.idFits(node_id, bounds.nodes));
-            for (item.outcome_cleanups) |cleanup| try require(verify.idFits(cleanup.place, bounds.nodes));
-            try require(verify.optionalIdFits(item.initializes_auto_deinit, bounds.nodes));
         },
         .virtualize => |id| try require(verify.idFits(id, bounds.virtualizes)),
         .virtual_call => |id| try require(verify.idFits(id, bounds.virtual_calls)),
-        .code_block, .value_sequence => |id| try require(verify.idFits(id, bounds.blocks)),
+        .code_block, .value_sequence, .replacement => |id| try require(verify.idFits(id, bounds.blocks)),
         .int_literal, .float_literal, .bool_literal, .break_statement, .continue_statement, .abort_statement => {},
         .argument_default => |index| try require(index < bounds.argument_defaults),
         .char_literal => |scalar| try require(scalar <= 0x10ffff and !(scalar >= 0xd800 and scalar <= 0xdfff)),
@@ -304,6 +304,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.array_type, bounds.types));
         },
         .struct_field_store => |item| {
+            try require(verify.optionalIdFits(item.cleanup_target, bounds.nodes));
             try require(verify.idFits(item.struct_ptr, bounds.nodes));
             try require(verify.idFits(item.struct_type, bounds.types));
             try require(verify.idFits(item.field_type, bounds.types));
@@ -352,6 +353,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.pointer_type, bounds.types));
         },
         .pointer_assignment => |item| {
+            try require(verify.optionalIdFits(item.cleanup_target, bounds.nodes));
             try require(verify.idFits(item.pointer, bounds.nodes));
             try require(verify.idFits(item.value, bounds.nodes));
         },

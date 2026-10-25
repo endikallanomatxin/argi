@@ -144,6 +144,7 @@ pub const Syntaxer = struct {
             .ampersand,
             .dollar,
             .tilde,
+            .hash,
             => true,
             else => false,
         };
@@ -1524,6 +1525,31 @@ pub const Syntaxer = struct {
     fn parsePrimary(self: *Syntaxer) !syn.NodeIndex {
         const content = self.currentContent();
 
+        if (self.tokenIs(.hash)) {
+            const prefix: syn.TokenIndex = @enumFromInt(self.index);
+            const location = self.currentLocation();
+            self.advanceOne();
+            if (self.currentContent() != .identifier or !std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "run")) {
+                try self.diags.add(location, .syntax, "expected '#run' before a compile-time entry", .{});
+                return error.ExpectedIdentifier;
+            }
+            self.advanceOne();
+            if (self.tokenIs(.open_brace) or self.tokenIs(.open_parenthesis)) {
+                var entry: syn.ComptimeEntryExtra = .{ .body = undefined };
+                if (self.tokenIs(.open_parenthesis)) {
+                    entry.input = syn.OptionalNodeIndex.init(try self.parseStructTypeLiteral());
+                    if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
+                    self.advanceOne();
+                    entry.output = syn.OptionalNodeIndex.init(try self.parseFunctionOutputType());
+                    self.skipNewLinesAndComments();
+                }
+                entry.body = try self.parseCodeBlock();
+                return self.addNode(.comptime_entry, prefix, .{ .extra = try self.addExtra(entry) });
+            }
+            try self.diags.add(location, .syntax, "#run requires an anonymous function block; call existing functions inside '#run {{ ... }}'", .{});
+            return error.ExpectedLeftBrace;
+        }
+
         if (content == .binary_operator and content.binary_operator == .subtraction) {
             return try self.parseSignedNumericLiteral();
         }
@@ -2120,13 +2146,20 @@ pub const Syntaxer = struct {
         }
 
         if (self.tokenIs(.hash)) {
+            const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const hash_loc = self.tokenLocation();
             self.advanceOne();
+            if (self.tokenIs(.keyword_if)) return self.parseIfKind(true);
             if (self.tokenIs(.keyword_defer)) {
                 try self.diags.add(hash_loc, .syntax, "use 'defer' without a '#' prefix", .{});
                 return SyntaxerError.ExpectedDeclarationOrAssignment;
             }
             const ident = try self.parseIdentifier();
+            if (std.mem.eql(u8, ident, "run")) {
+                self.index = @intFromEnum(hash_token);
+                const expression = try self.parseExpression();
+                return try self.addNode(.expression_statement, hash_token, .{ .node = expression });
+            }
             try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
             return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
@@ -2458,17 +2491,25 @@ pub const Syntaxer = struct {
     }
 
     fn parseIf(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
-        const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+        return self.parseIfKind(false);
+    }
+
+    fn parseIfKind(self: *Syntaxer, comptime_selection: bool) SyntaxerError!syn.NodeIndex {
+        const first = if (comptime_selection and self.index != 0 and self.file.tokens.items(.content)[self.index - 1] == .hash) self.index - 1 else self.index;
+        const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(first)));
         if (!self.tokenIs(.keyword_if)) return SyntaxerError.ExpectedKeywordIf;
         self.advanceOne();
         const cond = try self.parseControlExpression();
         const thenB = try self.parseCodeBlock();
         var elseB: ?syn.NodeIndex = null;
+        const before_else = self.index;
+        if (comptime_selection) self.skipNewLinesAndComments();
+        if (comptime_selection and self.tokenIs(.hash) and self.index + 1 < self.file.tokens.len and self.file.tokens.items(.content)[self.index + 1] == .keyword_else) self.advanceOne();
         if (self.tokenIs(.keyword_else)) {
             self.advanceOne();
-            elseB = if (self.tokenIs(.keyword_if)) try self.parseIf() else try self.parseCodeBlock();
-        }
-        const extra = try self.addExtra(syn.IfExtra{ .then_block = thenB, .else_block = syn.OptionalNodeIndex.init(elseB) });
+            elseB = if (self.tokenIs(.keyword_if)) try self.parseIfKind(comptime_selection) else try self.parseCodeBlock();
+        } else if (comptime_selection) self.index = before_else;
+        const extra = try self.addExtra(syn.IfExtra{ .then_block = thenB, .else_block = syn.OptionalNodeIndex.init(elseB), .comptime_selection = @intFromBool(comptime_selection) });
         return try self.addNode(.if_statement, start, .{ .node_and_extra = .{ .node = cond, .extra = extra } });
     }
 

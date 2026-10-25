@@ -54,6 +54,9 @@ pub const ConstraintFailure = struct {
 };
 
 pub const Resolver = struct {
+    active_instance: ?*InstanceContext = null,
+    capture_lookup_context: ?*anyopaque = null,
+    capture_lookup: ?*const fn (*anyopaque, usize, ?global_sg.GlobalFunctionId, []const u8) ?global_sg.GlobalBindingId = null,
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -66,9 +69,10 @@ pub const Resolver = struct {
     nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, ReachInferenceContext, primitives.SourceRef) anyerror!?global_sg.Node = null,
     ownership_context: ?*anyopaque = null,
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
-    ownership_checkpoint: ?*const fn (*anyopaque) [2]usize = null,
-    rollback_ownership: ?*const fn (*anyopaque, [2]usize) void = null,
+    ownership_checkpoint: ?*const fn (*anyopaque) @import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
+    rollback_ownership: ?*const fn (*anyopaque, @import("ownership.zig").Resolver.ParameterizedCheckpoint) void = null,
     constraint_diagnostics: ?*std.ArrayList(ConstraintFailure) = null,
+    reach_diagnostics: ?*std.array_list.Managed(u8) = null,
     failed_constraint: ?struct {
         contract_decl: global_sg.GlobalDeclId,
         actual: global_sg.GlobalTypeId,
@@ -89,9 +93,12 @@ pub const Resolver = struct {
     publishing_signature: bool = false,
 
     pub const SideEffectCheckpoint = struct {
-        ownership: ?[2]usize = null,
+        execution_requests: ?usize = null,
+        ownership: ?@import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
         reached_calls: usize = 0,
-        reached_signatures: usize = 0,
+        type_caches: [2]usize,
+        capture_nodes: usize,
+        capture_bindings: usize,
         contracts: ?contract_mod.Resolver.ResolutionCheckpoint = null,
         comptime_failure: ?generic_mod.ComptimeFailure = null,
     };
@@ -100,18 +107,28 @@ pub const Resolver = struct {
     /// Destroying the scope rolls both back unless selection commits them.
     pub const Speculation = struct {
         resolver: *Resolver,
-        graph: global_sg.GlobalSemanticGraph.Checkpoint,
+        graph: global_sg.GlobalSemanticGraph.Transaction,
         effects: SideEffectCheckpoint,
         active: bool = true,
+        retain_execution: bool = false,
 
         pub fn commit(self: *Speculation) void {
+            self.graph.commit();
             self.active = false;
+        }
+
+        // A suspended selection still needs its integer dependencies. Keep
+        // their stable recipes while discarding the incomplete graph/evidence.
+        pub fn retainPendingExecution(self: *Speculation) void {
+            self.retain_execution = true;
         }
 
         pub fn rollback(self: *Speculation) void {
             if (!self.active) return;
-            self.resolver.graph.rollback(self.graph);
-            self.resolver.rollbackSideEffects(self.effects);
+            self.graph.rollback();
+            var effects = self.effects;
+            if (self.retain_execution) effects.execution_requests = null;
+            self.resolver.rollbackSideEffects(effects);
             self.active = false;
         }
 
@@ -121,11 +138,13 @@ pub const Resolver = struct {
     };
 
     pub fn beginSpeculation(self: *Resolver) Speculation {
-        return .{ .resolver = self, .graph = self.graph.checkpoint(), .effects = self.checkpointSideEffects() };
+        return .{ .resolver = self, .graph = self.graph.beginTransaction(self.allocator), .effects = self.checkpointSideEffects() };
     }
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
-        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .reached_signatures = self.core.reached_signature_changes.items.len };
+        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .type_caches = self.generics.checkpointCaches(), .capture_nodes = self.graph.nodes.items.len, .capture_bindings = self.graph.bindings.items.len };
+        if (self.generics.checkpoint_execution) |checkpoint|
+            saved.execution_requests = checkpoint(self.generics.execution_context.?);
         if (self.ownership_context) |context| {
             if (self.ownership_checkpoint) |checkpoint|
                 saved.ownership = checkpoint(context);
@@ -136,9 +155,23 @@ pub const Resolver = struct {
     }
 
     pub fn rollbackSideEffects(self: *Resolver, saved: SideEffectCheckpoint) void {
+        // Nested entry instantiation can forward a selected capture through
+        // live outer contexts. Their maps must not retain provisional IDs.
+        var instance = self.active_instance;
+        while (instance) |context| : (instance = context.active_parent) {
+            while (context.entry_captures.items.len != 0 and
+                @intFromEnum(context.entry_captures.items[context.entry_captures.items.len - 1].binding) >= saved.capture_bindings)
+                _ = context.entry_captures.pop();
+            context.node_map.discardValuesFrom(@enumFromInt(saved.capture_nodes));
+            context.binding_map.discardValuesFrom(@enumFromInt(saved.capture_bindings));
+        }
+        if (saved.execution_requests) |count| {
+            if (self.generics.rollback_execution) |rollback|
+                rollback(self.generics.execution_context.?, count);
+        }
         self.generics.comptime_failure = saved.comptime_failure;
+        self.generics.rollbackCaches(saved.type_caches);
         self.core.rollbackReachedCalls(saved.reached_calls);
-        self.core.rollback_reached_signatures(saved.reached_signatures);
         if (saved.contracts) |checkpoint|
             if (self.nested_call_context) |contracts|
                 contracts.rollbackResolution(checkpoint);
@@ -184,9 +217,9 @@ pub const Resolver = struct {
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
-        self.core.contextualizeArithmeticPair(&operands);
+        try self.core.contextualizeArithmeticPair(&operands);
         const call = try self.makeContractOperator(module_index, identity.contract, identity.operation, &operands, reach, assumed) orelse return .deferred;
-        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = self.lowerSelectedScalarArithmetic(call, value.operator, &operands);
+        try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), self.lowerSelectedScalarArithmetic(call, value.operator, &operands));
         return .resolved;
     }
 
@@ -269,6 +302,9 @@ pub const Resolver = struct {
             speculation.deinit();
             if (failure) |value| contracts.participant_conformance_failure = value;
         };
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
+        }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         for (operands) |operand| try self.graph.generic_arguments.append(self.allocator, .{
             .name = .{ .start = 0, .len = 0 },
@@ -282,7 +318,7 @@ pub const Resolver = struct {
                 value.input = null;
                 value.output = null;
             }
-            return err;
+            return @as(anyerror!?global_sg.Node, err);
         } orelse {
             failure = contracts.participant_conformance_failure;
             if (failure) |*value| {
@@ -310,12 +346,17 @@ pub const Resolver = struct {
             speculation.deinit();
             if (failure) |value| contracts.participant_conformance_failure = value;
         };
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
+        }
         const input = try self.makePositionalInput(operands);
         // Operand transfer is explicit. No distinguished receiver is borrowed
         // automatically, and Args completion handles all auxiliary capabilities.
-        self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.dispatch_prefix_positional_count = 0;
-        if (reach == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
-        if (assumed) |node| self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
+        var completed_input = self.graph.node(input);
+        completed_input.content.struct_value_literal.dispatch_prefix_positional_count = 0;
+        if (reach == .global) completed_input.content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
+        if (assumed) |node| completed_input.content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
+        try self.graph.setNode(self.allocator, input, completed_input);
         var resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = self.generics, .functions = self, .contracts = contracts };
         const selected = switch (try resolver.infer(declaration, &.{ .inferred, .inferred }, input, reach)) {
             .selected => |selection| selection,
@@ -355,7 +396,7 @@ pub const Resolver = struct {
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
-        self.core.contextualizeArithmeticPair(&operands);
+        try self.core.contextualizeArithmeticPair(&operands);
         const call = try self.makeComparisonCall(module_index, value.operator, &operands, reach, assumed) orelse return .deferred;
         try self.patchComparisonResult(globalizer.globalNode(o, value.node), self.lowerSelectedScalarComparison(call, if (value.operator == .not_equal) .equal else value.operator, &operands), value.operator);
         return .resolved;
@@ -365,7 +406,7 @@ pub const Resolver = struct {
         // Negation appends nodes and can relocate the node buffer. Resolve it
         // before taking the destination element's address.
         const result = try self.comparisonResult(call, operator);
-        self.graph.nodes.items[@intFromEnum(target)] = result;
+        try self.graph.setNode(self.allocator, target, result);
     }
 
     fn comparisonResult(self: *Resolver, call: global_sg.Node, operator: primitives.ComparisonOperator) !global_sg.Node {
@@ -427,19 +468,19 @@ pub const Resolver = struct {
         }
         if (reference.module_path == null and std.mem.eql(u8, name, "_zeroed")) {
             const node = (try self.core.makeZeroed(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, name, "size_of")) {
             const node = (try self.makeSizeOf(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, name, "alignment_of")) {
             const node = (try self.makeAlignmentOf(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
-            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
         }
@@ -453,16 +494,18 @@ pub const Resolver = struct {
                 self.resolveExplicitGenericFunction(module_index, module, reference, args, input, reach) catch |err| switch (err) {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
+                    error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
+                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName => return err,
                     else => return .deferred,
                 }
             else
                 self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| switch (err) {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
+                    error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
+                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName => return err,
                     error.ConflictingGenericArgument => return err,
                     else => return .deferred,
                 };
@@ -474,11 +517,11 @@ pub const Resolver = struct {
             return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.sourceFor(module_index, reference.source),
             .ty = output_ty,
             .content = .{ .function_call = .{ .callee = function, .input = input } },
-        };
+        });
         self.stats.calls += 1;
         return .resolved;
     }
@@ -648,7 +691,7 @@ pub const Resolver = struct {
             if (self.graph.node(value).ty) |actual|
                 if (self.definiteNominalReferenceMismatch(module_index, field.ty, actual)) return false;
             if (allow_contextual_concrete) {
-                if (self.contextualParameterizedLiteralFits(module_index, field.ty, bindings, value)) continue;
+                if (try self.contextualParameterizedLiteralFits(module_index, field.ty, bindings, value)) continue;
             }
             const actual = self.graph.node(value).ty orelse return false;
             if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
@@ -755,6 +798,18 @@ pub const Resolver = struct {
                 }
                 if (inferred) break;
             }
+            if (!inferred) if (self.reach_diagnostics) |message| {
+                // Render while the speculative candidate is alive; retain no
+                // inferred type or graph-tail identity in the diagnostic.
+                try message.print("\n  .{s} uses reach ", .{candidate_module.text(field.name)});
+                for (storage.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
+                    if (index != 0) try message.appendSlice(" or ");
+                    for (storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, part| {
+                        if (part != 0) try message.append('.');
+                        try message.appendSlice(candidate_module.text(segment));
+                    }
+                }
+            };
         }
         return true;
     }
@@ -981,6 +1036,7 @@ pub const Resolver = struct {
     ) bool {
         for (self.modules, 0..) |*candidate_module, candidate_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.concrete_function != null) continue;
                 const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (self.core.declarationVisible(current_module, declaration, module_filter)) return true;
@@ -1034,6 +1090,10 @@ pub const Resolver = struct {
         }
         const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null) catch |err| {
             return switch (err) {
+                error.ComptimeExecutionPending => blk: {
+                    speculation.retainPendingExecution();
+                    break :blk .deferred;
+                },
                 error.OutOfMemory => err,
                 error.DeferredGenericFunction => .deferred,
                 error.AmbiguousGenericFunction => .ambiguous,
@@ -1116,7 +1176,7 @@ pub const Resolver = struct {
                     // Earlier typed inputs may determine a generic scalar.
                     // A literal then supplies context-compatible data, rather
                     // than conflicting evidence from its default numeric type.
-                    if (self.contextualParameterizedLiteralFits(candidate_index, field.ty, &bindings, supplied)) continue;
+                    if (try self.contextualParameterizedLiteralFits(candidate_index, field.ty, &bindings, supplied)) continue;
                     const actual = self.graph.node(supplied).ty orelse {
                         candidate_deferred = true;
                         matches = false;
@@ -1198,7 +1258,7 @@ pub const Resolver = struct {
         pattern: ir.ParameterizedTypeId,
         bindings: *generic_mod.Resolver.Bindings,
         value: global_sg.GlobalNodeId,
-    ) bool {
+    ) anyerror!bool {
         // Context probes can materialize constrained nominal types even before
         // the actual argument is resolved. Keep those types speculative: the
         // final constraint pass must see only selected or source-written types.
@@ -1208,7 +1268,13 @@ pub const Resolver = struct {
             speculation.deinit();
             self.generics.stats = saved_stats;
         }
-        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
+        }
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+            else => return false,
+        };
         return self.core.contextualLiteralFits(value, expected);
     }
 
@@ -1278,9 +1344,9 @@ pub const Resolver = struct {
     }
 
     /// Diagnostic probes use normal selection and roll back its graph and
-    /// ownership effects. Rejected bounds must not escape a speculative probe
-    /// or become an error when another visible identity actually accepts the call.
-    pub fn collectGenericConstraintFailures(
+    /// ownership effects. Bounds and unavailable reach defaults are explanations
+    /// only; discard them when another visible identity accepts the call.
+    pub fn collectGenericCallFailures(
         self: *Resolver,
         current_module: usize,
         module: *const module_sg.ModuleSemanticGraph,
@@ -1288,6 +1354,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach: ReachInferenceContext,
         failures: *std.ArrayList(ConstraintFailure),
+        missing_reach: *std.array_list.Managed(u8),
         actual_name: *std.array_list.Managed(u8),
         append_type_name: *const fn (*std.array_list.Managed(u8), *const global_sg.GlobalSemanticGraph, global_sg.GlobalTypeId) anyerror!void,
     ) !void {
@@ -1296,6 +1363,7 @@ pub const Resolver = struct {
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
         const saved_diagnostics = self.constraint_diagnostics;
+        const saved_reach_diagnostics = self.reach_diagnostics;
         const saved_failure = self.failed_constraint;
         defer {
             speculation.deinit();
@@ -1303,10 +1371,13 @@ pub const Resolver = struct {
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
             self.constraint_diagnostics = saved_diagnostics;
+            self.reach_diagnostics = saved_reach_diagnostics;
             self.failed_constraint = saved_failure;
         }
         failures.clearRetainingCapacity();
         self.constraint_diagnostics = failures;
+        missing_reach.clearRetainingCapacity();
+        self.reach_diagnostics = missing_reach;
         // TODO: Preserve selected-body instantiation failures separately from
         // selection failures, so rejected bounds do not hide a nested error.
         const selected = selection: {
@@ -1321,6 +1392,7 @@ pub const Resolver = struct {
             // A successful selection is not a constraint error even if other
             // candidates failed their bounds.
             failures.clearRetainingCapacity();
+            missing_reach.clearRetainingCapacity();
         } else if (failures.items.len != 0) {
             // Associated-parameter inference may create temporary types. Render
             // their name before rollback rather than expose their IDs afterward.
@@ -1379,7 +1451,10 @@ pub const Resolver = struct {
         }
         // TODO: Classify definite instantiation errors separately from missing
         // bindings without publishing diagnostics from losing identities.
-        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return .deferred;
+        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
+            return .deferred;
+        };
         const fields = self.interfaceFields(ty) catch return .deferred;
         const matching_fields = self.materializeDefaultPresenceForMatch(module_index, pattern, fields) catch return .deferred;
         return self.core.matchCallInput(matching_fields, input);
@@ -1497,10 +1572,7 @@ pub const Resolver = struct {
             },
             .resolved => |resolved| switch (resolved) {
                 .nullable => |child| {
-                    const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
-                        .nullable => |value| value,
-                        else => return false,
-                    };
+                    const value = global_types.nullableChild(self.graph, actual) orelse return false;
                     return self.inferInputType(module_index, child, value, bindings);
                 },
                 .inferred_errable => |child| {
@@ -1518,7 +1590,10 @@ pub const Resolver = struct {
                     if (pointer.mutability == .read_write and value.mutability != .read_write) return false;
                     if (try self.inferInputType(module_index, pointer.child, value.child, bindings)) return true;
                     if (self.definiteNominalReferenceMismatch(module_index, pattern, actual)) return false;
-                    const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
+                    const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+                        error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+                        else => return false,
+                    };
                     if (self.core.callTypesCompatible(actual, expected)) return true;
                     return false;
                 },
@@ -1570,7 +1645,10 @@ pub const Resolver = struct {
             },
             else => {},
         }
-        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+            else => return false,
+        };
         return global_types.equal(self.graph, expected, actual);
     }
 
@@ -1594,7 +1672,10 @@ pub const Resolver = struct {
             // Composite expressions are constraints rather than invertible
             // bindings. Once their operands have been inferred elsewhere the
             // regular evaluator validates the dependent value.
-            .binary, .projection => (self.generics.evalInt(module_index, expression, bindings) catch return false) == actual,
+            .binary, .projection, .execution => (self.generics.evalInt(module_index, expression, bindings) catch |err| switch (err) {
+                error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+                else => return false,
+            }) == actual,
         };
     }
 
@@ -1730,7 +1811,10 @@ pub const Resolver = struct {
             };
             break;
         }
-        const size = global_types.sizeOf(self.graph, measured_type orelse return error.SizeOfTypeMissing) catch return null;
+        const size = global_types.sizeOf(self.graph, measured_type orelse return error.SizeOfTypeMissing) catch |err| switch (err) {
+            error.UnmaterializedGlobalType, error.UnmaterializedGenericType => return error.ComptimeExecutionPending,
+            else => return null,
+        };
         return .{
             .source = source,
             .ty = try self.generics.internType(.{ .builtin = .UIntNative }),
@@ -1756,7 +1840,10 @@ pub const Resolver = struct {
             };
             break;
         }
-        const alignment = global_types.alignmentOf(self.graph, measured_type orelse return error.AlignmentOfTypeMissing) catch return null;
+        const alignment = global_types.alignmentOf(self.graph, measured_type orelse return error.AlignmentOfTypeMissing) catch |err| switch (err) {
+            error.UnmaterializedGlobalType, error.UnmaterializedGenericType => return error.ComptimeExecutionPending,
+            else => return null,
+        };
         return .{
             .source = source,
             .ty = try self.generics.internType(.{ .builtin = .UIntNative }),
@@ -1813,7 +1900,8 @@ pub const Resolver = struct {
         var speculation = self.beginSpeculation();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
-        errdefer {
+        errdefer |err| {
+            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
             const comptime_failure = self.generics.comptime_failure;
             const projection_failure = if (self.nested_call_context) |contracts| contracts.participant_conformance_failure else null;
             speculation.deinit();
@@ -1835,6 +1923,14 @@ pub const Resolver = struct {
         try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions);
         if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions))
             return error.GenericContractConstraintNotSatisfied;
+
+        if (located.parameterized.safety_primitive == .allocation_metadata_layout or located.parameterized.safety_primitive == .prepare_allocation_metadata) {
+            if (arguments.len != 1) return error.InvalidAllocationMetadataPrimitive;
+            const participant = self.graph.generic_arguments.items[arguments.start].value;
+            if (participant != .type) return error.InvalidAllocationMetadataPrimitive;
+            const contracts = self.nested_call_context orelse return error.MissingOwnershipDispatch;
+            try contracts.prepareStorageCleanupEvidence(participant.type);
+        }
 
         const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
         const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
@@ -1866,6 +1962,8 @@ pub const Resolver = struct {
             .flags = .{
                 .has_declared_body = located.parameterized.body != null,
                 .is_generic_instantiation = true,
+                .is_comptime_entry = located.parameterized.is_comptime_entry,
+                .is_comptime_host_entry = located.parameterized.is_comptime_host_entry,
                 .uses_inferred_error_reasons = inferred_errors,
                 // A contract template has no runtime ABI; its inferred
                 // instance does, once every generic parameter is concrete.
@@ -1883,11 +1981,12 @@ pub const Resolver = struct {
         // They are selected specializations, not eagerly registered families.
         const declaration_file = self.graph.files.items[self.graph.declaration(declaration).source.file_index];
         const scalar_primitive = module.is_bundled_core and std.mem.eql(u8, std.fs.path.basename(self.graph.text(declaration_file.path)), "scalar_arithmetic.rg");
-        if (!self.publishing_signature or scalar_primitive) if (located.parameterized.body) |body| {
+        if (!self.publishing_signature or scalar_primitive or located.parameterized.is_comptime_entry) if (located.parameterized.body) |body| {
             const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             const instantiated_body = try context.instantiateBlock(body);
             if (self.profile_io) |io| self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
-            self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
+            try context.publishEntryCaptures();
+            try self.graph.completeFunctionBody(self.allocator, function_id, instantiated_body, &.{});
         };
         self.stats.instances += 1;
         speculation.commit();
@@ -1907,46 +2006,101 @@ pub const Resolver = struct {
             if (function.body != null or !function.flags.has_declared_body) continue;
             if (reachable) |set| if (!set.contains(instance.function)) continue;
             const located = self.findParameterized(instance.parameterized_declaration) orelse return error.GenericFunctionParameterizedNotFound;
-            const body = located.parameterized.body orelse continue;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
             var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer substitutions.deinit(self.allocator);
             try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, instance.arguments, &substitutions);
-            var context = InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
-            defer context.deinit();
-            context.function = instance.function;
-            inline for (.{ "input_bindings", "output_bindings" }) |name| {
-                const local = @field(located.parameterized, name);
-                const global = @field(function, name);
-                for (0..local.len) |offset| {
-                    try context.binding_map.put(self.allocator, local.start + offset, self.graph.binding_refs.items[global.start + offset]);
-                }
+            if (try self.materializeRetainedBody(located, instance.function, &substitutions)) changed = true;
+        }
+        for (self.modules, 0..) |*module, module_index| {
+            for (module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                const local = parameterized.concrete_function orelse continue;
+                const function_id = globalizer.globalFunction(self.offsets[module_index], local);
+                const function = self.graph.function(function_id);
+                if (function.body != null or !function.flags.has_declared_body) continue;
+                if (reachable) |set| if (!set.contains(function_id)) continue;
+                var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+                defer substitutions.deinit(self.allocator);
+                if (try self.materializeRetainedBody(.{ .module_index = module_index, .parameterized = parameterized }, function_id, &substitutions)) changed = true;
             }
-            const saved_publication = self.publishing_signature;
-            self.publishing_signature = false;
-            defer self.publishing_signature = saved_publication;
-            const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            defer if (self.profile_io) |io| {
-                self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
-            };
-            const instantiated = context.instantiateBlock(body) catch |err| {
-                if (err == error.OutOfMemory or err == error.Reported) return err;
-                // A dependency selected by the body owns the more precise
-                // conformance diagnostic; do not hide it behind this fallback.
-                if (self.nested_call_context) |contracts| if (contracts.participant_conformance_failure != null) return err;
-                if (self.generics.comptime_failure == null) {
-                    const declaration = self.graph.declaration(instance.parameterized_declaration);
-                    self.generics.comptime_failure = .{
-                        .source = declaration.source,
-                        .reason = try std.fmt.allocPrint(self.allocator, "cannot materialize body of '{s}': {s}", .{ self.graph.text(self.graph.declarationSourceName(instance.parameterized_declaration)), @errorName(err) }),
-                    };
-                }
-                return err;
-            };
-            self.graph.functions.items[@intFromEnum(instance.function)].body = instantiated;
-            changed = true;
         }
         return changed;
+    }
+
+    fn materializeRetainedBody(self: *Resolver, located: LocatedParameterized, function_id: global_sg.GlobalFunctionId, substitutions: *generic_mod.Resolver.Bindings) !bool {
+        const body = located.parameterized.body orelse return false;
+        const function = self.graph.function(function_id);
+        inline for (.{ function.input, function.output }) |fields| {
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
+                if (self.graph.isTypeUnresolved(field.ty)) return false;
+        }
+        var speculation = self.beginSpeculation();
+        defer speculation.deinit();
+        errdefer {
+            const failure = self.generics.comptime_failure;
+            const projection = if (self.nested_call_context) |contracts| contracts.participant_conformance_failure else null;
+            speculation.rollback();
+            self.generics.comptime_failure = failure;
+            if (self.nested_call_context) |contracts| if (projection) |retained| {
+                if (retained.is_projection or retained.operation != null) contracts.participant_conformance_failure = retained;
+            };
+        }
+        var context = InstanceContext.init(self, located.module_index, located.parameterized, substitutions);
+        defer context.deinit();
+        context.function = function_id;
+        inline for (.{ "input_bindings", "output_bindings" }) |name| {
+            const local = @field(located.parameterized, name);
+            const global = @field(function, name);
+            for (0..local.len) |offset| try context.binding_map.put(self.allocator, local.start + offset, self.graph.binding_refs.items[global.start + offset]);
+        }
+        // The signature keeps its published identities, including capabilities
+        // completed while resolving this body. Stage only new output defaults;
+        // incomplete work must not leave initializers pointing into rolled-back IR.
+        var defaults: std.ArrayList(global_sg.GlobalSemanticGraph.BindingInitialization) = .empty;
+        defer defaults.deinit(self.allocator);
+        if (located.parameterized.concrete_function != null) {
+            const storage = &self.modules[located.module_index].semantic.parameterized_storage.ir;
+            const outputs = located.parameterized.output_bindings;
+            for (0..outputs.len) |offset| {
+                const local: ir.ParameterizedBindingId = @enumFromInt(outputs.start + @as(u32, @intCast(offset)));
+                const initialization = storage.bindings.items[@intFromEnum(local)].initialization orelse continue;
+                const binding = self.graph.binding_refs.items[function.output_bindings.start + offset];
+                const value = context.instantiateNodeWithExpected(initialization, self.graph.binding(binding).ty) catch |err| {
+                    if (err == error.ComptimeExecutionPending) {
+                        speculation.retainPendingExecution();
+                        return false;
+                    }
+                    return err;
+                };
+                try defaults.append(self.allocator, .{ .binding = binding, .value = value });
+            }
+        }
+        const saved_publication = self.publishing_signature;
+        self.publishing_signature = false;
+        defer self.publishing_signature = saved_publication;
+        const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        defer if (self.profile_io) |io| {
+            self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
+        };
+        const instantiated = context.instantiateBlock(body) catch |err| {
+            if (err == error.ComptimeExecutionPending) {
+                speculation.retainPendingExecution();
+                return false;
+            }
+            if (err == error.UnresolvedCompileTimeCaptureType) return false;
+            if (err == error.OutOfMemory or err == error.Reported) return err;
+            if (self.nested_call_context) |contracts| if (contracts.participant_conformance_failure != null) return err;
+            if (self.generics.comptime_failure == null) self.generics.comptime_failure = .{
+                .source = self.graph.declaration(function.declaration).source,
+                .reason = "cannot materialize function body",
+                .materialization_error = err,
+            };
+            return err;
+        };
+        try context.publishEntryCaptures();
+        try self.graph.completeFunctionBody(self.allocator, function_id, instantiated, defaults.items);
+        speculation.commit();
+        return true;
     }
 
     const LocatedParameterized = struct {
@@ -2052,7 +2206,22 @@ pub const Resolver = struct {
         return expression;
     }
 
+    // Compile-time requests reuse ordinary expression instantiation without a
+    // fabricated function identity. The scheduler owns publication/rollback.
+    pub fn instantiateComptimeExpression(self: *Resolver, module_index: usize, node: ir.ParameterizedNodeId, bindings: *generic_mod.Resolver.Bindings) !global_sg.GlobalNodeId {
+        var instance = InstanceContext.init(self, module_index, .{
+            .declaration = @enumFromInt(0),
+            .parameters = .{ .start = 0, .len = 0 },
+            .input = @enumFromInt(0),
+            .output = @enumFromInt(0),
+            .body = null,
+        }, bindings);
+        defer instance.deinit();
+        return instance.instantiateNode(node);
+    }
+
     const InstanceContext = struct {
+        active_parent: ?*InstanceContext = null,
         resolver: *Resolver,
         module_index: usize,
         parameterized: parameterized_storage.ParameterizedFunction,
@@ -2063,6 +2232,8 @@ pub const Resolver = struct {
         function: ?global_sg.GlobalFunctionId = null,
         callsite_reach: ?ReachInferenceContext = null,
         callsite_temporaries: std.ArrayList(global_sg.GlobalNodeId) = .empty,
+        conditional_bindings: std.ArrayList(struct { local: ir.ParameterizedBindingId, global: global_sg.GlobalBindingId }) = .empty,
+        entry_captures: std.ArrayList(struct { field: global_sg.Field, binding: global_sg.GlobalBindingId }) = .empty,
 
         fn init(
             resolver: *Resolver,
@@ -2083,19 +2254,25 @@ pub const Resolver = struct {
         }
 
         fn deinit(self: *InstanceContext) void {
+            self.entry_captures.deinit(self.resolver.allocator);
             self.callsite_temporaries.deinit(self.resolver.allocator);
+            self.conditional_bindings.deinit(self.resolver.allocator);
             self.binding_map.deinit(self.resolver.allocator);
             self.node_map.deinit(self.resolver.allocator);
             self.block_map.deinit(self.resolver.allocator);
         }
 
         fn instantiateBindingRange(self: *InstanceContext, range: primitives.Range(ir.ParameterizedBindingId)) !global_sg.BindingRange {
-            const start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
-            for (0..range.len) |offset| {
+            // Defaults can instantiate other functions and append their binding
+            // ranges. Publish this interface only after those dependencies.
+            const bindings = try self.resolver.allocator.alloc(global_sg.GlobalBindingId, range.len);
+            defer self.resolver.allocator.free(bindings);
+            for (bindings, 0..) |*binding, offset| {
                 const local: ir.ParameterizedBindingId = @enumFromInt(range.start + @as(u32, @intCast(offset)));
-                const global = try self.instantiateBinding(local);
-                try self.resolver.graph.binding_refs.append(self.resolver.allocator, global);
+                binding.* = try self.instantiateBinding(local);
             }
+            const start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
+            try self.resolver.graph.binding_refs.appendSlice(self.resolver.allocator, bindings);
             return .{ .start = start, .len = range.len };
         }
 
@@ -2120,7 +2297,9 @@ pub const Resolver = struct {
             try self.binding_map.put(self.resolver.allocator, @intFromEnum(id), global);
             if (source.cleanup_arguments) |node| {
                 const arguments = try self.instantiateNode(node);
-                self.resolver.graph.bindings.items[@intFromEnum(global)].cleanup_arguments = arguments;
+                var updated = self.resolver.graph.binding(global);
+                updated.cleanup_arguments = arguments;
+                try self.resolver.graph.setBinding(self.resolver.allocator, global, updated);
             }
             if (source_ty == null) try self.resolver.graph.markBindingTypeUnresolved(self.resolver.allocator, global);
             if (source.initialization) |node| {
@@ -2128,11 +2307,13 @@ pub const Resolver = struct {
                     try self.instantiateNodeWithExpected(node, self.resolver.graph.bindings.items[@intFromEnum(global)].ty)
                 else
                     try self.instantiateNode(node);
-                self.resolver.graph.bindings.items[@intFromEnum(global)].initialization = initialization;
+                var updated = self.resolver.graph.binding(global);
+                updated.initialization = initialization;
+                try self.resolver.graph.setBinding(self.resolver.allocator, global, updated);
                 if (source_ty == null) {
                     if (self.resolver.graph.nodes.items[@intFromEnum(initialization)].ty) |inferred| {
                         if (!self.resolver.graph.isTypeUnresolved(inferred)) {
-                            try self.resolver.graph.resolveBindingType(global, inferred);
+                            try self.resolver.graph.resolveBindingType(self.resolver.allocator, global, inferred);
                         }
                     }
                 }
@@ -2141,6 +2322,12 @@ pub const Resolver = struct {
         }
 
         fn instantiateBlock(self: *InstanceContext, id: ir.ParameterizedBlockId) anyerror!global_sg.GlobalBlockId {
+            return self.instantiateBlockWithScope(id, true);
+        }
+
+        fn instantiateBlockWithScope(self: *InstanceContext, id: ir.ParameterizedBlockId, scoped: bool) anyerror!global_sg.GlobalBlockId {
+            const mark = self.conditional_bindings.items.len;
+            defer if (scoped) self.conditional_bindings.shrinkRetainingCapacity(mark);
             if (self.block_map.get(@intFromEnum(id))) |existing| return existing;
             const local = self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.blocks.items[@intFromEnum(id)];
             const global: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.blocks.items.len)));
@@ -2150,23 +2337,176 @@ pub const Resolver = struct {
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             var nodes: std.ArrayList(global_sg.GlobalNodeId) = .empty;
             defer nodes.deinit(self.resolver.allocator);
+            var conditional_result = false;
             for (storage.node_refs.items[local.nodes.start..][0..local.nodes.len]) |node| {
-                try nodes.append(self.resolver.allocator, try self.instantiateNode(node));
+                const expression = storage.nodes.items[@intFromEnum(node)];
+                const selected = expression == .pending and storage.pending.items[@intFromEnum(expression.pending)] == .resolve_expression and
+                    storage.pending.items[@intFromEnum(expression.pending)].resolve_expression.kind == .comptime_if;
+                const instantiated = try self.instantiateNode(node);
+                if (selected) {
+                    // #if selects statements in the containing scope, just as
+                    // source selection for target predicates does. It creates
+                    // neither a runtime branch nor an earlier cleanup boundary.
+                    const branch = self.resolver.graph.node(instantiated).content.code_block;
+                    const block = self.resolver.graph.blocks.items[@intFromEnum(branch)];
+                    try nodes.appendSlice(self.resolver.allocator, self.resolver.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]);
+                    if (local.ret_val == node) conditional_result = true;
+                } else {
+                    try nodes.append(self.resolver.allocator, instantiated);
+                    if (!scoped and expression == .resolved and expression.resolved.content == .binding_declaration) {
+                        const binding = expression.resolved.content.binding_declaration;
+                        try self.conditional_bindings.append(self.resolver.allocator, .{ .local = binding, .global = self.binding_map.get(@intFromEnum(binding)).? });
+                    }
+                }
             }
+            const ret_val = if (local.ret_val) |node| if (conditional_result) null else try self.instantiateNode(node) else null;
             const start: u32 = @intCast(self.resolver.graph.node_refs.items.len);
             try self.resolver.graph.node_refs.appendSlice(self.resolver.allocator, nodes.items);
-            const ret_val = if (local.ret_val) |node| try self.instantiateNode(node) else null;
-            self.resolver.graph.blocks.items[@intFromEnum(global)] = .{
-                .nodes = .{ .start = start, .len = local.nodes.len },
+            try self.resolver.graph.setBlock(self.resolver.allocator, global, .{
+                .nodes = .{ .start = start, .len = @intCast(nodes.items.len) },
                 .ret_val = ret_val,
-            };
+            });
             return global;
         }
 
+        fn entryCaptureSource(self: *InstanceContext, local: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
+            var current = self.active_parent;
+            while (current) |parent| : (current = parent.active_parent) {
+                if (parent.module_index != self.module_index) continue;
+                if (parent.node_map.get(@intFromEnum(local))) |existing| return existing;
+                switch (storage.nodes.items[@intFromEnum(local)]) {
+                    .resolved => |node| if (node.content == .binding_use) {
+                        const binding = node.content.binding_use;
+                        if (parent.binding_map.get(@intFromEnum(binding)) == null) continue;
+                        const global = try parent.lexicalBinding(binding);
+                        if (self.resolver.graph.isBindingTypeUnresolved(global)) return error.UnresolvedCompileTimeCaptureType;
+                        return self.resolver.core.appendNode(self.resolver.sourceFor(self.module_index, node.source), self.resolver.graph.binding(global).ty, .{ .binding_use = global });
+                    },
+                    .pending => |pending| {
+                        const expression = storage.pending.items[@intFromEnum(pending)];
+                        if (expression == .resolve_expression and expression.resolve_expression.kind == .entry_capture)
+                            return parent.instantiateEntryCapture(local);
+                    },
+                }
+            }
+            if (self.function == null) return self.instantiateNode(local);
+            return error.UnresolvedCompileTimeCaptureType;
+        }
+
+        fn instantiateEntryCapture(self: *InstanceContext, id: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
+            if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
+            const module = &self.resolver.modules[self.module_index];
+            const storage = &module.semantic.parameterized_storage.ir;
+            const expression = storage.pending.items[@intFromEnum(storage.nodes.items[@intFromEnum(id)].pending)].resolve_expression;
+            var value = switch (expression.detail) {
+                .none => try self.entryCaptureSource(storage.node_refs.items[expression.operands.start]),
+                .capture_module_value => |value_node| globalizer.globalNode(self.resolver.offsets[self.module_index], value_node),
+                .capture_owner => |owner| blk: {
+                    const binding = self.resolver.capture_lookup.?(self.resolver.capture_lookup_context.?, self.module_index, if (owner) |function| globalizer.globalFunction(self.resolver.offsets[self.module_index], function) else null, module.text(expression.name.?)) orelse {
+                        self.resolver.generics.comptime_failure = .{ .source = self.resolver.sourceFor(self.module_index, expression.source), .reason = "unknown name in this scope", .unknown_name = module.text(expression.name.?) };
+                        return error.UnknownParameterizedName;
+                    };
+                    if (self.resolver.graph.isBindingTypeUnresolved(binding)) return error.UnresolvedCompileTimeCaptureType;
+                    break :blk try self.resolver.core.appendNode(self.resolver.sourceFor(self.module_index, expression.source), self.resolver.graph.binding(binding).ty, .{ .binding_use = binding });
+                },
+                else => return error.InvalidParameterizedEntryCapture,
+            };
+            const name = try self.resolver.graph.addString(self.resolver.allocator, module.text(expression.name.?));
+            const source = self.resolver.sourceFor(self.module_index, expression.source);
+            value = try self.forwardEntryCapture(name, source, value);
+            const node = try self.captureEntryValue(name, source, value);
+            try self.node_map.put(self.resolver.allocator, @intFromEnum(id), node);
+            return node;
+        }
+
+        fn forwardEntryCapture(self: *InstanceContext, name: primitives.StringRange, source: primitives.SourceRef, original: global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
+            var scopes: std.ArrayList(*InstanceContext) = .empty;
+            defer scopes.deinit(self.resolver.allocator);
+            var current = self.active_parent;
+            const content = self.resolver.graph.node(original).content;
+            while (current) |parent| : (current = parent.active_parent) {
+                const function = parent.function orelse break;
+                if (content == .binding_use) {
+                    var owned = parent.binding_map.containsValue(content.binding_use);
+                    for (parent.entry_captures.items) |capture| if (capture.binding == content.binding_use) {
+                        owned = true;
+                        break;
+                    };
+                    if (owned) break;
+                }
+                if (!self.resolver.graph.function(function).flags.is_comptime_entry) break;
+                try scopes.append(self.resolver.allocator, parent);
+            }
+            var value = original;
+            var index = scopes.items.len;
+            while (index != 0) {
+                index -= 1;
+                value = try scopes.items[index].captureEntryValue(name, source, value);
+            }
+            return value;
+        }
+
+        fn captureEntryValue(self: *InstanceContext, name: primitives.StringRange, source: primitives.SourceRef, value: global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
+            const content = self.resolver.graph.node(value).content;
+            for (self.entry_captures.items) |capture| {
+                if ((content == .binding_use and content.binding_use == capture.binding) or
+                    (capture.field.default_value == value and std.mem.eql(u8, self.resolver.graph.text(capture.field.name), self.resolver.graph.text(name))))
+                    return self.resolver.core.appendNode(source, capture.field.ty, .{ .binding_use = capture.binding });
+            }
+            const ty = self.resolver.graph.node(value).ty orelse return error.UnresolvedCompileTimeCaptureType;
+            if (self.resolver.graph.isTypeUnresolved(ty)) return error.UnresolvedCompileTimeCaptureType;
+            if (self.function == null) return value;
+            const binding: global_sg.GlobalBindingId = @enumFromInt(self.resolver.graph.bindings.items.len);
+            try self.resolver.graph.bindings.append(self.resolver.allocator, .{ .name = name, .source = source, .ty = ty, .mutability = .constant });
+            try self.entry_captures.append(self.resolver.allocator, .{ .binding = binding, .field = .{ .name = name, .source = source, .ty = ty, .default_value = value } });
+            return self.resolver.core.appendNode(source, ty, .{ .binding_use = binding });
+        }
+
+        fn publishEntryCaptures(self: *InstanceContext) !void {
+            if (self.entry_captures.items.len == 0) return;
+            const function_id = self.function orelse return error.InvalidParameterizedEntryCapture;
+            const function = self.resolver.graph.function(function_id);
+            if (!function.flags.is_comptime_entry) return error.InvalidParameterizedEntryCapture;
+            var fields: std.ArrayList(global_sg.Field) = .empty;
+            defer fields.deinit(self.resolver.allocator);
+            var bindings: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+            defer bindings.deinit(self.resolver.allocator);
+            try fields.appendSlice(self.resolver.allocator, self.resolver.graph.fields.items[function.input.start..][0..function.input.len]);
+            try bindings.appendSlice(self.resolver.allocator, self.resolver.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]);
+            for (self.entry_captures.items) |capture| {
+                try fields.append(self.resolver.allocator, capture.field);
+                try bindings.append(self.resolver.allocator, capture.binding);
+            }
+            const field_start: u32 = @intCast(self.resolver.graph.fields.items.len);
+            try self.resolver.graph.fields.appendSlice(self.resolver.allocator, fields.items);
+            const binding_start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
+            try self.resolver.graph.binding_refs.appendSlice(self.resolver.allocator, bindings.items);
+            var completed = self.resolver.graph.function(function_id);
+            completed.input = .{ .start = field_start, .len = @intCast(fields.items.len) };
+            completed.input_bindings = .{ .start = binding_start, .len = @intCast(bindings.items.len) };
+            try self.resolver.graph.setFunction(self.resolver.allocator, function_id, completed);
+        }
+
         fn instantiateNode(self: *InstanceContext, id: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
+            const previous = self.resolver.active_instance;
+            const previous_parent = self.active_parent;
+            if (previous != self) {
+                self.active_parent = previous;
+                self.resolver.active_instance = self;
+            }
+            defer {
+                self.resolver.active_instance = previous;
+                self.active_parent = previous_parent;
+            }
             if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];
+            if (local == .pending) {
+                const pending = storage.pending.items[@intFromEnum(local.pending)];
+                if (pending == .resolve_expression and pending.resolve_expression.kind == .entry_capture)
+                    return self.instantiateEntryCapture(id);
+            }
             const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
             try self.resolver.graph.nodes.append(self.resolver.allocator, .{
                 .source = .{ .file_index = 0, .offset = 0 },
@@ -2191,7 +2531,12 @@ pub const Resolver = struct {
                 .resolved => |node| try self.instantiateResolvedNode(node),
                 .pending => |pending| try self.instantiatePendingNode(storage.pending.items[@intFromEnum(pending)]),
             };
-            self.resolver.graph.nodes.items[@intFromEnum(global)] = instantiated;
+            try self.resolver.graph.setNode(self.resolver.allocator, global, instantiated);
+            if (local == .pending) {
+                const pending = storage.pending.items[@intFromEnum(local.pending)];
+                if (pending == .resolve_expression and pending.resolve_expression.comptime_run)
+                    try self.resolver.graph.comptime_requests.append(self.resolver.allocator, global);
+            }
             self.resolver.stats.nodes += 1;
             return global;
         }
@@ -2215,7 +2560,7 @@ pub const Resolver = struct {
                             _ = try self.instantiateNodeWithExpected(child, element);
                     }
                     const global = try self.instantiateNode(id);
-                    self.resolver.core.contextualizeStoredValue(global, expected);
+                    try self.resolver.core.contextualizeStoredValue(global, expected);
                     return global;
                 }
                 if (pending == .resolve_expression and pending.resolve_expression.kind == .choice_literal) {
@@ -2226,7 +2571,7 @@ pub const Resolver = struct {
                     // Resolving payloads can grow the node pool. Compute the
                     // value before taking the destination slot's address.
                     const resolved = try self.resolveChoiceLiteral(pending.resolve_expression, expected);
-                    self.resolver.graph.nodes.items[@intFromEnum(global)] = resolved;
+                    try self.resolver.graph.setNode(self.resolver.allocator, global, resolved);
                     self.resolver.stats.nodes += 1;
                     return global;
                 }
@@ -2236,7 +2581,7 @@ pub const Resolver = struct {
                 const global = try self.instantiateNode(id);
                 const current = self.resolver.graph.nodes.items[@intFromEnum(global)].ty;
                 if (current == null or !global_types.equal(self.resolver.graph, current.?, expected))
-                    self.resolver.core.contextualizeStoredValue(global, expected);
+                    try self.resolver.core.contextualizeStoredValue(global, expected);
                 return global;
             }
             return self.instantiateNode(id);
@@ -2248,8 +2593,21 @@ pub const Resolver = struct {
             try self.resolver.graph.nodes.append(self.resolver.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .break_statement });
             try self.node_map.put(self.resolver.allocator, @intFromEnum(id), global);
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
-            const expected_fields = global_types.fields(self.resolver.graph, expected) orelse return error.ParameterizedStructExpectedNonStruct;
             const local_fields = node.content.struct_value_literal.fields;
+            const expected_fields = global_types.fields(self.resolver.graph, expected) orelse {
+                // Empty parentheses can materialize Void or an empty array.
+                // Reuse ordinary contextualization rather than requiring a
+                // record field range merely because this body is specialized.
+                if (local_fields.len != 0) return error.ParameterizedStructExpectedNonStruct;
+                try self.resolver.graph.setNode(self.resolver.allocator, global, .{
+                    .source = self.resolver.sourceFor(self.module_index, node.source),
+                    .ty = null,
+                    .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } },
+                });
+                if (!try self.resolver.core.coerceContextualValue(global, expected)) return error.ParameterizedStructExpectedNonStruct;
+                self.resolver.stats.nodes += 1;
+                return global;
+            };
             var values: std.ArrayList(global_sg.ValueField) = .empty;
             defer values.deinit(self.resolver.allocator);
             for (storage.value_fields.items[local_fields.start..][0..local_fields.len]) |field| {
@@ -2268,14 +2626,22 @@ pub const Resolver = struct {
             }
             const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
-            self.resolver.graph.nodes.items[@intFromEnum(global)] = .{
+            try self.resolver.graph.setNode(self.resolver.allocator, global, .{
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = expected,
                 .content = .{ .struct_value_literal = .{
                     .fields = .{ .start = start, .len = local_fields.len },
                     .dispatch_prefix_positional_count = node.content.struct_value_literal.dispatch_prefix_positional_count,
                 } },
-            };
+            });
+            // Use ordinary default completion before publishing a value with
+            // the complete contextual record type. A type annotation alone
+            // cannot manufacture omitted runtime fields.
+            const context = try self.operatorContext(null);
+            defer self.resolver.allocator.free(context.global.visible_bindings);
+            if (!try self.resolver.core.completeRecordValue(expected, global, context))
+                return error.MissingParameterizedStructField;
+            try self.resolver.graph.setNodeType(self.resolver.allocator, global, expected);
             self.resolver.stats.nodes += 1;
             return global;
         }
@@ -2301,12 +2667,19 @@ pub const Resolver = struct {
             }
             if (node.content == .binding_use or node.content == .binding_declaration) {
                 const declaration = node.content == .binding_declaration;
-                const binding = try self.instantiateBinding(if (declaration) node.content.binding_declaration else node.content.binding_use);
+                const binding = if (declaration) try self.instantiateBinding(node.content.binding_declaration) else try self.lexicalBinding(node.content.binding_use);
                 return .{
                     .source = self.resolver.sourceFor(self.module_index, node.source),
                     .ty = if (self.resolver.graph.isBindingTypeUnresolved(binding)) null else self.resolver.graph.bindings.items[@intFromEnum(binding)].ty,
                     .content = if (declaration) .{ .binding_declaration = binding } else .{ .binding_use = binding },
                 };
+            }
+            if (node.content == .assignment) {
+                const assignment = node.content.assignment;
+                const binding = try self.lexicalBinding(assignment.binding);
+                const expected = if (self.resolver.graph.isBindingTypeUnresolved(binding)) null else self.resolver.graph.binding(binding).ty;
+                const value = if (expected) |target| try self.instantiateNodeWithExpected(assignment.value, target) else try self.instantiateNode(assignment.value);
+                return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = expected, .content = .{ .assignment = .{ .binding = binding, .value = value } } };
             }
             const ty = if (node.ty) |value|
                 try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions)
@@ -2320,18 +2693,11 @@ pub const Resolver = struct {
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = ty,
                 .content = switch (node.content) {
-                    .binding_use => |binding| .{ .binding_use = try self.instantiateBinding(binding) },
-                    .binding_declaration => |binding| .{ .binding_declaration = try self.instantiateBinding(binding) },
+                    .binding_use, .binding_declaration, .assignment => unreachable,
                     .reach_directive => |reach| .{ .reach_directive = try self.instantiateReach(reach) },
-                    .assignment => |assignment| .{ .assignment = .{
-                        .binding = try self.instantiateBinding(assignment.binding),
-                        .value = if (self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.bindingType(assignment.binding)) |binding_ty|
-                            try self.instantiateNodeAs(assignment.value, binding_ty)
-                        else
-                            try self.instantiateNode(assignment.value),
-                    } },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
                     .value_sequence => |block| .{ .value_sequence = try self.instantiateBlock(block) },
+                    .replacement => return error.InvalidParameterizedNode,
                     .int_literal => |value| .{ .int_literal = value },
                     .float_literal => |value| .{ .float_literal = value },
                     .char_literal => |value| .{ .char_literal = value },
@@ -2418,11 +2784,18 @@ pub const Resolver = struct {
             }
             var assumed: std.ArrayList(global_sg.ValueField) = .empty;
             defer assumed.deinit(self.resolver.allocator);
-            for (storage.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |field| {
-                try assumed.append(self.resolver.allocator, .{
-                    .name = try self.copyString(field.name),
-                    .value = try self.instantiateNode(field.value),
-                });
+            if (self.callsite_reach) |context| {
+                // A default executes in its caller's lexical environment.
+                // Re-instantiating the declaration's assumed bindings creates
+                // body-local slots that do not exist at that call site.
+                if (context == .global) try assumed.appendSlice(self.resolver.allocator, self.resolver.graph.value_fields.items[context.global.assumed_fields.start..][0..context.global.assumed_fields.len]);
+            } else {
+                for (storage.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |field| {
+                    try assumed.append(self.resolver.allocator, .{
+                        .name = try self.copyString(field.name),
+                        .value = try self.instantiateNode(field.value),
+                    });
+                }
             }
             const assumed_start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, assumed.items);
@@ -2488,6 +2861,11 @@ pub const Resolver = struct {
                 const record = self.resolver.graph.bindings.items[@intFromEnum(binding)];
                 return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = record.ty, .content = .{ .binding_use = binding } };
             }
+            if (self.resolver.generics.comptime_failure == null) self.resolver.generics.comptime_failure = .{
+                .source = self.resolver.sourceFor(self.module_index, value.source),
+                .reason = "unknown name in this scope",
+                .unknown_name = name,
+            };
             return error.UnknownParameterizedName;
         }
 
@@ -2540,6 +2918,21 @@ pub const Resolver = struct {
             var operands = std.array_list.Managed(global_sg.GlobalNodeId).init(self.resolver.allocator);
             defer operands.deinit();
             const local_operands = storage.node_refs.items[value.operands.start..][0..value.operands.len];
+            // Select before instantiating either arm. Discarded names, types
+            // and operations must never become semantic obligations.
+            if (value.kind == .comptime_if) {
+                if (local_operands.len < 2 or local_operands.len > 3) return error.InvalidParameterizedIf;
+                const execute = self.resolver.generics.execute_boolean orelse return error.CompileTimeExecutionUnavailable;
+                const selected = try execute(self.resolver.generics.execution_context.?, self.module_index, local_operands[0], self.substitutions);
+                if (selected or local_operands.len == 3) {
+                    const branch = storage.nodes.items[@intFromEnum(local_operands[if (selected) 1 else 2])].resolved;
+                    const block = try self.instantiateBlockWithScope(branch.content.code_block, false);
+                    return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = try self.resolver.generics.internType(.{ .builtin = .Void }), .content = .{ .code_block = block } };
+                }
+                const block: global_sg.GlobalBlockId = @enumFromInt(self.resolver.graph.blocks.items.len);
+                try self.resolver.graph.blocks.append(self.resolver.allocator, .{ .nodes = .{ .start = 0, .len = 0 }, .ret_val = null });
+                return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = try self.resolver.generics.internType(.{ .builtin = .Void }), .content = .{ .code_block = block } };
+            }
             // Equality against a bare variant is a tag test. Infer its identity
             // from the other operand before attempting to instantiate the tag.
             // Canonicalize reversed tests so refinement and codegen see the value first.
@@ -2560,6 +2953,7 @@ pub const Resolver = struct {
                 try operands.append(try self.instantiateNode(operand));
 
             return switch (value.kind) {
+                .entry_capture => error.InvalidParameterizedEntryCapture,
                 .unknown_identifier => if (value.name) |name| self.resolveName(.{ .name = name, .source = value.source }) else error.UnknownParameterizedName,
                 .comptime_parameter => self.resolveComptimeParameter(value),
                 .generic_call => blk: {
@@ -2605,6 +2999,7 @@ pub const Resolver = struct {
                 .nullable_test => self.resolveNullableTest(operands.items, value.source),
                 .return_statement => self.resolveReturn(operands.items, value.source),
                 .if_statement => self.resolveIf(operands.items, value.source),
+                .comptime_if => unreachable,
                 .while_statement => self.resolveWhile(operands.items, value.source),
                 .for_each => self.resolveForEach(value, operands.items),
                 .match => if (operands.items.len == 1) self.resolveMatch(value, operands.items[0]) else error.InvalidParameterizedMatch,
@@ -2800,17 +3195,8 @@ pub const Resolver = struct {
                 .nullable => |value| value,
                 else => return false,
             };
-            const variants = global_types.variants(self.resolver.graph, actual) orelse return false;
-            if (variants.len != 2) return false;
-            const none = global_types.findVariant(self.resolver.graph, actual, "none") orelse return false;
-            if (none.variant.payload_type != null) return false;
-            const some = global_types.findVariant(self.resolver.graph, actual, "some") orelse return false;
-            const payload = some.variant.payload_type orelse return false;
-            const fields = global_types.fields(self.resolver.graph, payload) orelse return false;
-            if (fields.len != 1) return false;
-            const field = self.resolver.graph.fields.items[fields.start];
-            return std.mem.eql(u8, self.resolver.graph.text(field.name), "value") and
-                global_types.equal(self.resolver.graph, field.ty, child);
+            const actual_child = global_types.nullableChild(self.resolver.graph, actual) orelse return false;
+            return global_types.equal(self.resolver.graph, actual_child, child);
         }
 
         fn resolveMatch(self: *InstanceContext, value: ir.PendingExpression, expression: global_sg.GlobalNodeId) !global_sg.Node {
@@ -2829,7 +3215,7 @@ pub const Resolver = struct {
                 const payload_binding = if (case.payload_binding) |local_binding| blk: {
                     const payload = variant.variant.payload_type orelse return error.ParameterizedMatchPayloadOnPayloadlessVariant;
                     const binding = try self.instantiateBinding(local_binding);
-                    try self.resolver.graph.resolveBindingType(binding, try self.matchBindingType(payload, case.mode));
+                    try self.resolver.graph.resolveBindingType(self.resolver.allocator, binding, try self.matchBindingType(payload, case.mode));
                     break :blk binding;
                 } else null;
                 const body = try self.instantiateBlock(case.body);
@@ -3028,9 +3414,6 @@ pub const Resolver = struct {
                                 }
                             }
                         }
-                        if (module_path == null and std.mem.eql(u8, name, "deinit") and
-                            self.parameterized.safety_primitive == .trusted_opaque_drop)
-                            return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
                         return err;
                     };
                 };
@@ -3096,7 +3479,7 @@ pub const Resolver = struct {
                 .binary => |value| value,
                 else => return error.InvalidParameterizedBinary,
             };
-            self.resolver.core.contextualizeArithmeticPair(operands);
+            try self.resolver.core.contextualizeArithmeticPair(operands);
             const identity = standard_contracts.arithmeticOperation(operator);
             const reach = try self.operatorContext(assumed);
             defer self.resolver.allocator.free(reach.global.visible_bindings);
@@ -3110,7 +3493,7 @@ pub const Resolver = struct {
                 .comparison => |value| value,
                 else => return error.InvalidParameterizedComparison,
             };
-            self.resolver.core.contextualizeArithmeticPair(operands);
+            try self.resolver.core.contextualizeArithmeticPair(operands);
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
             const reach = try self.operatorContext(assumed);
             defer self.resolver.allocator.free(reach.global.visible_bindings);
@@ -3219,7 +3602,7 @@ pub const Resolver = struct {
                 // Store operands take the array element's context before
                 // codegen, so a narrow element never receives a default-width
                 // literal store that overwrites adjacent elements.
-                if (store) self.resolver.core.contextualizeStoredValue(operands[2], element);
+                if (store) try self.resolver.core.contextualizeStoredValue(operands[2], element);
                 return if (store) .{
                     .source = self.resolver.sourceFor(self.module_index, source),
                     .ty = element,
@@ -3319,7 +3702,7 @@ pub const Resolver = struct {
             const start: u32 = @intCast(graph.node_refs.items.len);
             try graph.node_refs.appendSlice(self.resolver.allocator, &.{ declaration, assignment });
             try graph.node_refs.appendSlice(self.resolver.allocator, nodes);
-            graph.blocks.items[@intFromEnum(body_id)] = .{ .nodes = .{ .start = start, .len = @intCast(nodes.len + 2) }, .ret_val = actual_body.ret_val };
+            try graph.setBlock(self.resolver.allocator, body_id, .{ .nodes = .{ .start = start, .len = @intCast(nodes.len + 2) }, .ret_val = actual_body.ret_val });
             return graph.node(target);
         }
 
@@ -3342,7 +3725,7 @@ pub const Resolver = struct {
                 .assignment => |assignment| blk: {
                     if (self.resolver.graph.isBindingTypeUnresolved(assignment.binding)) return error.ParameterizedAddressUntyped;
                     const ty = self.resolver.graph.binding(assignment.binding).ty;
-                    self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty = ty;
+                    try self.resolver.graph.setNodeType(self.resolver.allocator, operands[0], ty);
                     break :blk ty;
                 },
                 else => self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped,
@@ -3395,11 +3778,32 @@ pub const Resolver = struct {
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = self.resolver.graph.nodes.items[@intFromEnum(operands[1])].ty, .content = .{ .pointer_assignment = .{ .pointer = operands[0], .value = operands[1] } } };
         }
 
-        fn findGlobalBinding(self: *InstanceContext, name: []const u8) ?global_sg.GlobalBindingId {
-            for (self.resolver.graph.bindings.items, 0..) |binding, raw| {
-                if (std.mem.eql(u8, self.resolver.graph.text(binding.name), name)) return @enumFromInt(@as(u32, @intCast(raw)));
+        fn lexicalBinding(self: *InstanceContext, local: ir.ParameterizedBindingId) !global_sg.GlobalBindingId {
+            const module = &self.resolver.modules[self.module_index];
+            const name = module.text(module.semantic.parameterized_storage.ir.bindings.items[@intFromEnum(local)].name);
+            var index = self.conditional_bindings.items.len;
+            while (index != 0) {
+                index -= 1;
+                const entry = self.conditional_bindings.items[index];
+                // Bindings are appended in declaration order. An inserted
+                // declaration can shadow an earlier syntax binding, while a
+                // later explicit declaration keeps its already-bound identity.
+                if (@intFromEnum(entry.local) <= @intFromEnum(local)) continue;
+                if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(entry.global).name), name)) return entry.global;
             }
-            return null;
+            return self.instantiateBinding(local);
+        }
+
+        fn findGlobalBinding(self: *InstanceContext, name: []const u8) ?global_sg.GlobalBindingId {
+            var index = self.conditional_bindings.items.len;
+            while (index != 0) {
+                index -= 1;
+                const binding = self.conditional_bindings.items[index].global;
+                if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(binding).name), name)) return binding;
+            }
+            // A specialization has the defining module's namespace, never
+            // another function's locals or an unrelated module's globals.
+            return @import("name_lookup.zig").binding(self.resolver.graph, self.resolver.modules, self.resolver.offsets, self.module_index, name);
         }
 
         fn copyString(self: *InstanceContext, range: primitives.StringRange) !primitives.StringRange {
@@ -3471,4 +3875,58 @@ test "comparison negation patches its destination after node storage grows" {
     try std.testing.expectEqual(primitives.ComparisonOperator.equal, comparison.operator);
     try std.testing.expect(graph.node(comparison.left).content.bool_literal);
     try std.testing.expect(!graph.node(comparison.right).content.bool_literal);
+}
+
+test "speculative entry capture rollback restores live parent contexts before IDs are reused" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    const literal: global_sg.Node = .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } };
+    try graph.nodes.append(allocator, literal);
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(allocator);
+    try module.semantic.parameterized_storage.ir.nodes.appendNTimes(allocator, undefined, 2);
+    try module.semantic.parameterized_storage.ir.bindings.appendNTimes(allocator, undefined, 2);
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var core: core_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{} };
+    defer core.deinit();
+    var generics: generic_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{}, .core = &core, .generics = &generics };
+    var substitutions: generic_mod.Resolver.Bindings = .{ .types = &.{}, .ints = &.{} };
+    var parent = Resolver.InstanceContext.init(&resolver, 0, std.mem.zeroes(parameterized_storage.ParameterizedFunction), &substitutions);
+    defer parent.deinit();
+    parent.function = @enumFromInt(0);
+    var child = Resolver.InstanceContext.init(&resolver, 0, std.mem.zeroes(parameterized_storage.ParameterizedFunction), &substitutions);
+    defer child.deinit();
+    child.active_parent = &parent;
+    resolver.active_instance = &child;
+    const name = try graph.addString(allocator, "value");
+    const retained = try parent.captureEntryValue(name, source, @enumFromInt(0));
+    const retained_binding = graph.node(retained).content.binding_use;
+    try parent.node_map.put(allocator, 0, retained);
+    try parent.binding_map.put(allocator, 0, retained_binding);
+
+    var speculation = resolver.beginSpeculation();
+    defer speculation.deinit();
+    const provisional_value: global_sg.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(allocator, literal);
+    const provisional = try parent.captureEntryValue(name, source, provisional_value);
+    const provisional_binding = graph.node(provisional).content.binding_use;
+    try parent.node_map.put(allocator, 1, provisional);
+    try parent.binding_map.put(allocator, 1, provisional_binding);
+    speculation.rollback();
+    try std.testing.expectEqual(@as(usize, 1), parent.entry_captures.items.len);
+    try std.testing.expectEqual(retained, parent.node_map.get(0).?);
+    try std.testing.expectEqual(retained_binding, parent.binding_map.get(0).?);
+    try std.testing.expectEqual(null, parent.node_map.get(1));
+    try std.testing.expectEqual(null, parent.binding_map.get(1));
+
+    try std.testing.expectEqual(@intFromEnum(provisional_value), graph.nodes.items.len);
+    try graph.nodes.append(allocator, literal);
+    const retried = try parent.captureEntryValue(name, source, provisional_value);
+    try std.testing.expectEqual(provisional, retried);
+    try std.testing.expectEqual(@as(usize, 2), parent.entry_captures.items.len);
 }

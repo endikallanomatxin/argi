@@ -417,6 +417,10 @@ const Layout = struct {
             if (tree.functionDeclaration(node) orelse if (tree.testDeclaration(node)) |test_decl| test_decl.function else null) |function| {
                 layout.markSignature(&tree, tokens, function.generic_params_struct, function.input, function.output);
             }
+            if (tree.comptimeEntry(node)) |entry| if (entry.input) |input| {
+                layout.markSignature(&tree, tokens, null, input, entry.output.?);
+                layout.space_before[@intFromEnum(tree.mainToken(input))] = true;
+            };
             if (tree.contractFunctionRequirement(node)) |requirement| {
                 layout.markSignature(&tree, tokens, null, requirement.input, requirement.output);
             }
@@ -802,7 +806,12 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (left == .semicolon) return true;
     if (right == .comma or right == .close_parenthesis or right == .close_bracket) return false;
     if (left == .comma) return true;
-    if (right == .dot or right == .hash or right == .bang or right == .double_bang or right == .triple_bang) return false;
+    // A named compile-time directive starts an operand. Generic argument
+    // groups instead attach '#(' to the preceding declaration/callee.
+    if (right == .hash) return index + 1 < tokens.len and
+        (tokens.contents[index + 1] == .identifier or tokens.contents[index + 1] == .keyword_if or tokens.contents[index + 1] == .keyword_else) and
+        left != .open_parenthesis and left != .open_bracket;
+    if (right == .dot or right == .bang or right == .double_bang or right == .triple_bang) return false;
     if (left == .dot or left == .double_dot or left == .hash or left == .dollar or left == .tilde or left == .question_mark) return false;
     if (left == .open_parenthesis or left == .open_bracket) return false;
     if (right == .double_colon) return true;
@@ -1110,6 +1119,18 @@ fn expectSameSyntax(allocator: std.mem.Allocator, source: []const u8, formatted:
     try std.testing.expectEqualSlices(syn.Node.Tag, original.nodes.items(.tag), result.nodes.items(.tag));
 }
 
+test "formatter preserves anonymous compile-time entry structure" {
+    try expectFormat("#run{calculate()}\n", "#run { calculate() }\n");
+    try expectFormat(
+        "answer::=#run()->(.result:Int32){result=42}\n",
+        "answer ::= #run () -> (.result: Int32) { result = 42 }\n",
+    );
+    try expectFormat(
+        "answer::=#run(.system:System)->(.result:Int32){assume writer::=$&system.terminal&.stdout\nresult=42}\n",
+        "answer ::= #run (.system: System) -> (.result: Int32) {\n    assume writer ::= $&system.terminal&.stdout\n    result = 42\n}\n",
+    );
+}
+
 test "formatter preserves prefixes and grouping at statement boundaries" {
     try expectFormat(
         "f()->():={assume allocator:=source mod.write(.value=1)!!\"context\"\n[values[index]]=2 return}\n",
@@ -1389,6 +1410,24 @@ test "formatter budgets member calls after generic arguments" {
     try expectFormat(
         "transposed ::= math.MatrixTransposition#(math.Matrix#(.rows = 3, .cols = 2, .t: Float64)).transpose(&design)\n",
         "transposed ::= math.MatrixTransposition#(\n    math.Matrix#(.rows = 3, .cols = 2, .t: Float64)\n).transpose(&design)\n",
+    );
+}
+
+test "formatter separates compile-time execution prefixes from assignments" {
+    try expectFormat(
+        "answer:=#run()->(.value:Int32){value=42}\n",
+        "answer := #run () -> (.value: Int32) { value = 42 }\n",
+    );
+    try expectFormat(
+        "main()->(.result:Int32=0):={result=#run ()->(.answer:Int32){answer=calculate(.value=40)}}\n",
+        "main() -> (.result: Int32 = 0) := {\n    result = #run () -> (.answer: Int32) { answer = calculate(.value = 40) }\n}\n",
+    );
+}
+
+test "formatter retains conditional compilation directive boundaries" {
+    try expectFormat(
+        "main() -> () := {\n#if true { f() }#else { g() }\n}\n",
+        "main() -> () := {\n    #if true { f() } #else { g() }\n}\n",
     );
 }
 

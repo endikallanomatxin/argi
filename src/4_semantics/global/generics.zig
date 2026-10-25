@@ -25,7 +25,13 @@ pub const Stats = struct {
     type_intern_ns_by_tag: [tag_count]u64 = @splat(0),
 };
 
-pub const ComptimeFailure = struct { source: primitives.SourceRef, reason: []const u8 };
+pub const ComptimeFailure = struct {
+    source: primitives.SourceRef,
+    reason: []const u8,
+    // Borrow the original module token; rendering happens after rollback.
+    unknown_name: ?[]const u8 = null,
+    materialization_error: ?anyerror = null,
+};
 
 pub const Resolver = struct {
     const PointerKey = struct {
@@ -42,12 +48,31 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     stats: Stats = .{},
     comptime_failure: ?ComptimeFailure = null,
+    execution_context: ?*anyopaque = null,
+    checkpoint_execution: ?*const fn (*anyopaque) usize = null,
+    rollback_execution: ?*const fn (*anyopaque, usize) void = null,
+    execute_integer: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!i64 = null,
+    execute_boolean: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!bool = null,
     argument_failure: ?struct { declaration: global_sg.GlobalDeclId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
     constant_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!i64 = null,
-    pointer_types: std.AutoHashMapUnmanaged(PointerKey, global_sg.GlobalTypeId) = .empty,
-    generic_types: std.AutoHashMapUnmanaged(GenericKey, global_sg.GlobalTypeId) = .empty,
+    pointer_types: @import("identity_cache.zig").IdentityCache(PointerKey, global_sg.GlobalTypeId) = .empty,
+    generic_types: @import("identity_cache.zig").IdentityCache(GenericKey, global_sg.GlobalTypeId) = .empty,
+
+    pub fn checkpointCaches(self: *const Resolver) [2]usize {
+        return .{ self.pointer_types.checkpoint(), self.generic_types.checkpoint() };
+    }
+
+    pub fn rollbackCaches(self: *Resolver, saved: [2]usize) void {
+        self.pointer_types.rollback(saved[0]);
+        self.generic_types.rollback(saved[1]);
+    }
+
+    pub fn commitCaches(self: *Resolver) void {
+        self.pointer_types.commit(self.allocator);
+        self.generic_types.commit(self.allocator);
+    }
 
     pub fn deinit(self: *Resolver) void {
         self.pointer_types.deinit(self.allocator);
@@ -55,7 +80,14 @@ pub const Resolver = struct {
     }
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
-        for (self.modules, 0..) |*module, module_index| {
+        return self.resolveExternalTypesFrom(0);
+    }
+
+    /// Initialize relocated holes in a new module suffix without overwriting
+    /// retained slots already materialized by earlier resolution passes.
+    pub fn resolveExternalTypesFrom(self: *Resolver, first_module: usize) !void {
+        if (first_module > self.modules.len) return error.InvalidSemanticModuleViews;
+        for (self.modules[first_module..], first_module..) |*module, module_index| {
             const o = self.offsets[module_index];
             for (0..module_views.typeCount(module)) |raw_type| {
                 const local_id: module_entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw_type)));
@@ -70,7 +102,7 @@ pub const Resolver = struct {
                 const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch continue;
                 const global_args = try self.relocateModuleArguments(module_index, args);
                 const destination = globalizer.globalType(o, local_id);
-                try self.graph.resolveType(destination, .{ .generic = .{ .base = base, .arguments = global_args } });
+                try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
                 self.stats.type_holes += 1;
             }
         }
@@ -84,7 +116,10 @@ pub const Resolver = struct {
             const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(index)));
             switch (self.graph.types.items[index]) {
                 .generic => {
-                    if (try self.ensureGenericInstance(id)) changed = true;
+                    if (self.ensureGenericInstance(id) catch |err| switch (err) {
+                        error.ComptimeExecutionPending => continue,
+                        else => return err,
+                    }) changed = true;
                 },
                 else => {},
             }
@@ -119,7 +154,7 @@ pub const Resolver = struct {
             var bindings = try Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
             const resolved = try self.instantiateParameterizedType(module_index, computed, &bindings);
-            try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(resolved)]);
+            try self.graph.resolveType(self.allocator, destination, self.graph.types.items[@intFromEnum(resolved)]);
             return .resolved;
         }
         if (reference.projection_base) |base| {
@@ -129,7 +164,7 @@ pub const Resolver = struct {
                 .file_index = o.file_base + reference.source.file_index,
                 .offset = reference.source.offset,
             });
-            try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(resolved)]);
+            try self.graph.resolveType(self.allocator, destination, self.graph.types.items[@intFromEnum(resolved)]);
             self.stats.type_holes += 1;
             return .resolved;
         }
@@ -137,7 +172,7 @@ pub const Resolver = struct {
         const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch return .deferred;
         const global_args = try self.relocateModuleArguments(module_index, args);
         const destination = globalizer.globalType(o, value.destination);
-        try self.graph.resolveType(destination, .{ .generic = .{ .base = base, .arguments = global_args } });
+        try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
         _ = try self.ensureGenericInstance(destination);
         self.stats.type_holes += 1;
         return .resolved;
@@ -739,6 +774,17 @@ pub const Resolver = struct {
         const expression = self.modules[module_index].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(id)];
         return switch (expression) {
             .literal => |value| value,
+            .execution => |node| {
+                if (self.execute_integer) |execute|
+                    return execute(self.execution_context.?, module_index, node, bindings);
+                const local = self.modules[module_index].semantic.parameterized_storage.ir.nodes.items[@intFromEnum(node)];
+                const source = switch (local) {
+                    .resolved => |value| value.source,
+                    .pending => |pending| self.modules[module_index].semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.source,
+                };
+                self.recordComptimeFailure(module_index, source, "compile-time execution in type or specialization arguments requires staged dependency resolution");
+                return error.ComptimeExecutionNotReady;
+            },
             .parameter => |parameter| bindings.ints[@intFromEnum(parameter)] orelse error.UnboundComptimeParameter,
             .projection => |value| blk: {
                 const base = try self.instantiateParameterizedType(module_index, value.base, bindings);
@@ -861,7 +907,6 @@ pub const Resolver = struct {
         // fall back to the original recursive equivalence search.
         const raw: usize = @intFromEnum(id);
         if (raw < self.graph.types.items.len and sameShallowType(self.graph, self.graph.types.items[raw], .{ .generic = generic })) return id;
-        _ = self.generic_types.remove(key);
         return null;
     }
 
@@ -876,7 +921,6 @@ pub const Resolver = struct {
         if (raw < self.graph.types.items.len and sameShallowType(self.graph, self.graph.types.items[raw], .{ .pointer = pointer })) {
             return candidate_id;
         }
-        _ = self.pointer_types.remove(key);
         return null;
     }
 
@@ -965,7 +1009,7 @@ test "generic interning fast index preserves argument matching and rollback" {
 
     const saved = graph.checkpoint();
     const speculative = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(8), .arguments = .{ .start = 0, .len = 1 } } });
-    graph.rollback(saved);
+    graph.rollback(allocator, saved);
     try graph.types.append(allocator, .{ .builtin = .Bool });
     const committed = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(8), .arguments = .{ .start = 0, .len = 1 } } });
     try std.testing.expect(committed != speculative);
@@ -1029,4 +1073,26 @@ test "generic type materialization has a dedicated resolver" {
     try std.testing.expectEqual(@as(u64, 0), stats.type_intern_calls);
     try std.testing.expectEqual(@as(u64, 0), stats.type_intern_candidates);
     try std.testing.expectEqual(@as(u64, 0), stats.type_intern_ns);
+}
+
+test "type cache rollback discards rejected keys before graph IDs are reused" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    const retained = try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    resolver.commitCaches();
+    const saved = resolver.checkpointCaches();
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    const rejected = try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
+    transaction.rollback();
+    resolver.rollbackCaches(saved);
+    try std.testing.expectEqual(@as(usize, 1), resolver.pointer_types.count());
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try std.testing.expectEqual(primitives.BuiltinType.Bool, graph.semanticType(rejected).builtin);
+    try std.testing.expectEqual(retained, try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } }));
+    try std.testing.expect(rejected != try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } }));
 }

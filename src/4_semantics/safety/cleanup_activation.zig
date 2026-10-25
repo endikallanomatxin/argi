@@ -10,6 +10,7 @@ const primitives = @import("../primitives/schema.zig");
 /// The result unions possible cleanup across exits, without caller snapshots.
 pub const Activation = struct {
     roots: std.AutoHashMap(graph_mod.GlobalAutoDeinitId, void),
+    replacements: std.AutoHashMap(graph_mod.GlobalNodeId, void),
     fields: std.AutoHashMap(graph_mod.GlobalAutoDeinitFieldId, void),
     stable_initializers: std.AutoHashMap(graph_mod.GlobalBindingId, graph_mod.GlobalNodeId),
     unstable_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
@@ -37,6 +38,7 @@ pub const Activation = struct {
         self.roots.allocator.free(self.assignment_counts);
         self.roots.allocator.free(self.loop_assigned);
         self.roots.deinit();
+        self.replacements.deinit();
         self.fields.deinit();
     }
 };
@@ -115,11 +117,13 @@ pub fn collect(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         .allocator = allocator,
         .graph = graph,
         .assignment_nodes = .init(allocator),
+        .addressed_bindings = .init(allocator),
         .activation = .{
             .stable_initializers = .init(allocator),
             .unstable_bindings = .init(allocator),
             .incomplete_outputs = .init(allocator),
             .roots = .init(allocator),
+            .replacements = .init(allocator),
             .fields = .init(allocator),
             .output_bindings = graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len],
             .assignment_counts = counts,
@@ -128,10 +132,23 @@ pub fn collect(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
     };
     errdefer scanner.activation.deinit();
     defer scanner.assignment_nodes.deinit();
+    defer scanner.addressed_bindings.deinit();
     var flow = Flow.init(allocator);
     defer flow.deinit();
+    for (scanner.activation.output_bindings) |binding| {
+        if (graph.binding(binding).initialization == null) try flow.disable(.{ .root = binding });
+    }
     if (graph.function(function_id).body) |body| try scanner.block(body, &flow);
     if (flow.reachable) try scanner.recordOutputExit(&flow);
+    // Loop widening may forget an output's initial empty state. A single
+    // assignment outside loops still initializes an unaddressed output exactly
+    // once, irrespective of unrelated preceding loops or indirect writes.
+    var assignments = scanner.assignment_nodes.keyIterator();
+    while (assignments.next()) |node| {
+        const binding = graph.node(node.*).content.assignment.binding;
+        if (scanner.activation.canForward(binding) and graph.binding(binding).initialization == null and !scanner.addressed_bindings.contains(binding))
+            _ = scanner.activation.replacements.remove(node.*);
+    }
     return scanner.activation;
 }
 
@@ -141,6 +158,7 @@ const Scanner = struct {
     activation: Activation,
     in_loop: bool = false,
     assignment_nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+    addressed_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
 
     fn recordOutputExit(self: *Scanner, flow: *const Flow) !void {
         for (self.activation.output_bindings) |binding| {
@@ -208,7 +226,8 @@ const Scanner = struct {
 
     fn cleanupFields(self: *Scanner, range: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), parent: facts.Place, flow: *const Flow) anyerror!void {
         for (self.graph.auto_deinit_fields.items[range.start..][0..range.len], 0..) |field, index| {
-            const target = try self.project(parent, if (field.is_variant) .{ .variant = field.field_index } else .{ .field = field.field_index });
+            if (field.repeat_count == 0) continue;
+            const target = try self.project(parent, if (field.repeat_count != null) .dynamic_index else if (field.is_variant) .{ .variant = field.field_index } else .{ .field = field.field_index });
             if (flow.skips(target)) continue;
             try self.activation.fields.put(@enumFromInt(range.start + @as(u32, @intCast(index))), {});
             try self.cleanupFields(field.fields, target, flow);
@@ -218,7 +237,10 @@ const Scanner = struct {
     fn block(self: *Scanner, id: graph_mod.GlobalBlockId, flow: *Flow) anyerror!void {
         const value = self.graph.blocks.items[@intFromEnum(id)];
         try self.visitRange(value.nodes, flow);
-        if (flow.reachable) if (value.ret_val) |result| try self.node(result, flow);
+        if (flow.reachable) if (value.ret_val) |result| {
+            const nodes = self.graph.node_refs.items[value.nodes.start..][0..value.nodes.len];
+            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, result) == null) try self.node(result, flow);
+        };
     }
 
     fn visitRange(self: *Scanner, nodes: primitives.Range(graph_mod.GlobalNodeId), flow: *Flow) anyerror!void {
@@ -237,7 +259,7 @@ const Scanner = struct {
 
     fn node(self: *Scanner, id: graph_mod.GlobalNodeId, flow: *Flow) anyerror!void {
         switch (self.graph.node(id).content) {
-            .code_block, .value_sequence => |child| try self.block(child, flow),
+            .code_block, .value_sequence, .replacement => |child| try self.block(child, flow),
             .binding_declaration => |binding| {
                 const record = self.graph.binding(binding);
                 if (self.in_loop or record.deferred_initialization) {
@@ -253,7 +275,10 @@ const Scanner = struct {
                 try self.recordAssignment(id, assignment.binding);
                 try self.activation.unstable_bindings.put(assignment.binding, {});
                 try self.node(assignment.value, flow);
-                try self.initialize(flow, .{ .root = assignment.binding }, assignment.value);
+                const target = facts.Place{ .root = assignment.binding };
+                if (!flow.skips(target) or self.addressed_bindings.contains(assignment.binding))
+                    try self.activation.replacements.put(id, {});
+                try self.initialize(flow, target, assignment.value);
                 if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, self.activation.output_bindings, assignment.binding) != null and
                     std.mem.indexOfScalar(graph_mod.GlobalBindingId, flow.assigned_outputs.items, assignment.binding) == null)
                     try flow.assigned_outputs.append(assignment.binding);
@@ -263,7 +288,10 @@ const Scanner = struct {
                 if (try self.resolvePlace(value)) |target| try flow.disable(target);
             },
             .address_of => |value| {
-                if (try self.resolvePlace(value)) |target| try self.activation.unstable_bindings.put(target.root, {});
+                if (try self.resolvePlace(value)) |target| {
+                    try self.activation.unstable_bindings.put(target.root, {});
+                    try self.addressed_bindings.put(target.root, {});
+                }
                 try self.node(value, flow);
             },
             .denied_implicit_copy => |value| try self.node(value, flow),
@@ -356,7 +384,14 @@ const Scanner = struct {
             .break_statement, .continue_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| {
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-                const target = facts.Place{ .root = cleanup.binding };
+                const target = if (cleanup.targetNode()) |node_id| try self.resolvePlace(node_id) orelse {
+                    // Unknown referents have runtime cleanup evidence, but no
+                    // lexical Place for this may-activation analysis. Retain
+                    // their possible effects rather than proving cleanup absent.
+                    try self.activation.roots.put(auto_id, {});
+                    try self.activateUnknownCleanupFields(cleanup.fields);
+                    return;
+                } else facts.Place{ .root = cleanup.ownerBinding().? };
                 if (!flow.skips(target)) {
                     try self.activation.roots.put(auto_id, {});
                     try self.cleanupFields(cleanup.fields, target, flow);
@@ -368,23 +403,11 @@ const Scanner = struct {
                 // Codegen selects the actual flags from the returned tags.
                 if (call.callee_value) |value| try self.node(value, flow);
                 try self.node(call.input, flow);
-                if (call.consumes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
-                for (call.consumed_auto_deinits) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
-                for (call.initialized_auto_deinits) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
-                if (call.initializes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
-                for (call.outcome_cleanups) |cleanup| if (cleanup.enabled) {
-                    if (try self.resolvePlace(cleanup.place)) |target| flow.initialize(target);
-                };
             },
             .virtual_call => |call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(call_id)];
                 try self.node(call.handle, flow);
                 try self.node(call.input, flow);
-                for (call.consumed_auto_deinits) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
-                for (call.initialized_auto_deinits) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
-                for (call.outcome_cleanups) |cleanup| if (cleanup.enabled) {
-                    if (try self.resolvePlace(cleanup.place)) |target| flow.initialize(target);
-                };
             },
             .virtualize => |value| try self.node(self.graph.virtualizes.items[@intFromEnum(value)].value, flow),
             .binary_operation => |value| {
@@ -402,7 +425,16 @@ const Scanner = struct {
             .struct_field_store => |value| {
                 try self.node(value.struct_ptr, flow);
                 try self.node(value.value, flow);
-                if (try self.resolvePlace(value.struct_ptr)) |parent| try self.initialize(flow, try self.project(parent, .{ .field = value.field_index }), value.value);
+                const destination = if (value.cleanup_target) |target|
+                    try self.resolvePlace(target)
+                else if (try self.resolvePlace(value.struct_ptr)) |parent|
+                    try self.project(parent, .{ .field = value.field_index })
+                else
+                    null;
+                if (destination) |target| {
+                    if (!flow.skips(target)) try self.activation.replacements.put(id, {});
+                    try self.initialize(flow, target, value.value);
+                } else try self.activation.replacements.put(id, {});
             },
             .array_index => |value| {
                 try self.node(value.array_ptr, flow);
@@ -416,9 +448,28 @@ const Scanner = struct {
             .pointer_assignment => |value| {
                 try self.node(value.pointer, flow);
                 try self.node(value.value, flow);
-                // An unresolved indirect write may reinitialize an owner whose
-                // address escaped. Forget skip proofs rather than guess aliases.
-                flow.disabled.clearRetainingCapacity();
+                if (value.cleanup_target) |destination| {
+                    if (try self.resolvePlace(destination)) |target| {
+                        if (!flow.skips(target)) try self.activation.replacements.put(id, {});
+                        try self.initialize(flow, target, value.value);
+                    }
+                } else {
+                    if (try self.resolvePlace(value.pointer)) |target| {
+                        if (!flow.skips(target)) try self.activation.replacements.put(id, {});
+                    } else {
+                        // Unknown referents need a runtime cleanup decision;
+                        // absence of a lexical place is not first initialization.
+                        try self.activation.replacements.put(id, {});
+                    }
+                    // An unresolved write can reinitialize escaped storage, but
+                    // cannot initialize a local whose address was never formed.
+                    var index: usize = 0;
+                    while (index < flow.disabled.items.len) {
+                        if (self.addressed_bindings.contains(flow.disabled.items[index].root)) {
+                            _ = flow.disabled.swapRemove(index);
+                        } else index += 1;
+                    }
+                }
             },
             .explicit_cast => |value| try self.node(value.value, flow),
             .nullable_unwrap_or => |value| {
@@ -450,6 +501,14 @@ const Scanner = struct {
                 if (expect.test_fail_input) |input| try self.conditional(input, flow);
             },
             else => {},
+        }
+    }
+
+    fn activateUnknownCleanupFields(self: *Scanner, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId)) anyerror!void {
+        for (self.graph.auto_deinit_fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+            if (field.repeat_count == 0) continue;
+            try self.activation.fields.put(@enumFromInt(fields.start + @as(u32, @intCast(index))), {});
+            try self.activateUnknownCleanupFields(field.fields);
         }
     }
 };

@@ -77,6 +77,7 @@ pub const GenericArgument = primitives.GenericArgument(Ids);
 pub const Function = primitives.Function(Ids);
 pub const Binding = primitives.Binding(Ids);
 pub const Block = primitives.Block(Ids);
+pub const BlockAssumptions = primitives.BlockAssumptions(Ids);
 pub const ValueField = primitives.ValueField(Ids);
 pub const SwitchCase = primitives.SwitchCase(Ids);
 pub const Switch = primitives.Switch(Ids);
@@ -134,6 +135,8 @@ pub const FunctionSemantic = struct {
 pub const FieldSemantic = struct {
     field: ModuleFieldId,
     default_value: ?ModuleNodeId = null,
+    // Executable outputs initialize through their function entry statements.
+    default_at_entry: bool = false,
 };
 
 pub const VariantSemantic = struct {
@@ -172,6 +175,17 @@ pub const PendingOperation = union(enum) {
         external: ExternalRefId,
         destination: ModuleTypeId,
     },
+    resolve_value_type: struct {
+        value: ModuleNodeId,
+        destination: ModuleTypeId,
+    },
+    resolve_aggregate_literal: struct {
+        node: ModuleNodeId,
+        target: union(enum) { type: ModuleTypeId, pointee: ModuleNodeId, element: ModuleNodeId },
+        visible_bindings: BindingRange,
+        owner_function: ?ModuleFunctionId = null,
+    },
+    resolve_entry_call: struct { node: ModuleNodeId, callee: ModuleFunctionId },
     resolve_call: struct {
         contract_type: ?ModuleTypeId = null,
         node: ModuleNodeId,

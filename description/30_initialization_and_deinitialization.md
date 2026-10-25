@@ -113,6 +113,12 @@ Cleanup follows initializedness: an already deinitialized place is not
 destroyed twice. Replacing a live value first cleans the old one, then
 initializes the same storage with the replacement.
 
+A record may be initialized field by field. Once all fields are initialized,
+the complete value has the same cleanup as a whole-value initializer. If the
+scope exits before completion, only its initialized owning fields are cleaned;
+the incomplete record's `deinit` is not called. This applies recursively to
+partially initialized nested records and to early exits.
+
 `defer` schedules a statement to run when the current scope exits, including
 on a return or error propagation. Deferred statements run in reverse order,
 before automatic cleanup of the scope's locals. Use it for an exit action

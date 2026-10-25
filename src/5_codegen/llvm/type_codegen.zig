@@ -1,0 +1,269 @@
+const std = @import("std");
+const llvm = @import("llvm.zig");
+const c = llvm.c;
+const graph_mod = @import("../../4_semantics/global/graph.zig");
+const types = @import("../../4_semantics/global/types.zig");
+const primitives = @import("../../4_semantics/primitives/schema.zig");
+
+pub const Error = error{ InvalidType, OutOfMemory };
+
+pub const Lowerer = struct {
+    allocator: std.mem.Allocator,
+    graph: *const graph_mod.GlobalSemanticGraph,
+
+    pub fn toLLVMType(self: *Lowerer, ty: graph_mod.GlobalTypeId) Error!llvm.c.LLVMTypeRef {
+        return switch (types.representation(self.graph, ty) orelse return Error.InvalidType) {
+            .builtin => |builtin| self.builtinType(builtin),
+            // LLVM uses opaque pointers. The pointee's semantic type is kept
+            // in GlobalSG and supplied explicitly to loads and GEPs; lowering
+            // it here would recurse through self-referential structures.
+            .pointer => c.LLVMPointerType(c.LLVMInt8Type(), 0),
+            .array => |array| c.LLVMArrayType(try self.toLLVMType(array.element), @intCast(array.length)),
+            .declared => |decl| self.declaredType(decl),
+            .structural => |shape| self.structType(shape.fields, shape.layout),
+            .structural_choice => |shape| self.choiceType(shape.variants, shape.layout),
+            .inferred_choice => |shape| self.choiceType(shape.variants, .regular),
+            .generic => self.genericType(ty),
+            .virtual => blk: {
+                var fields = [_]c.LLVMTypeRef{
+                    c.LLVMPointerType(c.LLVMInt8Type(), 0),
+                    c.LLVMPointerType(c.LLVMInt8Type(), 0),
+                };
+                break :blk c.LLVMStructType(&fields, fields.len, 0);
+            },
+            .nullable, .inferred_errable => Error.InvalidType,
+        };
+    }
+
+    fn builtinType(self: *Lowerer, builtin: primitives.BuiltinType) Error!llvm.c.LLVMTypeRef {
+        return switch (builtin) {
+            .Void => c.LLVMStructType(null, 0, 0),
+            .Int8, .UInt8 => c.LLVMInt8Type(),
+            .Int16, .UInt16 => c.LLVMInt16Type(),
+            .Int32, .UInt32 => c.LLVMInt32Type(),
+            .Int64, .UInt64 => c.LLVMInt64Type(),
+            .UIntNative => switch (self.graph.target.pointerBytes()) {
+                2 => c.LLVMInt16Type(),
+                4 => c.LLVMInt32Type(),
+                8 => c.LLVMInt64Type(),
+                else => Error.InvalidType,
+            },
+            .Float16 => c.LLVMHalfType(),
+            .Float32 => c.LLVMFloatType(),
+            .Float64 => c.LLVMDoubleType(),
+            .Bool => c.LLVMInt1Type(),
+            .Type => c.LLVMPointerType(c.LLVMInt8Type(), 0),
+            .Any => c.LLVMInt8Type(),
+        };
+    }
+
+    fn declaredType(self: *Lowerer, decl_id: graph_mod.GlobalDeclId) Error!llvm.c.LLVMTypeRef {
+        const declaration = self.graph.declarations.items[@intFromEnum(decl_id)];
+        if (declaration.struct_layout == .c_function_pointer) return c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        if (declaration.struct_fields) |fields| return self.structType(fields, declaration.struct_layout);
+        if (declaration.choice_variants) |variants| return self.choiceType(variants, declaration.choice_layout);
+        return Error.InvalidType;
+    }
+
+    fn genericType(self: *Lowerer, ty: graph_mod.GlobalTypeId) Error!llvm.c.LLVMTypeRef {
+        const instance = types.genericInstance(self.graph, ty) orelse return Error.InvalidType;
+        return switch (instance.shape) {
+            .structure => |shape| self.structType(shape.fields, shape.layout),
+            .choice => |shape| self.choiceType(shape.variants, shape.layout),
+            .array => |shape| c.LLVMArrayType(try self.toLLVMType(shape.element), @intCast(shape.length)),
+            .alias => |target| self.toLLVMType(target),
+        };
+    }
+
+    fn structType(self: *Lowerer, range: graph_mod.FieldRange, layout: primitives.StructLayout) Error!llvm.c.LLVMTypeRef {
+        if (layout == .c_union) return self.unionType(range);
+        if (range.len == 0) return c.LLVMStructType(null, 0, 0);
+        const field_types = self.allocator.alloc(llvm.c.LLVMTypeRef, range.len) catch return Error.OutOfMemory;
+        defer self.allocator.free(field_types);
+        for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index|
+            field_types[index] = try self.toLLVMType(field.ty);
+        return c.LLVMStructType(field_types.ptr, @intCast(range.len), 0);
+    }
+
+    fn unionType(self: *Lowerer, range: graph_mod.FieldRange) Error!llvm.c.LLVMTypeRef {
+        if (range.len == 0) return c.LLVMStructType(null, 0, 0);
+        var best = self.graph.fields.items[range.start];
+        var best_layout = types.layoutOf(self.graph, best.ty) catch return Error.InvalidType;
+        var max_size = best_layout.size;
+        var max_alignment = best_layout.alignment;
+        for (self.graph.fields.items[range.start + 1 ..][0 .. range.len - 1]) |field| {
+            const layout = types.layoutOf(self.graph, field.ty) catch return Error.InvalidType;
+            max_size = @max(max_size, layout.size);
+            max_alignment = @max(max_alignment, layout.alignment);
+            if (layout.alignment > best_layout.alignment or (layout.alignment == best_layout.alignment and layout.size > best_layout.size)) {
+                best = field;
+                best_layout = layout;
+            }
+        }
+        const remainder = if (max_alignment == 0) 0 else max_size % max_alignment;
+        const total_size = if (remainder == 0) max_size else max_size + max_alignment - remainder;
+        const storage_ty = try self.toLLVMType(best.ty);
+        if (best_layout.size >= total_size) {
+            var one = [_]llvm.c.LLVMTypeRef{storage_ty};
+            return c.LLVMStructType(&one, 1, 0);
+        }
+        var fields = [_]llvm.c.LLVMTypeRef{
+            storage_ty,
+            c.LLVMArrayType(c.LLVMInt8Type(), @intCast(total_size - best_layout.size)),
+        };
+        return c.LLVMStructType(&fields, 2, 0);
+    }
+
+    fn choiceType(self: *Lowerer, range: graph_mod.VariantRange, layout: primitives.ChoiceLayout) Error!llvm.c.LLVMTypeRef {
+        if (layout == .c_enum) return c.LLVMInt32Type();
+        const count: usize = @as(usize, range.len) + 1;
+        const fields = self.allocator.alloc(llvm.c.LLVMTypeRef, count) catch return Error.OutOfMemory;
+        defer self.allocator.free(fields);
+        fields[0] = c.LLVMInt32Type();
+        for (self.graph.variants.items[range.start..][0..range.len], 0..) |variant, index| {
+            fields[index + 1] = if (variant.payload_type) |payload|
+                try self.toLLVMType(payload)
+            else
+                c.LLVMInt8Type();
+        }
+        return c.LLVMStructType(fields.ptr, @intCast(count), 0);
+    }
+
+    pub fn buildUnionFieldPointer(
+        self: *Lowerer,
+        builder: llvm.c.LLVMBuilderRef,
+        union_ptr: llvm.c.LLVMValueRef,
+        field_ty: graph_mod.GlobalTypeId,
+        name: [*:0]const u8,
+    ) Error!llvm.c.LLVMValueRef {
+        const type_ref = try self.toLLVMType(field_ty);
+        const bytes = c.LLVMBuildBitCast(builder, union_ptr, c.LLVMPointerType(c.LLVMInt8Type(), 0), "union.bytes.ptr");
+        return c.LLVMBuildBitCast(builder, bytes, c.LLVMPointerType(type_ref, 0), name);
+    }
+
+    fn appendPrint(self: *Lowerer, buffer: *std.array_list.Managed(u8), comptime format: []const u8, args: anytype) !void {
+        const text = try std.fmt.allocPrint(self.allocator, format, args);
+        defer self.allocator.free(text);
+        try buffer.appendSlice(text);
+    }
+
+    pub fn encodeType(self: *Lowerer, buffer: *std.array_list.Managed(u8), ty: graph_mod.GlobalTypeId) !void {
+        switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .builtin => |builtin| try buffer.appendSlice(switch (builtin) {
+                .Void => "void",
+                .Int8 => "i8",
+                .Int16 => "i16",
+                .Int32 => "i32",
+                .Int64 => "i64",
+                .UIntNative => "unative",
+                .UInt8 => "u8",
+                .UInt16 => "u16",
+                .UInt32 => "u32",
+                .UInt64 => "u64",
+                .Float16 => "f16",
+                .Float32 => "f32",
+                .Float64 => "f64",
+                .Bool => "bool",
+                .Type => "type",
+                .Any => "any",
+            }),
+            .pointer => |pointer| {
+                try buffer.appendSlice(if (pointer.mutability == .read_only) "pro_" else "prw_");
+                try self.encodeType(buffer, pointer.child);
+            },
+            .array => |array| {
+                try self.appendPrint(buffer, "arr{d}_", .{array.length});
+                try self.encodeType(buffer, array.element);
+            },
+            .declared => |decl| {
+                try buffer.appendSlice("d");
+                try self.appendPrint(buffer, "{d}_", .{@intFromEnum(decl)});
+                try buffer.appendSlice(self.graph.text(self.graph.declarations.items[@intFromEnum(decl)].name));
+            },
+            .structural => |shape| {
+                try buffer.appendSlice("s{");
+                for (self.graph.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, index| {
+                    if (index != 0) try buffer.append(',');
+                    try buffer.appendSlice(self.graph.text(field.name));
+                    try buffer.append(':');
+                    try self.encodeType(buffer, field.ty);
+                }
+                try buffer.append('}');
+            },
+            .structural_choice => try buffer.appendSlice("choice"),
+            .inferred_choice => |shape| try self.appendPrint(buffer, "choice_i{d}", .{shape.identity}),
+            .generic => |identity| {
+                try self.appendPrint(buffer, "g{d}", .{@intFromEnum(identity.base)});
+                for (self.graph.generic_arguments.items[identity.arguments.start..][0..identity.arguments.len]) |argument| switch (argument.value) {
+                    .type => |value| {
+                        try buffer.append('_');
+                        try self.encodeType(buffer, value);
+                    },
+                    .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
+                };
+            },
+            .virtual => |contract_type| {
+                try buffer.appendSlice("virtual_");
+                try self.encodeType(buffer, contract_type);
+            },
+            .nullable, .inferred_errable => return Error.InvalidType,
+        }
+    }
+
+    pub fn mangledFunctionName(self: *Lowerer, function_id: graph_mod.GlobalFunctionId) ![]u8 {
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
+        if (function.body == null and !function.flags.has_declared_body)
+            return self.allocator.dupe(u8, self.graph.text(declaration.name));
+
+        var buffer = std.array_list.Managed(u8).init(self.allocator);
+        errdefer buffer.deinit();
+        try buffer.appendSlice(self.graph.text(declaration.name));
+        try self.appendPrint(&buffer, "__f{d}__in_", .{@intFromEnum(function_id)});
+        for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+            if (index != 0) try buffer.append('_');
+            try self.encodeType(&buffer, field.ty);
+        }
+        try buffer.appendSlice("__out_");
+        for (self.graph.fields.items[function.output.start..][0..function.output.len], 0..) |field, index| {
+            if (index != 0) try buffer.append('_');
+            try self.encodeType(&buffer, field.ty);
+        }
+        return buffer.toOwnedSlice();
+    }
+};
+
+test "global codegen type layer is independent from pointer-based semantic graph" {
+    try std.testing.expect(@sizeOf(graph_mod.GlobalTypeId) == 4);
+    try std.testing.expect((@import("../../1_base/target.zig").Config{}).pointerBytes() == @sizeOf(*usize));
+}
+
+test "choice copy layout matches LLVM storage for empty and large variants" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .array = .{ .element = @enumFromInt(0), .length = 128 } });
+    var lowerer: Lowerer = .{ .allocator = allocator, .graph = &graph };
+    const data = c.LLVMCreateTargetData("e-i32:32-i64:64");
+    defer c.LLVMDisposeTargetData(data);
+    // Exercise empty alternatives before, after and between payloads. An
+    // underestimated size silently truncates memcpy of indirect call results.
+    for (0..3) |empty_index| {
+        graph.variants.clearRetainingCapacity();
+        for (0..3) |index| {
+            try graph.variants.append(allocator, .{
+                .name = .{ .start = 0, .len = 0 },
+                .source = .{ .file_index = 0, .offset = 0 },
+                .value = @intCast(index),
+                .payload_type = if (index == empty_index) null else @enumFromInt(1),
+            });
+        }
+        const ty: graph_mod.GlobalTypeId = @enumFromInt(graph.types.items.len);
+        try graph.types.append(allocator, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 3 }, .layout = .regular } });
+        const layout = try types.layoutOf(&graph, ty);
+        const lowered = try lowerer.toLLVMType(ty);
+        try std.testing.expectEqual(c.LLVMABISizeOfType(data, lowered), layout.size);
+        try std.testing.expectEqual(@as(u64, c.LLVMABIAlignmentOfType(data, lowered)), layout.alignment);
+    }
+}

@@ -45,7 +45,9 @@ implement Deinit#(FixedSizeErrorTracer) (
 _error_trace_header(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
     .header : MutableArrayView#(.t: UInt8)
 ) := {
-    assume error_tracer ::= $&noop_error_tracer
+    local_noop :: NoopErrorTracer = (.marker = 0)
+    local_trace ::= to_virtual#(.contract: ErrorTracer)(.value = $&local_noop)
+    assume error_tracer ::= $&local_trace
 
     if index >= self&._capacity { abort }
     header = unwrap_or_abort(
@@ -96,7 +98,9 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
     .add_context = (
         .self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context: StringView
     ) -> () {
-        assume error_tracer ::= $&noop_error_tracer
+        local_noop :: NoopErrorTracer = (.marker = 0)
+        local_trace ::= to_virtual#(.contract: ErrorTracer)(.value = $&local_noop)
+        assume error_tracer ::= $&local_trace
 
         if self&._capacity == 0 {
             self&._dropped = true

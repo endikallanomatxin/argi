@@ -1,34 +1,26 @@
-# Shared VM/JIT execution
+# Execution follow-ups
 
-Release order: [0.4](0.4.md). Language semantics:
-[compile-time execution](../description/50_comptime.md).
+Release: [0.4](0.4.md). Current behavior: [usage](../docs/usage.md#experimental-bytecode-execution).
 
-## Decisions before implementation
+## Compile-time host
 
-- Initial executable subset and diagnostics for unsupported constructs.
-- Typed bytecode, verification, frames, aggregates, references, and source maps.
-- Shared VM/native calling convention, output storage, errors, and cleanup.
-- LLVM JIT integration, symbol resolution, and supported host/C signatures.
-- Session persistence, redefinition, failed submissions, reset, and exit.
-- Comptime capabilities, frozen results, target behavior, and cache dependencies.
-- Instruction/recursion, memory, and time limits; cancellation at safe points.
+- Keep external reads disabled until their build dependencies are recorded.
+  The initial host policy provides empty arguments, stdout/stderr and VM allocation.
 
-## Constraints
+## Later
 
-Lower checked semantics; do not reimplement language resolution in the evaluator.
-Keep function identity independent of its executor. Native code must outlive its
-references, including across redefinition and failed submissions.
+- Prepare raw/inherited resource storage explicitly when a concrete consumer needs it.
+- Separate host execution from target semantics for cross-compilation.
 
-Rejected submissions must not publish partial definitions. Executed I/O cannot
-be rolled back. Retained values need session-owned storage and ordinary lifetime
-checks; initially reject redefinitions that invalidate live dependencies.
+- Measure retained frames and metadata before introducing reclamation; preserve
+  live references and cross-unit calls.
+- Measure verifier join-state memory on real workloads before changing representation.
+  Use the existing session benchmarks and graph-pool statistics.
 
-Comptime must not inherit runtime System/FFI permissions. Freeze supported values
-into compiler-owned constants; reject escaped evaluator references/native handles.
-Host execution must preserve target widths/layouts or reject unsupported operations.
+Frontend investigations after the merge: [frontend review](frontend_review.md).
 
 ## Validation
 
-Compare VM, JIT, mixed calls, and AOT for aggregates, generics, virtual calls,
-errors, cleanup, and output lifetimes. Force executor modes in tests. Measure
-cold/repeated evaluation before selecting automatic promotion thresholds.
+- Pair each fix with native/VM coverage and persistent REPL cases where relevant.
+  Include rejection, early exit, cleanup and reset, rather than only successful values.
+- Confirm the final branch in Linux/macOS CI on x86_64/ARM64.

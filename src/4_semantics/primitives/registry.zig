@@ -7,8 +7,10 @@ const syntax = @import("../../3_syntax/syntax_tree.zig");
 /// describes the complete source-level interface, including generic type
 /// parameters, argument names/modes and output shape. Runtime safety effects
 /// are the Transfer below and are selected by the same primitive identity.
+/// Metadata-only declarations set function flags without replacing body safety.
 pub const Spec = struct {
-    primitive: primitives.SafetyPrimitive,
+    primitive: primitives.SafetyPrimitive = .none,
+    flags: primitives.FunctionFlags = .{},
     path: []const u8,
     name: []const u8,
     signatures: []const []const u8,
@@ -17,6 +19,12 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
+    .{ .primitive = .prepare_allocation_metadata, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_prepare_allocation_metadata", .signatures = &.{"#(.t: Type)(.allocation: &Allocation) -> (.state: UIntNative)"} },
+    .{ .primitive = .allocation_metadata_layout, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_allocation_metadata_layout", .signatures = &.{"#(.t: Type)() -> (.layout: _AllocationMetadataLayout)"} },
+    .{ .flags = .{ .is_source_location_id = true }, .path = "core/errors/source_location.rg", .name = "error_location_id", .signatures = &.{"() -> (.location: SourceLocationId)"} },
+    .{ .flags = .{ .is_source_location_resolver = true }, .path = "core/errors/source_location.rg", .name = "source_location", .signatures = &.{"(.id: SourceLocationId) -> (.location: SourceLocation)"} },
+    .{ .flags = .{ .is_error_context_view = true }, .path = "core/errors/error_tracer.rg", .name = "_add_error_context", .signatures = &.{"(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: StringView) -> ()"} },
+    .{ .flags = .{ .is_error_context_text = true }, .path = "core/errors/error_tracer.rg", .name = "_add_error_context_text", .signatures = &.{"(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar) -> ()"} },
     .{ .primitive = .float_math, .path = "core/numbers/math.rg", .name = "_float_math", .signatures = &.{"#(.t: Type: Float)(.operation: UInt32, .left: t, .right: t) -> (.result: t)"} },
     .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
@@ -26,7 +34,7 @@ pub const specs = [_]Spec{
     .{ .primitive = .mutable_reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_mutable_reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: $&from) -> (.reference: $&to)"} },
     .{ .primitive = .read_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "read_reference", .signatures = &.{"#(.t: Type)(.base: $&t) -> (.reference: &t)"} },
     .{ .primitive = .establish_allocation, .path = "core/memory/heap_allocation/Allocation.rg", .name = "trusted_establish_allocation", .signatures = &.{"(.storage: UIntNative, .size: UIntNative, .alignment: UIntNative, .deallocator: Virtual#(.contract: Deallocator), .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference) -> (.allocation: Allocation)"} },
-    .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/allocation_slots.rg", .name = "trusted_establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any) -> (.reference: $&t)"} },
+    .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/allocation_slots.rg", .name = "trusted_establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any, .index: ?UIntNative = ..none) -> (.reference: $&t)"} },
     .{ .primitive = .native_allocated_storage, .operating_systems = &.{ .linux, .macos }, .path = "core/platforms/posix/page_mapping.rg", .name = "_memory_map_anonymous", .signatures = &.{"(.length: UIntNative) -> (.address: UIntNative)"} },
     .{ .primitive = .native_allocated_storage, .operating_systems = &.{.windows}, .path = "core/platforms/windows/page_mapping.rg", .name = "_memory_acquire_aligned", .signatures = &.{"(.length: UIntNative, .alignment: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
     .{ .primitive = .acquisition_subaddress, .path = "core/memory/heap_allocation/Memory.rg", .name = "_trusted_acquisition_subaddress", .signatures = &.{"(.base: UIntNative, .address: UIntNative) -> (.result: UIntNative)"} },
@@ -41,6 +49,8 @@ pub const specs = [_]Spec{
         "#(.t: Type)(.slot: $&t) -> ()",
     } },
     .{ .primitive = .trusted_opaque_mark_empty, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_mark_empty", .signatures = &.{"#(.t: Type)(.storage: $&t) -> ()"} },
+    .{ .primitive = .raw_released_storage, .path = "core/libc/libc.rg", .name = "_free", .signatures = &.{"(.address: UIntNative) -> ()"}, .declaration = .extern_function },
+    .{ .primitive = .raw_released_storage, .path = "core/libc/libc.rg", .name = "_aligned_free", .signatures = &.{"(.address: UIntNative) -> ()"}, .declaration = .extern_function },
     .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_malloc", .signatures = &.{"(.size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
     .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_aligned_alloc", .signatures = &.{"(.alignment: UIntNative, .size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
 };
@@ -205,7 +215,10 @@ pub const Transfer = struct {
 
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
-        .none, .float_math => .{ .value = .empty },
+        .none, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata => .{ .value = .empty },
+        // Physical release identity selects an execution boundary. Language
+        // consumption remains in checked allocation-owner cleanup, not raw ABI.
+        .raw_released_storage => .{ .value = .empty },
         .raw_allocated_storage => .{ .value = .raw_storage },
         // Body-backed page acquisition retains the Argi UIntNative ABI;
         // libc acquisition identity also selects its pointer-return ABI.
@@ -240,7 +253,15 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
 /// anchor and virtual deallocator. Both interpreters use this field mapping;
 /// raw byte ownership must not erase the deallocator's receiver lifetime.
 pub const AllocationTransfer = struct {
-    pub const field_count = 9;
+    pub fn fieldCount(graph: *const @import("../global/graph.zig").GlobalSemanticGraph, callee: @import("../global/graph.zig").GlobalFunctionId) !u32 {
+        const function = graph.function(callee);
+        if (function.output.len != 1) return error.InvalidAllocationPrimitive;
+        const output = graph.fields.items[function.output.start].ty;
+        const fields = @import("../global/types.zig").fields(graph, output) orelse return error.InvalidAllocationPrimitive;
+        if (fields.len <= data_field) return error.InvalidAllocationPrimitive;
+        for (borrowed_fields) |borrowed| if (fields.len <= borrowed.field) return error.InvalidAllocationPrimitive;
+        return fields.len;
+    }
     pub const data_field = 0;
     pub const borrowed_fields = [_]struct { field: u32, input: u32 }{
         .{ .field = 3, .input = 4 }, // anchor
@@ -248,19 +269,40 @@ pub const AllocationTransfer = struct {
     };
 };
 
-/// A move with two arguments discovers its storage domain from the owner.
-/// The three-argument form names the storage domain explicitly.
+// Successful opaque transfers change obligations on the evaluated referent,
+// never on the slot holding its reference. Data initialization remains separate.
+pub fn opaqueCleanupTransition(primitive: primitives.SafetyPrimitive) ?struct { input: u32, enabled: bool } {
+    return switch (primitive) {
+        .trusted_opaque_move => .{ .input = 0, .enabled = true },
+        .trusted_opaque_move_in => .{ .input = 1, .enabled = true },
+        .trusted_opaque_move_out => .{ .input = 1, .enabled = false },
+        .trusted_opaque_drop => .{ .input = 0, .enabled = false },
+        else => null,
+    };
+}
+
+/// Operand positions come from primitive identity, not completed arity.
+/// Reached capabilities may follow the explicit inputs.
 pub const OpaqueMoveOperands = struct {
     owner: usize,
     storage: ?usize,
 };
 
-pub fn opaqueMoveOperands(argument_count: usize) ?OpaqueMoveOperands {
-    return switch (argument_count) {
-        2 => .{ .owner = 1, .storage = null },
-        3 => .{ .owner = 2, .storage = 0 },
-        else => null,
+pub fn opaqueMoveOperands(primitive: primitives.SafetyPrimitive, argument_count: usize) ?OpaqueMoveOperands {
+    const operands: OpaqueMoveOperands = switch (primitive) {
+        .trusted_opaque_move => .{ .owner = 1, .storage = null },
+        .trusted_opaque_move_in => .{ .owner = 2, .storage = 0 },
+        else => return null,
     };
+    return if (argument_count > operands.owner) operands else null;
+}
+
+test "opaque move operand identity survives additional capability inputs" {
+    try std.testing.expectEqual(@as(usize, 1), opaqueMoveOperands(.trusted_opaque_move, 4).?.owner);
+    try std.testing.expectEqual(@as(usize, 2), opaqueMoveOperands(.trusted_opaque_move_in, 4).?.owner);
+    try std.testing.expectEqual(@as(?usize, 0), opaqueMoveOperands(.trusted_opaque_move_in, 4).?.storage);
+    try std.testing.expectEqual(null, opaqueMoveOperands(.trusted_opaque_move_in, 2));
+    try std.testing.expectEqual(null, opaqueMoveOperands(.relocate, 4));
 }
 
 test "trusted primitive paths accept native separators without weakening identity" {

@@ -19,6 +19,29 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     stats: Stats = .{},
+    session_bindings: std.ArrayList(global_sg.GlobalBindingId) = .empty,
+    continuation_function: ?global_sg.GlobalFunctionId = null,
+    operation_owner: ?global_sg.GlobalFunctionId = null,
+
+    pub fn deinit(self: *Resolver) void {
+        self.session_bindings.deinit(self.allocator);
+    }
+    pub fn captureBinding(context: *anyopaque, module_index: usize, owner: ?global_sg.GlobalFunctionId, name: []const u8) ?global_sg.GlobalBindingId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        return self.sessionBindingForOwner(name, owner) orelse name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name);
+    }
+
+    fn sessionBindingForOwner(self: *const Resolver, name: []const u8, owner: ?global_sg.GlobalFunctionId) ?global_sg.GlobalBindingId {
+        if (self.continuation_function == null or owner != self.continuation_function) return null;
+        for (self.session_bindings.items) |binding| {
+            if (std.mem.eql(u8, self.graph.text(self.graph.binding(binding).name), name)) return binding;
+        }
+        return null;
+    }
+
+    fn sessionBinding(self: *const Resolver, name: []const u8) ?global_sg.GlobalBindingId {
+        return self.sessionBindingForOwner(name, self.operation_owner);
+    }
 
     pub fn tryResolve(
         self: *Resolver,
@@ -29,7 +52,7 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_name_use => |value| resolution.Result.fromBool(try self.resolveNameUse(module_index, module, o, value)),
-            .resolve_name_assignment => |value| resolution.Result.fromBool(self.resolveNameAssignment(module_index, o, value)),
+            .resolve_name_assignment => |value| resolution.Result.fromBool(try self.resolveNameAssignment(module_index, o, value)),
             // Module values need a first-class representation before imports can
             // be materialized. The operation is nevertheless explicit now, so
             // no unrelated resolver can accidentally reinterpret it as a name.
@@ -52,30 +75,32 @@ pub const Resolver = struct {
                 module.text(path),
             ) catch return false;
             const target_index: usize = @intFromEnum(target);
-            if (target_index != module_index and std.mem.startsWith(u8, name, "_")) return false;
-            const binding = name_lookup.bindingInModule(self.modules, self.offsets, target_index, name) orelse return false;
+            if (!self.graph.sameModuleNamespace(target, @enumFromInt(module_index)) and std.mem.startsWith(u8, name, "_")) return false;
+            const binding = name_lookup.bindingInNamespace(self.graph, self.modules, self.offsets, target_index, name) orelse return false;
             return self.patchNameUse(o, value.node, binding, value.source);
         }
-        if (name_lookup.binding(self.modules, self.offsets, module_index, name)) |binding|
+        if (self.sessionBinding(name)) |binding|
+            return self.patchNameUse(o, value.node, binding, value.source);
+        if (name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
         return self.patchTypeExpression(module_index, o, value.node, name);
     }
 
-    fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) bool {
+    fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
         const name = self.modules[module_index].text(value.name);
-        const binding = name_lookup.binding(self.modules, self.offsets, module_index, name) orelse return false;
+        const binding = self.sessionBinding(name) orelse name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name) orelse return false;
         const target = globalizer.globalNode(o, value.node);
         var source = value.source;
         source.file_index += o.file_base;
         const ty = if (self.graph.isBindingTypeUnresolved(binding)) null else self.graph.bindings.items[@intFromEnum(binding)].ty;
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = source,
             .ty = ty,
             .content = .{ .assignment = .{
                 .binding = binding,
                 .value = globalizer.globalNode(o, value.value),
             } },
-        };
+        });
         self.stats.binding_assignments += 1;
         return true;
     }
@@ -86,20 +111,20 @@ pub const Resolver = struct {
         node: module_entities.ModuleNodeId,
         binding: global_sg.GlobalBindingId,
         local_source: primitives.SourceRef,
-    ) bool {
+    ) !bool {
         const target = globalizer.globalNode(o, node);
         const source: primitives.SourceRef = .{ .file_index = o.file_base + local_source.file_index, .offset = local_source.offset };
         const ty = if (self.graph.isBindingTypeUnresolved(binding)) null else self.graph.bindings.items[@intFromEnum(binding)].ty;
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = source,
             .ty = ty,
             .content = .{ .binding_use = binding },
-        };
+        });
         self.stats.binding_uses += 1;
         return true;
     }
 
-    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, node: module_entities.ModuleNodeId, name: []const u8) bool {
+    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, node: module_entities.ModuleNodeId, name: []const u8) !bool {
         var found: ?global_sg.GlobalTypeId = null;
         for (self.graph.types.items, 0..) |item, raw| switch (item) {
             .builtin => |builtin| if (std.mem.eql(u8, name, @tagName(builtin))) {
@@ -115,7 +140,7 @@ pub const Resolver = struct {
             if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             const owner = self.graph.moduleForDeclaration(id) orelse continue;
-            if (@intFromEnum(owner) != module_index and !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
+            if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
             if (found != null) return false;
             found = declaration.type_id orelse continue;
         }
@@ -128,11 +153,11 @@ pub const Resolver = struct {
             else => {},
         };
         const target = globalizer.globalNode(o, node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.graph.nodes.items[@intFromEnum(target)].source,
             .ty = meta orelse return false,
             .content = .{ .type_literal = ty },
-        };
+        });
         return true;
     }
 };
@@ -141,6 +166,8 @@ test "expression resolver preserves global binding reads and assignments" {
     const allocator = std.testing.allocator;
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
+    try graph.modules.appendNTimes(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 0 } }, 2);
+    graph.modules.items[1].is_bundled_core = true;
 
     var app: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "app") };
     defer app.deinit(allocator);
@@ -182,8 +209,15 @@ test "expression resolver preserves global binding reads and assignments" {
         .node = @enumFromInt(0),
         .name = name,
     } };
+    const saved = graph.checkpoint();
+    const original = graph.node(@enumFromInt(0));
+    var transaction = graph.beginTransaction(allocator);
+    defer transaction.deinit();
     try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], read)).isResolved());
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(0)), graph.nodes.items[0].content.binding_use);
+    transaction.rollback();
+    try std.testing.expectEqualDeep(original, graph.node(@enumFromInt(0)));
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
 
     graph.nodes.items[0] = .{ .source = .{ .file_index = 0, .offset = 9 }, .ty = null, .content = .{ .bool_literal = false } };
     const assignment = module_entities.PendingOperation{ .resolve_name_assignment = .{

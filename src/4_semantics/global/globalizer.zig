@@ -48,6 +48,27 @@ pub const Relocation = struct {
     graph: global_sg.GlobalSemanticGraph,
     offsets: std.ArrayList(Offsets) = .empty,
 
+    /// Append a complete batch without relocating any previously published ID.
+    /// This owns graph publication only; the caller must reconnect semantic
+    /// resolvers to the retained module/offset slices after a successful append.
+    pub fn append(self: *Relocation, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, mode: Mode) !void {
+        const saved = self.graph.checkpoint();
+        const offset_count = self.offsets.items.len;
+        errdefer {
+            self.graph.rollback(allocator, saved);
+            self.offsets.shrinkRetainingCapacity(offset_count);
+        }
+        const total = std.math.add(usize, offset_count, modules.len) catch return error.GlobalSemanticGraphTooLarge;
+        try self.offsets.ensureTotalCapacity(allocator, total);
+        for (modules) |*module| {
+            try module_verify.verifyModule(module);
+            if (mode == .strict) try requireFinalizable(module);
+            const offsets = try appendModule(allocator, &self.graph, module, mode);
+            self.offsets.appendAssumeCapacity(offsets);
+        }
+        if (mode == .strict) try global_verify.verifyGlobal(&self.graph);
+    }
+
     pub fn deinit(self: *Relocation, allocator: std.mem.Allocator) void {
         self.graph.deinit(allocator);
         self.offsets.deinit(allocator);
@@ -73,16 +94,7 @@ pub fn relocate(
 ) !Relocation {
     var result: Relocation = .{ .graph = .{} };
     errdefer result.deinit(allocator);
-    try result.offsets.ensureTotalCapacity(allocator, modules.len);
-
-    for (modules) |*module| {
-        try module_verify.verifyModule(module);
-        if (mode == .strict) try requireFinalizable(module);
-        const offsets = try appendModule(allocator, &result.graph, module, mode);
-        result.offsets.appendAssumeCapacity(offsets);
-    }
-
-    if (mode == .strict) try global_verify.verifyGlobal(&result.graph);
+    try result.append(allocator, modules, mode);
     return result;
 }
 
@@ -164,6 +176,7 @@ fn appendModule(
     for (module.file_offsets.items) |file| try result.files.append(allocator, .{
         .module = module_id,
         .path = try relocateString(module, file.path, o.string_base),
+        .content_hash = file.content_hash,
     });
 
     try appendDeclarations(allocator, result, module, o);
@@ -199,6 +212,7 @@ fn appendDeclarations(allocator: std.mem.Allocator, result: *global_sg.GlobalSem
             .struct_fields = if (value.struct_fields) |range| relocateEntityRange(global_sg.GlobalFieldId, o.field_base, range) else null,
             .choice_variants = if (value.choice_variants) |range| relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, range) else null,
             .generic_parameter_count = value.generic_parameter_count,
+            .contract_domain_count = value.contract_domain_count,
             .struct_layout = value.struct_layout,
             .choice_layout = value.choice_layout,
         });
@@ -359,6 +373,10 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .nodes = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.nodes),
         .ret_val = if (value.ret_val) |id| globalNode(o, id) else null,
     });
+    for (storage.block_assumptions.items) |value| try result.block_assumptions.append(allocator, .{
+        .block = globalBlock(o, value.block),
+        .bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.bindings),
+    });
     for (storage.value_fields.items) |value| try result.value_fields.append(allocator, .{
         .name = try relocateString(module, value.name, o.string_base),
         .value = globalNode(o, value.value),
@@ -379,20 +397,25 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     for (storage.auto_deinit_fields.items) |value| try result.auto_deinit_fields.append(allocator, .{
         .field_index = value.field_index,
         .is_variant = value.is_variant,
+        .repeat_count = value.repeat_count,
         .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
         .input = if (value.input) |id| globalNode(o, id) else null,
         .self_field_index = value.self_field_index,
         .fields = relocateEntityRange(global_sg.GlobalAutoDeinitFieldId, o.auto_deinit_field_base, value.fields),
     });
     for (storage.auto_deinits.items) |value| try result.auto_deinits.append(allocator, .{
-        .binding = globalBinding(o, value.binding),
+        .storage = switch (value.storage) {
+            .binding => |id| .{ .binding = globalBinding(o, id) },
+            .projected => |place| .{ .projected = .{ .binding = globalBinding(o, place.binding), .target = globalNode(o, place.target) } },
+            .indirect => |id| .{ .indirect = globalNode(o, id) },
+        },
+        .allow_untracked_complete = value.allow_untracked_complete,
         .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
         .input = if (value.input) |id| globalNode(o, id) else null,
         .self_field_index = value.self_field_index,
         .fields = relocateEntityRange(global_sg.GlobalAutoDeinitFieldId, o.auto_deinit_field_base, value.fields),
     });
     for (storage.virtual_registries.items) |value| try result.virtual_registries.append(allocator, .{
-        .implementations = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.implementations),
         .receiver_input_index = value.receiver_input_index,
         .contract_input_count = value.contract_input_count,
         .contract_output_type = if (value.contract_output_type) |ty| globalType(o, ty) else null,
@@ -423,10 +446,6 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .output_type = globalType(o, value.output_type),
         .self_permission = value.self_permission,
         .safety_methods = globalVirtualRegistry(o, value.safety_methods),
-        .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
-        .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
-        .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
-        .outcome_cleanups = try relocateOutcomeCleanups(allocator, o, value.outcome_cleanups),
     });
     for (storage.reach_segments.items) |value| try result.reach_segments.append(allocator, try relocateString(module, value, o.string_base));
     for (storage.reach_alternatives.items) |value| try result.reach_alternatives.append(allocator, .{
@@ -490,17 +509,18 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     });
 
     for (storage.nodes.items) |node| switch (node) {
-        .resolved => |value| try result.nodes.append(allocator, try relocateNode(allocator, module, o, value)),
+        .resolved => |value| try result.nodes.append(allocator, try relocateNode(module, o, value)),
         .pending => if (mode == .allow_holes) try result.nodes.append(allocator, .{
             .source = .{ .file_index = o.file_base, .offset = 0 },
             .ty = null,
             .content = .{ .bool_literal = false },
         }) else return error.UnresolvedModuleSemantics,
     };
+    for (storage.comptime_requests.items) |id| try result.comptime_requests.append(allocator, globalNode(o, id));
     for (storage.roots.items) |id| try result.roots.append(allocator, globalNode(o, id));
 }
 
-fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: module_entities.ResolvedNode) !global_sg.Node {
+fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: module_entities.ResolvedNode) !global_sg.Node {
     return .{
         .source = globalSource(o, node.source),
         .ty = if (node.ty) |id| globalType(o, id) else null,
@@ -518,16 +538,12 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
                 .callee = globalFunction(o, value.callee),
                 .callee_value = if (value.callee_value) |id| globalNode(o, id) else null,
                 .input = globalNode(o, value.input),
-                .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
-                .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
-                .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
-                .outcome_cleanups = try relocateOutcomeCleanups(allocator, o, value.outcome_cleanups),
-                .initializes_auto_deinit = if (value.initializes_auto_deinit) |id| globalNode(o, id) else null,
             } },
             .virtualize => |id| .{ .virtualize = globalVirtualize(o, id) },
             .virtual_call => |id| .{ .virtual_call = globalVirtualCall(o, id) },
             .code_block => |id| .{ .code_block = globalBlock(o, id) },
             .value_sequence => |id| .{ .value_sequence = globalBlock(o, id) },
+            .replacement => |id| .{ .replacement = globalBlock(o, id) },
             .int_literal => |value| .{ .int_literal = value },
             .float_literal => |value| .{ .float_literal = value },
             .char_literal => |value| .{ .char_literal = value },
@@ -580,6 +596,7 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
                 .array_type = globalType(o, value.array_type),
             } },
             .struct_field_store => |value| .{ .struct_field_store = .{
+                .cleanup_target = if (value.cleanup_target) |id| globalNode(o, id) else null,
                 .struct_ptr = globalNode(o, value.struct_ptr),
                 .struct_type = globalType(o, value.struct_type),
                 .field_index = value.field_index,
@@ -621,7 +638,7 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
                 .ty = globalType(o, value.ty),
                 .pointer_type = globalType(o, value.pointer_type),
             } },
-            .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value) } },
+            .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value), .cleanup_target = if (value.cleanup_target) |id| globalNode(o, id) else null } },
 
             .type_literal => |id| .{ .type_literal = globalType(o, id) },
             .explicit_cast => |value| .{ .explicit_cast = .{ .value = globalNode(o, value.value), .target_type = globalType(o, value.target_type) } },
@@ -656,23 +673,6 @@ pub fn globalFunction(o: Offsets, id: module_entities.ModuleFunctionId) global_s
 }
 pub fn globalBinding(o: Offsets, id: module_entities.ModuleBindingId) global_sg.GlobalBindingId {
     return @enumFromInt(o.binding_base + @intFromEnum(id));
-}
-fn relocateCleanupNodes(allocator: std.mem.Allocator, o: Offsets, nodes: []const module_entities.ModuleNodeId) ![]const global_sg.GlobalNodeId {
-    const result = try allocator.alloc(global_sg.GlobalNodeId, nodes.len);
-    for (nodes, result) |node, *relocated| relocated.* = globalNode(o, node);
-    return result;
-}
-
-fn relocateOutcomeCleanups(allocator: std.mem.Allocator, o: Offsets, cleanups: []const primitives.OutcomeCleanup(module_entities.Ids)) ![]const primitives.OutcomeCleanup(global_sg.Ids) {
-    const result = try allocator.alloc(primitives.OutcomeCleanup(global_sg.Ids), cleanups.len);
-    for (cleanups, result) |cleanup, *relocated| relocated.* = .{
-        .place = globalNode(o, cleanup.place),
-        .output_index = cleanup.output_index,
-        .parent_variants = try allocator.dupe(u32, cleanup.parent_variants),
-        .variant_index = cleanup.variant_index,
-        .enabled = cleanup.enabled,
-    };
-    return result;
 }
 
 pub fn globalNode(o: Offsets, id: module_entities.ModuleNodeId) global_sg.GlobalNodeId {
@@ -753,4 +753,102 @@ test "globalizer preserves hole identity for GlobalSema" {
     try std.testing.expectEqual(@as(usize, 1), result.graph.nodes.items.len);
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(globalType(result.offsets.items[0], @enumFromInt(0))));
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(globalNode(result.offsets.items[0], @enumFromInt(0))));
+}
+
+test "globalizer appends modules without changing retained identities" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    first.semantic.local_semantics_complete = true;
+    try first.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    second.semantic.local_semantics_complete = true;
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .Bool } });
+    var retained = try relocate(a, &.{first}, .strict);
+    defer retained.deinit(a);
+    const identity = globalType(retained.offsets.items[0], @enumFromInt(0));
+    const before = retained.graph.semanticType(identity);
+    // Resolution may have appended specializations between module batches.
+    const specialization: global_sg.GlobalTypeId = @enumFromInt(retained.graph.types.items.len);
+    try retained.graph.types.append(a, .{ .builtin = .UInt64 });
+    try retained.append(a, &.{second}, .strict);
+    try std.testing.expectEqual(@as(usize, 2), retained.graph.modules.items.len);
+    try std.testing.expectEqual(identity, globalType(retained.offsets.items[0], @enumFromInt(0)));
+    try std.testing.expectEqualDeep(before, retained.graph.semanticType(identity));
+    const appended = globalType(retained.offsets.items[1], @enumFromInt(0));
+    try std.testing.expect(identity != appended and specialization != appended);
+    try std.testing.expectEqual(primitives.BuiltinType.UInt64, retained.graph.semanticType(specialization).builtin);
+    try std.testing.expectEqual(primitives.BuiltinType.Bool, retained.graph.semanticType(appended).builtin);
+}
+
+test "globalizer rejects an append batch atomically and permits retry" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    first.semantic.local_semantics_complete = true;
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    second.semantic.local_semantics_complete = true;
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .Bool } });
+    var rejected: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "rejected") };
+    defer rejected.deinit(a);
+    var retained = try relocate(a, &.{first}, .strict);
+    defer retained.deinit(a);
+    const saved = retained.graph.checkpoint();
+    try std.testing.expectError(error.ModuleLocalSemanticsIncomplete, retained.append(a, &.{ second, rejected }, .strict));
+    try std.testing.expectEqual(@as(usize, 1), retained.offsets.items.len);
+    try std.testing.expectEqualDeep(saved, retained.graph.checkpoint());
+    try retained.append(a, &.{second}, .strict);
+    try std.testing.expectEqual(@as(usize, 2), retained.offsets.items.len);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(globalType(retained.offsets.items[1], @enumFromInt(0))));
+}
+
+fn appendWithAllocationFailures(a: std.mem.Allocator) !void {
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "appended") };
+    defer module.deinit(a);
+    module.semantic.local_semantics_complete = true;
+    try module.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var retained: Relocation = .{ .graph = .{} };
+    defer retained.deinit(a);
+    const saved = retained.graph.checkpoint();
+    retained.append(a, &.{module}, .strict) catch |err| {
+        try std.testing.expectEqual(@as(usize, 0), retained.offsets.items.len);
+        try std.testing.expectEqualDeep(saved, retained.graph.checkpoint());
+        return err;
+    };
+}
+
+test "globalizer append rolls back allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, appendWithAllocationFailures, .{});
+}
+
+test "globalizer relocates cleanup storage identities without inventing indirect owners" {
+    const a = std.testing.allocator;
+    var modules: [2]module_sg.ModuleSemanticGraph = undefined;
+    var initialized: usize = 0;
+    defer for (modules[0..initialized]) |*module| module.deinit(a);
+    for (&modules, 0..) |*module, index| {
+        module.* = .{ .module_dir = try std.fmt.allocPrint(a, "module_{d}", .{index}) };
+        initialized += 1;
+        module.semantic.local_semantics_complete = true;
+        try module.file_offsets.append(a, .{ .path = .{ .start = 0, .len = 0 }, .declaration_base = 0, .declaration_count = 0, .type_reference_base = 0, .type_reference_count = 0 });
+        try module.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+        try module.semantic.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .mutability = .variable });
+        try module.semantic.nodes.append(a, .{ .resolved = .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } } });
+        try module.semantic.auto_deinits.appendSlice(a, &.{
+            .{ .storage = .{ .binding = @enumFromInt(0) }, .deinit_fn = null },
+            .{ .storage = .{ .projected = .{ .binding = @enumFromInt(0), .target = @enumFromInt(0) } }, .deinit_fn = null },
+            .{ .storage = .{ .indirect = @enumFromInt(0) }, .deinit_fn = null, .allow_untracked_complete = true },
+        });
+    }
+    var relocated = try relocate(a, &modules, .strict);
+    defer relocated.deinit(a);
+    const cleanups = relocated.graph.auto_deinits.items;
+    try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(1)), cleanups[3].ownerBinding().?);
+    try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(1)), cleanups[4].ownerBinding().?);
+    try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), cleanups[4].targetNode().?);
+    try std.testing.expect(cleanups[5].ownerBinding() == null);
+    try std.testing.expect(cleanups[5].allow_untracked_complete);
+    try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), cleanups[5].targetNode().?);
 }

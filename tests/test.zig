@@ -253,6 +253,12 @@ fn expectSuccessfulBuild(name: []const u8) !void {
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
+fn expectDiagnostic(name: []const u8, actual: []const u8, expected: []const u8) !void {
+    if (std.mem.indexOf(u8, actual, expected) != null) return;
+    std.debug.print("build rejection for {s} is missing diagnostic '{s}':\n{s}\n", .{ name, expected, actual });
+    return error.MissingExpectedDiagnostic;
+}
+
 fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
     const result = try buildResult(name);
     defer std.testing.allocator.free(result.stdout);
@@ -263,7 +269,7 @@ fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
         else => return error.UnexpectedProcessTermination,
     }
 
-    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr) != null);
+    try expectDiagnostic(name, result.stderr, expected_stderr);
 }
 
 fn buildExpectFailWithoutNoise(name: []const u8, expected_stderr: []const u8, forbidden_stderr: []const u8) !void {
@@ -276,8 +282,11 @@ fn buildExpectFailWithoutNoise(name: []const u8, expected_stderr: []const u8, fo
         else => return error.UnexpectedProcessTermination,
     }
 
-    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr) != null);
-    try expect(std.mem.indexOf(u8, result.stderr, forbidden_stderr) == null);
+    try expectDiagnostic(name, result.stderr, expected_stderr);
+    if (std.mem.indexOf(u8, result.stderr, forbidden_stderr) != null) {
+        std.debug.print("build rejection for {s} contains forbidden diagnostic '{s}':\n{s}\n", .{ name, forbidden_stderr, result.stderr });
+        return error.UnexpectedDiagnostic;
+    }
 }
 
 fn buildExpectFailExact(name: []const u8, expected_stderr: []const u8) !void {
@@ -305,7 +314,7 @@ fn buildExpectFailWithoutParseNoise(name: []const u8, expected_stderr_fragment: 
         else => return error.UnexpectedProcessTermination,
     }
 
-    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr_fragment) != null);
+    try expectDiagnostic(name, result.stderr, expected_stderr_fragment);
     try expect(std.mem.indexOf(u8, result.stdout, "Parse error:") == null);
     try expect(std.mem.indexOf(u8, result.stderr, "Parse error:") == null);
 }
@@ -318,6 +327,11 @@ fn runExpect(name: []const u8, expected_code: u8) !void {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
+    if (result.term != .exited or result.term.exited != expected_code) {
+        std.debug.print("execution of {s}: expected exit {d}, got {any}\nstdout:\n{s}\nstderr:\n{s}\n", .{
+            name, expected_code, result.term, result.stdout, result.stderr,
+        });
+    }
     try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
 }
 
@@ -1503,6 +1517,7 @@ test "feature_tests/basics/07_struct_default_fields" {
     const test_path = "tests/feature_tests/basics/07_struct_default_fields";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
+    try vmExpect("tests/feature_tests/basics/07_struct_default_fields", 0, null);
 }
 
 test "feature_tests/basics/08_struct_field_store" {
@@ -2833,7 +2848,7 @@ test "feature_tests/io/25_positional_text_helpers" {
 }
 
 test "feature_tests/io/26X_print_without_system" {
-    try buildExpectFail("tests/feature_tests/io/26X_print_without_system", "no generic function named 'print'");
+    try buildExpectFailWithoutNoise("tests/feature_tests/io/26X_print_without_system", ".writer uses reach writer", "panic");
 }
 
 test "feature_tests/text/03_string_buffer_io" {
@@ -3083,6 +3098,7 @@ test "feature_tests/system/15_once_single_use" {
     const test_path = "tests/feature_tests/system/15_once_single_use";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
+    try vmExpect("tests/feature_tests/system/15_once_single_use", 0, null);
 }
 
 test "feature_tests/system/16X_once_duplicate_direct" {
@@ -3298,12 +3314,7 @@ test "feature_tests/ownership/42X_reference_use_after_root_end" {
 }
 
 test "feature_tests/ownership/53X_pointer_inputs_may_alias" {
-    try buildExpectFailExact("tests/feature_tests/ownership/53X_pointer_inputs_may_alias",
-        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:6:25: error: reference depends on a root that has ended
-        \\      value = read_alias&.size
-        \\                          ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/53X_pointer_inputs_may_alias", "observes storage after an aliased participant");
 }
 
 test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
@@ -3312,9 +3323,9 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:11: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:8: error: reference depends on a root that has ended
         \\      if b&.size == 1 {
-        \\            ^
+        \\         ^
         \\
     );
 }
@@ -3743,7 +3754,7 @@ test "feature_tests/ownership/122_trusted_opaque_relocate" {
 test "feature_tests/ownership/123X_self_referential_move_does_not_retarget" {
     try buildExpectFail(
         "tests/feature_tests/ownership/123X_self_referential_move_does_not_retarget",
-        "value was moved",
+        "place rooted at 'source' is moved and cannot be used",
     );
 }
 
@@ -5765,6 +5776,7 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "build [path] [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "run [executable] [build flags]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "repl [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "test [directory] [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot <path>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--exec <name>") != null);
@@ -5775,6 +5787,60 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "format [paths...] [--check]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "format <file.rg> --stdout") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--vm-instructions <N>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--vm-call-depth <N>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--vm-value-cells <N>") != null);
+}
+
+test "argi VM execution interrupts and REPL reset" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    const result = runChild(&.{ "python3", "tests/cli_interrupt.py", installed_argi, "tests/feature_tests/execution/03X_vm_instruction_limit" }) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) std.debug.print("Interrupt probe failed:\n{s}\n{s}\n", .{ result.stdout, result.stderr });
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
+test "argi repl retains values and shares compile-time execution" {
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    var child = try std.process.spawn(std.testing.io, .{
+        .argv = &.{ installed_argi, "repl" },
+        .cwd = .{ .path = compilerRoot() },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(std.testing.io);
+    try child.stdin.?.writeStreamingAll(std.testing.io, "value ::= 40 + 2\nunfinished := () -> () {\n:cancel\nvalue\n" ++
+        "answer := () -> (.result: Int32) { result = 7 }\nanswer()\n_0 + _1\n" ++
+        "enabled := () -> (.result: Bool) { result = true }\n" ++
+        "choose := () -> (.result: Int32) {\n" ++
+        "    #if enabled() { result = 12 } else { result = missing() }\n" ++
+        "}\n#run () -> (.answer: Int32) { answer = choose() }\n:reset\ntrue\n\"hello\"\n_1\n");
+    child.stdin.?.close(std.testing.io);
+    child.stdin = null;
+    var buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var reader: std.Io.File.MultiReader = undefined;
+    reader.init(std.testing.allocator, std.testing.io, buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer reader.deinit();
+    while (true) reader.fill(1, .none) catch |err| switch (err) {
+        error.EndOfStream => break,
+        else => return err,
+    };
+    const stdout = try reader.toOwnedSlice(0);
+    defer std.testing.allocator.free(stdout);
+    const stderr = try reader.toOwnedSlice(1);
+    defer std.testing.allocator.free(stderr);
+    if (stderr.len != 0) std.debug.print("REPL stderr: {s}\n", .{stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(std.testing.io));
+    try expectEqualStrings("", stderr);
+    try expectEqualStrings("_0 = 42\n_1 = 7\n_2 = 49\n_3 = 12\n_0 = true\n_1 = \"hello\"\n_2 = \"hello\"\n", stdout);
 }
 
 test "argi version reports current release" {
@@ -8435,7 +8501,7 @@ test "feature_tests/basics/49_release_ir_optimization" {
     const after = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, release_ir, allocator, .limited(1024 * 1024));
     defer allocator.free(after);
     try expect(std.mem.count(u8, before, "alloca ") > std.mem.count(u8, after, "alloca "));
-    try expect(std.mem.count(u8, before, "store i1 ") > std.mem.count(u8, after, "store i1 "));
+    try expect(std.mem.count(u8, before, "store i32 ") > std.mem.count(u8, after, "store i32 "));
 }
 
 test "feature_tests/cross_compilation/01_aarch64_data_model" {
@@ -13045,11 +13111,11 @@ test "feature_tests/contracts/325_deferred_operation_body" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try expect(result.term == .exited and result.term.exited != 0);
-    try expect(std.mem.indexOf(u8, result.stderr, "cannot materialize body") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot materialize function body") != null);
 }
 
 test "feature_tests/contracts/326X_selected_deferred_operation_body" {
-    try buildExpectFail("tests/feature_tests/contracts/326X_selected_deferred_operation_body", "cannot materialize body");
+    try buildExpectFail("tests/feature_tests/contracts/326X_selected_deferred_operation_body", "cannot materialize function body");
 }
 
 test "feature_tests/contracts/327_ordered_comparison_evidence" {
@@ -13338,6 +13404,1992 @@ test "feature_tests/text/88_ascii_edits_are_checked" {
     try runExpect("tests/feature_tests/text/88_ascii_edits_are_checked", 0);
 }
 
+fn vmExpect(path: []const u8, status: u8, diagnostic: ?[]const u8) !void {
+    const result = try runArgiCommand(&.{ "run", "--vm", path });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != status) std.debug.print("VM stderr: {s}\n", .{result.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = status }, result.term);
+    if (diagnostic) |text| {
+        try expect(std.mem.indexOf(u8, result.stderr, text) != null);
+        try expect(std.mem.indexOf(u8, result.stderr, "main.rg:") != null);
+    }
+}
+
+test "feature_tests/execution/01_scalar_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/01_scalar_vm");
+    try runExpect("tests/feature_tests/execution/01_scalar_vm", 42);
+    try vmExpect("tests/feature_tests/execution/01_scalar_vm", 42, null);
+}
+
+test "feature_tests/execution/02_floating_point_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/02_floating_point_vm");
+    try runExpect("tests/feature_tests/execution/02_floating_point_vm", 42);
+    try vmExpect("tests/feature_tests/execution/02_floating_point_vm", 42, null);
+}
+
+test "feature_tests/execution/03X_vm_instruction_limit" {
+    try vmExpect("tests/feature_tests/execution/03X_vm_instruction_limit", 1, "ExecutionInstructionLimit");
+}
+
+test "feature_tests/execution/04_integer_wrapping_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/04_integer_wrapping_vm");
+    try runExpect("tests/feature_tests/execution/04_integer_wrapping_vm", 42);
+    try vmExpect("tests/feature_tests/execution/04_integer_wrapping_vm", 42, null);
+}
+
+test "feature_tests/execution/05_local_reference_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/05_local_reference_vm");
+    try runExpect("tests/feature_tests/execution/05_local_reference_vm", 42);
+    try vmExpect("tests/feature_tests/execution/05_local_reference_vm", 42, null);
+}
+
+test "feature_tests/execution/06_array_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/06_array_vm");
+    try runExpect("tests/feature_tests/execution/06_array_vm", 42);
+    try vmExpect("tests/feature_tests/execution/06_array_vm", 42, null);
+}
+
+test "feature_tests/execution/07X_vm_array_bounds" {
+    try vmExpect("tests/feature_tests/execution/07X_vm_array_bounds", 1, "ExecutionIndexOutOfBounds");
+}
+
+test "feature_tests/execution/08_nested_places_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/08_nested_places_vm");
+    try runExpect("tests/feature_tests/execution/08_nested_places_vm", 42);
+    try vmExpect("tests/feature_tests/execution/08_nested_places_vm", 42, null);
+}
+
+test "feature_tests/execution/09_recursive_frames_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/09_recursive_frames_vm");
+    try runExpect("tests/feature_tests/execution/09_recursive_frames_vm", 42);
+    try vmExpect("tests/feature_tests/execution/09_recursive_frames_vm", 42, null);
+}
+
+test "feature_tests/execution/10_reference_calls_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/10_reference_calls_vm");
+    try runExpect("tests/feature_tests/execution/10_reference_calls_vm", 42);
+    try vmExpect("tests/feature_tests/execution/10_reference_calls_vm", 42, null);
+}
+
+test "feature_tests/execution/11_choices_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/11_choices_vm");
+    try runExpect("tests/feature_tests/execution/11_choices_vm", 42);
+    try vmExpect("tests/feature_tests/execution/11_choices_vm", 42, null);
+}
+
+test "feature_tests/execution/12_iterator_loops_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/12_iterator_loops_vm");
+    try runExpect("tests/feature_tests/execution/12_iterator_loops_vm", 42);
+    try vmExpect("tests/feature_tests/execution/12_iterator_loops_vm", 42, null);
+}
+
+test "feature_tests/execution/13_multiple_outputs_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/13_multiple_outputs_vm");
+    try runExpect("tests/feature_tests/execution/13_multiple_outputs_vm", 42);
+    try vmExpect("tests/feature_tests/execution/13_multiple_outputs_vm", 42, null);
+}
+
+test "feature_tests/execution/14_integer_boundaries_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/14_integer_boundaries_vm");
+    try runExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42);
+    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/14_integer_boundaries_vm", "--release" });
+    try runExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42);
+    try vmExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42, null);
+}
+
+test "feature_tests/execution/15_native_constant_wrapping" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/15_native_constant_wrapping");
+    try runExpect("tests/feature_tests/execution/15_native_constant_wrapping", 42);
+    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/15_native_constant_wrapping", "--release" });
+    try runExpect("tests/feature_tests/execution/15_native_constant_wrapping", 42);
+}
+
+test "feature_tests/execution/16X_integer_division_zero" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/16X_integer_division_zero");
+    try runExpectFailure("tests/feature_tests/execution/16X_integer_division_zero");
+    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/16X_integer_division_zero", "--release" });
+    try runExpectFailure("tests/feature_tests/execution/16X_integer_division_zero");
+    try vmExpect("tests/feature_tests/execution/16X_integer_division_zero", 1, "ExecutionDivisionByZero");
+}
+
+test "feature_tests/execution/17X_integer_remainder_zero" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/17X_integer_remainder_zero");
+    try runExpectFailure("tests/feature_tests/execution/17X_integer_remainder_zero");
+    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/17X_integer_remainder_zero", "--release" });
+    try runExpectFailure("tests/feature_tests/execution/17X_integer_remainder_zero");
+    try vmExpect("tests/feature_tests/execution/17X_integer_remainder_zero", 1, "ExecutionDivisionByZero");
+}
+
+test "feature_tests/execution/18_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/18_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/18_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/18_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/19_choice_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/19_choice_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/19_choice_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/19_choice_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/20_conditional_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/20_conditional_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/20_conditional_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/20_conditional_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/21_binding_replacement_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/21_binding_replacement_vm");
+    try runExpect("tests/feature_tests/execution/21_binding_replacement_vm", 42);
+    try vmExpect("tests/feature_tests/execution/21_binding_replacement_vm", 42, null);
+}
+
+test "feature_tests/execution/22X_replacement_retains_old_storage" {
+    try buildExpectFail("tests/feature_tests/execution/22X_replacement_retains_old_storage", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/22X_replacement_retains_old_storage", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/23_field_replacement_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/23_field_replacement_vm");
+    try runExpect("tests/feature_tests/execution/23_field_replacement_vm", 42);
+    try vmExpect("tests/feature_tests/execution/23_field_replacement_vm", 42, null);
+}
+
+test "feature_tests/execution/24X_field_replacement_retains_old_storage" {
+    try buildExpectFail("tests/feature_tests/execution/24X_field_replacement_retains_old_storage", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/24X_field_replacement_retains_old_storage", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/25_owning_reference_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/25_owning_reference_vm_boundary");
+    try runExpect("tests/feature_tests/execution/25_owning_reference_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/25_owning_reference_vm_boundary", 0, null);
+}
+
+test "feature_tests/execution/26_structural_reference_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/26_structural_reference_vm_boundary");
+    try runExpect("tests/feature_tests/execution/26_structural_reference_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/26_structural_reference_vm_boundary", 0, null);
+}
+
+test "feature_tests/execution/27_borrowed_reference_write_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/27_borrowed_reference_write_vm");
+    try runExpect("tests/feature_tests/execution/27_borrowed_reference_write_vm", 42);
+    try vmExpect("tests/feature_tests/execution/27_borrowed_reference_write_vm", 42, null);
+}
+
+test "feature_tests/execution/28_reference_field_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/28_reference_field_vm_boundary");
+    try runExpect("tests/feature_tests/execution/28_reference_field_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/28_reference_field_vm_boundary", 0, null);
+}
+
+test "feature_tests/execution/29_owning_indexed_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/29_owning_indexed_vm_boundary");
+    try runExpect("tests/feature_tests/execution/29_owning_indexed_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/29_owning_indexed_vm_boundary", 0, null);
+}
+
+test "feature_tests/execution/30_local_alias_replacement_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/30_local_alias_replacement_vm");
+    try runExpect("tests/feature_tests/execution/30_local_alias_replacement_vm", 42);
+    try vmExpect("tests/feature_tests/execution/30_local_alias_replacement_vm", 42, null);
+}
+
+test "feature_tests/execution/31X_alias_replacement_retains_old_storage" {
+    try buildExpectFail("tests/feature_tests/execution/31X_alias_replacement_retains_old_storage", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/31X_alias_replacement_retains_old_storage", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/32X_alias_replacement_keeps_sibling_stale" {
+    try buildExpectFail("tests/feature_tests/execution/32X_alias_replacement_keeps_sibling_stale", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/32X_alias_replacement_keeps_sibling_stale", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/33_retargetable_alias_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/33_retargetable_alias_vm_boundary");
+    try runExpect("tests/feature_tests/execution/33_retargetable_alias_vm_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/33_retargetable_alias_vm_boundary", 0, null);
+}
+
+test "feature_tests/execution/34X_destination_checked_before_rhs" {
+    const fixture = "tests/feature_tests/execution/34X_destination_checked_before_rhs";
+    try expectSuccessfulBuild(fixture);
+    const path = try outputPathFor(fixture);
+    defer std.testing.allocator.free(path);
+    const result = try runChild(&.{path});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expect(result.term != .exited or result.term.exited != 0);
+    try expect(std.mem.indexOf(u8, result.stderr, "runtime error: array index is out of bounds") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "explicit abort") == null);
+    try vmExpect("tests/feature_tests/execution/34X_destination_checked_before_rhs", 1, "ExecutionIndexOutOfBounds");
+}
+
+test "feature_tests/execution/35_destination_captured_once_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/35_destination_captured_once_vm");
+    try runExpect("tests/feature_tests/execution/35_destination_captured_once_vm", 42);
+    try vmExpect("tests/feature_tests/execution/35_destination_captured_once_vm", 42, null);
+}
+
+test "feature_tests/ownership/362_call_reinitialization_restores_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/362_call_reinitialization_restores_cleanup");
+    try runExpect("tests/feature_tests/ownership/362_call_reinitialization_restores_cleanup", 42);
+}
+
+test "feature_tests/ownership/363X_conditional_initialization_requires_outcome" {
+    try buildExpectFail("tests/feature_tests/ownership/363X_conditional_initialization_requires_outcome", "cannot select cleanup for conditional initialization");
+}
+
+test "feature_tests/execution/36_record_reference_replacement_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/36_record_reference_replacement_vm");
+    try runExpect("tests/feature_tests/execution/36_record_reference_replacement_vm", 42);
+    try vmExpect("tests/feature_tests/execution/36_record_reference_replacement_vm", 42, null);
+}
+
+test "feature_tests/execution/37X_record_reference_keeps_sibling_stale" {
+    try buildExpectFail("tests/feature_tests/execution/37X_record_reference_keeps_sibling_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/364_projected_call_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/364_projected_call_reinitialization");
+    try runExpect("tests/feature_tests/ownership/364_projected_call_reinitialization", 42);
+    try vmExpect("tests/feature_tests/ownership/364_projected_call_reinitialization", 42, null);
+}
+
+test "feature_tests/ownership/365X_projected_call_keeps_copy_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/365X_projected_call_keeps_copy_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/366X_projected_call_keeps_sibling_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/366X_projected_call_keeps_sibling_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/38_zero_sized_cleanup_identity_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/38_zero_sized_cleanup_identity_vm");
+    try runExpect("tests/feature_tests/execution/38_zero_sized_cleanup_identity_vm", 42);
+    try vmExpect("tests/feature_tests/execution/38_zero_sized_cleanup_identity_vm", 42, null);
+}
+
+test "feature_tests/execution/39_contextual_empty_records_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/39_contextual_empty_records_vm");
+    try runExpect("tests/feature_tests/execution/39_contextual_empty_records_vm", 42);
+    try vmExpect("tests/feature_tests/execution/39_contextual_empty_records_vm", 42, null);
+}
+
+test "feature_tests/execution/40_captured_replacement_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/40_captured_replacement_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/40_captured_replacement_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/40_captured_replacement_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/41_forwarded_reference_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/41_forwarded_reference_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/41_forwarded_reference_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/41_forwarded_reference_cleanup_vm", 42, null);
+}
+
+test "feature_tests/ownership/367X_forwarded_reference_keeps_sibling_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/367X_forwarded_reference_keeps_sibling_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/368_nested_replacement_captured_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/368_nested_replacement_captured_cleanup");
+    try runExpect("tests/feature_tests/ownership/368_nested_replacement_captured_cleanup", 42);
+}
+
+test "feature_tests/execution/42_dynamic_reference_cleanup_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary");
+    try runExpect("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary", 0);
+    try vmExpect("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary", 0, null);
+}
+
+test "feature_tests/ownership/369_symbolic_reference_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/369_symbolic_reference_reinitialization");
+    try runExpect("tests/feature_tests/ownership/369_symbolic_reference_reinitialization", 42);
+}
+
+test "feature_tests/ownership/370X_symbolic_reinitialization_keeps_copy_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/370X_symbolic_reinitialization_keeps_copy_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/371X_symbolic_reinitialization_keeps_possible_alias_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/371X_symbolic_reinitialization_keeps_possible_alias_stale", "observes storage after an aliased participant");
+}
+
+test "feature_tests/ownership/372X_symbolic_reinitialization_rhs_cannot_read_vacant" {
+    try buildExpectFail("tests/feature_tests/ownership/372X_symbolic_reinitialization_rhs_cannot_read_vacant", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/373_symbolic_call_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/373_symbolic_call_reinitialization");
+    try runExpect("tests/feature_tests/ownership/373_symbolic_call_reinitialization", 42);
+}
+
+test "feature_tests/ownership/374X_symbolic_call_reinitialization_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/374X_symbolic_call_reinitialization_keeps_alias_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/375X_symbolic_call_possible_initialization" {
+    try buildExpectFail("tests/feature_tests/ownership/375X_symbolic_call_possible_initialization", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/376_symbolic_record_call_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/376_symbolic_record_call_reinitialization");
+    try runExpect("tests/feature_tests/ownership/376_symbolic_record_call_reinitialization", 42);
+}
+
+test "feature_tests/ownership/377X_symbolic_record_call_keeps_copy_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/377X_symbolic_record_call_keeps_copy_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/43_nested_cleanup_projection_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/43_nested_cleanup_projection_vm");
+    try runExpect("tests/feature_tests/execution/43_nested_cleanup_projection_vm", 42);
+    try vmExpect("tests/feature_tests/execution/43_nested_cleanup_projection_vm", 42, null);
+}
+
+test "feature_tests/execution/44_explicit_reference_reinitialization_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/44_explicit_reference_reinitialization_vm");
+    try runExpect("tests/feature_tests/execution/44_explicit_reference_reinitialization_vm", 42);
+    try vmExpect("tests/feature_tests/execution/44_explicit_reference_reinitialization_vm", 42, null);
+}
+
+test "feature_tests/execution/45_contextual_nested_arrays_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/45_contextual_nested_arrays_vm");
+    try runExpect("tests/feature_tests/execution/45_contextual_nested_arrays_vm", 42);
+    try vmExpect("tests/feature_tests/execution/45_contextual_nested_arrays_vm", 42, null);
+}
+
+test "feature_tests/execution/46_record_reference_reinitialization_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/46_record_reference_reinitialization_vm");
+    try runExpect("tests/feature_tests/execution/46_record_reference_reinitialization_vm", 42);
+    try vmExpect("tests/feature_tests/execution/46_record_reference_reinitialization_vm", 42, null);
+}
+
+test "feature_tests/ownership/378X_record_input_keeps_copy_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/378X_record_input_keeps_copy_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/379X_record_input_keeps_possible_alias_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/379X_record_input_keeps_possible_alias_stale", "observes storage after an aliased participant");
+}
+
+test "feature_tests/ownership/380X_record_input_repeated_consumption" {
+    try buildExpectFail("tests/feature_tests/ownership/380X_record_input_repeated_consumption", "consumption requires an initialized owner");
+}
+
+test "feature_tests/execution/47_comptime_run" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/47_comptime_run");
+    try runExpect("tests/feature_tests/execution/47_comptime_run", 42);
+    try vmExpect("tests/feature_tests/execution/47_comptime_run", 42, null);
+}
+
+test "feature_tests/execution/48X_comptime_runtime_argument" {
+    try buildExpectFail("tests/feature_tests/execution/48X_comptime_runtime_argument", "#run arguments must be compile-time constants");
+}
+
+test "feature_tests/execution/49X_comptime_abort" {
+    try buildExpectFail("tests/feature_tests/execution/49X_comptime_abort", "#run evaluation aborted");
+}
+
+test "feature_tests/execution/50X_comptime_cycle" {
+    try buildExpectFail("tests/feature_tests/execution/50X_comptime_cycle", "cyclic dependency between #run evaluations");
+}
+
+test "feature_tests/execution/51X_comptime_reference_result" {
+    try buildExpectFail("tests/feature_tests/execution/51X_comptime_reference_result", "#run cannot return references or values requiring cleanup");
+}
+
+test "feature_tests/execution/52X_comptime_instruction_limit" {
+    try buildExpectFail("tests/feature_tests/execution/52X_comptime_instruction_limit", "#run evaluation exceeded its instruction limit");
+}
+
+test "feature_tests/execution/53_comptime_argument_calls" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/53_comptime_argument_calls");
+    try runExpect("tests/feature_tests/execution/53_comptime_argument_calls", 42);
+    try vmExpect("tests/feature_tests/execution/53_comptime_argument_calls", 42, null);
+}
+
+test "feature_tests/execution/54X_comptime_shared_budget" {
+    try buildExpectFail("tests/feature_tests/execution/54X_comptime_shared_budget", "#run evaluation exceeded its instruction limit");
+}
+
+test "feature_tests/execution/55X_output_default_consumption" {
+    try buildExpectFail("tests/feature_tests/execution/55X_output_default_consumption", "consumption requires an initialized owner");
+}
+
+test "feature_tests/execution/56_output_default_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/56_output_default_reinitialization");
+    try runExpect("tests/feature_tests/execution/56_output_default_reinitialization", 42);
+    try vmExpect("tests/feature_tests/execution/56_output_default_reinitialization", 42, null);
+}
+
+test "feature_tests/execution/57X_output_default_keeps_old_generation" {
+    try buildExpectFail("tests/feature_tests/execution/57X_output_default_keeps_old_generation", "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/58_output_default_reference" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/58_output_default_reference");
+    try runExpect("tests/feature_tests/execution/58_output_default_reference", 42);
+    try vmExpect("tests/feature_tests/execution/58_output_default_reference", 42, null);
+}
+
+test "feature_tests/execution/59_output_default_scope" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/59_output_default_scope");
+    try runExpect("tests/feature_tests/execution/59_output_default_scope", 42);
+    try vmExpect("tests/feature_tests/execution/59_output_default_scope", 42, null);
+}
+
+test "feature_tests/execution/60X_concrete_output_default_consumption" {
+    try buildExpectFail("tests/feature_tests/execution/60X_concrete_output_default_consumption", "consumption requires an initialized owner");
+}
+
+test "feature_tests/execution/61X_output_default_implicit_copy" {
+    try buildExpectFail("tests/feature_tests/execution/61X_output_default_implicit_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/execution/62_comptime_aggregate_projection" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/62_comptime_aggregate_projection");
+    try runExpect("tests/feature_tests/execution/62_comptime_aggregate_projection", 42);
+    try vmExpect("tests/feature_tests/execution/62_comptime_aggregate_projection", 42, null);
+}
+
+test "feature_tests/execution/63X_comptime_projection_bounds" {
+    try buildExpectFail("tests/feature_tests/execution/63X_comptime_projection_bounds", "#run array index is out of bounds");
+}
+
+test "feature_tests/execution/64_comptime_specialization_arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/64_comptime_specialization_arguments");
+    try runExpect("tests/feature_tests/execution/64_comptime_specialization_arguments", 42);
+    try vmExpect("tests/feature_tests/execution/64_comptime_specialization_arguments", 42, null);
+}
+
+test "feature_tests/execution/65X_comptime_noninteger_argument" {
+    try buildExpectFail("tests/feature_tests/execution/65X_comptime_noninteger_argument", "compile-time integer argument requires an integer result");
+}
+
+test "feature_tests/execution/66X_comptime_argument_safety" {
+    try buildExpectFail("tests/feature_tests/execution/66X_comptime_argument_safety", "consumption requires an initialized owner");
+}
+
+test "feature_tests/execution/67_comptime_argument_default_suspension" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/67_comptime_argument_default_suspension");
+    try runExpect("tests/feature_tests/execution/67_comptime_argument_default_suspension", 42);
+    try vmExpect("tests/feature_tests/execution/67_comptime_argument_default_suspension", 42, null);
+}
+
+test "feature_tests/execution/68_computed_generic_condition" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/68_computed_generic_condition");
+    try runExpect("tests/feature_tests/execution/68_computed_generic_condition", 42);
+    try vmExpect("tests/feature_tests/execution/68_computed_generic_condition", 42, null);
+}
+
+test "feature_tests/execution/69_computed_concrete_condition" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/69_computed_concrete_condition");
+    try runExpect("tests/feature_tests/execution/69_computed_concrete_condition", 42);
+    try vmExpect("tests/feature_tests/execution/69_computed_concrete_condition", 42, null);
+}
+
+test "feature_tests/execution/70X_computed_nonboolean_condition" {
+    try buildExpectFail("tests/feature_tests/execution/70X_computed_nonboolean_condition", "compile-time condition requires a Bool result");
+}
+
+test "feature_tests/execution/71X_computed_runtime_condition" {
+    try buildExpectFail("tests/feature_tests/execution/71X_computed_runtime_condition", "runtime values cannot be used");
+}
+
+test "feature_tests/execution/72X_computed_selected_branch" {
+    try buildExpectFail("tests/feature_tests/execution/72X_computed_selected_branch", "cannot materialize function body");
+}
+
+test "feature_tests/execution/73_computed_condition_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/73_computed_condition_cleanup");
+    try runExpect("tests/feature_tests/execution/73_computed_condition_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/73_computed_condition_cleanup", 42, null);
+}
+
+test "feature_tests/execution/74X_computed_condition_safety" {
+    try buildExpectFail("tests/feature_tests/execution/74X_computed_condition_safety", "consumption requires an initialized owner");
+}
+
+test "feature_tests/execution/75_computed_module_condition" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/75_computed_module_condition");
+    try runExpect("tests/feature_tests/execution/75_computed_module_condition", 42);
+    try vmExpect("tests/feature_tests/execution/75_computed_module_condition", 42, null);
+}
+
+test "feature_tests/execution/76X_computed_condition_cycle" {
+    try buildExpectFail("tests/feature_tests/execution/76X_computed_condition_cycle", "unresolved or cyclic semantic dependencies");
+}
+
+test "feature_tests/execution/77_computed_test_condition" {
+    try argiTestExpectStderr("tests/feature_tests/execution/77_computed_test_condition", &.{}, 0, "PASS selected\n");
+}
+
+test "feature_tests/execution/78X_computed_discarded_binding" {
+    try buildExpectFail("tests/feature_tests/execution/78X_computed_discarded_binding", "unknown name 'missing' in this scope");
+}
+
+test "feature_tests/execution/79_string_literals_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/79_string_literals_vm");
+    try runExpect("tests/feature_tests/execution/79_string_literals_vm", 42);
+    try vmExpect("tests/feature_tests/execution/79_string_literals_vm", 42, null);
+}
+
+test "feature_tests/execution/80_virtual_dispatch_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/80_virtual_dispatch_vm");
+    try runExpect("tests/feature_tests/execution/80_virtual_dispatch_vm", 42);
+    try vmExpect("tests/feature_tests/execution/80_virtual_dispatch_vm", 42, null);
+}
+
+test "feature_tests/execution/81_capture_error_tracer_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/81_capture_error_tracer_vm");
+    try runExpect("tests/feature_tests/execution/81_capture_error_tracer_vm", 42);
+    try vmExpect("tests/feature_tests/execution/81_capture_error_tracer_vm", 42, null);
+}
+
+test "feature_tests/execution/82_source_location_ids_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/82_source_location_ids_vm");
+    try runExpect("tests/feature_tests/execution/82_source_location_ids_vm", 42);
+    try vmExpect("tests/feature_tests/execution/82_source_location_ids_vm", 42, null);
+}
+
+test "feature_tests/execution/83_error_propagation_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/83_error_propagation_vm");
+    try runExpect("tests/feature_tests/execution/83_error_propagation_vm", 42);
+    try vmExpect("tests/feature_tests/execution/83_error_propagation_vm", 42, null);
+}
+
+test "feature_tests/execution/84_numeric_byte_views_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/84_numeric_byte_views_vm");
+    try runExpect("tests/feature_tests/execution/84_numeric_byte_views_vm", 42);
+    try vmExpect("tests/feature_tests/execution/84_numeric_byte_views_vm", 42, null);
+}
+
+test "feature_tests/execution/85_globals_and_core_tracer_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/85_globals_and_core_tracer_vm");
+    try runExpect("tests/feature_tests/execution/85_globals_and_core_tracer_vm", 42);
+    try vmExpect("tests/feature_tests/execution/85_globals_and_core_tracer_vm", 42, null);
+}
+
+test "feature_tests/system/21_once_completed_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/system/21_once_completed_defaults");
+    try runExpect("tests/feature_tests/system/21_once_completed_defaults", 42);
+    try vmExpect("tests/feature_tests/system/21_once_completed_defaults", 42, null);
+}
+
+test "feature_tests/execution/86_deferred_address_temporaries_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/86_deferred_address_temporaries_vm");
+    try runExpect("tests/feature_tests/execution/86_deferred_address_temporaries_vm", 42);
+    try vmExpect("tests/feature_tests/execution/86_deferred_address_temporaries_vm", 42, null);
+}
+
+test "feature_tests/execution/87X_vm_host_requires_binding" {
+    try vmExpect("tests/feature_tests/execution/87X_vm_host_requires_binding", 1, "MissingHostBinding");
+}
+
+test "feature_tests/execution/88_partial_record_outputs_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/88_partial_record_outputs_vm");
+    try runExpect("tests/feature_tests/execution/88_partial_record_outputs_vm", 42);
+    try vmExpect("tests/feature_tests/execution/88_partial_record_outputs_vm", 42, null);
+}
+
+test "feature_tests/execution/89_partial_local_records_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/89_partial_local_records_vm");
+    try runExpect("tests/feature_tests/execution/89_partial_local_records_vm", 42);
+    try vmExpect("tests/feature_tests/execution/89_partial_local_records_vm", 42, null);
+}
+
+test "feature_tests/execution/90_partial_local_owner_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/90_partial_local_owner_vm");
+    try runExpect("tests/feature_tests/execution/90_partial_local_owner_vm", 42);
+    try vmExpect("tests/feature_tests/execution/90_partial_local_owner_vm", 42, null);
+}
+
+test "feature_tests/execution/91_partial_owner_child_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/91_partial_owner_child_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/91_partial_owner_child_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/91_partial_owner_child_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/92X_partial_owner_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/execution/92X_partial_owner_cleanup_borrow", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/92X_partial_owner_cleanup_borrow", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/93X_field_completed_owner_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/execution/93X_field_completed_owner_cleanup_borrow", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/93X_field_completed_owner_cleanup_borrow", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/94_partial_owner_error_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/94_partial_owner_error_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/94_partial_owner_error_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/94_partial_owner_error_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/95_partial_owner_allocated_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/95_partial_owner_allocated_cleanup");
+    try runExpect("tests/feature_tests/execution/95_partial_owner_allocated_cleanup", 42);
+}
+
+test "feature_tests/execution/96_empty_record_values_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/96_empty_record_values_vm");
+    try runExpect("tests/feature_tests/execution/96_empty_record_values_vm", 42);
+    try vmExpect("tests/feature_tests/execution/96_empty_record_values_vm", 42, null);
+}
+
+test "feature_tests/execution/97_scalar_reference_initialization_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/97_scalar_reference_initialization_vm");
+    try runExpect("tests/feature_tests/execution/97_scalar_reference_initialization_vm", 42);
+    try vmExpect("tests/feature_tests/execution/97_scalar_reference_initialization_vm", 42, null);
+}
+
+test "feature_tests/execution/98_field_completed_records_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/98_field_completed_records_vm");
+    try runExpect("tests/feature_tests/execution/98_field_completed_records_vm", 42);
+    try vmExpect("tests/feature_tests/execution/98_field_completed_records_vm", 42, null);
+}
+
+test "feature_tests/execution/99X_incomplete_nested_record" {
+    try buildExpectFail("tests/feature_tests/execution/99X_incomplete_nested_record", "deinitialized");
+}
+
+test "feature_tests/execution/100X_completed_record_stale_reference" {
+    try buildExpectFail("tests/feature_tests/execution/100X_completed_record_stale_reference", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/100X_completed_record_stale_reference", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/101_field_completed_owner_move_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/101_field_completed_owner_move_vm");
+    try runExpect("tests/feature_tests/execution/101_field_completed_owner_move_vm", 42);
+    try vmExpect("tests/feature_tests/execution/101_field_completed_owner_move_vm", 42, null);
+}
+
+test "feature_tests/execution/102_partial_arrays_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/102_partial_arrays_vm");
+    try runExpect("tests/feature_tests/execution/102_partial_arrays_vm", 42);
+    try vmExpect("tests/feature_tests/execution/102_partial_arrays_vm", 42, null);
+}
+
+test "feature_tests/execution/103X_partial_array_missing_element" {
+    try buildExpectFail("tests/feature_tests/execution/103X_partial_array_missing_element", "deinitialized");
+    try vmExpect("tests/feature_tests/execution/103X_partial_array_missing_element", 1, "deinitialized");
+}
+
+test "feature_tests/execution/104_partial_owning_array_field" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/104_partial_owning_array_field");
+    try runExpect("tests/feature_tests/execution/104_partial_owning_array_field", 0);
+    try vmExpect("tests/feature_tests/execution/104_partial_owning_array_field", 0, null);
+}
+
+test "feature_tests/execution/105X_partial_array_reference_lifetime" {
+    try buildExpectFail("tests/feature_tests/execution/105X_partial_array_reference_lifetime", "depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/105X_partial_array_reference_lifetime", 1, "depends on a root that has ended");
+}
+
+test "feature_tests/execution/106X_partial_array_explicit_dependency" {
+    try buildExpectFail("tests/feature_tests/execution/106X_partial_array_explicit_dependency", "depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/106X_partial_array_explicit_dependency", 1, "depends on a root that has ended");
+}
+
+test "feature_tests/execution/107_computed_module_imports" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/107_computed_module_imports");
+    try runExpect("tests/feature_tests/execution/107_computed_module_imports", 42);
+    try vmExpect("tests/feature_tests/execution/107_computed_module_imports", 42, null);
+}
+
+test "feature_tests/execution/108X_module_condition_nonboolean" {
+    try buildExpectFail("tests/feature_tests/execution/108X_module_condition_nonboolean", "compile-time condition requires a Bool result");
+}
+
+test "feature_tests/execution/109X_module_condition_safety" {
+    try buildExpectFail("tests/feature_tests/execution/109X_module_condition_safety", "deinitialized");
+}
+
+test "feature_tests/execution/110X_computed_import_cycle" {
+    try buildExpectFail("tests/feature_tests/execution/110X_computed_import_cycle", "import cycle detected after compile-time selection");
+}
+
+test "feature_tests/testing/31_computed_module_selection" {
+    try argiTestExpectStderr("tests/feature_tests/testing/31_computed_module_selection", &.{}, 0, "PASS selected\n");
+    try argiTestExpectStderr("tests/feature_tests/testing/31_computed_module_selection", &.{ "--filter", "discarded" }, 1, "No tests found\n");
+}
+
+test "feature_tests/execution/111X_unknown_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/111X_unknown_value", "unknown name 'unknown_value' in this scope", "global sema unresolved");
+    try vmExpect("tests/feature_tests/execution/111X_unknown_value", 1, "unknown name 'unknown_value' in this scope");
+}
+
+test "feature_tests/execution/112X_comptime_unknown_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/112X_comptime_unknown_value", "unknown name 'unknown_value' in this scope", "global sema unresolved");
+}
+
+test "feature_tests/execution/113_generic_global_scope" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/113_generic_global_scope");
+    try runExpect("tests/feature_tests/execution/113_generic_global_scope", 42);
+    try vmExpect("tests/feature_tests/execution/113_generic_global_scope", 42, null);
+}
+
+test "feature_tests/execution/114X_generic_inaccessible_global" {
+    try buildExpectFail("tests/feature_tests/execution/114X_generic_inaccessible_global", "unknown name 'foreign_value' in this scope");
+}
+
+test "feature_tests/execution/115_computed_transient_types" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/115_computed_transient_types");
+    try runExpect("tests/feature_tests/execution/115_computed_transient_types", 42);
+    try vmExpect("tests/feature_tests/execution/115_computed_transient_types", 42, null);
+}
+
+test "bytecode CLI execution budgets" {
+    const path = "tests/feature_tests/execution/115_computed_transient_types";
+    const bounded = try runChild(&.{ argi_bin, "run", "--vm", "--frontend-jobs", "1", "--vm-instructions", "0", path });
+    defer std.testing.allocator.free(bounded.stdout);
+    defer std.testing.allocator.free(bounded.stderr);
+    try expect(bounded.term == .exited and bounded.term.exited != 0);
+    try expect(std.mem.indexOf(u8, bounded.stderr, "ExecutionInstructionLimit") != null);
+    const allowed = try runChild(&.{ argi_bin, "run", "--vm", "--frontend-jobs", "1", "--vm-instructions", "1000000", "--vm-call-depth", "128", "--vm-value-cells", "1000000", path });
+    defer std.testing.allocator.free(allowed.stdout);
+    defer std.testing.allocator.free(allowed.stderr);
+    try expect(allowed.term == .exited and allowed.term.exited == 42);
+    const invalid = try runChild(&.{ argi_bin, "repl", "--vm-instructions", "-1" });
+    defer std.testing.allocator.free(invalid.stdout);
+    defer std.testing.allocator.free(invalid.stderr);
+    try expect(invalid.term == .exited and invalid.term.exited != 0);
+    try expect(std.mem.indexOf(u8, invalid.stderr, "InvalidExecutionLimit") != null);
+}
+
+test "feature_tests/execution/116_partial_record_choice_payload" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/116_partial_record_choice_payload");
+    try runExpect("tests/feature_tests/execution/116_partial_record_choice_payload", 42);
+    try vmExpect("tests/feature_tests/execution/116_partial_record_choice_payload", 42, null);
+}
+
+test "feature_tests/execution/117_acquired_memory_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/117_acquired_memory_boundary");
+    try runExpect("tests/feature_tests/execution/117_acquired_memory_boundary", 42);
+    try vmExpect("tests/feature_tests/execution/117_acquired_memory_boundary", 42, null);
+}
+
+test "feature_tests/execution/118_acquired_scalar_reference" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/118_acquired_scalar_reference");
+    try runExpect("tests/feature_tests/execution/118_acquired_scalar_reference", 42);
+    try vmExpect("tests/feature_tests/execution/118_acquired_scalar_reference", 42, null);
+}
+
+test "feature_tests/execution/119_allocation_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/119_allocation_cleanup");
+    try runExpect("tests/feature_tests/execution/119_allocation_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/119_allocation_cleanup", 42, null);
+}
+
+test "feature_tests/execution/120_acquired_aggregate_reference" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/120_acquired_aggregate_reference");
+    try runExpect("tests/feature_tests/execution/120_acquired_aggregate_reference", 42);
+    try vmExpect("tests/feature_tests/execution/120_acquired_aggregate_reference", 42, null);
+}
+
+test "feature_tests/execution/140_floating_memory" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/140_floating_memory");
+    try runExpect("tests/feature_tests/execution/140_floating_memory", 42);
+    try vmExpect("tests/feature_tests/execution/140_floating_memory", 42, null);
+}
+
+test "feature_tests/execution/149_comptime_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/149_comptime_record_defaults");
+    try runExpect("tests/feature_tests/execution/149_comptime_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/149_comptime_record_defaults", 42, null);
+}
+
+test "feature_tests/execution/150_comptime_array_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/150_comptime_array_defaults");
+    try runExpect("tests/feature_tests/execution/150_comptime_array_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/150_comptime_array_defaults", 42, null);
+}
+
+test "feature_tests/execution/151_choice_payload_evaluated_address" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/151_choice_payload_evaluated_address");
+    try runExpect("tests/feature_tests/execution/151_choice_payload_evaluated_address", 42);
+    try vmExpect("tests/feature_tests/execution/151_choice_payload_evaluated_address", 42, null);
+}
+
+test "feature_tests/execution/152_anonymous_comptime_entry" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/152_anonymous_comptime_entry");
+    try runExpect("tests/feature_tests/execution/152_anonymous_comptime_entry", 42);
+    try vmExpect("tests/feature_tests/execution/152_anonymous_comptime_entry", 42, null);
+}
+
+test "feature_tests/execution/153_anonymous_comptime_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/153_anonymous_comptime_cleanup");
+    try runExpect("tests/feature_tests/execution/153_anonymous_comptime_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/153_anonymous_comptime_cleanup", 42, null);
+}
+
+test "feature_tests/execution/154_generic_anonymous_comptime_entry" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/154_generic_anonymous_comptime_entry");
+    try runExpect("tests/feature_tests/execution/154_generic_anonymous_comptime_entry", 42);
+    try vmExpect("tests/feature_tests/execution/154_generic_anonymous_comptime_entry", 42, null);
+}
+
+test "feature_tests/execution/121_type_queries" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/121_type_queries");
+    try runExpect("tests/feature_tests/execution/121_type_queries", 42);
+    try vmExpect("tests/feature_tests/execution/121_type_queries", 42, null);
+}
+
+test "feature_tests/execution/130_partial_record_indirect_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/130_partial_record_indirect_replacement");
+    try runExpect("tests/feature_tests/execution/130_partial_record_indirect_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/130_partial_record_indirect_replacement", 42, null);
+}
+
+test "feature_tests/execution/131_partial_record_live_sibling_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/131_partial_record_live_sibling_cleanup");
+    try runExpect("tests/feature_tests/execution/131_partial_record_live_sibling_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/131_partial_record_live_sibling_cleanup", 42, null);
+}
+
+test "feature_tests/execution/132_projected_symbolic_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/132_projected_symbolic_initialization");
+    try runExpect("tests/feature_tests/execution/132_projected_symbolic_initialization", 42);
+    try vmExpect("tests/feature_tests/execution/132_projected_symbolic_initialization", 42, null);
+}
+
+test "feature_tests/execution/133X_projected_symbolic_historical_alias" {
+    try buildExpectFail("tests/feature_tests/execution/133X_projected_symbolic_historical_alias", "root that has ended");
+}
+
+test "feature_tests/execution/134X_projected_symbolic_participant_alias" {
+    try buildExpectFail("tests/feature_tests/execution/134X_projected_symbolic_participant_alias", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/135_projected_symbolic_read_before_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/135_projected_symbolic_read_before_consumption");
+    try runExpect("tests/feature_tests/execution/135_projected_symbolic_read_before_consumption", 42);
+    try vmExpect("tests/feature_tests/execution/135_projected_symbolic_read_before_consumption", 42, null);
+}
+
+test "feature_tests/execution/141_projected_symbolic_independent_participant" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/141_projected_symbolic_independent_participant");
+    try runExpect("tests/feature_tests/execution/141_projected_symbolic_independent_participant", 42);
+    try vmExpect("tests/feature_tests/execution/141_projected_symbolic_independent_participant", 42, null);
+}
+
+test "feature_tests/execution/142X_projected_observation_loop_alias" {
+    try buildExpectFail("tests/feature_tests/execution/142X_projected_observation_loop_alias", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/143_projected_observation_forwarding" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/143_projected_observation_forwarding");
+    try runExpect("tests/feature_tests/execution/143_projected_observation_forwarding", 42);
+    try vmExpect("tests/feature_tests/execution/143_projected_observation_forwarding", 42, null);
+}
+
+test "feature_tests/execution/144X_projected_observation_args_alias" {
+    try buildExpectFail("tests/feature_tests/execution/144X_projected_observation_args_alias", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/145_projected_observation_args_independent" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/145_projected_observation_args_independent");
+    try runExpect("tests/feature_tests/execution/145_projected_observation_args_independent", 42);
+    try vmExpect("tests/feature_tests/execution/145_projected_observation_args_independent", 42, null);
+}
+
+test "feature_tests/execution/146X_projected_observation_returned_reference" {
+    try buildExpectFail("tests/feature_tests/execution/146X_projected_observation_returned_reference", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/147_symbolic_reinitialization_independent" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/147_symbolic_reinitialization_independent");
+    try runExpect("tests/feature_tests/execution/147_symbolic_reinitialization_independent", 42);
+    try vmExpect("tests/feature_tests/execution/147_symbolic_reinitialization_independent", 42, null);
+}
+
+test "feature_tests/execution/148X_projected_observation_operand_effect" {
+    try buildExpectFail("tests/feature_tests/execution/148X_projected_observation_operand_effect", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/136_comptime_lexical_boundaries" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/136_comptime_lexical_boundaries");
+    try runExpect("tests/feature_tests/execution/136_comptime_lexical_boundaries", 42);
+    try vmExpect("tests/feature_tests/execution/136_comptime_lexical_boundaries", 42, null);
+}
+
+test "feature_tests/execution/137_comptime_transient_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/137_comptime_transient_defaults");
+    try runExpect("tests/feature_tests/execution/137_comptime_transient_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/137_comptime_transient_defaults", 42, null);
+}
+
+test "argi repl retains transient default recipes across commands" {
+    try expectReplFixture(
+        "tests/feature_tests/execution/137_comptime_transient_defaults/main.rg",
+        "with_default(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default(.value = 9) }\nwith_default(.value = true)\n",
+        "_0 = 42\n_1 = 42\n_2 = 42\n",
+    );
+}
+test "feature_tests/execution/138_comptime_transient_expression_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/138_comptime_transient_expression_defaults");
+    try runExpect("tests/feature_tests/execution/138_comptime_transient_expression_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/138_comptime_transient_expression_defaults", 42, null);
+}
+
+test "argi repl distinguishes transient expression default specializations" {
+    try expectReplFixture(
+        "tests/feature_tests/execution/138_comptime_transient_expression_defaults/main.rg",
+        "with_default#(.T: Int32, .n = 40)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Int32, .n = 39)(.value = 9) }\nwith_default#(.T: Bool, .n = 40)(.value = true)\n",
+        "_0 = 42\n_1 = 41\n_2 = 42\n",
+    );
+}
+test "feature_tests/execution/139_comptime_default_effects" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/139_comptime_default_effects");
+    try runExpect("tests/feature_tests/execution/139_comptime_default_effects", 42);
+    try vmExpect("tests/feature_tests/execution/139_comptime_default_effects", 42, null);
+}
+
+fn expectReplFixture(fixture_path: ?[]const u8, commands: []const u8, expected: []const u8) !void {
+    return expectReplFixtureWithDiagnostic(fixture_path, commands, expected, null);
+}
+
+fn expectReplFixtureWithDiagnostic(fixture_path: ?[]const u8, commands: []const u8, expected: []const u8, expected_diagnostic: ?[]const u8) !void {
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    var child = try std.process.spawn(std.testing.io, .{
+        .argv = &.{ installed_argi, "repl" },
+        .cwd = .{ .path = compilerRoot() },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(std.testing.io);
+    if (fixture_path) |path| {
+        const fixture = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(64 * 1024));
+        defer std.testing.allocator.free(fixture);
+        const definitions_end = std.mem.indexOf(u8, fixture, "main()") orelse return error.MissingFixtureEntrypoint;
+        try child.stdin.?.writeStreamingAll(std.testing.io, ":begin\n");
+        try child.stdin.?.writeStreamingAll(std.testing.io, fixture[0..definitions_end]);
+        try child.stdin.?.writeStreamingAll(std.testing.io, ":end\n");
+    }
+    try child.stdin.?.writeStreamingAll(std.testing.io, commands);
+    try child.stdin.?.writeStreamingAll(std.testing.io, ":reset\n");
+    child.stdin.?.close(std.testing.io);
+    child.stdin = null;
+    var buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var reader: std.Io.File.MultiReader = undefined;
+    reader.init(std.testing.allocator, std.testing.io, buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer reader.deinit();
+    while (true) reader.fill(1, .none) catch |err| switch (err) {
+        error.EndOfStream => break,
+        else => return err,
+    };
+    const stdout = try reader.toOwnedSlice(0);
+    defer std.testing.allocator.free(stdout);
+    const stderr = try reader.toOwnedSlice(1);
+    defer std.testing.allocator.free(stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(std.testing.io));
+    if (expected_diagnostic) |message| {
+        try expectDiagnostic("argi repl", stderr, message);
+        try expectEqual(@as(usize, 1), std.mem.count(u8, stderr, ": error:"));
+    } else {
+        if (stderr.len != 0) std.debug.print("REPL stderr: {s}\n", .{stderr});
+        try expectEqualStrings("", stderr);
+    }
+    try expectEqualStrings(expected, stdout);
+}
+
+test "argi repl preserves record defaults across specializations" {
+    try expectReplFixture(
+        "tests/feature_tests/execution/149_comptime_record_defaults/main.rg",
+        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 16)(.value = true) }\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
+        "_0 = 42\n_1 = 41\n_2 = 42\n",
+    );
+}
+
+test "argi repl preserves array defaults across specializations" {
+    try expectReplFixture(
+        "tests/feature_tests/execution/150_comptime_array_defaults/main.rg",
+        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 16)(.value = true) }\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
+        "_0 = 42\n_1 = 41\n_2 = 42\n",
+    );
+}
+
+test "feature_tests/execution/155_nested_comptime_capture_context" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/155_nested_comptime_capture_context");
+    try runExpect("tests/feature_tests/execution/155_nested_comptime_capture_context", 42);
+    try vmExpect("tests/feature_tests/execution/155_nested_comptime_capture_context", 42, null);
+}
+
+test "feature_tests/execution/156X_nested_comptime_reference_output" {
+    try buildExpectFail("tests/feature_tests/execution/156X_nested_comptime_reference_output", "cannot return references or values requiring cleanup");
+}
+
+test "feature_tests/execution/157X_selected_runtime_comptime_capture" {
+    try buildExpectFail("tests/feature_tests/execution/157X_selected_runtime_comptime_capture", "runtime values cannot be used");
+}
+
+test "feature_tests/execution/158_concrete_selected_comptime_captures" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/158_concrete_selected_comptime_captures");
+    try runExpect("tests/feature_tests/execution/158_concrete_selected_comptime_captures", 42);
+    try vmExpect("tests/feature_tests/execution/158_concrete_selected_comptime_captures", 42, null);
+}
+
+test "feature_tests/execution/159X_concrete_selected_runtime_capture" {
+    try buildExpectFail("tests/feature_tests/execution/159X_concrete_selected_runtime_capture", "runtime values cannot be used");
+}
+
+test "feature_tests/execution/160_comptime_choice_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/160_comptime_choice_defaults");
+    try runExpect("tests/feature_tests/execution/160_comptime_choice_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/160_comptime_choice_defaults", 42, null);
+}
+
+test "argi repl preserves choice defaults across specializations" {
+    try expectReplFixture(
+        "tests/feature_tests/execution/160_comptime_choice_defaults/main.rg",
+        "with_default#(.T: Int32, .n = 42)(.value = 7)\nwith_default#(.T: Bool, .n = 41)(.value = true)\nwith_default#(.T: Int32, .n = 0)(.value = 9)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 42)(.value = true) }\n",
+        "_0 = 42\n_1 = 41\n_2 = 0\n_3 = 42\n",
+    );
+}
+
+test "feature_tests/execution/161_partial_choice_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/161_partial_choice_cleanup");
+    try runExpect("tests/feature_tests/execution/161_partial_choice_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/161_partial_choice_cleanup", 42, null);
+}
+
+test "argi repl supplies persistent allocator capabilities across reset" {
+    try expectReplFixture(
+        null,
+        "text ::= unwrap_or_abort(.value = String(.length = 3))\nbyte_length(.self = &text)\nnumbers ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)\nunwrap_or_abort(.value = get(.self = &numbers, .index = 0))\n:reset\ntext ::= unwrap_or_abort(.value = String(.length = 4))\nbyte_length(.self = &text)\n",
+        "_0 = 3\n_1 = ()\n_2 = 42\n_0 = 4\n",
+    );
+}
+
+test "feature_tests/execution/152_static_contract_alias_obligation" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/152_static_contract_alias_obligation");
+    try runExpect("tests/feature_tests/execution/152_static_contract_alias_obligation", 42);
+    try vmExpect("tests/feature_tests/execution/152_static_contract_alias_obligation", 42, null);
+}
+
+test "feature_tests/execution/153X_static_contract_aliased_observation" {
+    try buildExpectFail("tests/feature_tests/execution/153X_static_contract_aliased_observation", "observes storage after an aliased participant");
+}
+
+test "feature_tests/execution/154X_virtual_contract_alias_obligation" {
+    try buildExpectFail("tests/feature_tests/execution/154X_virtual_contract_alias_obligation", "a caller-side storage alias obligation is not represented by this contract");
+}
+
+test "feature_tests/execution/162_structural_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/162_structural_array_cleanup");
+    try runExpect("tests/feature_tests/execution/162_structural_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/162_structural_array_cleanup", 42, null);
+}
+
+test "feature_tests/execution/163X_array_cleanup_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/163X_array_cleanup_keeps_alias_stale", "root that has ended");
+}
+
+test "feature_tests/execution/164_zero_sized_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/164_zero_sized_array_cleanup");
+    try runExpect("tests/feature_tests/execution/164_zero_sized_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/164_zero_sized_array_cleanup", 42, null);
+}
+
+test "feature_tests/execution/165_indexed_owner_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/165_indexed_owner_replacement");
+    try runExpect("tests/feature_tests/execution/165_indexed_owner_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/165_indexed_owner_replacement", 42, null);
+}
+
+test "feature_tests/execution/166X_indexed_replacement_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/166X_indexed_replacement_keeps_alias_stale", "root that has ended");
+}
+
+test "feature_tests/execution/167_partial_owning_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/167_partial_owning_array_cleanup");
+    try runExpect("tests/feature_tests/execution/167_partial_owning_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/167_partial_owning_array_cleanup", 42, null);
+}
+
+test "feature_tests/execution/168_acquired_logical_slot" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/168_acquired_logical_slot");
+    try runExpect("tests/feature_tests/execution/168_acquired_logical_slot", 42);
+    try vmExpect("tests/feature_tests/execution/168_acquired_logical_slot", 42, null);
+}
+
+test "feature_tests/execution/169X_acquired_slot_index_mismatch" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/169X_acquired_slot_index_mismatch");
+    try runExpectFailure("tests/feature_tests/execution/169X_acquired_slot_index_mismatch");
+    const result = try runArgiCommand(&.{ "run", "--vm", "tests/feature_tests/execution/169X_acquired_slot_index_mismatch" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectDiagnostic("tests/feature_tests/execution/169X_acquired_slot_index_mismatch", result.stderr, "ExecutionAborted");
+    try expectDiagnostic("tests/feature_tests/execution/169X_acquired_slot_index_mismatch", result.stderr, "allocation_slots.rg:");
+}
+
+test "feature_tests/execution/170_nullable_generic_input" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/170_nullable_generic_input");
+    try runExpect("tests/feature_tests/execution/170_nullable_generic_input", 42);
+    try vmExpect("tests/feature_tests/execution/170_nullable_generic_input", 42, null);
+}
+
+test "feature_tests/execution/171_opaque_relocation" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/171_opaque_relocation");
+    try runExpect("tests/feature_tests/execution/171_opaque_relocation", 42);
+    try vmExpect("tests/feature_tests/execution/171_opaque_relocation", 42, null);
+}
+
+test "feature_tests/execution/172_relocation_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/172_relocation_cleanup");
+    try runExpect("tests/feature_tests/execution/172_relocation_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/172_relocation_cleanup", 42, null);
+}
+
+test "feature_tests/execution/173X_relocated_reference_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/173X_relocated_reference_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/174X_relocated_branch_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/174X_relocated_branch_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/175X_loop_output_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/175X_loop_output_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/176X_match_output_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/176X_match_output_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/177_opaque_reference_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/177_opaque_reference_evidence");
+    try runExpect("tests/feature_tests/execution/177_opaque_reference_evidence", 42);
+    try vmExpect("tests/feature_tests/execution/177_opaque_reference_evidence", 42, null);
+}
+
+test "feature_tests/execution/178X_projected_output_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/178X_projected_output_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/179_projected_output_reference_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/179_projected_output_reference_cleanup");
+    try runExpect("tests/feature_tests/execution/179_projected_output_reference_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/179_projected_output_reference_cleanup", 42, null);
+}
+
+test "feature_tests/execution/180X_array_output_keeps_loan" {
+    try buildExpectFail("tests/feature_tests/execution/180X_array_output_keeps_loan", "root that has ended");
+}
+
+test "feature_tests/execution/181_array_output_reference_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/181_array_output_reference_cleanup");
+    try runExpect("tests/feature_tests/execution/181_array_output_reference_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/181_array_output_reference_cleanup", 42, null);
+}
+
+test "feature_tests/execution/182_conditional_initialization_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/182_conditional_initialization_cleanup");
+    try runExpect("tests/feature_tests/execution/182_conditional_initialization_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/182_conditional_initialization_cleanup", 42, null);
+}
+
+test "feature_tests/execution/183X_unrepresented_initialization_cleanup" {
+    try buildExpectFail("tests/feature_tests/execution/183X_unrepresented_initialization_cleanup", "cannot select cleanup for conditional initialization");
+    try vmExpect("tests/feature_tests/execution/183X_unrepresented_initialization_cleanup", 1, "cannot select cleanup for conditional initialization");
+}
+
+test "feature_tests/execution/184_indexed_outcome_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/184_indexed_outcome_cleanup");
+    try runExpect("tests/feature_tests/execution/184_indexed_outcome_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/184_indexed_outcome_cleanup", 42, null);
+}
+
+test "feature_tests/execution/185_composite_outcome_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/185_composite_outcome_cleanup");
+    try runExpect("tests/feature_tests/execution/185_composite_outcome_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/185_composite_outcome_cleanup", 42, null);
+}
+
+test "feature_tests/execution/186_array_reference_input_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/186_array_reference_input_cleanup");
+    try runExpect("tests/feature_tests/execution/186_array_reference_input_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/186_array_reference_input_cleanup", 42, null);
+}
+
+test "feature_tests/execution/187X_array_reference_input_alias" {
+    try buildExpectFail("tests/feature_tests/execution/187X_array_reference_input_alias", "aliased participant has consumed its value");
+    try vmExpect("tests/feature_tests/execution/187X_array_reference_input_alias", 1, "aliased participant has consumed its value");
+}
+
+test "feature_tests/execution/188X_array_reference_input_historical_copy" {
+    try buildExpectFail("tests/feature_tests/execution/188X_array_reference_input_historical_copy", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/188X_array_reference_input_historical_copy", 1, "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/189_array_owner_reference_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/189_array_owner_reference_initialization");
+    try runExpect("tests/feature_tests/execution/189_array_owner_reference_initialization", 42);
+    try vmExpect("tests/feature_tests/execution/189_array_owner_reference_initialization", 42, null);
+}
+
+test "feature_tests/execution/190_array_owner_reference_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/190_array_owner_reference_cleanup");
+    try runExpect("tests/feature_tests/execution/190_array_owner_reference_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/190_array_owner_reference_cleanup", 42, null);
+}
+
+test "feature_tests/execution/191X_reference_self_initialization" {
+    try buildExpectFail("tests/feature_tests/execution/191X_reference_self_initialization", "value was deinitialized");
+    try vmExpect("tests/feature_tests/execution/191X_reference_self_initialization", 1, "value was deinitialized");
+}
+
+test "feature_tests/execution/192_captured_reference_field_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/192_captured_reference_field_cleanup");
+    try runExpect("tests/feature_tests/execution/192_captured_reference_field_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/192_captured_reference_field_cleanup", 42, null);
+}
+
+test "feature_tests/execution/193_captured_symbolic_reference_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/193_captured_symbolic_reference_cleanup");
+    try runExpect("tests/feature_tests/execution/193_captured_symbolic_reference_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/193_captured_symbolic_reference_cleanup", 42, null);
+}
+
+test "feature_tests/execution/194X_symbolic_replacement_keeps_historical_alias" {
+    try buildExpectFail("tests/feature_tests/execution/194X_symbolic_replacement_keeps_historical_alias", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/194X_symbolic_replacement_keeps_historical_alias", 1, "root that has ended");
+}
+
+test "feature_tests/execution/195_partial_symbolic_reference_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/195_partial_symbolic_reference_cleanup");
+    try runExpect("tests/feature_tests/execution/195_partial_symbolic_reference_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/195_partial_symbolic_reference_cleanup", 42, null);
+}
+
+test "feature_tests/execution/196X_symbolic_reference_field_keeps_written_target" {
+    try buildExpectFail("tests/feature_tests/execution/196X_symbolic_reference_field_keeps_written_target", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/196X_symbolic_reference_field_keeps_written_target", 1, "root that has ended");
+}
+
+test "feature_tests/execution/197_symbolic_reference_values_survive_retargeting" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/197_symbolic_reference_values_survive_retargeting");
+    try runExpect("tests/feature_tests/execution/197_symbolic_reference_values_survive_retargeting", 42);
+    try vmExpect("tests/feature_tests/execution/197_symbolic_reference_values_survive_retargeting", 42, null);
+}
+
+test "feature_tests/execution/198X_symbolic_reference_values_survive_conditional_calls" {
+    try buildExpectFail("tests/feature_tests/execution/198X_symbolic_reference_values_survive_conditional_calls", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/198X_symbolic_reference_values_survive_conditional_calls", 1, "root that has ended");
+}
+
+test "feature_tests/execution/199X_symbolic_reference_values_survive_loop_exits" {
+    try buildExpectFail("tests/feature_tests/execution/199X_symbolic_reference_values_survive_loop_exits", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/199X_symbolic_reference_values_survive_loop_exits", 1, "root that has ended");
+}
+
+test "feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target" {
+    try buildExpectFail("tests/feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target", 1, "root that has ended");
+}
+
+test "feature_tests/execution/201X_symbolic_caller_storage_rejects_local_reference" {
+    try buildExpectFail("tests/feature_tests/execution/201X_symbolic_caller_storage_rejects_local_reference", "caller storage cannot depend on a local storage generation");
+    try vmExpect("tests/feature_tests/execution/201X_symbolic_caller_storage_rejects_local_reference", 1, "caller storage cannot depend on a local storage generation");
+}
+
+test "feature_tests/execution/202_symbolic_caller_storage_overwrites_local_reference" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/202_symbolic_caller_storage_overwrites_local_reference");
+    try runExpect("tests/feature_tests/execution/202_symbolic_caller_storage_overwrites_local_reference", 42);
+    try vmExpect("tests/feature_tests/execution/202_symbolic_caller_storage_overwrites_local_reference", 42, null);
+}
+
+test "feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_local_reference" {
+    try buildExpectFail("tests/feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_local_reference", "caller storage cannot depend on a local storage generation");
+    try vmExpect("tests/feature_tests/execution/203X_symbolic_caller_storage_rejects_conditional_local_reference", 1, "caller storage cannot depend on a local storage generation");
+}
+
+test "feature_tests/execution/204X_initial_symbolic_reference_keeps_target" {
+    try buildExpectFail("tests/feature_tests/execution/204X_initial_symbolic_reference_keeps_target", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/204X_initial_symbolic_reference_keeps_target", 1, "root that has ended");
+}
+
+test "feature_tests/execution/205_initial_symbolic_reference_survives_retargeting" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/205_initial_symbolic_reference_survives_retargeting");
+    try runExpect("tests/feature_tests/execution/205_initial_symbolic_reference_survives_retargeting", 42);
+    try vmExpect("tests/feature_tests/execution/205_initial_symbolic_reference_survives_retargeting", 42, null);
+}
+
+test "feature_tests/execution/206X_returned_initial_symbolic_reference_keeps_target" {
+    try buildExpectFail("tests/feature_tests/execution/206X_returned_initial_symbolic_reference_keeps_target", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/206X_returned_initial_symbolic_reference_keeps_target", 1, "root that has ended");
+}
+
+test "feature_tests/execution/207_nested_symbolic_replacement_captures_target" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/207_nested_symbolic_replacement_captures_target");
+    try runExpect("tests/feature_tests/execution/207_nested_symbolic_replacement_captures_target", 42);
+    try vmExpect("tests/feature_tests/execution/207_nested_symbolic_replacement_captures_target", 42, null);
+}
+
+test "feature_tests/execution/208_partial_symbolic_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/208_partial_symbolic_array_cleanup");
+    try runExpect("tests/feature_tests/execution/208_partial_symbolic_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/208_partial_symbolic_array_cleanup", 42, null);
+}
+
+test "feature_tests/execution/209X_symbolic_match_payload_keeps_consumption" {
+    try buildExpectFail("tests/feature_tests/execution/209X_symbolic_match_payload_keeps_consumption", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/209X_symbolic_match_payload_keeps_consumption", 1, "root that has ended");
+}
+
+test "feature_tests/execution/210_symbolic_match_payload_preserves_sibling" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/210_symbolic_match_payload_preserves_sibling");
+    try runExpect("tests/feature_tests/execution/210_symbolic_match_payload_preserves_sibling", 42);
+    try vmExpect("tests/feature_tests/execution/210_symbolic_match_payload_preserves_sibling", 42, null);
+}
+
+test "feature_tests/execution/211_symbolic_match_captures_effectful_selector" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector");
+    try runExpect("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector", 42);
+    try vmExpect("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector", 42, null);
+}
+
+test "feature_tests/execution/212_selected_symbolic_choice_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/212_selected_symbolic_choice_cleanup");
+    try runExpect("tests/feature_tests/execution/212_selected_symbolic_choice_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/212_selected_symbolic_choice_cleanup", 42, null);
+}
+
+test "feature_tests/execution/213_joined_symbolic_choice_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/213_joined_symbolic_choice_cleanup");
+    try runExpect("tests/feature_tests/execution/213_joined_symbolic_choice_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/213_joined_symbolic_choice_cleanup", 42, null);
+}
+
+test "feature_tests/execution/214X_joined_symbolic_choice_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/214X_joined_symbolic_choice_keeps_alias_stale", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/214X_joined_symbolic_choice_keeps_alias_stale", 1, "root that has ended");
+}
+
+test "feature_tests/execution/215_divergent_symbolic_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/215_divergent_symbolic_replacement");
+    try runExpect("tests/feature_tests/execution/215_divergent_symbolic_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/215_divergent_symbolic_replacement", 42, null);
+}
+
+test "feature_tests/execution/216X_divergent_symbolic_replacement_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/216X_divergent_symbolic_replacement_keeps_alias_stale", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/216X_divergent_symbolic_replacement_keeps_alias_stale", 1, "root that has ended");
+}
+
+test "feature_tests/execution/217_divergent_symbolic_loop_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/217_divergent_symbolic_loop_replacement");
+    try runExpect("tests/feature_tests/execution/217_divergent_symbolic_loop_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/217_divergent_symbolic_loop_replacement", 42, null);
+}
+
+test "feature_tests/execution/218_returned_reference_list_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/218_returned_reference_list_cleanup");
+    try runExpect("tests/feature_tests/execution/218_returned_reference_list_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/218_returned_reference_list_cleanup", 42, null);
+}
+
+test "feature_tests/execution/219X_returned_reference_list_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/219X_returned_reference_list_keeps_alias_stale", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/219X_returned_reference_list_keeps_alias_stale", 1, "root that has ended");
+}
+
+test "feature_tests/execution/220_projected_replacement_through_args" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/220_projected_replacement_through_args");
+    try runExpect("tests/feature_tests/execution/220_projected_replacement_through_args", 42);
+    try vmExpect("tests/feature_tests/execution/220_projected_replacement_through_args", 42, null);
+}
+
+test "feature_tests/execution/221X_projected_replacement_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/execution/221X_projected_replacement_keeps_alias_stale", "root that has ended");
+    try vmExpect("tests/feature_tests/execution/221X_projected_replacement_keeps_alias_stale", 1, "root that has ended");
+}
+
+test "feature_tests/execution/222_vm_failure_call_trace" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/222_vm_failure_call_trace");
+    try vmExpect("tests/feature_tests/execution/222_vm_failure_call_trace", 1, "ExecutionAborted");
+    try vmExpect("tests/feature_tests/execution/222_vm_failure_call_trace", 1, "called from tests/feature_tests/execution/222_vm_failure_call_trace/main.rg:3:");
+    try vmExpect("tests/feature_tests/execution/222_vm_failure_call_trace", 1, "called from tests/feature_tests/execution/222_vm_failure_call_trace/main.rg:5:");
+}
+
+test "feature_tests/execution/223X_comptime_failure_call_trace" {
+    try buildExpectFail("tests/feature_tests/execution/223X_comptime_failure_call_trace", "#run evaluation aborted");
+    try buildExpectFail("tests/feature_tests/execution/223X_comptime_failure_call_trace", "called from tests/feature_tests/execution/223X_comptime_failure_call_trace/main.rg:3:");
+    try vmExpect("tests/feature_tests/execution/223X_comptime_failure_call_trace", 1, "called from");
+}
+
+test "tests/feature_tests/execution/224_zero_sized_allocation_slots" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/224_zero_sized_allocation_slots");
+    try runExpect("tests/feature_tests/execution/224_zero_sized_allocation_slots", 42);
+    try vmExpect("tests/feature_tests/execution/224_zero_sized_allocation_slots", 42, null);
+}
+
+test "tests/feature_tests/execution/225X_zero_sized_allocation_slot_bounds" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/225X_zero_sized_allocation_slot_bounds");
+    try runExpectFailure("tests/feature_tests/execution/225X_zero_sized_allocation_slot_bounds");
+    try vmExpect("tests/feature_tests/execution/225X_zero_sized_allocation_slot_bounds", 1, "ExecutionAborted");
+}
+
+test "tests/feature_tests/execution/226X_empty_typed_allocation_slot" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/226X_empty_typed_allocation_slot");
+    try runExpectFailure("tests/feature_tests/execution/226X_empty_typed_allocation_slot");
+    try vmExpect("tests/feature_tests/execution/226X_empty_typed_allocation_slot", 1, "ExecutionAborted");
+}
+
+test "tests/feature_tests/execution/227X_unreserved_zero_sized_slot" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/227X_unreserved_zero_sized_slot");
+    try runExpectFailure("tests/feature_tests/execution/227X_unreserved_zero_sized_slot");
+    try vmExpect("tests/feature_tests/execution/227X_unreserved_zero_sized_slot", 1, "ExecutionAborted");
+}
+
+test "tests/feature_tests/execution/228X_zero_sized_establishment_bounds" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/228X_zero_sized_establishment_bounds");
+    try runExpectFailure("tests/feature_tests/execution/228X_zero_sized_establishment_bounds");
+    try vmExpect("tests/feature_tests/execution/228X_zero_sized_establishment_bounds", 1, "ExecutionAborted");
+}
+
+test "feature_tests/execution/229_typed_allocation_failure_trace" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/229_typed_allocation_failure_trace");
+    try runExpect("tests/feature_tests/execution/229_typed_allocation_failure_trace", 42);
+    try vmExpect("tests/feature_tests/execution/229_typed_allocation_failure_trace", 42, null);
+}
+
+test "feature_tests/execution/230X_incomplete_record_literal" {
+    try buildExpectFail("tests/feature_tests/execution/230X_incomplete_record_literal", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/230X_incomplete_record_literal", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/231_partial_record_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/231_partial_record_initialization");
+    try runExpect("tests/feature_tests/execution/231_partial_record_initialization", 42);
+    try vmExpect("tests/feature_tests/execution/231_partial_record_initialization", 42, null);
+}
+
+test "feature_tests/execution/232X_nested_incomplete_record_literal" {
+    try buildExpectFail("tests/feature_tests/execution/232X_nested_incomplete_record_literal", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/232X_nested_incomplete_record_literal", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/233X_incomplete_record_result" {
+    try buildExpectFail("tests/feature_tests/execution/233X_incomplete_record_result", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/233X_incomplete_record_result", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/234X_comptime_incomplete_record_literal" {
+    try buildExpectFail("tests/feature_tests/execution/234X_comptime_incomplete_record_literal", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/234X_comptime_incomplete_record_literal", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/235_contextual_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/235_contextual_record_defaults");
+    try runExpect("tests/feature_tests/execution/235_contextual_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/235_contextual_record_defaults", 42, null);
+}
+
+test "feature_tests/execution/236_contextual_default_temporary_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/236_contextual_default_temporary_storage");
+    try runExpect("tests/feature_tests/execution/236_contextual_default_temporary_storage", 42);
+    try vmExpect("tests/feature_tests/execution/236_contextual_default_temporary_storage", 42, null);
+}
+
+test "feature_tests/execution/237_empty_contextual_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/237_empty_contextual_record_defaults");
+    try runExpect("tests/feature_tests/execution/237_empty_contextual_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/237_empty_contextual_record_defaults", 42, null);
+}
+
+test "feature_tests/execution/238X_empty_required_record_literal" {
+    try buildExpectFail("tests/feature_tests/execution/238X_empty_required_record_literal", "record initializer is missing required field 'answer'");
+    try vmExpect("tests/feature_tests/execution/238X_empty_required_record_literal", 1, "record initializer is missing required field 'answer'");
+}
+
+test "feature_tests/execution/239_nested_contextual_record_layout" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/239_nested_contextual_record_layout");
+    try runExpect("tests/feature_tests/execution/239_nested_contextual_record_layout", 42);
+    try vmExpect("tests/feature_tests/execution/239_nested_contextual_record_layout", 42, null);
+}
+
+test "feature_tests/execution/240_contextual_default_resource_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/240_contextual_default_resource_cleanup");
+    try runExpect("tests/feature_tests/execution/240_contextual_default_resource_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/240_contextual_default_resource_cleanup", 42, null);
+}
+
+test "feature_tests/execution/241_integer_conversions" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/241_integer_conversions");
+    try runExpect("tests/feature_tests/execution/241_integer_conversions", 42);
+    try vmExpect("tests/feature_tests/execution/241_integer_conversions", 42, null);
+}
+
+test "feature_tests/execution/242_array_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/242_array_record_defaults");
+    try runExpect("tests/feature_tests/execution/242_array_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/242_array_record_defaults", 42, null);
+}
+
+test "feature_tests/execution/243_array_default_temporary_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/243_array_default_temporary_storage");
+    try runExpect("tests/feature_tests/execution/243_array_default_temporary_storage", 42);
+    try vmExpect("tests/feature_tests/execution/243_array_default_temporary_storage", 42, null);
+}
+
+test "feature_tests/execution/244X_array_incomplete_record" {
+    try buildExpectFail("tests/feature_tests/execution/244X_array_incomplete_record", "record initializer is missing required field 'right'");
+    try vmExpect("tests/feature_tests/execution/244X_array_incomplete_record", 1, "record initializer is missing required field 'right'");
+}
+
+test "feature_tests/execution/245_indirect_record_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/245_indirect_record_defaults");
+    try runExpect("tests/feature_tests/execution/245_indirect_record_defaults", 42);
+    try vmExpect("tests/feature_tests/execution/245_indirect_record_defaults", 42, null);
+}
+
+test "feature_tests/execution/246_vacant_reference_offset" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/246_vacant_reference_offset");
+    try runExpect("tests/feature_tests/execution/246_vacant_reference_offset", 42);
+    try vmExpect("tests/feature_tests/execution/246_vacant_reference_offset", 42, null);
+}
+
+test "feature_tests/execution/247_reference_offset_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/247_reference_offset_cleanup");
+    try runExpect("tests/feature_tests/execution/247_reference_offset_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/247_reference_offset_cleanup", 42, null);
+}
+
+test "feature_tests/execution/248_acquired_numeric_offset" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/248_acquired_numeric_offset");
+    try runExpect("tests/feature_tests/execution/248_acquired_numeric_offset", 42);
+    try vmExpect("tests/feature_tests/execution/248_acquired_numeric_offset", 42, null);
+}
+
+test "feature_tests/execution/249X_acquired_offset_grant_boundary" {
+    try vmExpect("tests/feature_tests/execution/249X_acquired_offset_grant_boundary", 1, "ExecutionIndexOutOfBounds");
+}
+
+test "feature_tests/execution/250_prepared_acquired_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/250_prepared_acquired_resources");
+    try runExpect("tests/feature_tests/execution/250_prepared_acquired_resources", 42);
+    try vmExpect("tests/feature_tests/execution/250_prepared_acquired_resources", 42, null);
+}
+
+test "feature_tests/execution/251_prepared_zero_sized_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/251_prepared_zero_sized_resources");
+    try runExpect("tests/feature_tests/execution/251_prepared_zero_sized_resources", 42);
+    try vmExpect("tests/feature_tests/execution/251_prepared_zero_sized_resources", 42, null);
+}
+
+test "argi repl retains prepared generic resource slots across submissions" {
+    const commands =
+        \\Box#(.T: Type): Type = (.value: T)
+        \\implement#(.T: Type) Deinit#(Box#(T)) (
+        \\    .deinit = (.self: $&Box#(T)) -> () {}
+        \\)
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Box#(Int32))(.self = allocator, .count = 1))
+        \\raw ::= raw_pointer#(.t: Box#(Int32))(.address = memory.data.address).raw
+        \\first ::= trusted_establish_allocation_slot#(.t: Box#(Int32))(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = first, .source = Box#(Int32)(.value = 42))
+        \\first&.value
+        \\trusted_opaque_drop(.slot = first)
+        \\trusted_opaque_mark_empty(.storage = $&memory)
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = ()\n_1 = 42\n_2 = ()\n_3 = ()\n");
+}
+
+test "feature_tests/execution/252_metadata_free_typed_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/252_metadata_free_typed_allocation");
+    try runExpect("tests/feature_tests/execution/252_metadata_free_typed_allocation", 42);
+    try vmExpect("tests/feature_tests/execution/252_metadata_free_typed_allocation", 42, null);
+}
+
+test "feature_tests/execution/253_acquired_boolean_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/253_acquired_boolean_resources");
+    try runExpect("tests/feature_tests/execution/253_acquired_boolean_resources", 42);
+    try vmExpect("tests/feature_tests/execution/253_acquired_boolean_resources", 42, null);
+}
+
+test "feature_tests/execution/254_acquired_reference_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/254_acquired_reference_resources");
+    try runExpect("tests/feature_tests/execution/254_acquired_reference_resources", 42);
+    try vmExpect("tests/feature_tests/execution/254_acquired_reference_resources", 42, null);
+}
+
+test "feature_tests/execution/255_acquired_borrowed_records" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/255_acquired_borrowed_records");
+    try runExpect("tests/feature_tests/execution/255_acquired_borrowed_records", 42);
+    try vmExpect("tests/feature_tests/execution/255_acquired_borrowed_records", 42, null);
+}
+
+test "argi repl retains acquired reference companions across submissions" {
+    const commands =
+        \\Pair: Type = (.source: &Int32)
+        \\value :: Int32 = 42
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Pair)(.self = allocator))
+        \\raw ::= raw_pointer#(.t: Pair)(.address = memory.data.address).raw
+        \\reference ::= trusted_establish_allocation_slot#(.t: Pair)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = reference, .source = Pair(.source = &value))
+        \\borrowed ::= reference&.source
+        \\borrowed&
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = ()\n_1 = 42\n");
+}
+
+test "feature_tests/execution/256_acquired_virtual_records" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/256_acquired_virtual_records");
+    try runExpect("tests/feature_tests/execution/256_acquired_virtual_records", 42);
+    try vmExpect("tests/feature_tests/execution/256_acquired_virtual_records", 42, null);
+}
+
+test "argi repl retains acquired virtual witnesses across submissions" {
+    const commands =
+        \\Counter: Type = (.value: Int32)
+        \\Counting#(.State: Type): Contract = (
+        \\    .bump: (.self: $&State, .amount: Int32) -> () where {}
+        \\    .read: (.self: &State) -> (.result: Int32) where {}
+        \\)
+        \\implement Counting#(Counter) (
+        \\    .bump = (.self: $&Counter, .amount: Int32) -> () { self&.value = self&.value + amount }
+        \\    .read = (.self: &Counter) -> (.result: Int32) { result = self&.value }
+        \\)
+        \\Holder: Type = (.counter: Virtual#(.contract: Counting))
+        \\counter :: Counter = (.value = 7)
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = allocator))
+        \\raw ::= raw_pointer#(.t: Holder)(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot#(.t: Holder)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = Holder(.counter = to_virtual#(.contract: Counting)(.value = $&counter)))
+        \\Counting#().bump(.self = $&slot&.counter, .amount = 35)
+        \\Counting#().read(.self = &slot&.counter).result
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = ()\n_1 = ()\n_2 = 42\n");
+}
+
+test "feature_tests/execution/257_partial_choice_payload_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/257_partial_choice_payload_storage");
+    try runExpect("tests/feature_tests/execution/257_partial_choice_payload_storage", 42);
+    try vmExpect("tests/feature_tests/execution/257_partial_choice_payload_storage", 42, null);
+}
+
+test "feature_tests/execution/258_acquired_choice_virtual_witness" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/258_acquired_choice_virtual_witness");
+    try runExpect("tests/feature_tests/execution/258_acquired_choice_virtual_witness", 42);
+    try vmExpect("tests/feature_tests/execution/258_acquired_choice_virtual_witness", 42, null);
+}
+
+test "feature_tests/execution/259_acquired_choice_resources" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/259_acquired_choice_resources");
+    try runExpect("tests/feature_tests/execution/259_acquired_choice_resources", 42);
+    try vmExpect("tests/feature_tests/execution/259_acquired_choice_resources", 42, null);
+}
+
+test "argi repl retains acquired choice cleanup identities across submissions" {
+    const commands =
+        \\Counter: Type = (.drops: Int32 = 0)
+        \\Resource: Type = (.counter: $&Counter, .id: Int32)
+        \\Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
+        \\implement Deinit#(Resource) (
+        \\    .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + self&.id }
+        \\)
+        \\counter :: Counter = Counter()
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = allocator))
+        \\raw ::= raw_pointer#(.t: Choice)(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot#(.t: Choice)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\value :: Choice = ..pair(.left = (.counter = $&counter, .id = 11), .right = (.counter = $&counter, .id = 31))
+        \\filled ::= trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = ~value)
+        \\dropped ::= trusted_opaque_drop(.slot = slot)
+        \\emptied ::= trusted_opaque_mark_empty(.storage = $&memory)
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n");
+}
+
+test "feature_tests/execution/260_acquired_choice_array_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/260_acquired_choice_array_replacement");
+    try runExpect("tests/feature_tests/execution/260_acquired_choice_array_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/260_acquired_choice_array_replacement", 42, null);
+}
+
+test "feature_tests/execution/261_acquired_partial_record_construction" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/261_acquired_partial_record_construction");
+    try runExpect("tests/feature_tests/execution/261_acquired_partial_record_construction", 42);
+    try vmExpect("tests/feature_tests/execution/261_acquired_partial_record_construction", 42, null);
+}
+
+test "feature_tests/execution/262_choice_construction_failure_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/262_choice_construction_failure_cleanup");
+    try runExpect("tests/feature_tests/execution/262_choice_construction_failure_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/262_choice_construction_failure_cleanup", 42, null);
+}
+
+test "argi repl cleans fallible aggregate operands across submissions" {
+    const commands =
+        \\counter :: Counter = Counter()
+        \\failed ::= build_owned(.counter = $&counter, .fail = true, .tracer = error_tracer)
+        \\counter.drops
+        \\succeeded ::= build_owned(.counter = $&counter, .fail = false, .tracer = error_tracer)
+        \\counter.drops
+        \\discarded ::= discard_result(.value = ~succeeded)
+        \\counter.drops
+        \\probe()
+        \\
+    ;
+    try expectReplFixture("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup/main.rg", commands, "_0 = 7\n_1 = 7\n_2 = 28\n_3 = 112\n");
+}
+
+test "feature_tests/execution/263_comptime_fallible_operand_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup");
+    try runExpect("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/263_comptime_fallible_operand_cleanup", 42, null);
+}
+
+test "feature_tests/execution/264_fallible_indexed_replacement_preserves_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner");
+    try runExpect("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner", 42);
+    try vmExpect("tests/feature_tests/execution/264_fallible_indexed_replacement_preserves_owner", 42, null);
+}
+
+test "feature_tests/execution/265_fallible_retargeted_reference_replacement" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/265_fallible_retargeted_reference_replacement");
+    try runExpect("tests/feature_tests/execution/265_fallible_retargeted_reference_replacement", 42);
+    try vmExpect("tests/feature_tests/execution/265_fallible_retargeted_reference_replacement", 42, null);
+}
+
+test "feature_tests/execution/266X_retargeted_replacement_historical_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/266X_retargeted_replacement_historical_reference", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "argi repl preserves captured destinations and rejects historical retargeted references" {
+    const commands =
+        \\counter :: Counter = Counter()
+        \\owner :: Resource = Resource(.counter = $&counter, .value = 1)
+        \\other :: Resource = Resource(.counter = $&counter, .value = 2)
+        \\holder :: Holder = Holder(.reference = $&owner)
+        \\failed ::= replace(.holder = $&holder, .other = $&other, .counter = $&counter, .fail = true)
+        \\owner.value
+        \\counter.drops
+        \\holder.reference&.value
+        \\holder.reference = $&owner
+        \\historical ::= holder.reference
+        \\succeeded ::= replace(.holder = $&holder, .other = $&other, .counter = $&counter, .fail = false)
+        \\historical&.value
+        \\owner.value
+        \\counter.drops
+        \\holder.reference&.value
+        \\counter.selections
+        \\closed_owner ::= deinit(.self = $&owner)
+        \\closed_other ::= deinit(.self = $&other)
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic(
+        "tests/feature_tests/execution/265_fallible_retargeted_reference_replacement/main.rg",
+        commands,
+        "_0 = 1\n_1 = 0\n_2 = 2\n_4 = 9\n_5 = 1\n_6 = 2\n_7 = 2\n_8 = 3\n",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/execution/267X_retarget_before_replacement_historical_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/267X_retarget_before_replacement_historical_reference", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/268_retargeted_replacement_preserves_other_references" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/268_retargeted_replacement_preserves_other_references");
+    try runExpect("tests/feature_tests/execution/268_retargeted_replacement_preserves_other_references", 42);
+    try vmExpect("tests/feature_tests/execution/268_retargeted_replacement_preserves_other_references", 42, null);
+}
+
+test "feature_tests/execution/269X_conditional_retarget_historical_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/269X_conditional_retarget_historical_reference", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/270_large_reference_aggregate_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/270_large_reference_aggregate_cleanup");
+    try runExpect("tests/feature_tests/execution/270_large_reference_aggregate_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/270_large_reference_aggregate_cleanup", 42, null);
+}
+
+test "feature_tests/execution/271_acquired_partial_array_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/271_acquired_partial_array_cleanup");
+    try runExpect("tests/feature_tests/execution/271_acquired_partial_array_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/271_acquired_partial_array_cleanup", 42, null);
+}
+
+test "argi repl retains partial acquired array cleanup across submissions" {
+    const commands =
+        \\counter :: Counter = Counter()
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: [3]Resource)(.self = allocator))
+        \\raw ::= raw_pointer#(.t: [3]Resource)(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot#(.t: [3]Resource)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\index :: UIntNative = 0
+        \\slot&[index] = Resource(.counter = $&counter, .value = 10)
+        \\slot&[0].value
+        \\index = 2
+        \\slot&[index] = Resource(.counter = $&counter, .value = 32)
+        \\slot&[2].value
+        \\trusted_opaque_drop(.slot = slot)
+        \\trusted_opaque_mark_empty(.storage = $&memory)
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixture("tests/feature_tests/execution/270_large_reference_aggregate_cleanup/main.rg", commands, "_0 = 10\n_1 = 32\n_2 = ()\n_3 = ()\n_4 = 2\n");
+}
+
+test "feature_tests/execution/272_acquired_partial_extraction_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/272_acquired_partial_extraction_cleanup");
+    try runExpect("tests/feature_tests/execution/272_acquired_partial_extraction_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/272_acquired_partial_extraction_cleanup", 42, null);
+}
+
+test "argi repl preserves indexed replacement destinations across submissions" {
+    const commands =
+        \\:begin
+        \\select_array_index(.selection: $&UIntNative, .counter: $&Counter) -> (.result: UIntNative) := {
+        \\    counter&.selections = counter&.selections + 1
+        \\    result = selection&
+        \\}
+        \\make_array_resource(.selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Resource, (..stop))) := {
+        \\    selection&= 1
+        \\    if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.counter = counter, .value = 9) }
+        \\}
+        \\replace_array(.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Int32, (..stop))) := {
+        \\    values&[select_array_index(.selection = selection, .counter = counter)] = make_array_resource(.selection = selection, .counter = counter, .fail = fail)!
+        \\    result = ..ok 42
+        \\}
+        \\:end
+        \\counter :: Counter = Counter()
+        \\values :: [2]Resource = (Resource(.counter = $&counter, .value = 1), Resource(.counter = $&counter, .value = 2))
+        \\selection :: UIntNative = 0
+        \\failed ::= replace_array(.values = $&values, .selection = $&selection, .counter = $&counter, .fail = true)
+        \\values[0].value
+        \\counter.drops
+        \\selection
+        \\counter.selections
+        \\selection = 0
+        \\succeeded ::= replace_array(.values = $&values, .selection = $&selection, .counter = $&counter, .fail = false)
+        \\values[0].value
+        \\values[1].value
+        \\counter.drops
+        \\counter.selections
+        \\closed_first ::= deinit(.self = $&values[0])
+        \\closed_second ::= deinit(.self = $&values[1])
+        \\counter.drops
+        \\
+    ;
+    try expectReplFixture("tests/feature_tests/execution/265_fallible_retargeted_reference_replacement/main.rg", commands, "_0 = 1\n_1 = 0\n_2 = 1\n_3 = 1\n_4 = 9\n_5 = 2\n_6 = 1\n_7 = 2\n_8 = 3\n");
+}
+
+test "feature_tests/execution/273X_borrowed_call_keeps_copy_stale" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/273X_borrowed_call_keeps_copy_stale", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/274X_borrowed_call_keeps_sibling_stale" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/274X_borrowed_call_keeps_sibling_stale", "reference depends on a root that has ended", "failed without a diagnostic");
+}
+
+test "argi repl renews borrowed argument references without renewing copies" {
+    const commands =
+        \\counter :: Counter = Counter()
+        \\owner :: Resource = Resource(.counter = $&counter)
+        \\args: Args = (.target = $&owner, .counter = $&counter)
+        \\historical ::= args.target
+        \\closed ::= deinit(.self = args.target)
+        \\initialize_borrowed(.args = &args)
+        \\args.target&.counter&.count
+        \\historical&.counter&.count
+        \\owner.counter&.count
+        \\closed_owner ::= deinit(.self = $&owner)
+        \\counter.count
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic("tests/feature_tests/ownership/364_projected_call_reinitialization/main.rg", commands, "_0 = ()\n_1 = 1\n_3 = 1\n_4 = 2\n", "reference depends on a root that has ended");
+}
+
+test "feature_tests/system/68_system_storage_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/system/68_system_storage_initialization");
+    try runExpect("tests/feature_tests/system/68_system_storage_initialization", 42);
+}
+
+test "feature_tests/system/69X_system_storage_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/system/69X_system_storage_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/275_comptime_system_entry" {
+    const built = try buildResult("tests/feature_tests/execution/275_comptime_system_entry");
+    defer std.testing.allocator.free(built.stdout);
+    defer std.testing.allocator.free(built.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    try expect(std.mem.count(u8, built.stdout, "compile-time host") == 1);
+    try runExpect("tests/feature_tests/execution/275_comptime_system_entry", 42);
+    try vmExpect("tests/feature_tests/execution/275_comptime_system_entry", 42, null);
+}
+
+test "feature_tests/execution/276X_comptime_system_host_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/276X_comptime_system_host_operation", "host operation that is not enabled for compile-time execution", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/277X_comptime_system_reference_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/277X_comptime_system_reference_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/execution/278X_comptime_system_missing_dependency" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/278X_comptime_system_missing_dependency", "omitted inputs have unavailable reach defaults", "failed without a diagnostic");
+}
+
+test "argi repl evaluates independent System entries" {
+    const commands =
+        \\first ::= #run (.system: System) -> (.value: Int32) { value = 40 }
+        \\second ::= #run (.system: System) -> (.value: Int32) { value = 2 }
+        \\first + second
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n");
+}
+
+test "feature_tests/execution/279_generic_comptime_system_entry" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/279_generic_comptime_system_entry");
+    try runExpect("tests/feature_tests/execution/279_generic_comptime_system_entry", 42);
+    try vmExpect("tests/feature_tests/execution/279_generic_comptime_system_entry", 42, null);
+}
+
+test "feature_tests/execution/280X_generic_system_runtime_capture" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/execution/280X_generic_system_runtime_capture", "#run arguments must be compile-time constants", "failed without a diagnostic");
+}
+
+test "argi repl preserves generic System specializations after rejected captures" {
+    const commands =
+        \\calculate#(.T: Int8, .n = 41)()
+        \\captured_local#(.n = 42)()
+        \\selected_capture#(.n = 42)(.runtime_value = 7)
+        \\bad ::= selected_capture#(.n = 41)(.runtime_value = 7)
+        \\default_host#(.n = 42)()
+        \\tuple_host#(.n = 41)()
+        \\allocate_host#(.n = 42)()
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n_3 = 42\n_4 = 42\n_5 = 42\n", "#run arguments must be compile-time constants");
+}
+
+test "argi repl recovers from aborted allocated System evaluations" {
+    const commands =
+        \\allocate_host#(.n = 41)()
+        \\failed ::= abort_host#(.n = 42)()
+        \\allocate_host#(.n = 42)()
+        \\captured_local#(.n = 42)()
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n", "#run evaluation aborted");
+}
+
 test "feature_tests/types/289_nominal_underlying" {
     try expectSuccessfulBuild("tests/feature_tests/types/289_nominal_underlying");
     try run("tests/feature_tests/types/289_nominal_underlying");
@@ -13487,4 +15539,49 @@ test "feature_tests/modules/35X_private_submodule_import" {
 
 test "feature_tests/modules/36X_nested_private_submodule" {
     try buildExpectFailWithoutNoise("tests/feature_tests/modules/36X_nested_private_submodule", "submodule '_detail' is private", "panic");
+}
+
+test "bytecode nominal underlying scalar and aggregate representations" {
+    try vmExpect("tests/feature_tests/execution/281_nominal_scalar_representations", 0, null);
+    try vmExpect("tests/feature_tests/types/294_nominal_underlying_shapes", 0, null);
+}
+
+test "feature_tests/execution/281_nominal_scalar_representations" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/281_nominal_scalar_representations");
+    try run("tests/feature_tests/execution/281_nominal_scalar_representations");
+}
+
+test "argi repl discovers public submodules from retained import aliases" {
+    const commands =
+        \\root := import("./tests/feature_tests/modules/32_public_submodules/tree")
+        \\root.branch.leaf.answer()
+        \\root.branch.leaf.identity#(.T: Int32)(42)
+        \\:begin
+        \\answer := () -> (.value: Int32) { value = root.branch.leaf.answer() }
+        \\:end
+        \\answer()
+        \\:reset
+        \\root := import("./tests/feature_tests/modules/32_public_submodules/tree")
+        \\root.branch.leaf.answer()
+        \\:begin
+        \\enabled := () -> (.value: Bool) { value = true }
+        \\selected := () -> (.value: Int32) {
+        \\    #if enabled() { value = root.branch.leaf.answer() }
+        \\    #else { value = 0 }
+        \\}
+        \\:end
+        \\selected()
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n_1 = 42\n_2 = 42\n_0 = 42\n_1 = 42\n");
+}
+
+test "argi repl rolls back newly discovered submodules after rejection" {
+    const commands =
+        \\root := import("./tests/feature_tests/modules/32_public_submodules/tree")
+        \\root.branch.leaf.answer() + missing()
+        \\root.branch.leaf.answer()
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic(null, commands, "_1 = 42\n", "no function named 'missing' exists");
 }

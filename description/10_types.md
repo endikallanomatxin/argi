@@ -13,7 +13,10 @@ element type. See [Compile-time parameters](132_generics.md).
 ## Type queries
 
 `type_of(.value = expression)` obtains the type of an expression. `size_of`
-and `alignment_of` query a type's size and alignment:
+and `alignment_of` query a type's size and alignment. Single positional forms
+`type_of(expression)`, `size_of(expression)` and `alignment_of(expression)`
+are also accepted. Layout queries accept either a type constant or a value
+whose type is measured; `.type =` explicitly requires a type constant:
 
 ```rg
 element_type : Type = type_of(.value = point)
@@ -31,6 +34,18 @@ Floating-point literals take the width of an explicit destination or function
 parameter, including fields and array elements. Without that context they
 default to `Float32`. This does not permit implicit conversions between typed
 floating-point values.
+
+## Integer arithmetic
+
+The standard scalar integer arithmetic contracts wrap results to the operand
+width, for both signed and unsigned integers. This behavior is the same in native
+and VM execution and does not depend on the build mode. It does not change the
+semantics of explicit checked conversions or custom arithmetic contracts.
+
+Integer division rounds towards zero. `%` returns the remainder with the sign
+of the dividend. The signed minimum divided by -1 wraps to the signed minimum;
+the corresponding remainder is zero. Integer division or remainder by zero
+aborts instead of invoking undefined behavior.
 
 ## Conversion
 

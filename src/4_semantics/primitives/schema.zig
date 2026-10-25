@@ -46,6 +46,10 @@ pub fn integerRange(kind: BuiltinType, target: std.Target) ?IntegerRange {
         .Int8, .Int16, .Int32, .Int64 => true,
         else => false,
     };
+    return integerRangeForWidth(bits, signed);
+}
+
+pub fn integerRangeForWidth(bits: u7, signed: bool) IntegerRange {
     const bound = @as(i128, 1) << (if (signed) bits - 1 else bits);
     return .{ .minimum = if (signed) -bound else 0, .maximum = bound - 1 };
 }
@@ -162,9 +166,12 @@ pub const SafetyPrimitive = enum {
     trusted_opaque_mark_empty,
     relocate,
     float_math,
+    raw_released_storage,
+    allocation_metadata_layout,
+    prepare_allocation_metadata,
 };
 
-pub const FunctionFlags = packed struct(u16) {
+pub const FunctionFlags = packed struct(u32) {
     is_once: bool = false,
     is_test: bool = false,
     has_declared_body: bool = false,
@@ -176,7 +183,22 @@ pub const FunctionFlags = packed struct(u16) {
     is_c_export: bool = false,
     has_foreign_capability: bool = false,
     is_c_function_pointer: bool = false,
-    _padding: u5 = 0,
+    is_comptime_entry: bool = false,
+    is_comptime_host_entry: bool = false,
+    reserved: u15 = 0,
+    // Trusted metadata identities retain ordinary function-body safety.
+    is_source_location_id: bool = false,
+    is_source_location_resolver: bool = false,
+    is_error_context_view: bool = false,
+    is_error_context_text: bool = false,
+
+    pub fn isTraceSupport(self: FunctionFlags) bool {
+        return self.is_source_location_resolver or self.is_error_context_view or self.is_error_context_text;
+    }
+
+    pub fn matchesErrorContext(self: FunctionFlags, view: bool) bool {
+        return if (view) self.is_error_context_view else self.is_error_context_text;
+    }
 };
 
 pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };
@@ -262,6 +284,7 @@ pub fn Declaration(comptime Ids: type) type {
         struct_fields: ?Range(Ids.FieldId) = null,
         choice_variants: ?Range(Ids.VariantId) = null,
         generic_parameter_count: ?u32 = null,
+        contract_domain_count: u32 = 0,
         struct_layout: StructLayout = .regular,
         choice_layout: ChoiceLayout = .regular,
     };
@@ -368,6 +391,14 @@ pub fn Binding(comptime Ids: type) type {
     };
 }
 
+/// Sparse lexical evidence; ordinary blocks without assumptions need no entry.
+pub fn BlockAssumptions(comptime Ids: type) type {
+    return struct {
+        block: Ids.BlockId,
+        bindings: Range(Ids.BindingId),
+    };
+}
+
 pub fn Block(comptime Ids: type) type {
     return struct {
         nodes: Range(Ids.NodeId),
@@ -417,26 +448,57 @@ pub fn AutoDeinitField(comptime Ids: type) type {
         field_index: u32,
         /// A choice payload uses a variant index and requires its active tag.
         is_variant: bool = false,
+        /// One symbolic element operation, repeated over this fixed dimension.
+        repeat_count: ?u64 = null,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
+        /// With deinit_fn, these are fallback operations for incomplete storage.
+        /// Whole-value destruction and fallback fields are mutually exclusive.
         fields: Range(Ids.AutoDeinitFieldId) = .{ .start = 0, .len = 0 },
     };
 }
 
 pub fn AutoDeinit(comptime Ids: type) type {
     return struct {
-        binding: Ids.BindingId,
+        /// Cleanup belongs to storage. An indirect place carries no invented
+        /// lexical owner; its identity must come from the evaluated reference.
+        storage: union(enum) {
+            binding: Ids.BindingId,
+            projected: struct { binding: Ids.BindingId, target: Ids.NodeId },
+            indirect: Ids.NodeId,
+        },
+        /// Trusted raw storage may promise a complete value without attached
+        /// cleanup evidence. Existing evidence always takes precedence.
+        allow_untracked_complete: bool = false,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
+        /// Structural cleanup, or incomplete-storage fallback when deinit_fn
+        /// is present. Never execute both for the same value.
         fields: Range(Ids.AutoDeinitFieldId) = .{ .start = 0, .len = 0 },
+        pub fn ownerBinding(self: @This()) ?Ids.BindingId {
+            return switch (self.storage) {
+                .binding => |id| id,
+                .projected => |place| place.binding,
+                .indirect => null,
+            };
+        }
+
+        pub fn targetNode(self: @This()) ?Ids.NodeId {
+            return switch (self.storage) {
+                .binding => null,
+                .projected => |place| place.target,
+                .indirect => |node| node,
+            };
+        }
     };
 }
 
+/// Erased signature and declared safety effects, completed independently of
+/// concrete handles. Runtime tables keep their own selected method identities.
 pub fn VirtualMethodRegistry(comptime Ids: type) type {
     return struct {
-        implementations: Range(Ids.FunctionId),
         /// Receiver position comes from the erased contract. A known
         /// argument may have the same concrete type as the participant after substitution.
         receiver_input_index: u32,
@@ -452,8 +514,6 @@ pub fn Virtualize(comptime Ids: type) type {
     return struct {
         value: Ids.NodeId,
         concrete_type: Ids.TypeId,
-        // Unreached construction in executable mode retains no proof obligation.
-        safety_required: bool = true,
         contract_decl: Ids.DeclId,
         virtual_type: Ids.TypeId,
         methods: Range(Ids.FunctionId),
@@ -463,11 +523,19 @@ pub fn Virtualize(comptime Ids: type) type {
     };
 }
 
+pub const CleanupInputProjection = union(enum) { field: u32, element: u64 };
+pub const CapturedCleanupInput = struct {
+    argument_index: u32,
+    projections: []const CleanupInputProjection = &.{},
+};
+
 /// A returned choice selects whether the caller still owns cleanup of a place.
+/// The place can name a lexical owner or an evaluated pointer input snapshot.
 /// Parent variants guard nested payload tags before their values are inspected.
 pub fn OutcomeCleanup(comptime Ids: type) type {
     return struct {
         place: Ids.NodeId,
+        captured_input: ?CapturedCleanupInput = null,
         output_index: u32,
         parent_variants: []const u32 = &.{},
         variant_index: u32,
@@ -487,13 +555,6 @@ pub fn VirtualCall(comptime Ids: type) type {
         output_type: Ids.TypeId,
         self_permission: PointerMutability,
         safety_methods: Ids.VirtualRegistryId,
-        consumes_auto_deinit: ?Ids.NodeId = null,
-        /// Safety records every consumed caller place, including aliases and
-        /// multiple resource inputs. These nodes identify cleanup flags only.
-        consumed_auto_deinits: []const Ids.NodeId = &.{},
-        /// Returning calls enable these destination cleanup flags.
-        initialized_auto_deinits: []const Ids.NodeId = &.{},
-        outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
     };
 }
 
@@ -605,14 +666,6 @@ pub fn Node(comptime Ids: type) type {
                 // the runtime address is evaluated separately from arguments.
                 callee_value: ?Ids.NodeId = null,
                 input: Ids.NodeId,
-                consumes_auto_deinit: ?Ids.NodeId = null,
-                /// Safety records every consumed caller place, including aliases and
-                /// multiple resource inputs. These nodes identify cleanup flags only.
-                consumed_auto_deinits: []const Ids.NodeId = &.{},
-                /// Returning calls enable these destination cleanup flags.
-                initialized_auto_deinits: []const Ids.NodeId = &.{},
-                outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
-                initializes_auto_deinit: ?Ids.NodeId = null,
             },
             virtualize: Ids.VirtualizeId,
             virtual_call: Ids.VirtualCallId,
@@ -620,6 +673,10 @@ pub fn Node(comptime Ids: type) type {
             // Compiler-generated ordered expressions have an explicit result,
             // unlike source blocks. Their storage belongs to the outer scope.
             value_sequence: Ids.BlockId,
+            // Checked lifecycle transition. The block contains one write;
+            // its destination, prepared owner, selected cleanup and commit
+            // form one verified plan. Only ownership finalization creates it.
+            replacement: Ids.BlockId,
             int_literal: i128,
             float_literal: f64,
             char_literal: u32,
@@ -676,6 +733,8 @@ pub fn Node(comptime Ids: type) type {
                 array_type: Ids.TypeId,
             },
             struct_field_store: struct {
+                // Proven lexical destination; metadata, never evaluated.
+                cleanup_target: ?Ids.NodeId = null,
                 struct_ptr: Ids.NodeId,
                 struct_type: Ids.TypeId,
                 field_index: u32,
@@ -704,7 +763,11 @@ pub fn Node(comptime Ids: type) type {
                 ty: Ids.TypeId,
                 pointer_type: Ids.TypeId,
             },
-            pointer_assignment: struct { pointer: Ids.NodeId, value: Ids.NodeId },
+            pointer_assignment: struct {
+                pointer: Ids.NodeId,
+                value: Ids.NodeId,
+                cleanup_target: ?Ids.NodeId = null,
+            },
             type_literal: Ids.TypeId,
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };

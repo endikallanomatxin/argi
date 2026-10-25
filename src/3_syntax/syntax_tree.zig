@@ -93,6 +93,7 @@ pub const Node = struct {
         reach_alternative,
         move_expression,
         function_call,
+        comptime_entry,
         unwrap_or,
         unwrap_or_do,
         handle_expression,
@@ -202,7 +203,9 @@ pub const FunctionExtra = struct {
     c_abi: u32 = 0,
     safety_contract: OptionalNodeIndex = .none,
 };
-pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex };
+pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex, comptime_selection: u32 = 0 };
+pub const ComptimeEntryExtra = struct { input: OptionalNodeIndex = .none, output: OptionalNodeIndex = .none, body: NodeIndex };
+pub const ComptimeEntry = struct { input: ?NodeIndex, output: ?NodeIndex, body: NodeIndex };
 pub const FieldExtra = struct { type_node: OptionalNodeIndex, default_value: OptionalNodeIndex };
 pub const GenericValueExtra = struct {
     implementation_members: OptionalNodeIndex = .none,
@@ -262,7 +265,7 @@ pub const OperatorName = enum {
     equal,
     not_equal,
 };
-pub const IfStatement = struct { condition: NodeIndex, then_block: NodeIndex, else_block: ?NodeIndex };
+pub const IfStatement = struct { condition: NodeIndex, then_block: NodeIndex, else_block: ?NodeIndex, comptime_selection: bool = false };
 pub const FunctionCall = struct {
     contract_type: ?NodeIndex = null,
     callee_token: TokenIndex,
@@ -504,6 +507,12 @@ pub const FileSyntaxTree = struct {
         };
     }
 
+    pub fn comptimeEntry(tree: *const FileSyntaxTree, node: NodeIndex) ?ComptimeEntry {
+        if (tree.tag(node) != .comptime_entry) return null;
+        const extra = tree.extraData(ComptimeEntryExtra, tree.data(node).extra);
+        return .{ .input = extra.input.unwrap(), .output = extra.output.unwrap(), .body = extra.body };
+    }
+
     pub fn functionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
         const node_tag = tree.tag(node);
         if (node_tag != .function_declaration and node_tag != .function_declaration_once and node_tag != .c_function_pointer_declaration) return null;
@@ -560,11 +569,72 @@ pub const FileSyntaxTree = struct {
         };
     }
 
+    /// Only block statements introduce conditional compilation. Follow the
+    /// parsed control structure rather than searching source text for '#if'.
+    pub fn hasComptimeSelection(tree: *const FileSyntaxTree, node: NodeIndex) bool {
+        return tree.hasComptimeSelectionWithin(node, false);
+    }
+
+    // An entry shares its nested compile-time execution, while an ordinary
+    // containing function keeps its own staging boundary.
+    pub fn hasEntryComptimeSelection(tree: *const FileSyntaxTree, node: NodeIndex) bool {
+        return tree.hasComptimeSelectionWithin(node, true);
+    }
+
+    fn hasComptimeSelectionWithin(tree: *const FileSyntaxTree, node: NodeIndex, descend_entries: bool) bool {
+        if (tree.comptimeEntry(node)) |entry|
+            return descend_entries and tree.hasComptimeSelectionWithin(entry.body, true);
+        if (tree.codeBlock(node)) |block| {
+            for (block.statements) |statement| if (tree.hasComptimeSelectionWithin(statement, descend_entries)) return true;
+        } else if (tree.ifStatement(node)) |statement| {
+            return statement.comptime_selection or tree.hasComptimeSelectionWithin(statement.condition, descend_entries) or tree.hasComptimeSelectionWithin(statement.then_block, descend_entries) or
+                (if (statement.else_block) |alternate| tree.hasComptimeSelectionWithin(alternate, descend_entries) else false);
+        } else if (tree.whileStatement(node)) |statement| {
+            return tree.hasComptimeSelectionWithin(statement.condition, descend_entries) or tree.hasComptimeSelectionWithin(statement.body, descend_entries);
+        } else if (tree.forStatement(node)) |statement| {
+            return tree.hasComptimeSelectionWithin(statement.iterable, descend_entries) or tree.hasComptimeSelectionWithin(statement.body, descend_entries);
+        } else if (tree.matchStatement(node)) |statement| {
+            if (tree.hasComptimeSelectionWithin(statement.value, descend_entries)) return true;
+            for (statement.cases) |case| if (tree.hasComptimeSelectionWithin(tree.matchCase(case).?.body, descend_entries)) return true;
+        } else if (tree.tag(node) == .handle_expression) {
+            const handle = tree.extraData(HandleExtra, tree.data(node).extra);
+            return tree.hasComptimeSelectionWithin(handle.value, descend_entries) or tree.hasComptimeSelectionWithin(handle.body, descend_entries);
+        } else if (tree.tag(node) == .error_report_return_block) {
+            const pair = tree.data(node).node_and_node;
+            return tree.hasComptimeSelectionWithin(pair.first, descend_entries) or tree.hasComptimeSelectionWithin(pair.second, descend_entries);
+        } else if (tree.symbolDeclaration(node)) |declaration| {
+            return if (declaration.value) |value| tree.hasComptimeSelectionWithin(value, descend_entries) else false;
+        } else if (tree.assignment(node)) |assignment_node| {
+            return tree.hasComptimeSelectionWithin(assignment_node.value, descend_entries);
+        } else if (tree.returnStatement(node)) |statement| {
+            return if (statement.value) |value| tree.hasComptimeSelectionWithin(value, descend_entries) else false;
+        } else if (tree.functionCall(node)) |call| {
+            return tree.hasComptimeSelectionWithin(call.input, descend_entries);
+        } else if (tree.structValueLiteral(node)) |collection_value| {
+            for (collection_value.fields) |field| if (tree.hasComptimeSelectionWithin(tree.valueField(field).?.value, descend_entries)) return true;
+        } else if (tree.listLiteral(node)) |collection_value| {
+            for (collection_value.elements) |element| if (tree.hasComptimeSelectionWithin(element, descend_entries)) return true;
+        } else if (tree.choiceLiteral(node)) |collection_value| {
+            return if (collection_value.payload) |payload| tree.hasComptimeSelectionWithin(payload, descend_entries) else false;
+        } else if (tree.structFieldAccess(node)) |access| {
+            return tree.hasComptimeSelectionWithin(access.value, descend_entries);
+        } else if (tree.choicePayloadAccess(node)) |access| {
+            return tree.hasComptimeSelectionWithin(access.value, descend_entries);
+        } else if (tree.binaryOperation(node)) |operation| {
+            return tree.hasComptimeSelectionWithin(operation.lhs, descend_entries) or tree.hasComptimeSelectionWithin(operation.rhs, descend_entries);
+        } else if (tree.unaryOperand(node)) |operand| {
+            return tree.hasComptimeSelectionWithin(operand, descend_entries);
+        } else if (tree.assumedDeclaration(node)) |declaration| {
+            return tree.hasComptimeSelectionWithin(declaration, descend_entries);
+        }
+        return false;
+    }
+
     pub fn ifStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?IfStatement {
         if (tree.tag(node) != .if_statement) return null;
         const node_data = tree.data(node).node_and_extra;
         const extra = tree.extraData(IfExtra, node_data.extra);
-        return .{ .condition = node_data.node, .then_block = extra.then_block, .else_block = extra.else_block.unwrap() };
+        return .{ .condition = node_data.node, .then_block = extra.then_block, .else_block = extra.else_block.unwrap(), .comptime_selection = extra.comptime_selection != 0 };
     }
 
     pub fn functionCall(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionCall {

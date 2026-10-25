@@ -24,6 +24,14 @@ pub const FunctionSet = struct {
         };
     }
 
+    pub fn clone(self: *const FunctionSet, allocator: std.mem.Allocator) !FunctionSet {
+        var result = FunctionSet.init(allocator);
+        errdefer result.deinit();
+        inline for (@typeInfo(FunctionSet).@"struct".fields) |field|
+            @field(result, field.name) = try @field(self, field.name).cloneWithAllocator(allocator);
+        return result;
+    }
+
     pub fn deinit(self: *FunctionSet) void {
         self.values.deinit();
         self.bindings.deinit();
@@ -40,6 +48,15 @@ pub const FunctionSet = struct {
     pub fn include(self: *FunctionSet, function: graph_mod.GlobalFunctionId) !bool {
         const result = try self.values.getOrPut(function);
         return !result.found_existing;
+    }
+
+    // Proof selection belongs to the compilation unit. Sharing a method body
+    // with selected cleanup does not select unrelated contract operations.
+    pub fn requiresConformance(self: *const FunctionSet, graph: *const graph_mod.GlobalSemanticGraph, proof: graph_mod.ContractSafetyConformance) bool {
+        if (self.operations.contains(proof.selection)) return true;
+        if (!self.cleanup_functions.contains(proof.method)) return false;
+        const conformance = graph.contract_conformances.items[proof.selection.conformance];
+        return @import("standard_contracts.zig").standardDeclaration(graph, "Deinit") == conformance.declaration;
     }
 
     pub fn containsBinding(self: *const FunctionSet, binding: graph_mod.GlobalBindingId) bool {
@@ -72,12 +89,20 @@ pub fn executionRoots(
             !function.flags.is_test and std.mem.eql(u8, name, "main");
         // Open Errable signatures are completed from their bodies and can be
         // inspected while resolving an otherwise reachable caller.
-        const trace_runtime = (if (graph.moduleForDeclaration(function.declaration)) |owner| graph.modules.items[@intFromEnum(owner)].is_bundled_core else false) and
-            (std.mem.eql(u8, name, "_add_error_context") or std.mem.eql(u8, name, "_add_error_context_text") or std.mem.eql(u8, name, "source_location"));
+        const trace_runtime = function.flags.isTraceSupport();
         if (entrypoint or trace_runtime or function.flags.is_c_export or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
     }
     return result;
+}
+
+/// Generated propagation and source-location operations call these ordinary
+/// core functions without a source-level call edge. Explicit execution roots
+/// need the same support whether they originate in a program or a REPL command.
+pub fn includeRuntimeSupport(graph: *const graph_mod.GlobalSemanticGraph, functions: *FunctionSet) !void {
+    for (graph.functions.items, 0..) |function, raw| {
+        if (function.flags.isTraceSupport()) _ = try functions.include(@enumFromInt(@as(u32, @intCast(raw))));
+    }
 }
 
 /// Extend a root set with every function referenced by its currently
@@ -106,6 +131,42 @@ pub fn expand(
         if (functions.contains(function_id)) try state.walkFunction(function_id);
     }
     return state.changed;
+}
+
+// Closed function dependencies without executable-program roots. Evaluation
+// and interactive submissions must not pull unrelated main/global work into
+// their proof merely because it exists in the retained graph.
+pub fn expressionUnit(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, root: graph_mod.GlobalNodeId) !FunctionSet {
+    var result = FunctionSet.init(allocator);
+    errdefer result.deinit();
+    var state = State{
+        .allocator = allocator,
+        .graph = graph,
+        .functions = &result,
+        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
+    };
+    defer state.visited_functions.deinit();
+    defer state.visited_nodes.deinit();
+    try state.walkNode(root);
+    return result;
+}
+
+pub fn dependencyUnit(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, roots: []const graph_mod.GlobalFunctionId) !FunctionSet {
+    for (roots) |root| if (@intFromEnum(root) >= graph.functions.items.len) return error.InvalidEntry;
+    var result = FunctionSet.init(allocator);
+    errdefer result.deinit();
+    var state = State{
+        .allocator = allocator,
+        .graph = graph,
+        .functions = &result,
+        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
+    };
+    defer state.visited_functions.deinit();
+    defer state.visited_nodes.deinit();
+    for (roots) |root| try state.includeFunction(root);
+    return result;
 }
 
 /// Initial summary worklist order, placing concrete dependencies before callers.
@@ -158,6 +219,8 @@ const State = struct {
         // outside the function body, so their callees are reachable as well.
         for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
             if (field.default_value) |value| try self.walkNode(value);
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding|
+            if (self.graph.binding(binding).initialization) |value| try self.walkNode(value);
         const body = function.body orelse return;
         try self.walkBlock(body);
         if (self.dependency_order) |order| if (function.safety_primitive == .none)
@@ -175,6 +238,7 @@ const State = struct {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id|
             try self.walkNode(node_id);
+        if (block.ret_val) |value| try self.walkNode(value);
     }
 
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
@@ -190,14 +254,26 @@ const State = struct {
                 if (binding.initialization) |value| try self.walkNode(value);
                 if (binding.cleanup_arguments) |value| try self.walkNode(value);
             },
-            .move_value, .denied_implicit_copy, .address_of => |value| try self.walkNode(value),
+            .move_value, .denied_implicit_copy => |value| try self.walkNode(value),
+            .address_of => |value| {
+                // Materialized address temporaries can be re-evaluated. Their
+                // selected cleanup is executed before the deferred assignment.
+                const child = self.graph.node(value);
+                if (child.content == .assignment) {
+                    const binding = self.graph.binding(child.content.assignment.binding);
+                    if (binding.deferred_initialization) if (binding.reinitialize_cleanup) |cleanup|
+                        try self.walkNode(cleanup);
+                }
+                try self.walkNode(value);
+            },
             .assignment => |value| {
                 try self.functions.bindings.put(value.binding, {});
                 try self.walkNode(value.value);
             },
             .auto_deinit_binding => |id| {
                 const value = self.graph.auto_deinits.items[@intFromEnum(id)];
-                try self.functions.bindings.put(value.binding, {});
+                if (value.ownerBinding()) |binding| try self.functions.bindings.put(binding, {});
+                if (value.targetNode()) |target| try self.walkNode(target);
                 if (value.input) |input| try self.walkNode(input);
                 if (value.deinit_fn) |callee| try self.includeCleanupFunction(callee);
                 try self.includeAutoDeinitFields(value.fields);
@@ -207,21 +283,7 @@ const State = struct {
                 if (self.graph.callOperation(call)) |operation| try self.functions.operations.put(operation, {});
                 if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
-                if (call.consumes_auto_deinit) |value| try self.walkNode(value);
-                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
-                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
-                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
-                if (call.initializes_auto_deinit) |value| try self.walkNode(value);
                 try self.includeFunction(call.callee);
-                const callee = self.graph.functions.items[@intFromEnum(call.callee)];
-                if (callee.safety_primitive == .trusted_opaque_drop and callee.input.len != 0) {
-                    const slot_ty = self.graph.fields.items[callee.input.start].ty;
-                    if (self.graph.resolvedSemanticType(slot_ty)) |semantic| switch (semantic) {
-                        .pointer => |pointer| if (try types.deinitFunctionForInput(self.graph, pointer.child, callee.input)) |destructor|
-                            try self.includeCleanupFunction(destructor),
-                        else => {},
-                    };
-                }
             },
             .virtualize => |id| {
                 try self.functions.virtualizes.put(id, {});
@@ -229,25 +291,15 @@ const State = struct {
                 try self.walkNode(value.value);
                 for (self.graph.function_refs.items[value.methods.start..][0..value.methods.len]) |method|
                     try self.includeFunction(method);
-                for (self.graph.virtual_registry_refs.items[value.safety_methods.start..][0..value.safety_methods.len]) |registry_id| {
-                    const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
-                    for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |method|
-                        try self.includeFunction(method);
-                }
             },
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
-                if (call.consumes_auto_deinit) |value| try self.walkNode(value);
-                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
-                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
-                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
-                const registry = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)];
-                for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |callee|
-                    try self.includeFunction(callee);
+                // A virtual call uses its declared effects. Concrete bodies
+                // are retained by the handle constructions that selected them.
             },
-            .code_block, .value_sequence => |block| try self.walkBlock(block),
+            .code_block, .value_sequence, .replacement => |block| try self.walkBlock(block),
             .list_literal => |literal| {
                 for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value|
                     try self.walkNode(value);
@@ -468,4 +520,23 @@ test "summary dependency order handles late callees and recursive cycles" {
     const recursive = try dependencyOrder(allocator, &graph, &functions);
     defer allocator.free(recursive);
     try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, ordered, recursive);
+}
+
+test "runtime support follows metadata independently of declaration spelling" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    // Support inclusion must not consult declaration names or module paths.
+    // Metadata-only synthetic functions suffice to exercise that boundary.
+    try graph.functions.appendSlice(a, &.{
+        .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } },
+        .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_error_context_view = true } },
+        .{ .declaration = @enumFromInt(2), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_error_context_text = true } },
+        .{ .declaration = @enumFromInt(3), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_source_location_resolver = true } },
+    });
+    var retained = FunctionSet.init(a);
+    defer retained.deinit();
+    try includeRuntimeSupport(&graph, &retained);
+    try std.testing.expect(!retained.contains(@enumFromInt(0)));
+    for (1..4) |index| try std.testing.expect(retained.contains(@enumFromInt(index)));
 }

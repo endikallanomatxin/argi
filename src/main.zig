@@ -4,6 +4,7 @@ const init_cmd = @import("0_commands/init.zig");
 const format_cmd = @import("0_commands/format.zig");
 const lsp_cmd = @import("0_commands/lsp.zig");
 const run_cmd = @import("0_commands/run.zig");
+const repl_cmd = @import("0_commands/repl.zig");
 const test_cmd = @import("0_commands/test.zig");
 const argi_version = @import("0_commands/version.zig");
 
@@ -36,6 +37,8 @@ fn printHelp() void {
     std.debug.print("  build [path] [flags]                   Build the current module or a selected module path\n", .{});
     std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
     std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
+    std.debug.print("  run --vm <directory>                  Execute the experimental scalar/aggregate bytecode subset\n", .{});
+    std.debug.print("  repl [flags]                           Start the experimental persistent bytecode REPL\n", .{});
     std.debug.print("  test [directory] [flags]               Build and run native Argi tests\n", .{});
     std.debug.print("  init [name]                            Create an executable module\n", .{});
     std.debug.print("  init --lib [name]                      Create a library module\n", .{});
@@ -64,7 +67,7 @@ fn printHelp() void {
     std.debug.print("  --c-sysroot <path>                      Select the target C toolchain sysroot\n", .{});
     std.debug.print("  --target <arch-os-abi>                   Select native or Linux x86_64/aarch64 GNU target\n", .{});
     std.debug.print("  --release                              Optimize LLVM IR and generated machine code\n", .{});
-    std.debug.print("\nTest defaults: [test].modules in the current directory's argi.toml\n", .{});
+    std.debug.print("\nBytecode execution limits (run --vm, repl):\n  {s}\n", .{@import("0_commands/execution_options.zig").help});
     std.debug.print("\nTest flags:\n", .{});
     std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
     std.debug.print("\nBuild diagnostic flags:\n", .{});
@@ -121,6 +124,10 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, command, "lsp")) {
         lsp_cmd.start(io) catch |err| {
             exitCommandError("LSP error", err);
+        };
+    } else if (std.mem.eql(u8, command, "repl")) {
+        repl_cmd.run(init.gpa, io, init.environ_map, args[2..]) catch |err| {
+            exitCommandError("REPL error", err);
         };
     } else if (std.mem.eql(u8, command, "run")) {
         const exit_code = run_cmd.run(io, init.environ_map, args[2..]) catch |err| {

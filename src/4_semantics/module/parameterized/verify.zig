@@ -71,10 +71,17 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
 
     for (storage.parameterized_functions.items) |parameterized| {
         try require(verify.idFits(parameterized.declaration, graph.declarations.items.len));
+        if (parameterized.concrete_function) |function| {
+            try require(verify.idFits(function, graph.functions.items.len));
+            try require(graph.functions.items[@intFromEnum(function)].declaration == parameterized.declaration);
+            try require(parameterized.parameters.len == 0 and parameterized.body != null);
+        }
         try require(verify.rangeFits(parameterized.parameters, storage.comptime_parameters.items.len));
         try require(verify.idFits(parameterized.input, storage.ir.types.items.len));
         try require(verify.idFits(parameterized.output, storage.ir.types.items.len));
         try require(verify.optionalIdFits(parameterized.body, storage.ir.blocks.items.len));
+        try require(verify.rangeFits(parameterized.input_bindings, storage.ir.bindings.items.len));
+        try require(verify.rangeFits(parameterized.output_bindings, storage.ir.bindings.items.len));
     }
 
     for (storage.parameterized_types.items) |parameterized| {
@@ -218,4 +225,9 @@ test "parameterized verifier accepts self contained semantic IR" {
     });
 
     try verifyParameterizedForms(&graph);
+    graph.semantic.parameterized_storage.parameterized_functions.items[0].input_bindings = .{ .start = 0, .len = 1 };
+    try std.testing.expectError(error.InvalidModuleSemanticParameterizedState, verifyParameterizedForms(&graph));
+    graph.semantic.parameterized_storage.parameterized_functions.items[0].input_bindings = .{ .start = 0, .len = 0 };
+    graph.semantic.parameterized_storage.parameterized_functions.items[0].output_bindings = .{ .start = 0, .len = 1 };
+    try std.testing.expectError(error.InvalidModuleSemanticParameterizedState, verifyParameterizedForms(&graph));
 }

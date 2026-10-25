@@ -1,0 +1,423 @@
+const std = @import("std");
+const g = @import("../../4_semantics/global/graph.zig");
+const types = @import("../../4_semantics/global/types.zig");
+const b = @import("bytecode.zig");
+
+/// Physical byte views support booleans and numeric data. Acquired layouts also
+/// describe reference leaves, whose evidence is stored separately from bytes.
+/// Descriptors belong to the compilation arena and contain no graph pointers.
+pub const Layout = struct {
+    size: usize,
+    alignment: usize,
+    has_references: bool = false,
+    shape: union(enum) {
+        boolean,
+        virtual_reference,
+        reference: @import("../../4_semantics/primitives/schema.zig").PointerMutability,
+        integer: struct { signed: bool },
+        floating: enum { float16, float32, float64 },
+        fields: []const Field,
+        choice: []const Variant,
+        array: struct { element: *const Layout, length: usize, stride: usize },
+    },
+
+    pub const Field = struct { offset: usize, layout: *const Layout };
+    pub const Variant = struct { offset: usize, payload: ?*const Layout };
+};
+
+pub fn equal(left: *const Layout, right: *const Layout) bool {
+    if (left.size != right.size or left.alignment != right.alignment or left.has_references != right.has_references or std.meta.activeTag(left.shape) != std.meta.activeTag(right.shape)) return false;
+    return switch (left.shape) {
+        .boolean, .virtual_reference => true,
+        .reference => |permission| permission == right.shape.reference,
+        .integer => |integer| integer.signed == right.shape.integer.signed,
+        .floating => |kind| kind == right.shape.floating,
+        .array => |array| array.length == right.shape.array.length and array.stride == right.shape.array.stride and equal(array.element, right.shape.array.element),
+        .choice => |variants| blk: {
+            if (variants.len != right.shape.choice.len) break :blk false;
+            for (variants, right.shape.choice) |a, c| {
+                if (a.offset != c.offset or (a.payload == null) != (c.payload == null)) break :blk false;
+                if (a.payload) |payload| if (!equal(payload, c.payload.?)) break :blk false;
+            }
+            break :blk true;
+        },
+        .fields => |fields| blk: {
+            if (fields.len != right.shape.fields.len) break :blk false;
+            for (fields, right.shape.fields) |a, c| if (a.offset != c.offset or !equal(a.layout, c.layout)) break :blk false;
+            break :blk true;
+        },
+    };
+}
+
+pub fn compile(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) !*const Layout {
+    return compileDepth(allocator, graph, ty, 0, false);
+}
+
+// Acquired references retain their evidence separately from physical bytes.
+// Ordinary byte views still reject every representation containing references.
+pub fn compileAcquired(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) !*const Layout {
+    return compileDepth(allocator, graph, ty, 0, true);
+}
+
+fn compileDepth(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId, depth: usize, acquired: bool) anyerror!*const Layout {
+    if (depth > 64) return error.UnsupportedNumericLayout;
+    const physical = try types.layoutOf(graph, ty);
+    const size = std.math.cast(usize, physical.size) orelse return error.Overflow;
+    const alignment = std.math.cast(usize, physical.alignment) orelse return error.Overflow;
+    const semantic = types.representation(graph, ty) orelse return error.UnsupportedNumericLayout;
+    const shape: @FieldType(Layout, "shape") = if (acquired and semantic == .pointer) blk: {
+        if (size != graph.target.pointerBytes()) return error.UnsupportedNumericLayout;
+        break :blk .{ .reference = semantic.pointer.mutability };
+    } else if (acquired and semantic == .virtual) blk: {
+        if (size != graph.target.pointerBytes() * 2) return error.UnsupportedNumericLayout;
+        break :blk .virtual_reference;
+    } else if (b.isBuiltinRepresentation(graph, ty, .Bool)) blk: {
+        if (size != 1 or alignment != 1) return error.UnsupportedNumericLayout;
+        break :blk .boolean;
+    } else if (b.integerBounds(graph, ty)) |bounds| blk: {
+        if (size == 0 or size > 8) return error.UnsupportedNumericLayout;
+        break :blk .{ .integer = .{ .signed = bounds.minimum < 0 } };
+    } else if (b.floatType(graph, ty)) blk: {
+        const kind: @FieldType(@FieldType(Layout, "shape"), "floating") = if (b.isBuiltinRepresentation(graph, ty, .Float16)) .float16 else if (b.isBuiltinRepresentation(graph, ty, .Float32)) .float32 else .float64;
+        const expected: usize = switch (kind) {
+            .float16 => 2,
+            .float32 => 4,
+            .float64 => 8,
+        };
+        if (size != expected) return error.UnsupportedNumericLayout;
+        break :blk .{ .floating = kind };
+    } else if (types.arrayElement(graph, ty)) |element_ty| blk: {
+        const element = try compileDepth(allocator, graph, element_ty, depth + 1, acquired);
+        const length = std.math.cast(usize, types.arrayLength(graph, ty).?) orelse return error.Overflow;
+        const stride = try alignOffset(element.size, element.alignment);
+        if (try std.math.mul(usize, stride, length) != size) return error.UnsupportedNumericLayout;
+        break :blk .{ .array = .{ .element = element, .length = length, .stride = stride } };
+    } else if (acquired and types.variants(graph, ty) != null) blk: {
+        const variants = types.variants(graph, ty).?;
+        const result = try allocator.alloc(Layout.Variant, variants.len);
+        var storage: types.ChoiceStorage = .{};
+        for (result, graph.variants.items[variants.start..][0..variants.len]) |*out, variant| {
+            const child = if (variant.payload_type) |payload| try compileDepth(allocator, graph, payload, depth + 1, acquired) else null;
+            const offset = storage.append(if (child) |payload| .{ .size = payload.size, .alignment = payload.alignment } else null);
+            out.* = .{ .offset = std.math.cast(usize, offset) orelse return error.Overflow, .payload = child };
+        }
+        const expected = storage.finish();
+        if (expected.size != size or expected.alignment != alignment) return error.UnsupportedNumericLayout;
+        break :blk .{ .choice = result };
+    } else blk: {
+        // Numeric unions and choices have overlapping or discriminated storage;
+        // they need an explicit representation plan before byte access is valid.
+        if (types.isCUnion(graph, ty)) return error.UnsupportedNumericLayout;
+        const fields = types.fields(graph, ty) orelse return error.UnsupportedNumericLayout;
+        const result = try allocator.alloc(Layout.Field, fields.len);
+        var offset: usize = 0;
+        for (result, graph.fields.items[fields.start..][0..fields.len]) |*out, field| {
+            const child = try compileDepth(allocator, graph, field.ty, depth + 1, acquired);
+            offset = try alignOffset(offset, child.alignment);
+            out.* = .{ .offset = offset, .layout = child };
+            offset = try std.math.add(usize, offset, child.size);
+        }
+        if (try alignOffset(offset, alignment) != size) return error.UnsupportedNumericLayout;
+        break :blk .{ .fields = result };
+    };
+    const result = try allocator.create(Layout);
+    const has_references = switch (shape) {
+        .reference, .virtual_reference => true,
+        .choice => |variants| blk: {
+            for (variants) |variant| if (variant.payload) |payload| if (payload.has_references) break :blk true;
+            break :blk false;
+        },
+        .array => |array| array.length != 0 and array.element.has_references,
+        .fields => |fields| blk: {
+            for (fields) |field| if (field.layout.has_references) break :blk true;
+            break :blk false;
+        },
+        else => false,
+    };
+    result.* = .{ .size = size, .alignment = alignment, .shape = shape, .has_references = has_references };
+    return result;
+}
+
+fn alignOffset(value: usize, alignment: usize) !usize {
+    if (alignment == 0 or !std.math.isPowerOfTwo(alignment)) return error.UnsupportedNumericLayout;
+    return (try std.math.add(usize, value, alignment - 1)) & ~(alignment - 1);
+}
+
+/// Read one representation byte without materializing a second backing buffer.
+/// Padding has no semantic value; a deterministic zero never exposes host data.
+pub fn readByte(layout: *const Layout, value: b.Value, offset: usize, endian: std.builtin.Endian) anyerror!u8 {
+    if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
+    return switch (layout.shape) {
+        .reference, .virtual_reference, .choice => error.ExecutionInvalidReference,
+        .boolean => if (value == .boolean) @intFromBool(value.boolean) else error.ExecutionInvalidReference,
+        .integer, .floating => blk: {
+            const bits = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
+            const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
+            break :blk @truncate(bits >> shift);
+        },
+        .fields => |fields| blk: {
+            if (value != .record or value.record.len != fields.len) return error.ExecutionInvalidReference;
+            for (fields, value.record) |field, child| {
+                if (offset >= field.offset and offset - field.offset < field.layout.size)
+                    break :blk try readByte(field.layout, child, offset - field.offset, endian);
+            }
+            break :blk 0;
+        },
+        .array => |array| blk: {
+            if (value != .array or value.array.len != array.length or array.stride == 0) return error.ExecutionInvalidReference;
+            const index = offset / array.stride;
+            const within = offset % array.stride;
+            if (within >= array.element.size) break :blk 0;
+            break :blk try readByte(array.element, value.array[index], within, endian);
+        },
+    };
+}
+
+/// Decode a scalar from physical bytes using the same layout as byte views.
+/// These routines accept numeric layouts only; bytes cannot reconstruct loans,
+/// virtual evidence, resource identities or initialized reference values.
+pub fn decodeInteger(layout: *const Layout, bytes: []const u8, endian: std.builtin.Endian) !i128 {
+    try requireInteger(layout);
+    if (bytes.len != layout.size) return error.ExecutionInvalidReference;
+    var bits: u64 = 0;
+    for (bytes, 0..) |byte, index| {
+        const shift: u6 = @intCast(8 * (if (endian == .little) index else bytes.len - 1 - index));
+        bits |= @as(u64, byte) << shift;
+    }
+    const width: u7 = @intCast(layout.size * 8);
+    const limit = @as(i128, 1) << width;
+    const value: i128 = bits;
+    return if (layout.shape.integer.signed and value >= @divExact(limit, 2)) value - limit else value;
+}
+
+pub fn encodeInteger(layout: *const Layout, value: i128, bytes: []u8, endian: std.builtin.Endian) !void {
+    try requireInteger(layout);
+    if (bytes.len != layout.size) return error.ExecutionInvalidReference;
+    const width: u7 = @intCast(layout.size * 8);
+    const limit = @as(i128, 1) << width;
+    const minimum = if (layout.shape.integer.signed) -@divExact(limit, 2) else 0;
+    const maximum = if (layout.shape.integer.signed) @divExact(limit, 2) - 1 else limit - 1;
+    if (value < minimum or value > maximum) return error.ExecutionIntegerOutOfRange;
+    for (bytes, 0..) |*byte, index| byte.* = try readByte(layout, .{ .integer = @import("../integer_arithmetic.zig").encode(value, @import("../../4_semantics/primitives/schema.zig").integerRangeForWidth(@intCast(layout.size * 8), layout.shape.integer.signed)) }, index, endian);
+}
+
+fn requireInteger(layout: *const Layout) !void {
+    if (layout.shape != .integer or layout.size == 0 or layout.size > 8 or
+        !std.math.isPowerOfTwo(layout.size) or layout.alignment == 0 or
+        !std.math.isPowerOfTwo(layout.alignment) or layout.alignment > layout.size)
+        return error.ExecutionInvalidReference;
+}
+
+test "floating byte layouts preserve precision signed zero and NaN payloads" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Float16 }, .{ .builtin = .Float32 }, .{ .builtin = .Float64 } });
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    for ([_]u64{ 0x8000, 0x80000000, 0x8000000000000000 }, 0..) |negative_zero, index| {
+        const layout = try compile(arena.allocator(), &graph, @enumFromInt(index));
+        const nan_bits = switch (index) {
+            0 => @as(u64, 0x7e55),
+            1 => @as(u64, 0x7fc01234),
+            else => @as(u64, 0x7ff8000012345678),
+        };
+        for ([_]u64{ negative_zero, nan_bits }) |bits| {
+            const value = try floatFromBits(layout, bits);
+            for ([_]std.builtin.Endian{ .little, .big }) |endian| {
+                var bytes: [8]u8 = undefined;
+                try encodeFloat(layout, value, bytes[0..layout.size], endian);
+                for (bytes[0..layout.size], 0..) |byte, offset| {
+                    const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
+                    try std.testing.expectEqual(@as(u8, @truncate(bits >> shift)), byte);
+                }
+                try std.testing.expectEqual(bits, try floatingBits(layout, try decodeFloat(layout, bytes[0..layout.size], endian)));
+                const updated = try writeByte(arena.allocator(), layout, value, 0, bytes[0] ^ 1, endian);
+                const changed_shift: u6 = @intCast(if (endian == .little) 0 else 8 * (layout.size - 1));
+                try std.testing.expectEqual(bits ^ (@as(u64, 1) << changed_shift), try floatingBits(layout, updated));
+                try std.testing.expectEqual(bits, try floatingBits(layout, value));
+            }
+        }
+        var bytes: [8]u8 = undefined;
+        try std.testing.expectError(error.ExecutionInvalidReference, encodeFloat(layout, .{ .integer = 0 }, bytes[0..layout.size], .little));
+    }
+}
+
+fn requireFloat(layout: *const Layout) !void {
+    if (layout.shape != .floating) return error.ExecutionInvalidReference;
+    const size: usize = switch (layout.shape.floating) {
+        .float16 => 2,
+        .float32 => 4,
+        .float64 => 8,
+    };
+    if (layout.size != size or layout.alignment == 0 or !std.math.isPowerOfTwo(layout.alignment) or layout.alignment > size) return error.ExecutionInvalidReference;
+}
+
+fn floatingBits(layout: *const Layout, value: b.Value) !u64 {
+    try requireFloat(layout);
+    return switch (layout.shape.floating) {
+        .float16 => if (value == .float16) @as(u16, @bitCast(value.float16)) else error.ExecutionInvalidReference,
+        .float32 => if (value == .float32) @as(u32, @bitCast(value.float32)) else error.ExecutionInvalidReference,
+        .float64 => if (value == .float64) @as(u64, @bitCast(value.float64)) else error.ExecutionInvalidReference,
+    };
+}
+
+fn floatFromBits(layout: *const Layout, bits: u64) !b.Value {
+    try requireFloat(layout);
+    return switch (layout.shape.floating) {
+        .float16 => .{ .float16 = @bitCast(@as(u16, @truncate(bits))) },
+        .float32 => .{ .float32 = @bitCast(@as(u32, @truncate(bits))) },
+        .float64 => .{ .float64 = @bitCast(bits) },
+    };
+}
+
+pub fn decodeFloat(layout: *const Layout, bytes: []const u8, endian: std.builtin.Endian) !b.Value {
+    try requireFloat(layout);
+    if (bytes.len != layout.size) return error.ExecutionInvalidReference;
+    var bits: u64 = 0;
+    for (bytes, 0..) |byte, index| bits |= @as(u64, byte) << @as(u6, @intCast(8 * (if (endian == .little) index else bytes.len - 1 - index)));
+    return floatFromBits(layout, bits);
+}
+
+pub fn encodeFloat(layout: *const Layout, value: b.Value, bytes: []u8, endian: std.builtin.Endian) !void {
+    _ = try floatingBits(layout, value);
+    if (bytes.len != layout.size) return error.ExecutionInvalidReference;
+    for (bytes, 0..) |*byte, index| byte.* = try readByte(layout, value, index, endian);
+}
+
+/// Produce an updated value without mutating shared aggregate slices. The
+/// caller commits it through its evaluated storage destination afterwards.
+pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
+    if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
+    return switch (layout.shape) {
+        .reference, .virtual_reference, .choice => error.ExecutionInvalidReference,
+        .boolean => if (value == .boolean) .{ .boolean = byte & 1 != 0 } else error.ExecutionInvalidReference,
+        .integer, .floating => blk: {
+            const previous = if (layout.shape == .floating) try floatingBits(layout, value) else if (value == .integer) value.integer else return error.ExecutionInvalidReference;
+            const shift: u6 = @intCast(8 * (if (endian == .little) offset else layout.size - 1 - offset));
+            const mask = @as(u64, 255) << shift;
+            const bits = (previous & ~mask) | (@as(u64, byte) << shift);
+            break :blk if (layout.shape == .floating) try floatFromBits(layout, bits) else .{ .integer = bits };
+        },
+        .fields => |fields| blk: {
+            if (value != .record or value.record.len != fields.len) return error.ExecutionInvalidReference;
+            for (fields, value.record, 0..) |field, child, index| {
+                if (offset >= field.offset and offset - field.offset < field.layout.size) {
+                    const updated = try writeByte(allocator, field.layout, child, offset - field.offset, byte, endian);
+                    const copy = try allocator.dupe(b.Value, value.record);
+                    copy[index] = updated;
+                    break :blk .{ .record = copy };
+                }
+            }
+            // Padding does not alter any language field.
+            break :blk value;
+        },
+        .array => |array| blk: {
+            if (value != .array or value.array.len != array.length or array.stride == 0) return error.ExecutionInvalidReference;
+            const index = offset / array.stride;
+            const within = offset % array.stride;
+            if (within >= array.element.size) break :blk value;
+            const updated = try writeByte(allocator, array.element, value.array[index], within, byte, endian);
+            const copy = try allocator.dupe(b.Value, value.array);
+            copy[index] = updated;
+            break :blk .{ .array = copy };
+        },
+    };
+}
+
+test "numeric byte layouts retain target padding and reject references" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt8 },
+        .{ .builtin = .Int32 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .array = .{ .element = @enumFromInt(2), .length = 3 } },
+    });
+    for ([_][]const u8{ "tag", "number" }, 0..) |name, index|
+        try graph.fields.append(a, .{ .name = try graph.addString(a, name), .source = source, .ty = @enumFromInt(@as(u32, @intCast(index))) });
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const layout = try compile(arena.allocator(), &graph, @enumFromInt(2));
+    try std.testing.expectEqual(@as(usize, 8), layout.size);
+    try std.testing.expectEqual(@as(usize, 4), layout.alignment);
+    try std.testing.expectEqual(@as(usize, 4), layout.shape.fields[1].offset);
+    try std.testing.expect(layout.shape.fields[1].layout.shape.integer.signed);
+    const array = try compile(arena.allocator(), &graph, @enumFromInt(4));
+    try std.testing.expectEqual(@as(usize, 24), array.size);
+    try std.testing.expectEqual(@as(usize, 8), array.shape.array.stride);
+    try std.testing.expectError(error.UnsupportedNumericLayout, compile(arena.allocator(), &graph, @enumFromInt(3)));
+}
+
+test "numeric byte reads honor endianness signed values and padding" {
+    const integer: Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const byte: Layout = .{ .size = 1, .alignment = 1, .shape = .{ .integer = .{ .signed = false } } };
+    const fields = [_]Layout.Field{ .{ .offset = 0, .layout = &byte }, .{ .offset = 4, .layout = &integer } };
+    const record: Layout = .{ .size = 8, .alignment = 4, .shape = .{ .fields = &fields } };
+    const values = [_]b.Value{ .{ .integer = 42 }, .{ .integer = 4294967294 } };
+    const value: b.Value = .{ .record = &values };
+    try std.testing.expectEqual(@as(u8, 42), try readByte(&record, value, 0, .little));
+    try std.testing.expectEqual(@as(u8, 0), try readByte(&record, value, 2, .little));
+    try std.testing.expectEqual(@as(u8, 254), try readByte(&record, value, 4, .little));
+    try std.testing.expectEqual(@as(u8, 255), try readByte(&record, value, 4, .big));
+    try std.testing.expectEqual(@as(u8, 254), try readByte(&record, value, 7, .big));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, readByte(&record, value, 8, .little));
+    try std.testing.expectError(error.ExecutionInvalidReference, readByte(&record, .unit, 0, .little));
+}
+
+test "numeric byte writes preserve siblings and interpret signed boundaries" {
+    const number: Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
+    const fields = [_]Layout.Field{ .{ .offset = 0, .layout = &number }, .{ .offset = 4, .layout = &number } };
+    const record: Layout = .{ .size = 8, .alignment = 4, .shape = .{ .fields = &fields } };
+    const values = [_]b.Value{ .{ .integer = 0 }, .{ .integer = 42 } };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const updated = try writeByte(arena.allocator(), &record, .{ .record = &values }, 3, 128, .little);
+    try std.testing.expectEqual(@as(u64, 2147483648), updated.record[0].integer);
+    try std.testing.expectEqual(@as(i128, 42), updated.record[1].integer);
+    try std.testing.expectEqual(@as(i128, 0), values[0].integer);
+    const big = try writeByte(arena.allocator(), &number, .{ .integer = 0 }, 0, 128, .big);
+    try std.testing.expectEqual(@as(u64, 2147483648), big.integer);
+}
+
+test "numeric scalar codecs agree with byte views across widths and endianness" {
+    for ([_]usize{ 1, 2, 4, 8 }) |size| for ([_]bool{ false, true }) |signed| {
+        const layout: Layout = .{ .size = size, .alignment = size, .shape = .{ .integer = .{ .signed = signed } } };
+        const limit = @as(i128, 1) << @as(u7, @intCast(size * 8));
+        const minimum = if (signed) -@divExact(limit, 2) else 0;
+        const maximum = if (signed) @divExact(limit, 2) - 1 else limit - 1;
+        for ([_]std.builtin.Endian{ .little, .big }) |endian| for ([_]i128{ minimum, 0, 42, maximum }) |value| {
+            var bytes: [8]u8 = undefined;
+            try encodeInteger(&layout, value, bytes[0..size], endian);
+            try std.testing.expectEqual(value, try decodeInteger(&layout, bytes[0..size], endian));
+            for (bytes[0..size], 0..) |byte, index| try std.testing.expectEqual(byte, try readByte(&layout, .{ .integer = @import("../integer_arithmetic.zig").encode(value, @import("../../4_semantics/primitives/schema.zig").integerRangeForWidth(@intCast(layout.size * 8), layout.shape.integer.signed)) }, index, endian));
+            @memset(&bytes, 99);
+            try std.testing.expectError(error.ExecutionIntegerOutOfRange, encodeInteger(&layout, maximum + 1, bytes[0..size], endian));
+            try std.testing.expectEqualSlices(u8, &(@as([8]u8, @splat(99))), &bytes);
+        };
+    };
+}
+
+test "boolean byte layout preserves LLVM i1 storage without integer coercion" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const layout = try compile(arena.allocator(), &graph, @enumFromInt(0));
+    try std.testing.expectEqual(@as(usize, 1), layout.size);
+    try std.testing.expectEqual(@as(usize, 1), layout.alignment);
+    try std.testing.expect(layout.shape == .boolean);
+    for ([_]std.builtin.Endian{ .little, .big }) |endian| {
+        try std.testing.expectEqual(@as(u8, 0), try readByte(layout, .{ .boolean = false }, 0, endian));
+        try std.testing.expectEqual(@as(u8, 1), try readByte(layout, .{ .boolean = true }, 0, endian));
+        try std.testing.expect((try writeByte(a, layout, .{ .boolean = false }, 0, 1, endian)).boolean);
+        try std.testing.expect(!(try writeByte(a, layout, .{ .boolean = true }, 0, 0, endian)).boolean);
+    }
+    try std.testing.expectError(error.ExecutionInvalidReference, readByte(layout, .{ .integer = 1 }, 0, .little));
+    try std.testing.expectError(error.ExecutionInvalidReference, writeByte(a, layout, .{ .integer = 0 }, 0, 1, .little));
+}

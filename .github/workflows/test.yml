@@ -8,17 +8,19 @@ name: Test
         type: string
         default: ''
   push:
-    branches: [develop]
+    branches: [develop, feature/bytecode-execution]
   pull_request:
     branches: [develop]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   validate:
-    # Release pushes are validated by the publication workflow on the same SHA.
-    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ')
     uses: ./.github/workflows/build.yml
     with:
       package: true

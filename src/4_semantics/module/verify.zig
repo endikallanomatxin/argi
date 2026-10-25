@@ -66,6 +66,10 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.optionalIdFits(value.reinitialize_cleanup, semantic.nodes.items.len));
         } else try payload.binding(entities.Ids, value, bounds);
     }
+    for (semantic.block_assumptions.items) |value| {
+        try require(verify.idFits(value.block, semantic.blocks.items.len));
+        try require(verify.rangeFits(value.bindings, semantic.binding_refs.items.len));
+    }
     for (semantic.blocks.items) |value| try payload.block(entities.Ids, value, bounds);
     for (semantic.value_fields.items) |value| try payload.valueField(entities.Ids, value, bounds);
     for (semantic.switch_cases.items) |value| try payload.switchCase(entities.Ids, value, bounds);
@@ -110,6 +114,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.binding_refs.items) |id| try require(verify.idFits(id, semantic.bindings.items.len));
     for (semantic.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (semantic.virtual_registry_refs.items) |id| try require(verify.idFits(id, semantic.virtual_registries.items.len));
+    for (semantic.comptime_requests.items) |id| try require(verify.idFits(id, semantic.nodes.items.len));
     for (semantic.roots.items) |id| try require(verify.idFits(id, semantic.nodes.items.len));
 }
 
@@ -141,7 +146,23 @@ fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
         type_reference_cursor += file.type_reference_count;
     }
 
-    try require(declaration_cursor == graph.declarations.items.len);
+    try require(graph.generated_declaration_count <= graph.declarations.items.len);
+    try require(declaration_cursor == graph.declarations.items.len - graph.generated_declaration_count);
+    for (graph.declarations.items[declaration_cursor..], declaration_cursor..) |declaration, index| {
+        try require(declaration.kind == .function);
+        try require(declaration.module_file_index < graph.file_offsets.items.len);
+        if (declaration.function_id) |function| {
+            try require(verify.idFits(function, graph.functions.items.len));
+            try require(@intFromEnum(graph.functions.items[@intFromEnum(function)].declaration) == index);
+        } else {
+            var templates: usize = 0;
+            for (graph.semantic.parameterized_storage.parameterized_functions.items) |function| {
+                if (@intFromEnum(function.declaration) == index and function.concrete_function == null) templates += 1;
+            }
+            try require(templates == 1);
+        }
+        for (graph.symbol_declarations.items) |exported| try require(@intFromEnum(exported) != index);
+    }
     try require(type_reference_cursor == graph.type_references.items.len);
 }
 
@@ -164,6 +185,7 @@ fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(!hasFieldOverlayBefore(graph, index, value.field));
 
         try require(verify.optionalIdFits(value.default_value, graph.semantic.nodes.items.len));
+        try require(!value.default_at_entry or value.default_value == null);
     }
     for (graph.semantic.variant_semantics.items, 0..) |value, index| {
         try require(verify.idFits(value.variant, views.variantCount(graph)));
@@ -179,6 +201,26 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.external, semantic.external_refs.items.len));
             try require(semantic.external_refs.items[@intFromEnum(value.external)].kind == .type);
             try require(verify.idFits(value.destination, views.typeCount(graph)));
+        },
+        .resolve_value_type => |value| {
+            try require(verify.idFits(value.value, semantic.nodes.items.len));
+            try require(verify.idFits(value.destination, views.typeCount(graph)));
+        },
+        .resolve_aggregate_literal => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            switch (value.target) {
+                .type => |ty| try require(verify.idFits(ty, views.typeCount(graph))),
+                .pointee, .element => |node| try require(verify.idFits(node, semantic.nodes.items.len)),
+            }
+            try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
+            try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
+        },
+        .resolve_entry_call => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.callee, graph.functions.items.len));
+            const node = semantic.nodes.items[@intFromEnum(value.node)];
+            try require(node == .resolved and node.resolved.content == .function_call);
+            try require(node.resolved.content.function_call.callee == value.callee);
         },
         .resolve_call => |value| {
             try require(verify.optionalIdFits(value.contract_type, views.typeCount(graph)));
@@ -376,6 +418,27 @@ test "module verifier accepts an empty semantic module" {
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "empty") };
     defer graph.deinit(allocator);
     try verifyModule(&graph);
+}
+
+test "module verifier checks generated declaration partitions and function provenance" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "entry") };
+    defer graph.deinit(a);
+    const text = try @import("../primitives/strings.zig").append(&graph.strings, a, "entry.rg");
+    try graph.file_offsets.append(a, .{ .path = text, .declaration_base = 0, .declaration_count = 0, .type_reference_base = 0, .type_reference_count = 0 });
+    try graph.declarations.append(a, .{ .kind = .function, .name = text, .source_offset = 7, .module_file_index = 0, .function_id = @enumFromInt(0) });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.generated_declaration_count = 1;
+    try verifyModule(&graph);
+    graph.file_offsets.items[0].declaration_count = 1;
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.file_offsets.items[0].declaration_count = 0;
+    graph.declarations.items[0].function_id = null;
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.declarations.items[0].function_id = @enumFromInt(0);
+    try graph.symbol_declarations.append(a, @enumFromInt(0));
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
 }
 
 test "module verifier accepts a well formed external type hole" {

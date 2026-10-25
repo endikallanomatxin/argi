@@ -1,0 +1,1541 @@
+const std = @import("std");
+const g = @import("../../4_semantics/global/graph.zig");
+const p = @import("../../4_semantics/primitives/schema.zig");
+const b = @import("bytecode.zig");
+const types = @import("../../4_semantics/global/types.zig");
+const cleanup_layout = @import("../cleanup_layout.zig");
+const error_plan = @import("../error_plan.zig");
+const cleanup_plan = @import("../cleanup_plan.zig");
+const replacement = @import("../../4_semantics/global/replacement.zig");
+
+pub const Options = struct {
+    bodies: ?*const @import("body_cache.zig").Store = null,
+    // Candidate proof availability stays fixed throughout this lowering.
+    proofs: ?*const @import("../../4_semantics/safety/body_cache.zig").Batch = null,
+    // Must outlive Lower, but may be reset once only its published Program remains.
+    scratch_allocator: ?std.mem.Allocator = null,
+    // Borrowed catalogue; the published Program retains only referenced rows.
+    session: ?b.Session = null,
+};
+
+pub const Lower = struct {
+    const SessionIndex = struct { source: u32, published: ?u32 = null };
+    allocator: std.mem.Allocator,
+    scratch_allocator: ?std.mem.Allocator = null,
+    graph: *const g.GlobalSemanticGraph,
+    annotations: *const @import("../../4_semantics/safety/annotations.zig").Annotations = &.empty,
+    bodies: ?*const @import("body_cache.zig").Store = null,
+    proofs: ?*const @import("../../4_semantics/safety/body_cache.zig").Batch = null,
+    functions: std.AutoHashMapUnmanaged(g.GlobalFunctionId, b.FunctionEntry) = .empty,
+    published_functions: []const b.FunctionEntry = &.{},
+    validated_bodies: std.AutoHashMapUnmanaged(@import("body_cache.zig").ValidationKey, bool) = .empty,
+    session_bindings: std.ArrayList(b.SessionBinding) = .empty,
+    session_indexes: std.AutoHashMapUnmanaged(g.GlobalBindingId, SessionIndex) = .empty,
+    published_session: ?b.Session = null,
+    globals: std.ArrayList(b.Global) = .empty,
+    host_functions: std.ArrayList(g.GlobalFunctionId) = .empty,
+    cleanup_bindings: []const bool,
+    cleanup_types: []const bool,
+    cleanup_layouts: cleanup_layout.Counts = .{},
+    bool_type: ?b.Type,
+    pending: std.ArrayList(g.GlobalFunctionId) = .empty,
+    source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
+    unsupported: []const u8 = "",
+    session: ?b.Session = null,
+    mode: enum { compile_time, compile_time_host, runtime } = .compile_time,
+    diagnostics: ?*const @import("../../1_base/diagnostic.zig").Diagnostics = null,
+
+    pub fn init(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, options: Options) !Lower {
+        const scratch_allocator = options.scratch_allocator orelse a;
+        const cleanup_bindings = try cleanup_layout.requiredBindings(scratch_allocator, graph);
+        const cleanup_types = try cleanup_layout.owningTypes(scratch_allocator, graph);
+        var session_indexes: std.AutoHashMapUnmanaged(g.GlobalBindingId, SessionIndex) = .empty;
+        errdefer session_indexes.deinit(scratch_allocator);
+        if (options.session) |session| for (session.bindings, 0..) |binding, index| {
+            const entry = try session_indexes.getOrPut(scratch_allocator, binding.binding);
+            if (entry.found_existing) return error.DuplicateSessionBinding;
+            entry.value_ptr.* = .{ .source = std.math.cast(u32, index) orelse return error.InvalidBytecode };
+        };
+        const bool_type: ?b.Type = for (graph.types.items, 0..) |ty, i| {
+            if (ty == .builtin and ty.builtin == .Bool) break @as(b.Type, @enumFromInt(i));
+        } else null;
+        return .{ .proofs = options.proofs, .bodies = options.bodies, .allocator = a, .scratch_allocator = options.scratch_allocator, .graph = graph, .cleanup_bindings = cleanup_bindings, .cleanup_types = cleanup_types, .bool_type = bool_type, .session_indexes = session_indexes, .session = options.session, .mode = if (options.session != null) .runtime else .compile_time };
+    }
+    // Only temporary lookup and patch tables use this allocator. Instructions,
+    // projections and immutable descriptors always belong to allocator.
+    fn scratch(self: *const Lower) std.mem.Allocator {
+        return self.scratch_allocator orelse self.allocator;
+    }
+    fn sessionIndex(self: *Lower, binding: g.GlobalBindingId) !?u32 {
+        const entry = self.session_indexes.getPtr(binding) orelse return null;
+        if (entry.published) |index| return index;
+        const index = std.math.cast(u32, self.session_bindings.items.len) orelse return error.InvalidBytecode;
+        try self.session_bindings.append(self.scratch(), self.session.?.bindings[entry.source]);
+        entry.published = index;
+        return index;
+    }
+
+    fn publishSession(self: *Lower) !?b.Session {
+        const source = self.session orelse return null;
+        if (self.published_session) |published| if (published.bindings.len == self.session_bindings.items.len) return published;
+        var layouts: cleanup_layout.Layout.Copy = .{ .allocator = self.allocator };
+        defer layouts.deinit();
+        const bindings = try self.allocator.dupe(b.SessionBinding, self.session_bindings.items);
+        for (bindings) |*binding| {
+            const cleanup = try self.allocator.dupe(b.Cleanup, binding.cleanup);
+            for (cleanup) |*entry| entry.layout = try layouts.retain(entry.layout, 0);
+            binding.cleanup = cleanup;
+        }
+        return .{ .namespace = source.namespace, .bindings = bindings };
+    }
+
+    fn rollbackSessionBindings(self: *Lower, count: usize) void {
+        while (self.session_bindings.items.len > count) {
+            const binding = self.session_bindings.pop().?;
+            self.session_indexes.getPtr(binding.binding).?.published = null;
+        }
+    }
+    // All bytecode allocations belong to the caller's compilation arena.
+    // VM initialization verifies the completed program before accepting it.
+    pub fn compile(self: *Lower, entry: g.GlobalFunctionId) !b.Program {
+        const host_count = self.host_functions.items.len;
+        const global_count = self.globals.items.len;
+        const session_count = self.session_bindings.items.len;
+        errdefer {
+            self.host_functions.items.len = host_count;
+            self.globals.items.len = global_count;
+            self.rollbackSessionBindings(session_count);
+            self.pending.deinit(self.scratch());
+            self.pending = .empty;
+        }
+        if (@intFromEnum(entry) >= self.graph.functions.items.len) return error.InvalidEntry;
+        try self.pending.append(self.scratch(), entry);
+        return self.finish(null);
+    }
+
+    /// Lower a checked session-exit cleanup list through the ordinary cleanup
+    /// emitter. This entry has no invented semantic function identity. Its
+    /// dependency bodies and persistent layouts must belong to the checked graph.
+    pub fn compileSessionCleanup(self: *Lower, nodes: []const g.GlobalNodeId) !b.Program {
+        const host_count = self.host_functions.items.len;
+        const global_count = self.globals.items.len;
+        const session_count = self.session_bindings.items.len;
+        errdefer {
+            self.host_functions.items.len = host_count;
+            self.globals.items.len = global_count;
+            self.rollbackSessionBindings(session_count);
+            self.pending.deinit(self.scratch());
+            self.pending = .empty;
+        }
+        if (self.session == null) return error.InvalidBytecode;
+        for (nodes) |id| {
+            if (@intFromEnum(id) >= self.graph.nodes.items.len) return error.InvalidBytecode;
+            const node = self.graph.node(id);
+            if (node.content != .auto_deinit_binding) return error.InvalidBytecode;
+            const cleanup = self.graph.auto_deinits.items[@intFromEnum(node.content.auto_deinit_binding)];
+            const binding = cleanup.ownerBinding() orelse return error.InvalidBytecode;
+            if (try self.sessionIndex(binding) == null) return error.InvalidBytecode;
+        }
+        var function = FunctionLower{ .parent = self };
+        return self.finish(try function.compileCleanup(nodes));
+    }
+
+    // An expression has its own entry frame, not a fabricated GlobalFunctionId.
+    // Inputs replace already-evaluated operand nodes; normal lowering still
+    // selects every instruction, call and control-flow edge.
+    pub fn compileExpression(self: *Lower, node: g.GlobalNodeId, operands: []const g.GlobalNodeId) !b.Program {
+        const host_count = self.host_functions.items.len;
+        const global_count = self.globals.items.len;
+        const session_count = self.session_bindings.items.len;
+        errdefer {
+            self.host_functions.items.len = host_count;
+            self.globals.items.len = global_count;
+            self.rollbackSessionBindings(session_count);
+            self.pending.deinit(self.scratch());
+            self.pending = .empty;
+        }
+        const root = self.graph.node(node);
+        if (self.cleanup_types[@intFromEnum(root.ty orelse return error.InvalidBytecode)])
+            return self.reject(root.source, "owning expression entry result");
+        for (operands) |operand| {
+            const value = self.graph.node(operand);
+            if (self.cleanup_types[@intFromEnum(value.ty orelse return error.InvalidBytecode)])
+                return self.reject(value.source, "owning expression entry input");
+        }
+        var function = FunctionLower{ .parent = self };
+        return self.finish(try function.compileExpression(node, operands));
+    }
+
+    fn partialLayout(self: *Lower, source: p.SourceRef, ty: b.Type) !@import("storage_layout.zig").Layout {
+        return @import("storage_layout.zig").compile(self.allocator, self.graph, ty) catch |err| switch (err) {
+            error.UnsupportedStorageLayout => self.reject(source, "partial storage nesting or size"),
+            else => err,
+        };
+    }
+
+    fn finish(self: *Lower, expression: ?b.Function) !b.Program {
+        defer {
+            self.pending.deinit(self.scratch());
+            self.pending = .empty;
+        }
+        var compiled: std.ArrayList(g.GlobalFunctionId) = .empty;
+        defer compiled.deinit(self.scratch());
+        // A caller can finish lowering before a dependency fails. Roll back
+        // every new cache entry so retrying it cannot publish an incomplete
+        // dependency closure. Previously published code stays reusable.
+        errdefer for (compiled.items) |id| {
+            _ = self.functions.remove(id);
+        };
+        while (self.pending.pop()) |id| {
+            if (self.functions.contains(id)) continue;
+            try compiled.append(self.scratch(), id);
+            if (self.bodies) |cache| if (try cache.lookupChecked(self.graph, id, self.session, self.proofs, self.scratch(), &self.validated_bodies)) |imported| {
+                try self.functions.put(self.scratch(), id, imported);
+                continue;
+            };
+            var f = FunctionLower{ .parent = self };
+            const compiled_body = try f.compile(id);
+            const body = try self.allocator.create(b.Function);
+            body.* = compiled_body;
+            try self.functions.put(self.scratch(), id, .{ .id = id, .body = body, .safety_revision = @import("body_cache.zig").proofRevision(self.graph, id, self.proofs) orelse std.math.maxInt(u64) });
+        }
+        // Mutable lookup tables stay in lowering scratch. A changed publication
+        // copies only its actual entries; previous tables remain immutable.
+        var functions = self.published_functions;
+        if (functions.len != self.functions.count()) {
+            const entries = try self.allocator.alloc(b.FunctionEntry, self.functions.count());
+            var iterator = self.functions.iterator();
+            var index: usize = 0;
+            while (iterator.next()) |item| : (index += 1)
+                entries[index] = item.value_ptr.*;
+            std.mem.sort(b.FunctionEntry, entries, {}, b.FunctionEntry.lessThan);
+            functions = entries;
+        }
+        const entry = if (expression) |value| blk: {
+            const stored = try self.allocator.create(b.Function);
+            stored.* = value;
+            break :blk stored;
+        } else null;
+        const host_functions = try self.allocator.alloc(b.HostFunction, self.host_functions.items.len);
+        for (self.host_functions.items, host_functions) |function, *descriptor|
+            descriptor.* = try @import("host_signature.zig").describe(self.allocator, self.graph, function);
+        const session = try self.publishSession();
+        const program: b.Program = .{ .host_functions = host_functions, .globals = try self.allocator.dupe(b.Global, self.globals.items), .graph = self.graph, .functions = functions, .expression = entry, .session = session };
+        self.published_functions = functions;
+        self.published_session = session;
+        return program;
+    }
+    fn isGlobal(self: *const Lower, binding: g.GlobalBindingId) bool {
+        for (self.graph.roots.items) |root| {
+            const node = self.graph.node(root);
+            if (node.content == .binding_declaration and node.content.binding_declaration == binding) return true;
+        }
+        return false;
+    }
+
+    fn allowsGlobalStorage(self: *const Lower, binding: g.GlobalBindingId) bool {
+        if (self.mode == .runtime or self.graph.binding(binding).mutability == .constant) return true;
+        if (self.mode != .compile_time_host) return false;
+        // Core runtime support (such as the noop tracer) gets private storage
+        // in this host invocation. User runtime globals are never captured.
+        const source = self.graph.binding(binding).source;
+        return source.file_index < self.graph.files.items.len and
+            self.graph.modules.items[@intFromEnum(self.graph.files.items[source.file_index].module)].is_bundled_core;
+    }
+
+    fn requireGlobal(self: *Lower, binding: g.GlobalBindingId) anyerror!void {
+        for (self.globals.items) |global| if (global.binding == binding) return;
+        const plan = try @import("../global_initialization.zig").build(self.allocator, self.graph, &.{binding});
+        defer self.allocator.free(plan.order);
+        for (plan.order) |id| {
+            var found = false;
+            for (self.globals.items) |global| if (global.binding == id) {
+                found = true;
+                break;
+            };
+            if (found) continue;
+            const record = self.graph.binding(id);
+            if (!self.allowsGlobalStorage(id)) {
+                self.source = record.source;
+                return error.RuntimeStorageInCompileTime;
+            }
+            if (self.cleanup_types[@intFromEnum(record.ty)]) return self.reject(record.source, "global storage with cleanup obligations");
+            const initializer = record.initialization orelse return self.reject(record.source, "global storage without an explicit initializer");
+            var function = FunctionLower{ .parent = self };
+            const compiled = try function.compileExpression(initializer, &.{});
+            try self.globals.append(self.allocator, .{ .binding = id, .ty = record.ty, .initializer = compiled });
+        }
+    }
+
+    fn reject(self: *Lower, source: p.SourceRef, name: []const u8) error{UnsupportedExecution} {
+        self.source = source;
+        self.unsupported = name;
+        return error.UnsupportedExecution;
+    }
+};
+
+const Loop = struct { breaks: std.ArrayList(u32) = .empty, continues: std.ArrayList(u32) = .empty };
+const DropState = enum(u32) { _ };
+// One preorder table during lowering; handles stay valid when it grows.
+// Each subtree ends at `end`, so projection skips siblings without a second
+// recursively allocated tree or entries for payloadless variants.
+const CleanupEntry = struct { place: b.Place, end: u32 };
+const FunctionLower = struct {
+    parent: *Lower,
+    safety_primitive: p.SafetyPrimitive = .none,
+    allocation_index: ?b.Slot = null,
+    allocation_receipt: ?b.Slot = null,
+    slots: std.ArrayList(b.Type) = .empty,
+    code: std.ArrayList(b.Instruction) = .empty,
+    bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, b.Slot) = .empty,
+    outputs: []const b.Slot = &.{},
+    default_location_source: ?p.SourceRef = null,
+    drops: std.AutoHashMapUnmanaged(g.GlobalBindingId, DropState) = .empty,
+    cleanup: std.ArrayList(CleanupEntry) = .empty,
+    write_destinations: std.ArrayList(b.Type) = .empty,
+    loops: std.ArrayList(Loop) = .empty,
+    replacement: ?struct { plan: replacement.Plan, target: ?b.Place = null, ty: ?b.Type = null } = null,
+
+    precomputed: []const struct { node: g.GlobalNodeId, slot: b.Slot } = &.{},
+
+    fn compileCleanup(self: *FunctionLower, nodes: []const g.GlobalNodeId) !b.Function {
+        const a = self.parent.allocator;
+        defer self.bindings.deinit(self.parent.scratch());
+        defer self.drops.deinit(self.parent.scratch());
+        defer self.cleanup.deinit(self.parent.scratch());
+        defer self.loops.deinit(self.parent.scratch());
+        for (nodes) |node| try self.statement(node);
+        _ = try self.emit(self.parent.source, .{ .ret = &.{} });
+        const cleanup = try self.finishCleanup();
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = &.{}, .outputs = &.{}, .code = try self.code.toOwnedSlice(a), .cleanup = cleanup, .write_destinations = try self.write_destinations.toOwnedSlice(a) };
+    }
+
+    fn compileExpression(self: *FunctionLower, root: g.GlobalNodeId, operands: []const g.GlobalNodeId) !b.Function {
+        const a = self.parent.allocator;
+        defer self.bindings.deinit(self.parent.scratch());
+        defer self.drops.deinit(self.parent.scratch());
+        defer self.cleanup.deinit(self.parent.scratch());
+        defer self.loops.deinit(self.parent.scratch());
+        const inputs = try a.alloc(b.Slot, operands.len);
+        const mapped = try a.alloc(@typeInfo(@TypeOf(self.precomputed)).pointer.child, operands.len);
+        for (operands, inputs, mapped) |node, *slot, *mapping| {
+            slot.* = try self.newSlot(self.parent.graph.node(node).ty orelse return error.InvalidBytecode);
+            mapping.* = .{ .node = node, .slot = slot.* };
+        }
+        self.precomputed = mapped;
+        const outputs = try a.alloc(b.Slot, 1);
+        outputs[0] = try self.expression(root);
+        _ = try self.emit(self.parent.graph.node(root).source, .{ .ret = outputs });
+        const cleanup = try self.finishCleanup();
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = cleanup, .write_destinations = try self.write_destinations.toOwnedSlice(a) };
+    }
+
+    fn compile(self: *FunctionLower, id: g.GlobalFunctionId) !b.Function {
+        const a = self.parent.allocator;
+        defer self.bindings.deinit(self.parent.scratch());
+        defer self.drops.deinit(self.parent.scratch());
+        defer self.cleanup.deinit(self.parent.scratch());
+        defer self.loops.deinit(self.parent.scratch());
+        const f = self.parent.graph.function(id);
+        self.safety_primitive = f.safety_primitive;
+        const source = self.parent.graph.declaration(f.declaration).source;
+        self.parent.source = source;
+        if (f.body == null or f.flags.is_c_abi or (f.flags.is_once and self.parent.mode == .compile_time)) return self.parent.reject(source, "foreign or once function");
+        const inputs = try a.alloc(b.Slot, f.input_bindings.len);
+        for (inputs, self.parent.graph.binding_refs.items[f.input_bindings.start..][0..f.input_bindings.len]) |*slot, binding| {
+            slot.* = try self.bindingSlot(binding);
+            if (self.drops.get(binding)) |drop| try self.setDrop(drop, true);
+        }
+        if (f.safety_primitive == .establish_allocation_slot) {
+            if (inputs.len != 4) return error.InvalidBytecode;
+            self.allocation_receipt = inputs[0];
+            self.allocation_index = inputs[3];
+        }
+        const outputs = try a.alloc(b.Slot, f.output_bindings.len);
+        self.outputs = outputs;
+        for (outputs, self.parent.graph.binding_refs.items[f.output_bindings.start..][0..f.output_bindings.len]) |*slot, binding| {
+            slot.* = try self.bindingSlot(binding);
+            if (self.parent.graph.binding(binding).initialization != null) return error.InvalidBytecode;
+            const ty = self.parent.graph.binding(binding).ty;
+            const layout = try self.parent.partialLayout(source, ty);
+            _ = try self.emit(source, .{ .reserve_storage = .{ .dst = slot.*, .layout = layout } });
+        }
+        if (f.safety_primitive == .allocation_metadata_layout) {
+            const metadata = @import("../allocation_metadata.zig");
+            _ = try metadata.outputFields(self.parent.graph, f);
+            const ty = try metadata.participant(self.parent.graph, id);
+            var leaves: @import("../reference_layout.zig").Layout = .{};
+            defer leaves.deinit(a);
+            const shape = try metadata.describe(a, self.parent.graph, ty, self.parent.cleanup_types[@intFromEnum(ty)], &self.parent.cleanup_layouts, &leaves);
+            const words = try a.alloc(b.Value, 5);
+            for (words, shape.words()) |*word, number| word.* = .{ .integer = number };
+            _ = try self.emit(source, .{ .constant = .{ .dst = outputs[0], .value = .{ .record = words } } });
+        } else if (f.safety_primitive == .prepare_allocation_metadata) {
+            if (inputs.len != 1 or outputs.len != 1) return error.InvalidBytecode;
+            const metadata = @import("../allocation_metadata.zig");
+            const ty = try metadata.participant(self.parent.graph, id);
+            var leaves: @import("../reference_layout.zig").Layout = .{};
+            defer leaves.deinit(a);
+            const shape = try metadata.describe(a, self.parent.graph, ty, self.parent.cleanup_types[@intFromEnum(ty)], &self.parent.cleanup_layouts, &leaves);
+            if (shape.cleanup_flags == 0 and shape.reference_leaves == 0) {
+                _ = try self.emit(source, .{ .constant = .{ .dst = outputs[0], .value = .{ .integer = 0 } } });
+            } else {
+                if (self.parent.mode == .compile_time) return self.parent.reject(source, "acquired metadata preparation during compile-time execution");
+                const layout = metadata.reservation(a, self.parent.graph, ty, self.slots.items[inputs[0]], &self.parent.cleanup_layouts, self.parent.cleanup_types[@intFromEnum(ty)]) catch |err| switch (err) {
+                    error.UnsupportedNumericLayout => return self.parent.reject(source, "acquired metadata for unsupported storage representation"),
+                    else => return err,
+                };
+                _ = try self.emit(source, .{ .prepare_acquired = .{ .dst = outputs[0], .receipt = inputs[0], .layout = layout } });
+            }
+        } else try self.block(f.body.?);
+        _ = try self.emit(source, .{ .ret = outputs });
+        const cleanup = try self.finishCleanup();
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = cleanup, .write_destinations = try self.write_destinations.toOwnedSlice(a) };
+    }
+
+    fn sessionIndex(self: *FunctionLower, binding: g.GlobalBindingId) anyerror!?u32 {
+        const index = try self.parent.sessionIndex(binding) orelse return null;
+        const entry = self.parent.session_bindings.items[index];
+        if (entry.cleanup.len != 0 and !self.drops.contains(binding)) {
+            const drop = try self.buildDrop(entry.ty, .{ .root = index, .region = .session, .path = &.{} });
+            try self.drops.put(self.parent.scratch(), binding, drop);
+        }
+        return index;
+    }
+    fn boolType(self: *FunctionLower) !b.Type {
+        return self.parent.bool_type orelse error.InvalidBytecode;
+    }
+    fn buildDrop(self: *FunctionLower, ty: b.Type, target: b.Place) anyerror!DropState {
+        const id: DropState = @enumFromInt(@as(u32, @intCast(self.cleanup.items.len)));
+        const shape = cleanup_layout.Shape.of(self.parent.graph, ty);
+        try self.cleanup.append(self.parent.scratch(), .{ .place = target, .end = 0 });
+        for (0..shape.len()) |index| if (shape.child(self.parent.graph, index)) |child| {
+            const projection: b.Projection = switch (child.projection) {
+                .field => |field| .{ .field = field },
+                .variant => |variant| .{ .variant = .{ .identity = variant } },
+            };
+            _ = try self.buildDrop(child.ty, try self.project(target, projection));
+        };
+        self.cleanup.items[@intFromEnum(id)].end = @intCast(self.cleanup.items.len);
+        return id;
+    }
+    fn finishCleanup(self: *FunctionLower) ![]const b.Cleanup {
+        const a = self.parent.allocator;
+        var count: usize = 0;
+        for (self.cleanup.items) |entry| if (entry.place.region == .local and entry.place.path.len == 0) {
+            count += 1;
+        };
+        const result = try a.alloc(b.Cleanup, count);
+        var output_index: usize = 0;
+        var flag_offset: usize = 0;
+        for (self.cleanup.items) |entry| {
+            if (entry.place.region != .local or entry.place.path.len != 0) continue;
+            const out = &result[output_index];
+            output_index += 1;
+            const ty = self.slots.items[entry.place.root];
+            _ = try self.parent.cleanup_layouts.count(a, self.parent.graph, ty);
+            out.* = .{ .root = entry.place.root, .offset = flag_offset, .layout = self.parent.cleanup_layouts.retained(ty) };
+            flag_offset = try std.math.add(usize, flag_offset, out.layout.count);
+        }
+        return result;
+    }
+    fn dropChild(self: *FunctionLower, parent: DropState, projection: b.Projection) ?DropState {
+        const end = self.cleanup.items[@intFromEnum(parent)].end;
+        var index = @intFromEnum(parent) + 1;
+        while (index < end) {
+            const entry = self.cleanup.items[index];
+            if (std.meta.eql(entry.place.path[entry.place.path.len - 1], projection)) return @enumFromInt(index);
+            index = entry.end;
+        }
+        return null;
+    }
+    fn setDrop(self: *FunctionLower, drop: DropState, enabled: bool) anyerror!void {
+        _ = try self.emit(self.parent.source, .{ .cleanup_set = .{ .place = self.cleanup.items[@intFromEnum(drop)].place, .enabled = enabled } });
+    }
+    fn nodeDrop(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?DropState {
+        return switch (self.parent.graph.node(id).content) {
+            .binding_use => |binding| blk: {
+                if (self.drops.get(binding)) |drop| break :blk drop;
+                _ = try self.sessionIndex(binding);
+                break :blk self.drops.get(binding);
+            },
+            .address_of => |value| try self.nodeDrop(value),
+            .dereference => |value| try self.nodeDrop(value.pointer),
+            .struct_field_access => |value| blk: {
+                const parent = try self.nodeDrop(value.value) orelse break :blk null;
+                break :blk self.dropChild(parent, .{ .field = value.field_index });
+            },
+            .choice_payload_access => |value| blk: {
+                const parent = try self.nodeDrop(value.value) orelse break :blk null;
+                break :blk self.dropChild(parent, .{ .variant = .{ .identity = value.variant } });
+            },
+            else => null,
+        };
+    }
+    // A reference field's drop flag belongs to its slot, not its referent.
+    // Checked replacement plans may capture either lexical storage or a
+    // runtime reference. Only that plan's exact write gains this permission.
+    fn trackedDestination(self: *FunctionLower, write: g.GlobalNodeId, pointer: g.GlobalNodeId, cleanup_target: ?g.GlobalNodeId) anyerror!bool {
+        if (self.replacement) |captured| if (captured.plan.write == write) return true;
+        if (cleanup_target) |target| return self.directStorage(target) and try self.nodeDrop(target) != null;
+        const node = self.parent.graph.node(pointer);
+        if (node.content != .address_of) return false;
+        return self.directStorage(node.content.address_of) and try self.nodeDrop(node.content.address_of) != null;
+    }
+    fn addressable(self: *FunctionLower, id: g.GlobalNodeId) bool {
+        return switch (self.parent.graph.node(id).content) {
+            .binding_use, .dereference => true,
+            .struct_field_access => |field| self.addressable(field.value),
+            .choice_payload_access => |payload| self.addressable(payload.value),
+            .array_index => |element| self.addressable(element.array_ptr),
+            .address_of => |value| self.addressable(value),
+            else => false,
+        };
+    }
+    fn directStorage(self: *FunctionLower, id: g.GlobalNodeId) bool {
+        return @import("../../4_semantics/global/lexical_storage.zig").root(self.parent.graph, id) != null;
+    }
+    fn autoDeinit(self: *FunctionLower, id: g.GlobalAutoDeinitId) anyerror!void {
+        const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
+        if (self.replacement) |captured| if (captured.plan.cleanup == id) {
+            if (captured.plan.initializes(self.parent.annotations)) return;
+            if (captured.target) |target|
+                return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, target, captured.ty.?);
+        };
+        if (auto.storage == .indirect) {
+            const target = auto.targetNode() orelse return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?);
+        }
+        if (auto.targetNode()) |target| {
+            if (try self.nodeDrop(target) == null) return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?);
+        }
+        if (try self.sessionIndex(auto.ownerBinding().?)) |index| {
+            if (!self.drops.contains(auto.ownerBinding().?)) return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = index, .region = .session, .path = &.{} }, self.parent.graph.binding(auto.ownerBinding().?).ty);
+        }
+        const root = self.bindings.get(auto.ownerBinding().?) orelse return error.InvalidBytecode;
+        if (!self.drops.contains(auto.ownerBinding().?)) return error.InvalidBytecode;
+        try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root]);
+    }
+    fn cleanupStorage(self: *FunctionLower, callee: ?g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32, fields: p.Range(g.GlobalAutoDeinitFieldId), target: b.Place, ty: b.Type) anyerror!void {
+        try cleanup_plan.emit(CleanupEmitter{ .lower = self }, self.parent.graph, .{
+            .deinit_fn = callee,
+            .input = input,
+            .self_field_index = self_index,
+            .fields = fields,
+        }, CleanupEmitter.Target{ .place = target, .ty = ty });
+    }
+    const CleanupEmitter = struct {
+        lower: *FunctionLower,
+        const Target = struct { place: b.Place, ty: b.Type };
+
+        pub fn begin(self: @This(), target: Target, access: b.CleanupAccess) !u32 {
+            const lower = self.lower;
+            return lower.emit(lower.parent.source, .{ .branch_cleanup = .{
+                .place = target.place,
+                .access = access,
+                .yes = lower.position() + 1,
+                .no = 0,
+            } });
+        }
+        pub fn call(self: @This(), target: Target, id: g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32) !void {
+            const source = self.lower.parent.source;
+            const function = self.lower.parent.graph.function(id);
+            if (function.output.len != 0) return self.lower.parent.reject(source, "destructor with outputs");
+            const args = try self.lower.parent.allocator.alloc(b.Slot, function.input.len);
+            for (args, self.lower.parent.graph.fields.items[function.input.start..][0..function.input.len], 0..) |*arg, field, index| {
+                if (index == self_index) {
+                    arg.* = try self.lower.newSlot(field.ty);
+                    _ = try self.lower.emit(source, .{ .borrow = .{ .dst = arg.*, .place = target.place, .permission = self.lower.parent.graph.semanticType(field.ty).pointer.mutability } });
+                } else {
+                    const value = try cleanup_plan.argument(self.lower.parent.graph, input, field);
+                    arg.* = try self.lower.coerce(source, try self.lower.expression(value), field.ty);
+                }
+            }
+            try self.lower.parent.pending.append(self.lower.parent.scratch(), id);
+            _ = try self.lower.emit(source, .{ .call = .{ .function = id, .args = args, .outputs = &.{} } });
+        }
+        const ElementLoop = struct { index: b.Slot, one: b.Slot, start: u32, exit: u32 };
+
+        pub fn beginElements(self: @This(), _: Target, length: u64) !ElementLoop {
+            const lower = self.lower;
+            const ty: b.Type = for (lower.parent.graph.types.items, 0..) |candidate, index| {
+                if (candidate == .builtin and candidate.builtin == .UIntNative) break @enumFromInt(index);
+            } else return error.InvalidBytecode;
+            const index = try lower.newSlot(ty);
+            const one = try lower.newSlot(ty);
+            const limit = try lower.newSlot(ty);
+            const condition = try lower.newSlot(try lower.boolType());
+            _ = try lower.emit(lower.parent.source, .{ .constant = .{ .dst = index, .value = .{ .integer = 0 } } });
+            _ = try lower.emit(lower.parent.source, .{ .constant = .{ .dst = one, .value = .{ .integer = 1 } } });
+            _ = try lower.emit(lower.parent.source, .{ .constant = .{ .dst = limit, .value = .{ .integer = length } } });
+            const start = lower.position();
+            _ = try lower.emit(lower.parent.source, .{ .compare = .{ .dst = condition, .left = index, .right = limit, .operator = .less_than } });
+            const exit = try lower.emit(lower.parent.source, .{ .branch = .{ .condition = condition, .yes = lower.position() + 1, .no = 0 } });
+            return .{ .index = index, .one = one, .start = start, .exit = exit };
+        }
+        pub fn element(self: @This(), target: Target, selected: cleanup_plan.Child, iteration: ElementLoop) !Target {
+            return .{ .place = try self.lower.project(target.place, .{ .element = .{ .slot = iteration.index } }), .ty = selected.ty };
+        }
+        pub fn endElements(self: @This(), iteration: ElementLoop) !void {
+            const lower = self.lower;
+            _ = try lower.emit(lower.parent.source, .{ .binary = .{ .dst = iteration.index, .left = iteration.index, .right = iteration.one, .operator = .addition } });
+            _ = try lower.emit(lower.parent.source, .{ .jump = iteration.start });
+            lower.code.items[iteration.exit].op.branch.no = lower.position();
+        }
+        pub fn beginVariant(self: @This(), target: Target, _: g.AutoDeinitField, selected: cleanup_plan.Child) !u32 {
+            const lower = self.lower;
+            return lower.emit(lower.parent.source, .{ .branch_storage_variant = .{
+                .place = target.place,
+                .variant = selected.variant.?,
+                .ordinal = try b.variantOrdinal(lower.parent.graph, target.ty, selected.variant.?),
+                .yes = lower.position() + 1,
+                .no = 0,
+            } });
+        }
+        pub fn endVariant(self: @This(), branch: u32) !void {
+            self.lower.code.items[branch].op.branch_storage_variant.no = self.lower.position();
+        }
+        pub fn project(self: @This(), target: Target, field: g.AutoDeinitField, selected: cleanup_plan.Child) !Target {
+            const projection: b.Projection = if (selected.variant) |variant| .{ .variant = .{ .identity = variant } } else .{ .field = field.field_index };
+            return .{ .place = try self.lower.project(target.place, projection), .ty = selected.ty };
+        }
+        pub fn finish(self: @This(), target: Target, branch: u32) !void {
+            try self.clear(target);
+            self.lower.code.items[branch].op.branch_cleanup.no = self.lower.position();
+        }
+        pub fn clear(self: @This(), target: Target) !void {
+            _ = try self.lower.emit(self.lower.parent.source, .{ .cleanup_set = .{ .place = target.place, .enabled = false } });
+        }
+    };
+    fn newSlot(self: *FunctionLower, ty: b.Type) !b.Slot {
+        if (!b.supportedType(self.parent.graph, ty, 0)) return self.parent.reject(self.parent.source, "type outside the supported VM subset");
+        const id: b.Slot = @intCast(self.slots.items.len);
+        try self.slots.append(self.parent.allocator, ty);
+        return id;
+    }
+    fn bindingSlot(self: *FunctionLower, id: g.GlobalBindingId) !b.Slot {
+        if (self.bindings.get(id)) |slot_id| return slot_id;
+        const slot_id = try self.newSlot(self.parent.graph.binding(id).ty);
+        try self.bindings.put(self.parent.scratch(), id, slot_id);
+        if (self.parent.cleanup_bindings[@intFromEnum(id)]) try self.drops.put(self.parent.scratch(), id, try self.buildDrop(self.parent.graph.binding(id).ty, .{ .root = slot_id, .path = &.{} }));
+        return slot_id;
+    }
+    fn emit(self: *FunctionLower, source: p.SourceRef, op: @FieldType(b.Instruction, "op")) !u32 {
+        const pc: u32 = @intCast(self.code.items.len);
+        var resolved = op;
+        // Finalize representation tags once, after semantic variant selection.
+        // The verifier rejects unresolved or contradictory descriptors.
+        switch (resolved) {
+            .load => |*load| load.interpretation = b.loadInterpretation(self.parent.graph, self.slots.items[load.dst]),
+            .index => |*index| index.kind = b.scalarKind(self.parent.graph, self.slots.items[index.index]),
+            inline .binary, .compare => |*numeric| numeric.kind = b.scalarKind(self.parent.graph, self.slots.items[numeric.left]),
+            .choice => |*choice| choice.ordinal = try b.variantOrdinal(self.parent.graph, self.slots.items[choice.dst], choice.variant),
+            inline .payload, .is_variant, .branch_variant => |*choice| choice.ordinal = try b.variantOrdinal(self.parent.graph, self.slots.items[choice.src], choice.variant),
+            else => {},
+        }
+        switch (resolved) {
+            .check_place => |*target| target.* = try self.finalizePlace(target.*),
+            inline .load, .capture_write, .borrow, .borrow_storage, .cleanup_test, .cleanup_set, .branch_cleanup, .branch_storage_variant => |*access| access.place = try self.finalizePlace(access.place),
+            else => {},
+        }
+        try self.code.append(self.parent.allocator, .{ .source = source, .op = resolved });
+        return pc;
+    }
+    fn finalizePlace(self: *FunctionLower, target: b.Place) !b.Place {
+        var needs_resolution = false;
+        for (target.path) |projection| if (projection == .variant or projection == .element) {
+            needs_resolution = true;
+            break;
+        };
+        if (!needs_resolution) return target;
+        const graph = self.parent.graph;
+        const root = switch (target.region) {
+            .local => self.slots.items[target.root],
+            .session => self.parent.session_bindings.items[target.root].ty,
+            .global => graph.binding(@enumFromInt(target.root)).ty,
+        };
+        const path = try self.parent.allocator.alloc(b.Projection, target.path.len);
+        try b.finalizePath(graph, root, target.path, path);
+        for (path) |*projection| if (projection.* == .element) {
+            projection.element.kind = b.scalarKind(graph, self.slots.items[projection.element.slot]);
+        };
+        var result = target;
+        result.path = path;
+        return result;
+    }
+    fn position(self: *FunctionLower) u32 {
+        return @intCast(self.code.items.len);
+    }
+    fn block(self: *FunctionLower, id: g.GlobalBlockId) anyerror!void {
+        const block_ = self.parent.graph.blocks.items[@intFromEnum(id)];
+        for (self.parent.graph.node_refs.items[block_.nodes.start..][0..block_.nodes.len]) |node| try self.statement(node);
+    }
+    fn statement(self: *FunctionLower, id: g.GlobalNodeId) anyerror!void {
+        const node = self.parent.graph.node(id);
+        self.parent.source = node.source;
+        switch (node.content) {
+            .binding_declaration => |binding_id| {
+                const binding_ = self.parent.graph.binding(binding_id);
+                if (types.staticTypeBinding(self.parent.graph, binding_id) != null) return;
+                if (try self.sessionIndex(binding_id)) |index| {
+                    if (binding_.deferred_initialization or binding_.initialization == null) {
+                        const layout = if (binding_.deferred_initialization) null else try self.parent.partialLayout(node.source, binding_.ty);
+                        _ = try self.emit(node.source, .{ .session_declare = .{ .binding = index, .layout = layout } });
+                        return;
+                    }
+                    const initializer = binding_.initialization.?;
+                    const value = try self.coerce(node.source, try self.expression(initializer), binding_.ty);
+                    _ = try self.emit(node.source, .{ .session_initialize = .{ .binding = index, .value = value } });
+                    if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
+                    return;
+                }
+                const dst = try self.bindingSlot(binding_id);
+                if (!binding_.deferred_initialization) {
+                    if (binding_.initialization) |value| {
+                        try self.copyTo(node.source, dst, try self.expression(value));
+                        if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
+                    } else {
+                        const layout = try self.parent.partialLayout(node.source, binding_.ty);
+                        _ = try self.emit(node.source, .{ .reserve_storage = .{ .dst = dst, .layout = layout, .reset = true } });
+                    }
+                }
+            },
+            .assignment => |x| {
+                if (try self.sessionIndex(x.binding)) |index| {
+                    const binding = self.parent.graph.binding(x.binding);
+                    const ty = binding.ty;
+                    if (binding.deferred_initialization) {
+                        const value = try self.coerce(node.source, try self.expression(x.value), ty);
+                        _ = try self.emit(node.source, .{ .session_initialize = .{ .binding = index, .value = value, .reinitialize = true } });
+                        if (self.drops.get(x.binding)) |drop| try self.setDrop(drop, true);
+                        return;
+                    }
+                    if (self.parent.cleanup_types[@intFromEnum(ty)]) return self.parent.reject(node.source, "session owner replacement requires a checked cleanup plan");
+                    const destination = try self.captureWrite(node.source, .{ .root = index, .region = .session, .path = &.{} }, ty);
+                    const value = try self.coerce(node.source, try self.expression(x.value), ty);
+                    try self.commitWrite(node.source, destination, value);
+                    return;
+                }
+                if (self.parent.isGlobal(x.binding)) {
+                    const target = try self.globalPlace(x.binding, node.source);
+                    const destination = try self.captureWrite(node.source, target, self.parent.graph.binding(x.binding).ty);
+                    try self.commitWrite(node.source, destination, try self.expression(x.value));
+                    return;
+                }
+                const dst = self.bindings.get(x.binding) orelse return self.parent.reject(node.source, "global or captured storage");
+                try self.copyTo(node.source, dst, try self.expression(x.value));
+                if (self.drops.get(x.binding)) |drop| try self.setDrop(drop, true);
+            },
+            .array_store => |x| {
+                if (self.parent.cleanup_types[@intFromEnum(x.element_type)])
+                    return self.parent.reject(node.source, "owning replacement in indexed storage");
+                const base = try self.place(x.array_ptr);
+                const index = try self.expression(x.index);
+                const target = try self.project(base, .{ .element = .{ .slot = index } });
+                const destination = try self.captureWrite(node.source, target, x.element_type);
+                const value = try self.coerce(node.source, try self.expression(x.value), x.element_type);
+                try self.commitWrite(node.source, destination, value);
+            },
+            .pointer_assignment => |x| {
+                const child = self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child;
+                if (self.parent.cleanup_types[@intFromEnum(child)] and !self.parent.annotations.initializes(id) and !try self.trackedDestination(id, x.pointer, x.cleanup_target))
+                    return self.parent.reject(node.source, "owning replacement through a runtime reference");
+                const target = try self.addressedPlace(x.pointer);
+                try self.captureReplacement(id, target, child);
+                const destination = try self.captureWrite(node.source, target, child);
+                const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
+                try self.commitWrite(node.source, destination, value);
+            },
+            .struct_field_store => |x| {
+                if (self.parent.cleanup_types[@intFromEnum(x.field_type)] and !try self.trackedDestination(id, x.struct_ptr, x.cleanup_target))
+                    return self.parent.reject(node.source, "owning replacement through a runtime reference");
+                const base = try self.addressedPlace(x.struct_ptr);
+                const target = try self.project(base, .{ .field = x.field_index });
+                try self.captureReplacement(id, target, x.field_type);
+                const destination = try self.captureWrite(node.source, target, x.field_type);
+                const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
+                try self.commitWrite(node.source, destination, value);
+            },
+            .auto_deinit_binding => |auto| try self.autoDeinit(auto),
+            .code_block => |block_id| try self.block(block_id),
+            .replacement => {
+                const plan = try replacement.plan(self.parent.graph, id);
+                const previous = self.replacement;
+                self.replacement = .{ .plan = plan };
+                defer self.replacement = previous;
+                try self.block(plan.block);
+            },
+            .return_statement => |x| {
+                if (x.expression != null) return self.parent.reject(node.source, "explicit return expression");
+                for (self.parent.graph.node_refs.items[x.cleanup.start..][0..x.cleanup.len]) |cleanup| try self.statement(cleanup);
+                _ = try self.emit(node.source, .{ .ret = self.outputs });
+            },
+            .if_statement => |x| {
+                const condition = try self.expression(x.condition);
+                const branch = try self.emit(node.source, .{ .branch = .{ .condition = condition, .yes = 0, .no = 0 } });
+                const yes = self.position();
+                try self.block(x.then_block);
+                const end = try self.emit(node.source, .{ .jump = 0 });
+                const no = self.position();
+                if (x.else_block) |other| try self.block(other);
+                self.code.items[branch].op.branch.yes = yes;
+                self.code.items[branch].op.branch.no = no;
+                self.code.items[end].op.jump = self.position();
+            },
+            .switch_statement => |switch_id| try self.matchStatement(switch_id, node.source),
+            .while_statement => |x| try self.loop(x.condition, x.body, null, node.source),
+            .for_statement => |x| {
+                if (x.init) |init| try self.statement(init);
+                try self.loop(x.condition, x.body, x.increment, node.source);
+            },
+            .break_statement => {
+                if (self.loops.items.len == 0) return error.InvalidBytecode;
+                const jump = try self.emit(node.source, .{ .jump = 0 });
+                try self.loops.items[self.loops.items.len - 1].breaks.append(self.parent.scratch(), jump);
+            },
+            .continue_statement => {
+                if (self.loops.items.len == 0) return error.InvalidBytecode;
+                const jump = try self.emit(node.source, .{ .jump = 0 });
+                try self.loops.items[self.loops.items.len - 1].continues.append(self.parent.scratch(), jump);
+            },
+            .abort_statement => {
+                _ = try self.emit(node.source, .abort_);
+            },
+            .function_call => {
+                _ = try self.call(id);
+            },
+            .virtual_call => {
+                _ = try self.virtualCall(id);
+            },
+            else => {
+                _ = try self.expression(id);
+            },
+        }
+    }
+    fn loop(self: *FunctionLower, condition_node: g.GlobalNodeId, body: g.GlobalBlockId, increment: ?g.GlobalNodeId, source: p.SourceRef) anyerror!void {
+        const start = self.position();
+        const condition = try self.expression(condition_node);
+        const branch = try self.emit(source, .{ .branch = .{ .condition = condition, .yes = self.position() + 1, .no = 0 } });
+        try self.loops.append(self.parent.scratch(), .{});
+        // Retain loop patch lists even if nested lowering fails.
+        defer {
+            var current = self.loops.pop().?;
+            current.breaks.deinit(self.parent.scratch());
+            current.continues.deinit(self.parent.scratch());
+        }
+        try self.block(body);
+        const next = self.position();
+        if (increment) |node| try self.statement(node);
+        _ = try self.emit(source, .{ .jump = start });
+        const end = self.position();
+        const current = self.loops.items[self.loops.items.len - 1];
+        for (current.breaks.items) |jump| self.code.items[jump].op.jump = end;
+        for (current.continues.items) |jump| self.code.items[jump].op.jump = if (increment != null) next else start;
+        self.code.items[branch].op.branch.no = end;
+    }
+    fn matchStatement(self: *FunctionLower, id: g.GlobalSwitchId, source: p.SourceRef) anyerror!void {
+        const sw = self.parent.graph.switches.items[@intFromEnum(id)];
+        const cases = self.parent.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len];
+        var borrowed = false;
+        for (cases) |case| if (case.payload_mode == .borrow or case.payload_mode == .mut_borrow) {
+            borrowed = true;
+        };
+        const target: ?b.Place = if (borrowed) try self.place(sw.expression) else null;
+        const value = if (target) |place_| blk: {
+            const slot = try self.newSlot(self.parent.graph.node(sw.expression).ty.?);
+            _ = try self.emit(source, .{ .load = .{ .dst = slot, .place = place_ } });
+            break :blk slot;
+        } else try self.expression(sw.expression);
+        var ends: std.ArrayList(u32) = .empty;
+        defer ends.deinit(self.parent.allocator);
+        for (cases) |case| {
+            const branch = try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = case.variant, .yes = self.position() + 1, .no = 0 } });
+            if (case.payload_binding) |binding| {
+                const dst = try self.bindingSlot(binding);
+                switch (case.payload_mode) {
+                    .borrow, .mut_borrow => {
+                        const place_ = try self.project(target.?, .{ .variant = .{ .identity = case.variant } });
+                        _ = try self.emit(source, .{ .borrow = .{ .dst = dst, .place = place_, .permission = self.parent.graph.semanticType(self.slots.items[dst]).pointer.mutability } });
+                    },
+                    .value, .move => _ = try self.emit(source, .{ .payload = .{ .dst = dst, .src = value, .variant = case.variant } }),
+                }
+            }
+            if (case.payload_binding) |binding| {
+                if (case.payload_mode == .move) if (try self.nodeDrop(sw.expression)) |drop| try self.setDrop(drop, false);
+                if (self.drops.get(binding)) |drop| try self.setDrop(drop, true);
+            }
+            try self.block(case.body);
+            try ends.append(self.parent.allocator, try self.emit(source, .{ .jump = 0 }));
+            self.code.items[branch].op.branch_variant.no = self.position();
+        }
+        if (sw.default_block) |other| {
+            try self.block(other);
+        } else if (sw.exhaustive) {
+            // Checked exhaustive switches cannot reach this path. An explicit
+            // trap preserves definite-initialization facts without inventing a
+            // fallthrough edge, and protects malformed runtime values.
+            _ = try self.emit(source, .abort_);
+        }
+        for (ends.items) |jump| self.code.items[jump].op.jump = self.position();
+    }
+    fn coerce(self: *FunctionLower, source: p.SourceRef, slot: b.Slot, target: b.Type) !b.Slot {
+        if (types.equal(self.parent.graph, self.slots.items[slot], target)) return slot;
+        const from = self.parent.graph.semanticType(self.slots.items[slot]);
+        const to = self.parent.graph.semanticType(target);
+        if (from == .pointer and to == .pointer and from.pointer.mutability == .read_write and to.pointer.mutability == .read_only and types.equal(self.parent.graph, from.pointer.child, to.pointer.child)) {
+            const dst = try self.newSlot(target);
+            _ = try self.emit(source, .{ .readonly = .{ .dst = dst, .src = slot } });
+            return dst;
+        }
+        return self.parent.reject(source, "conversion outside the supported VM subset");
+    }
+    fn copyTo(self: *FunctionLower, source: p.SourceRef, dst: b.Slot, value: b.Slot) !void {
+        const src = try self.coerce(source, value, self.slots.items[dst]);
+        _ = try self.emit(source, .{ .copy = .{ .dst = dst, .src = src } });
+    }
+    fn commitWrite(self: *FunctionLower, source: p.SourceRef, destination: b.Destination, value: b.Slot) !void {
+        _ = try self.emit(source, .{ .check_write_cleanup = destination });
+        _ = try self.emit(source, .{ .store = .{ .destination = destination, .value = value } });
+        _ = try self.emit(source, .{ .activate_write_cleanup = destination });
+    }
+    // The place already refers to evaluated operand snapshots. Retain it for
+    // this checked transition so cleanup cannot reevaluate after RHS effects.
+    fn captureReplacement(self: *FunctionLower, write: g.GlobalNodeId, target: b.Place, ty: b.Type) !void {
+        if (self.replacement) |*captured| if (captured.plan.write == write) {
+            if (captured.target != null) return error.InvalidReplacementDestination;
+            captured.target = target;
+            captured.ty = ty;
+        };
+    }
+    fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type) !b.Destination {
+        const destination: b.Destination = @intCast(self.write_destinations.items.len);
+        try self.write_destinations.append(self.parent.allocator, ty);
+        _ = try self.emit(source, .{ .capture_write = .{ .dst = destination, .place = place_, .activate_cleanup = true, .require_cleanup = self.parent.cleanup_types[@intFromEnum(ty)] } });
+        return destination;
+    }
+    fn addressedPlace(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {
+        const node = self.parent.graph.node(id);
+        if (node.content == .address_of) return self.place(node.content.address_of);
+        return self.project(.{ .root = try self.expression(id), .path = &.{} }, .dereference);
+    }
+    fn project(self: *FunctionLower, base: b.Place, projection: b.Projection) !b.Place {
+        if (base.path.len >= 64) return self.parent.reject(self.parent.source, "storage projection depth");
+        const path = try self.parent.allocator.alloc(b.Projection, base.path.len + 1);
+        @memcpy(path[0..base.path.len], base.path);
+        path[base.path.len] = projection;
+        return .{ .root = base.root, .region = base.region, .path = path };
+    }
+    fn globalPlace(self: *FunctionLower, binding: g.GlobalBindingId, source: p.SourceRef) !b.Place {
+        const record = self.parent.graph.binding(binding);
+        if (!self.parent.allowsGlobalStorage(binding)) {
+            // Tables can retain operations that this evaluation never invokes.
+            // Reject the access on its execution path without acquiring runtime storage.
+            _ = try self.emit(source, .{ .trap = .runtime_storage });
+            return .{ .root = try self.newSlot(record.ty), .path = &.{} };
+        }
+        try self.parent.requireGlobal(binding);
+        return .{ .root = @intFromEnum(binding), .region = .global, .path = &.{} };
+    }
+
+    // Resolve storage syntactically, without evaluating it into a copied value.
+    // Address operations retain storage identity. Intermediate array bounds are checked
+    // before later indices or the RHS, matching native address evaluation.
+    fn place(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {
+        const node = self.parent.graph.node(id);
+        self.parent.source = node.source;
+        return switch (node.content) {
+            .assignment => |assignment| blk: {
+                const record = self.parent.graph.binding(assignment.binding);
+                if (!record.deferred_initialization) return self.parent.reject(node.source, "address of non-deferred assignment");
+                if (record.reinitialize_cleanup) |cleanup| try self.statement(cleanup);
+                try self.statement(id);
+                if (try self.sessionIndex(assignment.binding)) |index|
+                    break :blk .{ .root = index, .region = .session, .path = &.{} };
+                break :blk .{ .root = self.bindings.get(assignment.binding) orelse return error.InvalidBytecode, .path = &.{} };
+            },
+            .binding_use => |binding| if (try self.sessionIndex(binding)) |index|
+                .{ .root = index, .region = .session, .path = &.{} }
+            else if (self.parent.isGlobal(binding))
+                try self.globalPlace(binding, node.source)
+            else
+                .{ .root = self.bindings.get(binding) orelse return self.parent.reject(node.source, "global or captured storage"), .path = &.{} },
+            .address_of => |value| self.place(value),
+            .dereference => |x| self.project(.{ .root = try self.expression(x.pointer), .path = &.{} }, .dereference),
+            .struct_field_access => |x| self.project(try self.place(x.value), .{ .field = x.field_index }),
+            .choice_payload_access => |x| self.project(try self.place(x.value), .{ .variant = .{ .identity = x.variant } }),
+            .array_index => |x| blk: {
+                const base = try self.place(x.array_ptr);
+                const index = try self.expression(x.index);
+                const target = try self.project(base, .{ .element = .{ .slot = index } });
+                _ = try self.emit(node.source, .{ .check_place = target });
+                break :blk target;
+            },
+            else => self.parent.reject(node.source, "write through unsupported storage"),
+        };
+    }
+    fn updateCallCleanup(self: *FunctionLower, node: g.GlobalNodeId, enabled: bool, fields: p.Range(g.GlobalValueFieldId), args: []const b.Slot) !void {
+        // Use the evaluated argument snapshot, never reevaluate an expression
+        // after the call or update the slot containing a reference.
+        if (self.parent.graph.node(node).ty) |ty| {
+            const semantic = self.parent.graph.semanticType(ty);
+            if (semantic == .pointer and self.parent.cleanup_types[@intFromEnum(semantic.pointer.child)]) {
+                for (self.parent.graph.value_fields.items[fields.start..][0..fields.len], args) |field, slot| {
+                    if (field.value != node) continue;
+                    const target = try self.project(.{ .root = slot, .path = &.{} }, .dereference);
+                    _ = try self.emit(self.parent.source, .{ .cleanup_set = .{ .place = target, .enabled = enabled } });
+                    return;
+                }
+            }
+        }
+        if (try self.nodeDrop(node)) |drop| try self.setDrop(drop, enabled);
+    }
+    fn traceLocation(self: *FunctionLower, node: g.Node) !b.Slot {
+        const graph = self.parent.graph;
+        const owner = graph.files.items[node.source.file_index].module;
+        const source = if (graph.modules.items[@intFromEnum(owner)].is_bundled_core) self.default_location_source orelse node.source else node.source;
+        return self.traceLocationValue(source, node.ty orelse return error.InvalidBytecode);
+    }
+
+    fn traceLocationValue(self: *FunctionLower, source: p.SourceRef, ty: b.Type) !b.Slot {
+        const graph = self.parent.graph;
+        const diagnostics = self.parent.diagnostics orelse return self.parent.reject(source, "source location metadata without a source database");
+        const location = diagnostics.presentedLocation(@import("../../4_semantics/global/source_location.zig").location(graph, diagnostics, source));
+        if (@intFromEnum(location.file) >= diagnostics.source_db.files.len)
+            return self.parent.reject(source, "source location metadata without a source database");
+        const position_ = diagnostics.source_db.lineColumn(location.file, location.offset);
+        const file = diagnostics.source_db.get(location.file);
+        const line = file.source[file.line_starts[position_.line - 1]..];
+        const metadata = try self.parent.allocator.create(b.TraceLocation);
+        metadata.* = .{
+            .path = try self.parent.allocator.dupe(u8, diagnostics.source_db.path(location.file)),
+            .offset = location.offset,
+            .line = position_.line,
+            .column = position_.column,
+            .source_line = try self.parent.allocator.dupe(u8, line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len]),
+        };
+        const fields = types.fields(graph, ty) orelse return error.InvalidBytecode;
+        if (fields.len != 1 or !types.isBuiltin(graph, graph.fields.items[fields.start].ty, .UInt32)) return error.InvalidBytecode;
+        const id = try self.newSlot(graph.fields.items[fields.start].ty);
+        _ = try self.emit(source, .{ .trace_location = .{ .dst = id, .location = metadata } });
+        const result = try self.newSlot(ty);
+        _ = try self.emit(source, .{ .record = .{ .dst = result, .fields = try self.parent.allocator.dupe(b.Slot, &.{id}) } });
+        return result;
+    }
+
+    fn errorContextFunction(self: *FunctionLower, view: bool, source: p.SourceRef) !g.GlobalFunctionId {
+        for (self.parent.graph.functions.items, 0..) |_, index| {
+            const id: g.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(index)));
+            if (self.parent.graph.function(id).flags.matchesErrorContext(view)) return id;
+        }
+        return self.parent.reject(source, "missing checked core error helper");
+    }
+
+    fn stringValue(self: *FunctionLower, source: p.SourceRef, ty: b.Type, text: []const u8) !b.Slot {
+        // Instructions outlive semantic pool allocations. Keep literal data
+        // in the Code Unit rather than borrowing a relocatable string slice.
+        const bytes = try self.parent.allocator.dupe(u8, text);
+        const dst = try self.newSlot(ty);
+        if (self.parent.graph.semanticType(ty) == .pointer) {
+            _ = try self.emit(source, .{ .static_bytes = .{ .dst = dst, .bytes = bytes } });
+        } else {
+            if (!types.isStringView(self.parent.graph, ty)) return self.parent.reject(source, "string literal representation");
+            const fields = types.fields(self.parent.graph, ty).?;
+            const data = try self.newSlot(self.parent.graph.fields.items[fields.start].ty);
+            const length = try self.newSlot(self.parent.graph.fields.items[fields.start + 1].ty);
+            _ = try self.emit(source, .{ .static_bytes = .{ .dst = data, .bytes = bytes } });
+            _ = try self.emit(source, .{ .constant = .{ .dst = length, .value = .{ .integer = bytes.len } } });
+            _ = try self.emit(source, .{ .record = .{ .dst = dst, .fields = try self.parent.allocator.dupe(b.Slot, &.{ data, length }) } });
+        }
+        return dst;
+    }
+
+    fn errorPropagation(self: *FunctionLower, propagation: anytype, context_node: ?g.GlobalNodeId, source: p.SourceRef) anyerror!b.Slot {
+        const graph = self.parent.graph;
+        const value = try self.expression(propagation.errable_value);
+        const branch = try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = propagation.error_variant, .yes = self.position() + 1, .no = 0 } });
+        const payload = try self.newSlot(propagation.error_payload_type);
+        _ = try self.emit(source, .{ .payload = .{ .dst = payload, .src = value, .variant = propagation.error_variant } });
+
+        // Invoke the checked core trace helpers used by native propagation. Their ordinary
+        // bytecode bodies use retained virtual evidence; the VM has no trace hook.
+        const trace = types.findField(graph, propagation.error_payload_type, "tracer") orelse return error.InvalidBytecode;
+        const tracer = try self.newSlot(trace.field.ty);
+        _ = try self.emit(source, .{ .field = .{ .dst = tracer, .base = payload, .index = trace.index } });
+        const context = if (context_node) |node| try self.expression(node) else null;
+        const is_view = if (context) |slot| types.isStringView(graph, self.slots.items[slot]) else true;
+        const helper = try self.errorContextFunction(is_view, source);
+        const function = graph.function(helper);
+        if (function.input.len != 3 or function.output.len != 0) return error.InvalidBytecode;
+        const inputs = graph.fields.items[function.input.start..][0..3];
+        const location = try self.traceLocationValue(source, inputs[1].ty);
+        const text = context orelse try self.stringValue(source, inputs[2].ty, "");
+        const args = try self.parent.allocator.dupe(b.Slot, &.{ try self.coerce(source, tracer, inputs[0].ty), location, try self.coerce(source, text, inputs[2].ty) });
+        try self.parent.pending.append(self.parent.scratch(), helper);
+        _ = try self.emit(source, .{ .call = .{ .outputs = &.{}, .function = helper, .args = args } });
+
+        const converted = try self.errorPayload(source, payload, propagation.propagated_error_payload_type);
+        if (self.outputs.len != 1 or !types.equal(graph, self.slots.items[self.outputs[0]], propagation.propagated_errable_type)) return error.InvalidBytecode;
+        _ = try self.emit(source, .{ .choice = .{ .dst = self.outputs[0], .variant = propagation.propagated_error_variant, .payload = converted } });
+        for (graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup| try self.statement(cleanup);
+        _ = try self.emit(source, .{ .ret = self.outputs });
+
+        self.code.items[branch].op.branch_variant.no = self.position();
+        const ok = try self.newSlot(propagation.ok_payload_type);
+        _ = try self.emit(source, .{ .payload = .{ .dst = ok, .src = value, .variant = propagation.ok_variant } });
+        if (propagation.ok_value_field_index) |index| {
+            const fields = types.fields(graph, propagation.ok_payload_type) orelse return error.InvalidBytecode;
+            if (index >= fields.len) return error.InvalidBytecode;
+            const result = try self.newSlot(graph.fields.items[fields.start + index].ty);
+            _ = try self.emit(source, .{ .field = .{ .dst = result, .base = ok, .index = index } });
+            return result;
+        }
+        return ok;
+    }
+
+    fn errorPayload(self: *FunctionLower, source: p.SourceRef, value: b.Slot, target: b.Type) !b.Slot {
+        const graph = self.parent.graph;
+        const from = self.slots.items[value];
+        if (types.equal(graph, from, target)) return value;
+        const plan = try error_plan.payload(graph, from, target);
+        const reason = try self.newSlot(plan.source_reason.field.ty);
+        const tracer = try self.newSlot(plan.source_tracer.field.ty);
+        _ = try self.emit(source, .{ .field = .{ .dst = reason, .base = value, .index = plan.source_reason.index } });
+        _ = try self.emit(source, .{ .field = .{ .dst = tracer, .base = value, .index = plan.source_tracer.index } });
+        const mapped = try self.newSlot(plan.target_reason.field.ty);
+        const variants = types.variants(graph, plan.source_reason.field.ty) orelse return error.InvalidBytecode;
+        var ends: std.ArrayList(u32) = .empty;
+        defer ends.deinit(self.parent.allocator);
+        for (0..variants.len) |offset| {
+            const variant: g.GlobalVariantId = @enumFromInt(variants.start + @as(u32, @intCast(offset)));
+            const target_variant = try error_plan.reasonTarget(graph, plan.source_reason.field.ty, plan.target_reason.field.ty, variant);
+            const branch = try self.emit(source, .{ .branch_variant = .{ .src = reason, .variant = variant, .yes = self.position() + 1, .no = 0 } });
+            _ = try self.emit(source, .{ .choice = .{ .dst = mapped, .variant = target_variant, .payload = null } });
+            try ends.append(self.parent.allocator, try self.emit(source, .{ .jump = 0 }));
+            self.code.items[branch].op.branch_variant.no = self.position();
+        }
+        _ = try self.emit(source, .abort_);
+        for (ends.items) |end| self.code.items[end].op.jump = self.position();
+        const fields = types.fields(graph, target) orelse return error.InvalidBytecode;
+        if (fields.len != 2) return error.InvalidBytecode;
+        const values = try self.parent.allocator.alloc(b.Slot, 2);
+        values[plan.target_reason.index] = mapped;
+        values[plan.target_tracer.index] = tracer;
+        const result = try self.newSlot(target);
+        _ = try self.emit(source, .{ .record = .{ .dst = result, .fields = values } });
+        return result;
+    }
+
+    fn call(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?b.Slot {
+        const node = self.parent.graph.node(id);
+        const x = node.content.function_call;
+        const effects = self.parent.annotations.call(id);
+        if (self.parent.graph.function(x.callee).flags.is_source_location_id) return try self.traceLocation(node);
+        if (self.parent.graph.function(x.callee).flags.is_source_location_resolver) {
+            const literal = self.parent.graph.node(x.input).content.struct_value_literal;
+            if (literal.fields.len != 1) return error.InvalidBytecode;
+            const input_value = try self.expression(self.parent.graph.value_fields.items[literal.fields.start].value);
+            const fields = types.fields(self.parent.graph, self.slots.items[input_value]) orelse return error.InvalidBytecode;
+            if (fields.len != 1 or !types.isBuiltin(self.parent.graph, self.parent.graph.fields.items[fields.start].ty, .UInt32)) return error.InvalidBytecode;
+            const id_slot = try self.newSlot(self.parent.graph.fields.items[fields.start].ty);
+            _ = try self.emit(node.source, .{ .field = .{ .dst = id_slot, .base = input_value, .index = 0 } });
+            const result = try self.newSlot(node.ty orelse return error.InvalidBytecode);
+            _ = try self.emit(node.source, .{ .resolve_location = .{ .dst = result, .id = id_slot } });
+            return result;
+        }
+        const previous_location = self.default_location_source;
+        self.default_location_source = node.source;
+        defer self.default_location_source = previous_location;
+        if (x.callee_value != null) return self.parent.reject(node.source, "indirect call");
+        const input = self.parent.graph.node(x.input).content;
+        if (input != .struct_value_literal) return self.parent.reject(node.source, "non-record call arguments");
+        const fields = input.struct_value_literal.fields;
+        const args = try self.parent.allocator.alloc(b.Slot, fields.len);
+        const f = self.parent.graph.function(x.callee);
+        for (args, self.parent.graph.value_fields.items[fields.start..][0..fields.len], 0..) |*arg, field, index| arg.* = try self.coerce(node.source, try self.expression(field.value), self.parent.graph.fields.items[f.input.start + index].ty);
+        const outputs = try self.parent.allocator.alloc(b.Slot, f.output.len);
+        for (outputs, self.parent.graph.fields.items[f.output.start..][0..f.output.len]) |*slot, field| slot.* = try self.newSlot(field.ty);
+        if (f.safety_primitive == .reference_offset or f.safety_primitive == .mutable_reference_offset) {
+            if (args.len != 2 or outputs.len != 1) return self.parent.reject(node.source, "reference offset signature");
+            _ = try self.emit(node.source, .{ .offset_reference = .{ .dst = outputs[0], .src = args[0], .elements = args[1] } });
+        } else if (f.safety_primitive == .read_reference) {
+            if (args.len != 1 or outputs.len != 1) return error.InvalidBytecode;
+            _ = try self.emit(node.source, .{ .readonly = .{ .dst = outputs[0], .src = args[0] } });
+        } else if (f.safety_primitive == .reinterpret_reference or f.safety_primitive == .mutable_reinterpret_reference) {
+            if (args.len != 1 or outputs.len != 1) return error.InvalidBytecode;
+            const from = self.parent.graph.semanticType(self.slots.items[args[0]]);
+            const to = self.parent.graph.semanticType(self.slots.items[outputs[0]]);
+            if (from != .pointer or to != .pointer) return error.InvalidBytecode;
+            if (types.isBuiltin(self.parent.graph, to.pointer.child, .Any)) {
+                _ = try self.emit(node.source, .{ .erase_reference = .{ .dst = outputs[0], .src = args[0] } });
+            } else {
+                if (!types.isBuiltin(self.parent.graph, to.pointer.child, .UInt8)) return self.parent.reject(node.source, "reinterpretation outside numeric byte views");
+                const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, from.pointer.child) catch |err| switch (err) {
+                    error.UnsupportedNumericLayout => return self.parent.reject(node.source, "byte reinterpretation of nonnumeric storage"),
+                    else => return err,
+                };
+                _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout, .permission = to.pointer.mutability, .endian = self.parent.graph.target.arch.endian() } });
+            }
+        } else if (f.safety_primitive == .relocate or f.safety_primitive == .trusted_opaque_relocate) {
+            if (args.len != 2 or outputs.len != 0) return error.InvalidBytecode;
+            _ = try self.emit(node.source, .{ .relocate = .{ .source = args[0], .destination = args[1], .function = x.callee } });
+        } else if (self.parent.mode != .compile_time and @import("memory_boundary.zig").classify(self.parent.graph, x.callee) != null) {
+            _ = try self.emit(node.source, .{ .memory_call = .{ .outputs = outputs, .function = x.callee, .operation = @import("memory_boundary.zig").classify(self.parent.graph, x.callee).?, .args = args } });
+        } else if (f.flags.is_c_abi and self.parent.mode != .compile_time) {
+            @import("host_signature.zig").validate(self.parent.graph, x.callee) catch
+                return self.parent.reject(node.source, "foreign call outside the scalar host boundary");
+            const host_index: u32 = for (self.parent.host_functions.items, 0..) |function, index| {
+                if (function == x.callee) break @intCast(index);
+            } else blk: {
+                const index: u32 = @intCast(self.parent.host_functions.items.len);
+                try self.parent.host_functions.append(self.parent.allocator, x.callee);
+                break :blk index;
+            };
+            _ = try self.emit(node.source, .{ .host_call = .{ .outputs = outputs, .function = host_index, .args = args } });
+        } else {
+            try self.parent.pending.append(self.parent.scratch(), x.callee);
+            _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
+        }
+        if (@import("../../4_semantics/primitives/registry.zig").opaqueCleanupTransition(f.safety_primitive)) |transition| {
+            if (transition.input >= args.len) return error.InvalidBytecode;
+            const argument = args[transition.input];
+            const pointer = self.parent.graph.semanticType(self.slots.items[argument]);
+            if (pointer != .pointer) return error.InvalidBytecode;
+            if (self.parent.cleanup_types[@intFromEnum(pointer.pointer.child)]) {
+                const target = try self.project(.{ .root = argument, .path = &.{} }, .dereference);
+                _ = try self.emit(node.source, .{ .cleanup_set = .{ .place = target, .enabled = transition.enabled } });
+            }
+        }
+        try self.updateCallCleanups(node.source, f.output, fields, args, outputs, effects.consumes_auto_deinit, effects.consumed_auto_deinits, effects.initialized_auto_deinits, effects.outcome_cleanups);
+        if (effects.initializes_auto_deinit) |value| try self.updateCallCleanup(value, true, fields, args);
+        if (outputs.len == 0) return null;
+        if (outputs.len == 1) return outputs[0];
+        const result = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped call result"));
+        _ = try self.emit(node.source, .{ .record = .{ .dst = result, .fields = outputs } });
+        return result;
+    }
+    fn capturedCleanupPlace(self: *FunctionLower, input: p.CapturedCleanupInput, args: []const b.Slot, source: p.SourceRef) !?b.Place {
+        if (input.argument_index >= args.len) return error.InvalidBytecode;
+        const slot = args[input.argument_index];
+        var ty = self.slots.items[slot];
+        var target: b.Place = .{ .root = slot, .path = &.{} };
+        for (input.projections) |projection| {
+            ty = try @import("../../4_semantics/global/cleanup_input.zig").inputProjectionType(self.parent.graph, ty, projection);
+            const selected: b.Projection = switch (projection) {
+                .field => |index| .{ .field = index },
+                .element => |index| element: {
+                    const index_type: b.Type = for (self.parent.graph.types.items, 0..) |candidate, position_| {
+                        if (candidate == .builtin and candidate.builtin == .UIntNative) break @enumFromInt(position_);
+                    } else return error.InvalidBytecode;
+                    const index_slot = try self.newSlot(index_type);
+                    _ = try self.emit(source, .{ .constant = .{ .dst = index_slot, .value = .{ .integer = index } } });
+                    break :element .{ .element = .{ .slot = index_slot } };
+                },
+            };
+            target = try self.project(target, selected);
+        }
+        if (self.parent.graph.semanticType(ty) != .pointer) return error.InvalidBytecode;
+        const pointer = self.parent.graph.semanticType(ty).pointer;
+        if (!self.parent.cleanup_types[@intFromEnum(pointer.child)]) return null;
+        return try self.project(target, .dereference);
+    }
+
+    fn updateCallCleanups(
+        self: *FunctionLower,
+        source: p.SourceRef,
+        output_fields: g.FieldRange,
+        fields: p.Range(g.GlobalValueFieldId),
+        args: []const b.Slot,
+        outputs: []const b.Slot,
+        consumes: ?g.GlobalNodeId,
+        consumed: []const g.GlobalNodeId,
+        initialized: []const g.GlobalNodeId,
+        outcomes: []const p.OutcomeCleanup(g.Ids),
+    ) !void {
+        if (consumes) |value| try self.updateCallCleanup(value, false, fields, args);
+        for (consumed) |value| try self.updateCallCleanup(value, false, fields, args);
+        for (initialized) |value| try self.updateCallCleanup(value, true, fields, args);
+        for (outcomes) |cleanup| {
+            const captured_target = if (cleanup.captured_input) |input| try self.capturedCleanupPlace(input, args, source) else null;
+            if (cleanup.captured_input != null and captured_target == null) continue;
+            var path = try cleanup_plan.OutcomePath.init(self.parent.graph, output_fields, cleanup);
+            var value = outputs[cleanup.output_index];
+            var branches: std.ArrayList(u32) = .empty;
+            defer branches.deinit(self.parent.allocator);
+            while (try path.next()) |step| {
+                const variant = step.variant;
+                try branches.append(self.parent.allocator, try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = variant, .yes = self.position() + 1, .no = 0 } }));
+                if (step.payload) |payload| {
+                    const child = try self.newSlot(payload);
+                    _ = try self.emit(source, .{ .payload = .{ .dst = child, .src = value, .variant = variant } });
+                    value = child;
+                }
+            }
+            if (captured_target) |target| {
+                _ = try self.emit(source, .{ .cleanup_set = .{ .place = target, .enabled = cleanup.enabled } });
+            } else try self.updateCallCleanup(cleanup.place, cleanup.enabled, fields, args);
+            for (branches.items) |branch| self.code.items[branch].op.branch_variant.no = self.position();
+        }
+    }
+
+    fn virtualCall(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?b.Slot {
+        const graph = self.parent.graph;
+        const node = graph.node(id);
+        const call_id = node.content.virtual_call;
+        const call_ = graph.virtual_calls.items[@intFromEnum(call_id)];
+        const effects = self.parent.annotations.virtualCall(call_id);
+        const handle = try self.expression(call_.handle);
+        const literal = graph.node(call_.input).content.struct_value_literal;
+        const input = types.fields(graph, call_.input_type) orelse return error.InvalidBytecode;
+        const output = types.fields(graph, call_.output_type) orelse return error.InvalidBytecode;
+        const args = try self.parent.allocator.alloc(b.Slot, literal.fields.len);
+        for (args, graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |*arg, field, index| {
+            arg.* = if (index == call_.self_input_index) handle else try self.coerce(node.source, try self.expression(field.value), graph.fields.items[input.start + index].ty);
+        }
+        const outputs = try self.parent.allocator.alloc(b.Slot, output.len);
+        for (outputs, graph.fields.items[output.start..][0..output.len]) |*slot, field| slot.* = try self.newSlot(field.ty);
+        const invocation = try self.parent.allocator.create(b.VirtualInvocation);
+        const input_types = try self.parent.allocator.alloc(b.Type, input.len);
+        for (input_types, graph.fields.items[input.start..][0..input.len]) |*ty, field| ty.* = field.ty;
+        const output_types = try self.parent.allocator.alloc(b.Type, output.len);
+        for (output_types, graph.fields.items[output.start..][0..output.len]) |*ty, field| ty.* = field.ty;
+        invocation.* = .{ .outputs = outputs, .args = args, .handle = handle, .signature = .{
+            .virtual_type = graph.semanticType(self.slots.items[handle]).pointer.child,
+            .inputs = input_types,
+            .outputs = output_types,
+            .receiver_input_index = call_.self_input_index,
+            .receiver_permission = call_.self_permission,
+            .method_index = call_.method_index,
+            .method_count = call_.method_count,
+        } };
+        _ = try self.emit(node.source, .{ .virtual_call = invocation });
+        try self.updateCallCleanups(node.source, output, literal.fields, args, outputs, effects.consumes_auto_deinit, effects.consumed_auto_deinits, effects.initialized_auto_deinits, effects.outcome_cleanups);
+        if (outputs.len == 0) return null;
+        if (outputs.len == 1) return outputs[0];
+        const result = try self.newSlot(node.ty orelse return error.InvalidBytecode);
+        _ = try self.emit(node.source, .{ .record = .{ .dst = result, .fields = outputs } });
+        return result;
+    }
+    fn expression(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Slot {
+        for (self.precomputed) |operand| if (operand.node == id) return operand.slot;
+        const node = self.parent.graph.node(id);
+        self.parent.source = node.source;
+        if (node.content == .binding_use) {
+            if (try self.sessionIndex(node.content.binding_use)) |index| {
+                const dst = try self.newSlot(node.ty orelse return error.InvalidBytecode);
+                _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = .{ .root = index, .region = .session, .path = &.{} } } });
+                return dst;
+            }
+            if (self.parent.isGlobal(node.content.binding_use)) {
+                const target = try self.place(id);
+                const dst = try self.newSlot(node.ty orelse return error.InvalidBytecode);
+                _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = target } });
+                return dst;
+            }
+            const src = self.bindings.get(node.content.binding_use) orelse return self.parent.reject(node.source, "global or captured storage");
+            const dst = try self.newSlot(self.slots.items[src]);
+            _ = try self.emit(node.source, .{ .copy = .{ .dst = dst, .src = src } });
+            return dst;
+        }
+        if (node.content == .move_value) {
+            const child = self.parent.graph.node(node.content.move_value);
+            if (child.content == .array_index) {
+                const place_ = try self.place(node.content.move_value);
+                const result = try self.newSlot(child.ty orelse return error.InvalidBytecode);
+                _ = try self.emit(node.source, .{ .load = .{ .dst = result, .place = place_ } });
+                if (self.parent.cleanup_types[@intFromEnum(child.ty.?)])
+                    _ = try self.emit(node.source, .{ .cleanup_set = .{ .place = place_, .enabled = false } });
+                return result;
+            }
+            const value = try self.expression(node.content.move_value);
+            if (try self.nodeDrop(node.content.move_value)) |drop| try self.setDrop(drop, false);
+            return value;
+        }
+        if (node.content == .error_propagation) return self.errorPropagation(self.parent.graph.error_propagations.items[@intFromEnum(node.content.error_propagation)], null, node.source);
+        if (node.content == .error_context) {
+            const propagation = self.parent.graph.error_contexts.items[@intFromEnum(node.content.error_context)];
+            return self.errorPropagation(propagation, propagation.context, node.source);
+        }
+        if (node.content == .string_literal) return self.stringValue(node.source, node.ty orelse return error.InvalidBytecode, self.parent.graph.text(node.content.string_literal));
+        if (node.content == .function_call or node.content == .virtual_call) {
+            if (if (node.content == .function_call) try self.call(id) else try self.virtualCall(id)) |result| return result;
+            // A checked no-output call still has the empty-tuple value in an
+            // expression. Execute the call once before materializing that value.
+            const ty = node.ty orelse return self.parent.reject(node.source, "untyped void expression");
+            const result_type = self.parent.graph.semanticType(ty);
+            if (result_type != .builtin or result_type.builtin != .Void) return self.parent.reject(node.source, "non-unit void expression");
+            const result = try self.newSlot(ty);
+            _ = try self.emit(node.source, .{ .constant = .{ .dst = result, .value = .unit } });
+            return result;
+        }
+        if (node.content == .value_sequence or node.content == .replacement) {
+            const previous = self.replacement;
+            if (node.content == .replacement) self.replacement = .{ .plan = try replacement.plan(self.parent.graph, id) };
+            defer self.replacement = previous;
+            const block_id = if (node.content == .replacement)
+                (try @import("../../4_semantics/global/replacement.zig").plan(self.parent.graph, id)).block
+            else
+                node.content.value_sequence;
+            const block_ = self.parent.graph.blocks.items[@intFromEnum(block_id)];
+            const result_node = block_.ret_val orelse return self.parent.reject(node.source, "sequence without result");
+            var result: ?b.Slot = null;
+            for (self.parent.graph.node_refs.items[block_.nodes.start..][0..block_.nodes.len]) |child| {
+                if (child == result_node) result = try self.expression(child) else try self.statement(child);
+            }
+            return result orelse try self.expression(result_node);
+        }
+        if (node.content == .switch_statement) {
+            const ty = node.ty orelse return error.InvalidBytecode;
+            if (!types.isBuiltin(self.parent.graph, ty, .Void)) return error.InvalidBytecode;
+            try self.matchStatement(node.content.switch_statement, node.source);
+            const result = try self.newSlot(ty);
+            _ = try self.emit(node.source, .{ .constant = .{ .dst = result, .value = .unit } });
+            return result;
+        }
+        const dst = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped expression"));
+        switch (node.content) {
+            .virtualize => |evidence| {
+                const selected = self.parent.graph.virtualizes.items[@intFromEnum(evidence)];
+                const table = try self.parent.allocator.create(b.VirtualTable);
+                const methods = try self.parent.allocator.alloc(std.meta.Elem(@TypeOf(table.methods)), selected.methods.len);
+                for (methods, self.parent.graph.function_refs.items[selected.methods.start..][0..selected.methods.len], 0..) |*out, method, index| {
+                    try self.parent.pending.append(self.parent.scratch(), method);
+                    const registry_id = self.parent.graph.virtual_registry_refs.items[selected.safety_methods.start + index];
+                    const receiver_index = self.parent.graph.virtual_registries.items[@intFromEnum(registry_id)].receiver_input_index;
+                    const implementation = self.parent.graph.function(method);
+                    const receiver = self.parent.graph.fields.items[implementation.input.start + receiver_index].ty;
+                    out.* = .{ .function = method, .receiver_input_index = receiver_index, .receiver_permission = self.parent.graph.semanticType(receiver).pointer.mutability };
+                }
+                table.* = .{ .virtual_type = selected.virtual_type, .concrete_type = selected.concrete_type, .methods = methods };
+                _ = try self.emit(node.source, .{ .virtualize = .{ .dst = dst, .receiver = try self.expression(selected.value), .table = table } });
+            },
+            .explicit_cast => |cast| {
+                const target = self.parent.graph.semanticType(cast.target_type);
+                const source_slot = try self.expression(cast.value);
+                const from = self.slots.items[source_slot];
+                const source_kind = b.scalarKind(self.parent.graph, from);
+                const target_kind = b.scalarKind(self.parent.graph, cast.target_type);
+                if (source_kind.bounds() != null and target_kind.bounds() != null) {
+                    _ = try self.emit(node.source, .{ .integer_cast = .{ .dst = dst, .src = source_slot, .from = source_kind, .to = target_kind } });
+                    return dst;
+                }
+                if (self.parent.mode == .compile_time or target != .pointer or !types.isBuiltin(self.parent.graph, from, .UIntNative) or
+                    (self.safety_primitive != .establish_inherited_reference and self.safety_primitive != .establish_allocation_slot))
+                    return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
+                const needs_cleanup = self.parent.cleanup_types[@intFromEnum(target.pointer.child)];
+                if (needs_cleanup and self.allocation_receipt == null) return self.parent.reject(node.source, "acquired reference requiring a prepared allocation receipt");
+                const layout = (if (self.allocation_receipt != null) @import("numeric_layout.zig").compileAcquired(self.parent.allocator, self.parent.graph, target.pointer.child) else @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child)) catch return self.parent.reject(node.source, "acquired reference to unsupported storage representation");
+                const instruction = try self.parent.allocator.create(b.AcquiredReference);
+                instruction.* = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() };
+                if (self.allocation_receipt) |receipt| {
+                    const description = try self.parent.allocator.create(@import("acquired_receipt.zig").Layout);
+                    description.* = try @import("acquired_receipt.zig").compile(self.parent.graph, self.slots.items[receipt]);
+                    instruction.receipt = .{ .value = receipt, .layout = description };
+                }
+                if (needs_cleanup) {
+                    _ = try self.parent.cleanup_layouts.count(self.parent.allocator, self.parent.graph, target.pointer.child);
+                    instruction.cleanup = self.parent.cleanup_layouts.retained(target.pointer.child);
+                }
+                if (self.allocation_index) |index| {
+                    const variants = types.variants(self.parent.graph, self.slots.items[index]) orelse return error.InvalidBytecode;
+                    for (self.parent.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, ordinal| {
+                        if (variant.payload_type != null) instruction.logical_index = .{ .value = index, .some_ordinal = @intCast(ordinal) };
+                    }
+                    if (instruction.logical_index == null) return error.InvalidBytecode;
+                }
+                _ = try self.emit(node.source, .{ .acquired_reference = instruction });
+            },
+            .address_of => |value| {
+                const target = try self.place(value);
+                _ = try self.emit(node.source, .{ .borrow_storage = .{ .dst = dst, .place = target, .permission = self.parent.graph.semanticType(self.slots.items[dst]).pointer.mutability } });
+            },
+            .dereference => |x| {
+                const pointer = try self.expression(x.pointer);
+                const target = try self.project(.{ .root = pointer, .path = &.{} }, .dereference);
+                _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = target } });
+            },
+            .choice_literal => |x| {
+                const payload = if (x.payload) |value| try self.coerce(node.source, try self.expression(value), self.parent.graph.variants.items[@intFromEnum(x.variant)].payload_type.?) else null;
+                _ = try self.emit(node.source, .{ .choice = .{ .dst = dst, .variant = x.variant, .payload = payload } });
+            },
+            .choice_payload_access => |x| {
+                _ = try self.emit(node.source, .{ .payload = .{ .dst = dst, .src = try self.expression(x.value), .variant = x.variant } });
+            },
+            .int_literal => |value| {
+                _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = @import("../integer_arithmetic.zig").encode(value, b.integerBounds(self.parent.graph, self.slots.items[dst]).?) } } });
+            },
+            .float_literal => |value| {
+                const kind = b.scalarKind(self.parent.graph, self.slots.items[dst]);
+                const number: b.Value = switch (kind) {
+                    .f16 => .{ .float16 = @floatCast(value) },
+                    .f32 => .{ .float32 = @floatCast(value) },
+                    .f64 => .{ .float64 = @floatCast(value) },
+                    else => return error.InvalidBytecode,
+                };
+                _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = number } });
+            },
+            .bool_literal => |value| {
+                _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .boolean = value } } });
+            },
+            .struct_value_literal => |x| {
+                const ty = self.parent.graph.semanticType(self.slots.items[dst]);
+                if (ty == .builtin and ty.builtin == .Void) {
+                    _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .unit } });
+                    return dst;
+                }
+                const fields = try self.parent.allocator.alloc(b.Slot, x.fields.len);
+                const expected = types.fields(self.parent.graph, self.slots.items[dst]).?;
+                for (fields, self.parent.graph.value_fields.items[x.fields.start..][0..x.fields.len], 0..) |*field, value, index| field.* = try self.coerce(node.source, try self.expression(value.value), self.parent.graph.fields.items[expected.start + index].ty);
+                _ = try self.emit(node.source, .{ .record = .{ .dst = dst, .fields = fields } });
+            },
+            .array_literal => |x| {
+                const elements = try self.parent.allocator.alloc(b.Slot, x.elements.len);
+                for (elements, self.parent.graph.node_refs.items[x.elements.start..][0..x.elements.len]) |*element, value| element.* = try self.coerce(node.source, try self.expression(value), x.element_type);
+                _ = try self.emit(node.source, .{ .array = .{ .dst = dst, .elements = elements } });
+            },
+            .array_index => |x| {
+                if (self.addressable(id)) {
+                    _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = try self.place(id) } });
+                    return dst;
+                }
+                const target = self.parent.graph.node(x.array_ptr);
+                const base = try self.expression(if (target.content == .address_of) target.content.address_of else x.array_ptr);
+                const index = try self.expression(x.index);
+                _ = try self.emit(node.source, .{ .index = .{ .dst = dst, .base = base, .index = index } });
+            },
+            .struct_field_access => |x| {
+                if (self.addressable(id)) {
+                    _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = try self.place(id) } });
+                } else _ = try self.emit(node.source, .{ .field = .{ .dst = dst, .base = try self.expression(x.value), .index = x.field_index } });
+            },
+            .binary_operation => |x| {
+                _ = try self.emit(node.source, .{ .binary = .{ .dst = dst, .left = try self.expression(x.left), .right = try self.expression(x.right), .operator = x.operator } });
+            },
+            .comparison => |x| {
+                const left = try self.expression(x.left);
+                const right = self.parent.graph.node(x.right);
+                if (types.variants(self.parent.graph, self.slots.items[left])) |variants| {
+                    if (right.content == .int_literal and (x.operator == .equal or x.operator == .not_equal)) {
+                        const tag = right.content.int_literal;
+                        if (tag < 0 or tag >= variants.len) return self.parent.reject(node.source, "choice comparison tag");
+                        _ = try self.emit(node.source, .{ .is_variant = .{ .dst = dst, .src = left, .variant = @enumFromInt(variants.start + @as(u32, @intCast(tag))), .invert = x.operator == .not_equal } });
+                        return dst;
+                    }
+                }
+                _ = try self.emit(node.source, .{ .compare = .{ .dst = dst, .left = left, .right = try self.expression(x.right), .operator = x.operator } });
+            },
+            .logical_operation => |x| {
+                const left = try self.expression(x.left);
+                _ = try self.emit(node.source, .{ .copy = .{ .dst = dst, .src = left } });
+                const branch = try self.emit(node.source, .{ .branch = .{ .condition = left, .yes = 0, .no = 0 } });
+                const evaluate = self.position();
+                _ = try self.emit(node.source, .{ .copy = .{ .dst = dst, .src = try self.expression(x.right) } });
+                self.code.items[branch].op.branch.yes = if (x.operator == .and_) evaluate else self.position();
+                self.code.items[branch].op.branch.no = if (x.operator == .and_) self.position() else evaluate;
+            },
+            else => return self.parent.reject(node.source, @tagName(node.content)),
+        }
+        return dst;
+    }
+};

@@ -42,6 +42,14 @@ fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
 /// it after relocation so its nominal identity comes from bundled core rather
 /// than a user declaration with the same spelling.
 pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mod.GlobalSemanticGraph) !void {
+    var pending = false;
+    for (graph.functions.items) |function| {
+        if (function.flags.is_c_abi and !function.flags.has_declared_body and !function.flags.has_foreign_capability) {
+            pending = true;
+            break;
+        }
+    }
+    if (!pending) return;
     var capability: ?graph_mod.GlobalTypeId = null;
     for (graph.declarations.items, 0..) |declaration, index| {
         if (!std.mem.eql(u8, graph.text(declaration.name), "ForeignFunctionInterface")) continue;
@@ -51,11 +59,23 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
         break;
     }
     const child = capability orelse return;
-    const pointer: graph_mod.GlobalTypeId = @enumFromInt(graph.types.items.len);
-    try graph.types.append(allocator, .{ .pointer = .{ .child = child, .mutability = .read_write } });
+    const pointer = pointer: {
+        for (graph.types.items, 0..) |ty, index| {
+            if (graph.isTypeUnresolved(@enumFromInt(index))) continue;
+            if (ty == .pointer and ty.pointer.child == child and ty.pointer.mutability == .read_write)
+                break :pointer @as(graph_mod.GlobalTypeId, @enumFromInt(index));
+        }
+        const id: graph_mod.GlobalTypeId = @enumFromInt(graph.types.items.len);
+        try graph.types.append(allocator, .{ .pointer = .{ .child = child, .mutability = .read_write } });
+        break :pointer id;
+    };
     const name = try graph.addString(allocator, "ffi");
-    for (graph.functions.items) |*function| {
-        if (!function.flags.is_c_abi or function.flags.has_declared_body) continue;
+    for (graph.functions.items, 0..) |function, raw| {
+        if (!function.flags.is_c_abi or function.flags.has_declared_body or function.flags.has_foreign_capability) continue;
+        // Publish the signature only once all backing pools are ready. A failed
+        // allocation leaves this function unchanged and earlier imports intact.
+        const saved = graph.checkpoint();
+        errdefer graph.rollback(allocator, saved);
         const source = graph.declaration(function.declaration).source;
         const segment_start: u32 = @intCast(graph.reach_segments.items.len);
         try graph.reach_segments.append(allocator, name);
@@ -77,9 +97,11 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
         const binding_start: u32 = @intCast(graph.binding_refs.items.len);
         try graph.binding_refs.appendSlice(allocator, old_bindings);
         try graph.binding_refs.append(allocator, binding);
-        function.input = .{ .start = field_start, .len = function.input.len + 1 };
-        function.input_bindings = .{ .start = binding_start, .len = function.input_bindings.len + 1 };
-        function.flags.has_foreign_capability = true;
+        var completed = function;
+        completed.input = .{ .start = field_start, .len = function.input.len + 1 };
+        completed.input_bindings = .{ .start = binding_start, .len = function.input_bindings.len + 1 };
+        completed.flags.has_foreign_capability = true;
+        try graph.setFunction(allocator, @enumFromInt(raw), completed);
     }
 }
 
@@ -783,4 +805,38 @@ test "Windows x64 records use integer carriers or indirect copies" {
             }
         }
     }
+}
+
+fn extendForeignCapabilities(allocator: std.mem.Allocator) !void {
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const capability_name = try graph.addString(allocator, "ForeignFunctionInterface");
+    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .is_bundled_core = true, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 2 } });
+    try graph.declarations.append(allocator, .{ .kind = .type, .name = capability_name, .source = .{ .file_index = 0, .offset = 0 }, .type_id = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 } });
+    const foreign: graph_mod.Function = .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_c_abi = true } };
+    try graph.functions.append(allocator, foreign);
+    try prepareForeignCapabilities(allocator, &graph);
+    const retained = graph.functions.items[0];
+    const saved = graph.checkpoint();
+    try prepareForeignCapabilities(allocator, &graph);
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+    try graph.functions.append(allocator, foreign);
+    prepareForeignCapabilities(allocator, &graph) catch |err| {
+        try std.testing.expectEqualDeep(retained, graph.functions.items[0]);
+        try std.testing.expectEqualDeep(foreign, graph.functions.items[1]);
+        return err;
+    };
+    try std.testing.expectEqualDeep(retained, graph.functions.items[0]);
+    try std.testing.expectEqual(@as(u32, 1), graph.functions.items[1].input.len);
+    try std.testing.expectEqual(@as(u32, 0), physicalInputCount(graph.functions.items[1]));
+    try std.testing.expectEqual(@as(usize, 2), graph.types.items.len);
+    const complete = graph.checkpoint();
+    try prepareForeignCapabilities(allocator, &graph);
+    try std.testing.expectEqualDeep(complete, graph.checkpoint());
+}
+
+test "foreign capability preparation extends signatures once and survives allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, extendForeignCapabilities, .{});
 }

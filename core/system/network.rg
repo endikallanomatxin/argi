@@ -137,7 +137,7 @@ resolve_addresses(
     .port      : UInt16,
     .transport : NetworkTransport = _network_tcp(),
     .family    : NetworkFamily    = _network_any(),
-    .passive   : Bool = false,
+    .passive   : Bool             = false,
     .self      : &Network         = reach network,
 ) -> (
     .result : Errable#(

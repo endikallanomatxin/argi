@@ -1,6 +1,10 @@
 const source_files = @import("1_base/source_files.zig");
 const semantic_literals = @import("4_semantics/semantic_literals.zig");
-const link = @import("5_codegen/link.zig");
+const native_cleanup_state = @import("5_codegen/llvm/cleanup_state.zig");
+const reference_evidence = @import("5_codegen/llvm/reference_evidence.zig");
+const reference_layout = @import("5_codegen/reference_layout.zig");
+const argi_abi = @import("5_codegen/llvm/argi_abi.zig");
+const link = @import("5_codegen/llvm/link.zig");
 const lsp = @import("0_commands/lsp.zig");
 const lsp_service = @import("0_commands/lsp_service.zig");
 const tokenizer = @import("2_tokens/tokenizer.zig");
@@ -46,9 +50,12 @@ const global_semantic_generic_functions = @import("4_semantics/global/generic_fu
 const global_semantic_contracts = @import("4_semantics/global/contracts.zig");
 const global_semantic_errors = @import("4_semantics/global/errors.zig");
 const global_semantic_ownership = @import("4_semantics/global/ownership.zig");
+const global_semantic_replacement = @import("4_semantics/global/replacement.zig");
+const global_lexical_storage = @import("4_semantics/global/lexical_storage.zig");
 const global_semantizer = @import("4_semantics/global/semantizer.zig");
 const global_safety_facts = @import("4_semantics/safety/facts.zig");
 const global_safety_checker = @import("4_semantics/safety/checker.zig");
+const safety_lexical_forwarding = @import("4_semantics/safety/lexical_forwarding.zig");
 const foreign_result = @import("4_semantics/safety/foreign_result.zig");
 const safety_choice_conditions = @import("4_semantics/safety/choice_conditions.zig");
 const safety_summaries = @import("4_semantics/safety/summaries.zig");
@@ -56,14 +63,35 @@ const safety_summary_infer = @import("4_semantics/safety/summary_infer.zig");
 const global_lsp_index = @import("0_commands/lsp_index.zig");
 const semantic_representation_test = @import("4_semantics/semantic_representation_test.zig");
 
-const type_codegen = @import("5_codegen/type_codegen.zig");
-const codegen = @import("5_codegen/codegen.zig");
+const type_codegen = @import("5_codegen/llvm/type_codegen.zig");
+const codegen = @import("5_codegen/llvm/codegen.zig");
+const cleanup_layout = @import("5_codegen/cleanup_layout.zig");
 const c_abi = @import("4_semantics/global/c_abi.zig");
 
-test {
+// Register imported tests independently of the runner's name filters.
+comptime {
+    _ = @import("5_codegen/bytecode/verify.zig");
+    _ = @import("0_commands/repl.zig");
+    _ = @import("0_commands/execution_options.zig");
+    _ = @import("0_commands/execution_interrupt.zig");
+    _ = @import("execution/host_output.zig");
+    _ = @import("5_codegen/bytecode/numeric_layout.zig");
+    _ = @import("5_codegen/allocation_metadata.zig");
+    _ = @import("execution/storage.zig");
+    _ = @import("execution/input_layout.zig");
+    _ = @import("execution/acquisitions.zig");
+    _ = @import("execution/partial_storage.zig");
+    _ = @import("5_codegen/global_initialization.zig");
+    _ = @import("execution/tests.zig");
+    _ = @import("execution/compilation_session.zig");
+    _ = @import("execution/session.zig");
+    _ = @import("execution/submissions.zig");
+    _ = @import("execution/interactive.zig");
     _ = c_abi;
     _ = semantic_literals;
     _ = source_files;
+    _ = @import("1_base/conditional_source.zig");
+    _ = @import("1_base/lexical.zig");
     _ = @import("1_base/target_selection.zig");
     _ = link;
     _ = lsp;
@@ -105,6 +133,12 @@ test {
     _ = module_semantic_parameterized_verify;
     _ = module_semantic_complete_verify;
 
+    _ = @import("4_semantics/global/comptime_execution.zig");
+    _ = @import("4_semantics/global/module_fragments_test.zig");
+    _ = @import("4_semantics/global/source_location.zig");
+    _ = @import("4_semantics/global/type_recipe.zig");
+    _ = @import("4_semantics/safety/fact_snapshot.zig");
+    _ = @import("4_semantics/global/resolver_context.zig");
     _ = global_semantic_graph;
     _ = global_semantic_types;
     _ = global_semantic_verify;
@@ -117,9 +151,13 @@ test {
     _ = global_semantic_contracts;
     _ = global_semantic_errors;
     _ = global_semantic_ownership;
+    _ = global_lexical_storage;
+    _ = global_semantic_replacement;
     _ = global_semantizer;
     _ = global_safety_facts;
+    _ = @import("4_semantics/safety/place.zig");
     _ = global_safety_checker;
+    _ = safety_lexical_forwarding;
     _ = foreign_result;
     _ = safety_choice_conditions;
     _ = safety_summaries;
@@ -131,4 +169,13 @@ test {
 
     _ = type_codegen;
     _ = codegen;
+    _ = cleanup_layout;
+    _ = @import("5_codegen/cleanup_plan.zig");
+    _ = @import("5_codegen/error_plan.zig");
+    _ = argi_abi;
+    _ = reference_layout;
+    _ = reference_evidence;
+    _ = native_cleanup_state;
+    _ = @import("5_codegen/integer_arithmetic.zig");
+    _ = @import("5_codegen/numeric_value.zig");
 }

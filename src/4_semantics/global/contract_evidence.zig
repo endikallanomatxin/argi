@@ -118,3 +118,25 @@ pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contrac
     }
     return null;
 }
+
+/// Conservative call targets for once-use analysis, derived from materialized
+/// handles rather than a mutable list stored in the erased signature. Multiple
+/// handles can return the same method; consumers deduplicate by FunctionId.
+pub const PossibleVirtualMethods = struct {
+    graph: *const graph_mod.GlobalSemanticGraph,
+    contract: graph_mod.GlobalTypeId,
+    method_index: u32,
+    cursor: usize = 0,
+
+    pub fn next(self: *PossibleVirtualMethods) ?graph_mod.GlobalFunctionId {
+        while (self.cursor < self.graph.virtualizes.items.len) {
+            const candidate = self.graph.virtualizes.items[self.cursor];
+            self.cursor += 1;
+            if (self.method_index >= candidate.methods.len) continue;
+            const ty = self.graph.resolvedSemanticType(candidate.virtual_type) orelse continue;
+            if (ty != .virtual or !@import("types.zig").equal(self.graph, ty.virtual, self.contract)) continue;
+            return self.graph.function_refs.items[candidate.methods.start + self.method_index];
+        }
+        return null;
+    }
+};

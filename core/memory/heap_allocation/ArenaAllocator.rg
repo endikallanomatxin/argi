@@ -24,10 +24,10 @@ implement Deinit#(ArenaDomain) (
 -- until the first allocation; all blocks come from the chosen backing policy.
 ArenaAllocator: Type = (
     ._backing_allocator    : Virtual#(.contract: Allocator)
-    .domain : ArenaDomain
-    ._block_head : UIntNative
-    .block_count : UIntNative
-    .block_size : UIntNative
+    .domain                : ArenaDomain
+    ._block_head           : UIntNative
+    .block_count           : UIntNative
+    .block_size            : UIntNative
     ._current_block_offset : UIntNative
 )
 
@@ -48,10 +48,10 @@ implement#(.Provider: Type: Allocator) Init#(
         if actual_block_size == 0 { actual_block_size = 1 }
         constructed = (
             ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = allocator)
-            .domain = ArenaDomain()
-            ._block_head = 0
-            .block_count = 0
-            .block_size = actual_block_size
+            .domain                = ArenaDomain()
+            ._block_head           = 0
+            .block_count           = 0
+            .block_size            = actual_block_size
             ._current_block_offset = 0
         )
 
@@ -177,6 +177,7 @@ implement Allocator#(ArenaAllocator) (
             ._storage_size      = size
             ._storage_alignment = alignment
             ._release_size      = size
+            ._slot_extent       = ..none
         )
         self&._current_block_offset = aligned_offset + required
 

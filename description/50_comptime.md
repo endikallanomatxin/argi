@@ -24,10 +24,136 @@ Explicit compile-time execution uses `#run`. Conditional compilation uses
 branch is compiled. This differs from running an ordinary `if` inside
 `#run`; the latter executes the conditional during compile-time evaluation.
 
+## Compile-time entry points
+
+`#run` declares and immediately executes an anonymous function. Its signature
+uses the ordinary function input and output syntax:
+
+```rg
+#run {
+    calculate(42)
+}
+
+answer ::= #run () -> (.result: Int32) {
+    result = calculate(42)
+}
+```
+
+Like `main`, an entry takes no inputs or one `.system: System` input. For
+`#run`, the compiler supplies the compilation host's system, independently of
+the generated program's target. Capabilities remain explicit:
+
+```rg
+answer ::= #run (.system: System) -> (.result: Int32) {
+    assume writer ::= $&system.terminal&.stdout
+    print("Compiling...")
+    result = calculate(42)
+}
+```
+
+Neither `#run` nor its `System` input installs assumed writers, allocators or
+other capabilities. Ordinary `assume`, `reach`, contracts and safety rules
+apply to the entry and its calls. Existing functions are called inside the
+block; `#run function(...)` is not an alternative entry syntax.
+
+The entry is an execution boundary. It can use surrounding compile-time-known
+values, including compile-time parameters, but cannot capture runtime-only
+values or storage. It can borrow local storage and create temporary resources
+during evaluation. Outputs must freeze into compiler constants: references,
+host handles and temporary resource ownership cannot escape into generated
+code. These restrictions apply to all captured values and outputs, not only
+to `System`.
+
+A directly nested entry runs within the enclosing compile-time invocation.
+Its enclosing locals are already compile-time storage, and repeated calls use
+the current invocation's values. It does not create an independently frozen
+request detached from those inputs. Every entry retains its output representation checks, including nested entries;
+references and resource ownership cannot be returned even when the enclosing
+entry would consume them before producing a scalar.
+
+Dependency readiness remains the semantic scheduler's responsibility; the VM
+executes an entry after its dependencies are available. Specialization and
+`#if` selection retain deferred evaluation rather than executing discarded
+entries. Host operations require explicit support and effect policy; providing
+`System` does not authorize unrestricted FFI or external access. Relevant
+external inputs must be tracked as build dependencies before enabling them.
+
 > [!IMPLEMENTATION]
-> `#run` and general compile-time conditions are not supported yet.
-> `#if` currently accepts the target predicates described below, combined
-> with `not`, `and`, `or`, and parentheses.
+> Concrete anonymous entries without inputs execute through ordinary semantic
+> functions and compile-time requests, including nested entries and output
+> defaults. Multiple outputs retain their names and types in a frozen record,
+> including when retained between interactive submissions.
+> No-output blocks and local reference operations execute within the
+> entry; temporary references cannot escape as outputs. Entries in generic
+> bodies can receive enclosing type and integer compile-time parameters through
+> a generated parameterized function, without capturing runtime bindings.
+> Nested entries and parameter-dependent `#if` selection retain separate
+> specialization results, including across interactive submissions.
+> Entry results can supply integer specialization arguments; dependency readiness
+> and suspended generic materialization use the existing compile-time scheduler.
+> Concrete `System` entries use a checked resource scope shared with native
+> entry construction, including nested entries, defaults and `#if`. They support
+> stdout/stderr and context-owned allocation. Each invocation has its own `once`
+> acquisition scope, independently of the REPL runtime scope. Arguments are empty;
+> filesystem, environment, stdin, network, process, clock and entropy operations
+> remain disabled. Register build dependencies before enabling external reads.
+> Generic `System` entries use the same staged materialization and selected
+> captures, including dependent types, output defaults and nested entries.
+> Persistent sessions retain successful entry results. Rejected runtime captures
+> and aborted compile-time entries publish no session revision and do not poison
+> the accepted runtime state; reset starts a fresh execution context.
+> A concrete entry containing `#if` uses ordinary staged function materialization:
+> only its selected branch is resolved and safety-checked.
+> Anonymous entries can initialize module constants and field defaults through
+> the same execution request and constant-freezing path.
+> Known module constants may be read during evaluation; mutable runtime globals
+> are rejected, rather than reconstructed from their initializers as a snapshot.
+> Interactive selection retains successful results across commands and rejects
+> invalid selected branches without changing the accepted session revision.
+> Captured lexical values travel through ordinary checked call inputs. Their
+> types can be inferred, including for constants retained by the REPL. Concrete
+> and generic staged captures become inputs only when the selected branch uses them. Their
+> types come from the enclosing specialization's existing bindings, without
+> repeating initializer execution.
+> The superseded `#run function(...)` form is rejected; invoke the function
+> inside an anonymous entry instead.
+> This implementation accepts resolved function calls with constant scalar or
+> aggregate arguments and representable results. Closed calls and selected
+> integer arithmetic/comparisons and aggregate field/index projections can compute
+> those arguments. Calls use the checked bytecode
+> subset and its execution limits; references, resource-owning results and host
+> effects cannot cross this boundary. Requests in specialized bodies are retained,
+> and nested requests are resolved before their callers. Integer results can
+> determine type and function specialization arguments: semantic resolution
+> waits for the selected dependency bodies, proves their safety, and resumes
+> with the frozen result. Suspended specializations preserve temporary pointer,
+> array, record, choice and generic type descriptions across selection rollback.
+> Field defaults retain scalar, record and array literals or their deferred expression and type/integer
+> bindings across rollback. They still execute independently for each omitted
+> argument. Defaults distinguish specialization identities even when the records
+> are structurally compatible. Inferred choice identities and declaration origins
+> must already be stable; otherwise the request remains pending.
+> Within function bodies, computed `#if` conditions accept closed Boolean calls,
+> integer comparisons, and scalar or aggregate projections in that same subset.
+> Generic conditions are evaluated separately for each specialization. Both arms
+> must parse, but only the selected arm is materialized and safety-checked.
+> Selected statements belong to the containing scope, like target selection;
+> use an explicit nested block when a separate lifetime is needed.
+> Runtime inputs cannot determine a compile-time condition.
+> CLI compilation also evaluates closed module-level conditions before adding
+> the selected declarations and discovering their imports. Nested selections
+> retain original source offsets; inactive imports need not exist. Program entry
+> discovery follows selection, so `main` can be declared in a selected arm.
+> `argi test` uses the same selection to discover active tests, without selecting
+> `main` or executing test bodies during discovery.
+> REPL module preparation and later imports use the same staged selection driver.
+> Selected namespaces remain stable across subsequent commands; reset restores
+> the initial modules, and later imports can read updated sources.
+
+The experimental `argi run --vm <directory>` command uses the shared bytecode
+executor for runtime execution. Explicit `#run` requests use that executor during
+compilation regardless of the selected runtime backend. The supported subset and
+limits are documented in [usage](../docs/usage.md#experimental-bytecode-execution).
 
 ## Compilation target
 
@@ -55,8 +181,9 @@ Use `#if` to select declarations, imports, or statements:
 
 Only the selected branch contributes declarations or dependencies. Imports,
 types, and foreign symbols in the discarded branch do not need to exist.
-Nested selections are allowed. Conditions are checked even in discarded
-branches, and branch delimiters must remain balanced. `#if` is a declaration
+Nested selections are allowed. Target predicates are validated even in discarded
+branches, and branch delimiters must remain balanced. Computed conditions inside
+an unselected function-body branch are not evaluated. `#if` is a declaration
 or statement selection, not a value-producing expression. An ordinary `if`
 does not provide these dependency-selection guarantees.
 

@@ -58,6 +58,69 @@ pub fn lowerDiagnosed(
     return ctx.lowerDeclarations();
 }
 
+pub const EntryCaptureSource = struct {
+    pub const Value = union(enum) { value: entities.ModuleNodeId, owner: ?entities.ModuleFunctionId };
+    context: *anyopaque,
+    resolve: *const fn (*anyopaque, syn.NodeIndex, []const u8) anyerror!?Value,
+};
+
+/// Retain an anonymous entry body in the ordinary staged-function representation.
+/// Its declared inputs/outputs are the only bindings initially in scope.
+pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex, declaration: entities.ModuleDeclId, function: entities.ModuleFunctionId, captures: EntryCaptureSource) !void {
+    var context = Context{
+        .allocator = writer.allocator,
+        .graph = graph,
+        .files = &.{},
+        .writer = writer.*,
+        .parameters = std.array_list.Managed(ParameterBinding).init(writer.allocator),
+        .bindings = std.array_list.Managed(BindingName).init(writer.allocator),
+        .file_index = file_index,
+        .tree = tree,
+        .source = source,
+        .inside_comptime_entry = true,
+        .module_capture_source = captures,
+    };
+    defer context.entry_captures.deinit(writer.allocator);
+    defer context.parameters.deinit();
+    defer context.bindings.deinit();
+    const entry = tree.comptimeEntry(node).?;
+    const empty = try context.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
+    const input = if (entry.input) |syntax| try context.lowerType(syntax, false) else empty;
+    const input_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.input) |syntax| try context.seedFunctionBindings(syntax, .constant) else .{ .start = 0, .len = 0 };
+    const output = if (entry.output) |syntax| try context.lowerType(syntax, false) else empty;
+    const output_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.output) |syntax| try context.seedFunctionBindings(syntax, .variable) else .{ .start = 0, .len = 0 };
+    const body = try context.lowerBlock(entry.body);
+    try graph.semantic.parameterized_storage.parameterized_functions.append(writer.allocator, .{
+        .declaration = declaration,
+        .is_comptime_entry = true,
+        .concrete_function = function,
+        .parameters = .{ .start = 0, .len = 0 },
+        .input = input,
+        .input_bindings = input_bindings,
+        .output = output,
+        .body = body,
+        .output_bindings = output_bindings,
+    });
+}
+
+/// Retain a closed expression for staged evaluation in the supplied module.
+pub fn lowerConcreteExpression(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !ir.ParameterizedNodeId {
+    var context = Context{
+        .allocator = writer.allocator,
+        .graph = graph,
+        .files = &.{},
+        .writer = writer.*,
+        .parameters = std.array_list.Managed(ParameterBinding).init(writer.allocator),
+        .bindings = std.array_list.Managed(BindingName).init(writer.allocator),
+        .file_index = file_index,
+        .tree = tree,
+        .source = source,
+    };
+    defer context.parameters.deinit();
+    defer context.bindings.deinit();
+    return context.lowerBodyNode(node);
+}
+
 pub fn lowerConcreteTypeExpression(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !ir.ParameterizedTypeId {
     var context = Context{
         .allocator = writer.allocator,
@@ -120,6 +183,12 @@ pub const Context = struct {
     files: []const graph_mod.FileInput,
     writer: writer_mod.Writer,
     parameters: std.array_list.Managed(ParameterBinding),
+    referenced_parameter_prefix: usize = 0,
+    inside_comptime_entry: bool = false,
+    generated_source: ?primitives.SourceRef = null,
+    entry_parent: ?*Context = null,
+    module_capture_source: ?EntryCaptureSource = null,
+    entry_captures: std.ArrayList(struct { name: []const u8, use_node: ir.ParameterizedNodeId }) = .empty,
     bindings: std.array_list.Managed(BindingName),
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
@@ -130,7 +199,9 @@ pub const Context = struct {
 
     fn lowerDeclarations(self: *Context) !Stats {
         var stats: Stats = .{};
-        for (self.graph.declarations.items, 0..) |declaration, raw_decl| {
+        var raw_decl: usize = 0;
+        while (raw_decl < self.graph.declarations.items.len) : (raw_decl += 1) {
+            const declaration = self.graph.declarations.items[raw_decl];
             self.file_index = declaration.module_file_index;
             const file = self.files[@intCast(self.file_index)];
             self.tree = file.tree;
@@ -156,8 +227,8 @@ pub const Context = struct {
                     });
                     stats.generic_types += 1;
                 },
-                .function => {
-                    const function = self.tree.functionDeclaration(declaration_node) orelse continue;
+                .function, .test_function => {
+                    const function = if (declaration.kind == .test_function) self.tree.testDeclaration(declaration_node).?.function else self.tree.functionDeclaration(declaration_node) orelse continue;
                     self.parameters.clearRetainingCapacity();
                     self.bindings.clearRetainingCapacity();
                     const explicit = hasGenericParameters(function.generic_params, function.generic_params_struct);
@@ -172,23 +243,22 @@ pub const Context = struct {
                         .start = parameter_start,
                         .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - parameter_start),
                     };
-                    if (params.len == 0 and !function.contract_member) continue;
+                    const staged_body = if (function.body) |body| self.tree.hasComptimeSelection(body) else false;
+                    if (params.len == 0 and !function.contract_member and !staged_body) continue;
                     const input = try self.lowerType(function.input, false);
                     const output = try self.lowerType(function.output, false);
-                    const input_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
-                    try self.seedFunctionBindings(function.input, .constant);
-                    const output_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
-                    try self.seedFunctionBindings(function.output, .variable);
-                    const output_end: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+                    const input_bindings = try self.seedFunctionBindings(function.input, .constant);
+                    const output_bindings = try self.seedFunctionBindings(function.output, .variable);
                     const body = if (function.body) |node| try self.lowerBlock(node) else null;
                     try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
                         .declaration = decl_id,
+                        .concrete_function = if (params.len == 0 and staged_body) declaration.function_id else null,
                         .parameters = params,
                         .input = input,
                         .output = output,
                         .body = body,
-                        .input_bindings = .{ .start = input_start, .len = output_start - input_start },
-                        .output_bindings = .{ .start = output_start, .len = output_end - output_start },
+                        .input_bindings = input_bindings,
+                        .output_bindings = output_bindings,
                     });
                     stats.generic_functions += 1;
                 },
@@ -263,7 +333,8 @@ pub const Context = struct {
                             .safety_contract = safety_contract,
                         });
                     }
-                    try self.graph.semantic.parameterized_storage.contract_definitions.append(self.allocator, .{
+                    try self.graph.semantic.parameterized_storage.contract_definitions.ensureUnusedCapacity(self.allocator, 1);
+                    self.graph.semantic.parameterized_storage.contract_definitions.appendAssumeCapacity(.{
                         .declaration = decl_id,
                         .parameters = params,
                         .participants = participants,
@@ -986,7 +1057,215 @@ pub const Context = struct {
         return self.addInt(.{ .literal = value });
     }
 
+    fn lowerAnonymousEntry(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
+        const entry = self.tree.comptimeEntry(node).?;
+        const takes_system = if (entry.input) |syntax| self.tree.structTypeLiteral(syntax).?.fields.len != 0 else false;
+        if (takes_system) {
+            const fields = self.tree.structTypeLiteral(entry.input.?).?.fields;
+            if (fields.len != 1 or !std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, self.tree.structTypeField(fields[0]).?.name_token), "system"))
+                return error.UnsupportedParameterizedEntryInput;
+        }
+        // The same default syntax can be lowered in distinct semantic contexts;
+        // source coordinates alone do not identify a generated declaration.
+        const name_text = try std.fmt.allocPrint(self.allocator, "_comptime_entry_{d}_{d}_{d}", .{ self.file_index, self.sourceRef(node).offset, self.graph.declarations.items.len });
+        defer self.allocator.free(name_text);
+        const name = try self.writer.addString(name_text);
+        const declaration: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
+        try self.graph.declarations.append(self.allocator, .{
+            .kind = .function,
+            .name = name,
+            .source_offset = self.sourceRef(node).offset,
+            .module_file_index = self.file_index,
+            .generic_parameter_count = @intCast(self.parameters.items.len),
+        });
+        self.graph.generated_declaration_count += 1;
+        var child = Context{
+            .allocator = self.allocator,
+            .graph = self.graph,
+            .files = self.files,
+            .writer = self.writer,
+            .parameters = std.array_list.Managed(ParameterBinding).init(self.allocator),
+            .bindings = std.array_list.Managed(BindingName).init(self.allocator),
+            .file_index = self.file_index,
+            .tree = self.tree,
+            .source = self.source,
+            .diagnostics = self.diagnostics,
+            .inside_comptime_entry = true,
+            .entry_parent = self,
+        };
+        defer child.entry_captures.deinit(self.allocator);
+        defer child.parameters.deinit();
+        defer child.bindings.deinit();
+        try child.parameters.appendSlice(self.parameters.items);
+        const empty = try child.addType(.{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
+        const entry_input = if (entry.input) |syntax| try child.lowerType(syntax, false) else empty;
+        const input_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.input) |syntax| try child.seedFunctionBindings(syntax, .constant) else .{ .start = 0, .len = 0 };
+        const output = if (entry.output) |syntax| try child.lowerType(syntax, false) else empty;
+        const output_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.output) |syntax| try child.seedFunctionBindings(syntax, .variable) else .{ .start = 0, .len = 0 };
+        const body = try child.lowerBlock(entry.body);
+        // Forward only the declaration-order prefix needed by the entry. In a
+        // parameter default, forwarding the parameter being defined would turn
+        // an otherwise closed entry into a dependency on its own result.
+        // A captured binding's declared type can mention parameters without a
+        // name lookup in the child. Retain that enclosing parameter environment.
+        if (child.entry_captures.items.len != 0) child.referenced_parameter_prefix = self.parameters.items.len;
+        const captured = self.parameters.items[0..child.referenced_parameter_prefix];
+        self.referenced_parameter_prefix = @max(self.referenced_parameter_prefix, child.referenced_parameter_prefix);
+        self.graph.declarations.items[@intFromEnum(declaration)].generic_parameter_count = @intCast(captured.len);
+        const parameters: primitives.Range(ir.ComptimeParameterId) = .{
+            .start = if (captured.len == 0) 0 else @intFromEnum(captured[0].id),
+            .len = @intCast(captured.len),
+        };
+        try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
+            .is_comptime_entry = true,
+            .declaration = declaration,
+            .parameters = parameters,
+            .input = entry_input,
+            .input_bindings = input_bindings,
+            .output = output,
+            .body = body,
+            .output_bindings = output_bindings,
+        });
+        var arguments: std.ArrayList(ir.GenericArgument) = .empty;
+        defer arguments.deinit(self.allocator);
+        for (captured) |parameter_binding| {
+            try arguments.append(self.allocator, .{
+                .name = try self.writer.addString(parameter_binding.name),
+                .value = switch (parameter_binding.kind) {
+                    .type => .{ .type = try self.addType(.{ .parameter = parameter_binding.id }) },
+                    .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = parameter_binding.id }) },
+                },
+            });
+        }
+        const argument_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
+        try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
+        const input = try self.addResolvedNode(node, empty, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        const call_name = if (takes_system) try child.lowerHostEntryWrapper(node, name, parameters, empty, output, output_bindings, .{ .start = argument_start, .len = @intCast(arguments.items.len) }) else name;
+        const result = try self.addPending(node, .generic_call, &.{input}, call_name, null, .none);
+        const pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.comptime_run = !self.inside_comptime_entry;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.generic_arguments = .{ .start = argument_start, .len = @intCast(arguments.items.len) };
+        return result;
+    }
+
+    fn lowerHostEntryWrapper(self: *Context, syntax: syn.NodeIndex, callee: primitives.StringRange, parameters: primitives.Range(ir.ComptimeParameterId), empty: ir.ParameterizedTypeId, output: ir.ParameterizedTypeId, original_outputs: primitives.Range(ir.ParameterizedBindingId), generic_arguments: primitives.Range(ir.ParameterizedGenericArgId)) !primitives.StringRange {
+        const source = self.sourceRef(syntax);
+        const spelling = try std.fmt.allocPrint(self.allocator, "_host{s}", .{self.graph.text(callee)});
+        defer self.allocator.free(spelling);
+        const name = try self.writer.addString(spelling);
+        const declaration: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
+        try self.graph.declarations.append(self.allocator, .{ .kind = .function, .name = name, .source_offset = source.offset, .module_file_index = self.file_index, .generic_parameter_count = parameters.len });
+        self.graph.generated_declaration_count += 1;
+        const text = "bootstrap() -> () := {\n" ++ @embedFile("../../../0_commands/system_scope.rg") ++ "}\n";
+        var diagnostics = @import("../../../1_base/diagnostic.zig").Diagnostics.init(&self.allocator, &.{});
+        defer diagnostics.deinit();
+        var tokenizer = @import("../../../2_tokens/tokenizer.zig").Tokenizer.init(self.allocator, &diagnostics, text, @enumFromInt(0));
+        defer tokenizer.deinit();
+        _ = try tokenizer.tokenize();
+        const file = syn.FileSyntaxTree.initOwnedTokens(@enumFromInt(0), tokenizer.takeTokens());
+        var parser = @import("../../../3_syntax/syntaxer.zig").Syntaxer.initFile(self.allocator, file, text, &diagnostics);
+        var tree = try parser.parse();
+        defer tree.deinit(self.allocator);
+        var wrapper: Context = .{
+            .allocator = self.allocator,
+            .graph = self.graph,
+            .files = self.files,
+            .writer = self.writer,
+            .parameters = std.array_list.Managed(ParameterBinding).init(self.allocator),
+            .bindings = std.array_list.Managed(BindingName).init(self.allocator),
+            .file_index = self.file_index,
+            .tree = &tree,
+            .source = text,
+            .generated_source = source,
+            .inside_comptime_entry = true,
+        };
+        defer wrapper.parameters.deinit();
+        defer wrapper.bindings.deinit();
+        defer wrapper.entry_captures.deinit(self.allocator);
+        try wrapper.parameters.appendSlice(self.parameters.items);
+        // Output defaults belong to the user body, not to its resource owner.
+        const originals = try self.allocator.dupe(ir.Binding, self.graph.semantic.parameterized_storage.ir.bindings.items[original_outputs.start..][0..original_outputs.len]);
+        defer self.allocator.free(originals);
+        const output_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+        for (originals) |original| {
+            var binding = original;
+            binding.initialization = null;
+            try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, binding);
+        }
+        const outputs: primitives.Range(ir.ParameterizedBindingId) = .{ .start = output_start, .len = original_outputs.len };
+        const block = try wrapper.lowerBlock(tree.functionDeclaration(tree.roots[0]).?.body.?);
+        const original_block = self.graph.semantic.parameterized_storage.ir.blocks.items[@intFromEnum(block)];
+        var nodes: std.ArrayList(ir.ParameterizedNodeId) = .empty;
+        defer nodes.deinit(self.allocator);
+        try nodes.appendSlice(self.allocator, self.graph.semantic.parameterized_storage.ir.node_refs.items[original_block.nodes.start..][0..original_block.nodes.len]);
+        var system: ?ir.ParameterizedBindingId = null;
+        for (nodes.items) |id| {
+            const node = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)];
+            if (node != .resolved or node.resolved.content != .binding_declaration) continue;
+            const binding = node.resolved.content.binding_declaration;
+            if (std.mem.eql(u8, self.graph.text(self.graph.semantic.parameterized_storage.ir.bindings.items[@intFromEnum(binding)].name), "system")) system = binding;
+        }
+        const system_binding = system orelse return error.MissingSystemEntryStorage;
+        const system_value = try wrapper.addResolvedNode(syntax, self.graph.semantic.parameterized_storage.ir.bindingType(system_binding), .{ .binding_use = system_binding });
+        const field_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.value_fields.items.len);
+        try self.graph.semantic.parameterized_storage.ir.value_fields.append(self.allocator, .{ .name = try self.writer.addString("system"), .value = system_value });
+        const input = try wrapper.addResolvedNode(syntax, null, .{ .struct_value_literal = .{ .fields = .{ .start = field_start, .len = 1 } } });
+        const call_type = if (originals.len == 1) originals[0].ty else if (originals.len == 0) try wrapper.parameterizedBuiltin(.Void) else output;
+        const call = try wrapper.addPending(syntax, .generic_call, &.{input}, callee, call_type, .none);
+        const pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(call)].pending;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.generic_arguments = generic_arguments;
+        if (originals.len <= 1) {
+            try nodes.append(self.allocator, if (originals.len == 1) try wrapper.addResolvedNode(syntax, originals[0].ty, .{ .assignment = .{ .binding = @enumFromInt(output_start), .value = call } }) else call);
+        } else {
+            const temporary: ir.ParameterizedBindingId = @enumFromInt(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+            try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{ .name = try self.writer.addString("#entry_result"), .source = source, .ty = call_type, .initialization = call, .mutability = .constant });
+            try nodes.append(self.allocator, try wrapper.addResolvedNode(syntax, null, .{ .binding_declaration = temporary }));
+            const use = try wrapper.addResolvedNode(syntax, call_type, .{ .binding_use = temporary });
+            for (originals, 0..) |binding, index| {
+                const value = try wrapper.addPending(syntax, .field_access, &.{use}, binding.name, binding.ty, .none);
+                try nodes.append(self.allocator, try wrapper.addResolvedNode(syntax, binding.ty, .{ .assignment = .{ .binding = @enumFromInt(output_start + @as(u32, @intCast(index))), .value = value } }));
+            }
+        }
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.node_refs.items.len);
+        try self.graph.semantic.parameterized_storage.ir.node_refs.appendSlice(self.allocator, nodes.items);
+        self.graph.semantic.parameterized_storage.ir.blocks.items[@intFromEnum(block)] = .{ .nodes = .{ .start = start, .len = @intCast(nodes.items.len) } };
+        try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
+            .is_comptime_entry = true,
+            .is_comptime_host_entry = true,
+            .declaration = declaration,
+            .parameters = parameters,
+            .input = empty,
+            .output = output,
+            .output_bindings = outputs,
+            .body = block,
+        });
+        return name;
+    }
+
+    fn captureEntryValue(self: *Context, node: syn.NodeIndex, name: []const u8) anyerror!?ir.ParameterizedNodeId {
+        for (self.entry_captures.items) |capture|
+            if (std.mem.eql(u8, capture.name, name)) return capture.use_node;
+        const use = if (self.entry_parent) |parent| blk: {
+            const outer = if (parent.parameterizedBinding(name)) |binding|
+                try parent.addResolvedNode(node, parent.graph.semantic.parameterized_storage.ir.bindingType(binding), .{ .binding_use = binding })
+            else
+                (try parent.captureEntryValue(node, name)) orelse return null;
+            break :blk try self.addPending(node, .entry_capture, &.{outer}, try self.writer.addString(name), null, .none);
+        } else if (self.module_capture_source) |source| blk: {
+            const value = (try source.resolve(source.context, node, name)) orelse return null;
+            const detail: ir.PendingExpressionDetail = switch (value) {
+                .value => |value_node| .{ .capture_module_value = value_node },
+                .owner => |owner| .{ .capture_owner = owner },
+            };
+            break :blk try self.addPending(node, .entry_capture, &.{}, try self.writer.addString(name), null, detail);
+        } else return null;
+        try self.entry_captures.append(self.allocator, .{ .name = name, .use_node = use });
+        return use;
+    }
+
     pub fn lowerIntExpression(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedIntExprId {
+        if (self.tree.tag(node) == .comptime_entry)
+            return self.addInt(.{ .execution = try self.lowerBodyNode(node) });
         if (self.tree.syntaxType(node)) |syntax| if (syntax == .projection) {
             return self.addInt(.{ .projection = .{
                 .base = try self.lowerType(syntax.projection.base, false),
@@ -1023,23 +1302,37 @@ pub const Context = struct {
         } });
     }
 
-    fn seedFunctionBindings(self: *Context, struct_node: syn.NodeIndex, mutability: primitives.Mutability) !void {
-        const literal = self.tree.structTypeLiteral(struct_node) orelse return;
+    fn seedFunctionBindings(self: *Context, struct_node: syn.NodeIndex, mutability: primitives.Mutability) !primitives.Range(ir.ParameterizedBindingId) {
+        const literal = self.tree.structTypeLiteral(struct_node) orelse return .{ .start = 0, .len = 0 };
+        var count: u32 = 0;
+        for (literal.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node) orelse continue;
+            if (field.type_node != null) count += 1;
+        }
+        // Defaults can lower nested functions with bindings of their own. Reserve
+        // this interface's contiguous range before lowering any child expression.
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
+        try self.graph.semantic.parameterized_storage.ir.bindings.appendNTimes(self.allocator, undefined, count);
+        var offset: u32 = 0;
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse continue;
             const type_node = field.type_node orelse continue;
             const name = if (field.inferred_result) "result" else self.tree.tokenTextFromSource(self.source, field.name_token);
             const initialization = if (field.default_value) |value| try self.lowerBodyNode(value) else null;
-            const binding_id: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len)));
-            try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{
-                .name = try self.writer.addString(name),
+            const binding_id: ir.ParameterizedBindingId = @enumFromInt(start + offset);
+            const ty = try self.lowerType(type_node, false);
+            const stored_name = try self.writer.addString(name);
+            self.graph.semantic.parameterized_storage.ir.bindings.items[start + offset] = .{
+                .name = stored_name,
                 .source = self.sourceRef(field_node),
-                .ty = try self.lowerType(type_node, false),
+                .ty = ty,
                 .initialization = initialization,
                 .mutability = mutability,
-            });
+            };
             try self.bindings.append(.{ .name = name, .id = binding_id });
+            offset += 1;
         }
+        return .{ .start = start, .len = count };
     }
 
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedBlockId {
@@ -1145,6 +1438,7 @@ pub const Context = struct {
         defer self.defer_loop_depth = previous_loop_depth;
 
         for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
+        if (self.tree.tag(node) == .comptime_entry) return self.lowerAnonymousEntry(node);
         if (self.tree.tag(node) == .pipe_placeholder) return self.pipe_value orelse error.PipePlaceholderOutsidePipe;
         if (self.tree.tag(node) == .pipe_expression) return self.lowerPipe(node);
         if (self.tree.tag(node) == .handle_expression or self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block) return self.lowerHandle(node);
@@ -1352,6 +1646,7 @@ pub const Context = struct {
                 const ty = self.graph.semantic.parameterized_storage.ir.bindingType(binding);
                 return self.addResolvedNode(node, ty, .{ .binding_use = binding });
             }
+            if (try self.captureEntryValue(node, name)) |value| return value;
             if (self.parameter(name)) |parameter_binding| {
                 switch (parameter_binding.kind) {
                     .type => {
@@ -1443,7 +1738,7 @@ pub const Context = struct {
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
         defer operands.deinit();
         try self.collectBodyOperands(node, &operands);
-        const kind = parameterizedKindForTag(self.tree.tag(node));
+        const kind: ir.PendingExpressionKind = if (self.tree.ifStatement(node)) |statement| if (statement.comptime_selection) .comptime_if else .if_statement else parameterizedKindForTag(self.tree.tag(node));
         const name = switch (self.tree.tag(node)) {
             .function_call => if (self.tree.functionCall(node)) |call| try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)) else null,
             .struct_field_access => if (self.tree.structFieldAccess(node)) |access| try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)) else null,
@@ -1846,7 +2141,10 @@ pub const Context = struct {
         var i = self.parameters.items.len;
         while (i != 0) {
             i -= 1;
-            if (std.mem.eql(u8, self.parameters.items[i].name, name)) return self.parameters.items[i];
+            if (std.mem.eql(u8, self.parameters.items[i].name, name)) {
+                self.referenced_parameter_prefix = @max(self.referenced_parameter_prefix, i + 1);
+                return self.parameters.items[i];
+            }
         }
         return null;
     }
@@ -1875,7 +2173,7 @@ pub const Context = struct {
     }
 
     fn sourceRef(self: *Context, node: syn.NodeIndex) primitives.SourceRef {
-        return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
+        return self.generated_source orelse .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
     }
 };
 

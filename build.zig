@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const llvm_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/5_codegen/llvm-c.h"),
+        .root_source_file = b.path("src/5_codegen/llvm/llvm-c.h"),
         .target = target,
         .optimize = optimize,
     });
@@ -175,6 +175,20 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| benchmark_run.addArgs(args);
     const benchmark_step = b.step("benchmark-frontend", "Measure clean and reused frontend compilations");
     benchmark_step.dependOn(&benchmark_run.step);
+
+    const execution_benchmark_mod = b.createModule(.{
+        .root_source_file = b.path("src/execution_benchmark.zig"),
+        .target = target,
+        .optimize = optimize,
+        .error_tracing = if (optimize == .Debug) false else null,
+    });
+    execution_benchmark_mod.addOptions("frontend_build_options", frontend_build_options);
+    const execution_benchmark = b.addExecutable(.{ .name = "execution-benchmark", .root_module = execution_benchmark_mod });
+    const execution_install = b.addInstallArtifact(execution_benchmark, .{});
+    b.step("build-execution-benchmark", "Build the retained execution benchmark").dependOn(&execution_install.step);
+    const execution_run = b.addRunArtifact(execution_benchmark);
+    if (b.args) |args| execution_run.addArgs(args);
+    b.step("benchmark-execution", "Measure retained session phases and memory").dependOn(&execution_run.step);
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(internal_test_step);

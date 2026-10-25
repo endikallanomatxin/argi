@@ -12,12 +12,18 @@ add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
 
 The body reads inputs by name and assigns output bindings by name. An output
 without a default must receive a value before the function completes. A
-default supplies its value when the body does not replace it:
+default initializes its output once at function entry, before the body. Output
+initializers execute in declaration order, and their calls, lifetime effects and
+cleanup follow the same rules as body statements. The body may then replace the
+initial value:
 
 ```rg
 main := () -> (.status_code: Int32 = 0) {
 }
 ```
+
+Output defaults can refer to function inputs and earlier outputs. Their
+temporaries belong to the function scope, just as temporaries in its body.
 
 Empty `()` denotes no input or no output. A `return` leaves the function; it
 does not carry a separate result expression. Results come from the output
