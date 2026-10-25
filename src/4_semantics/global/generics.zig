@@ -108,6 +108,66 @@ pub const Resolver = struct {
         }
     }
 
+    /// Scratch work for one fixed-point resolution call, never session state.
+    /// Type holes remain pending: an older slot can become generic after a
+    /// later operation resolves it. Completed representations leave this list.
+    pub const PendingTypes = struct {
+        scanned: usize = 0,
+        items: std.ArrayList(global_sg.GlobalTypeId) = .empty,
+
+        pub fn deinit(self: *PendingTypes, allocator: std.mem.Allocator) void {
+            self.items.deinit(allocator);
+        }
+
+        fn discover(self: *PendingTypes, allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, measurement: ?@import("resolution_profile.zig").Profile.Measurement) !void {
+            while (self.scanned < graph.types.items.len) {
+                const id: global_sg.GlobalTypeId = @enumFromInt(self.scanned);
+                if (measurement) |m| m.visit(1);
+                if (graph.isTypeUnresolved(id) or graph.types.items[self.scanned] == .generic)
+                    try self.items.append(allocator, id);
+                self.scanned += 1;
+            }
+        }
+    };
+
+    /// Retry the unresolved candidates in discovery order. The caller owns
+    /// this scratch list and discards it if resolution fails or rolls back.
+    pub fn materializePendingTypes(self: *Resolver, pending: *PendingTypes) !bool {
+        self.argument_failure = null;
+        var changed = false;
+        const measurement = if (self.core.scan_profile) |profile| profile.begin(.generic_types) else null;
+        defer if (measurement) |m| m.finish(changed);
+        try pending.discover(self.allocator, self.graph, measurement);
+        var read: usize = 0;
+        var write: usize = 0;
+        while (read < pending.items.items.len) {
+            const id = pending.items.items[read];
+            read += 1;
+            if (measurement) |m| m.visit(1);
+            if (self.graph.isTypeUnresolved(id)) {
+                pending.items.items[write] = id;
+                write += 1;
+                continue;
+            }
+            const result = self.materializeGenericInstance(id) catch |err| switch (err) {
+                error.ComptimeExecutionPending => .pending,
+                else => return err,
+            };
+            switch (result) {
+                .changed => changed = true,
+                .complete => {},
+                .pending => {
+                    pending.items.items[write] = id;
+                    write += 1;
+                },
+            }
+            // Instantiation can append more generic types in this same round.
+            try pending.discover(self.allocator, self.graph, measurement);
+        }
+        pending.items.shrinkRetainingCapacity(write);
+        return changed;
+    }
+
     pub fn materializeKnownTypes(self: *Resolver) !bool {
         self.argument_failure = null;
         var changed = false;
@@ -116,16 +176,13 @@ pub const Resolver = struct {
         var index: usize = 0;
         while (index < self.graph.types.items.len) : (index += 1) {
             if (measurement) |m| m.visit(1);
-            const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(index)));
-            switch (self.graph.types.items[index]) {
-                .generic => {
-                    if (self.ensureGenericInstance(id) catch |err| switch (err) {
-                        error.ComptimeExecutionPending => continue,
-                        else => return err,
-                    }) changed = true;
-                },
-                else => {},
-            }
+            const id: global_sg.GlobalTypeId = @enumFromInt(index);
+            if (self.graph.isTypeUnresolved(id) or self.graph.types.items[index] != .generic) continue;
+            const result = self.materializeGenericInstance(id) catch |err| switch (err) {
+                error.ComptimeExecutionPending => continue,
+                else => return err,
+            };
+            if (result == .changed) changed = true;
         }
         return changed;
     }
@@ -182,14 +239,20 @@ pub const Resolver = struct {
     }
 
     pub fn ensureGenericInstance(self: *Resolver, ty: global_sg.GlobalTypeId) !bool {
+        return try self.materializeGenericInstance(ty) == .changed;
+    }
+
+    const InstanceMaterialization = enum { pending, complete, changed };
+
+    fn materializeGenericInstance(self: *Resolver, ty: global_sg.GlobalTypeId) !InstanceMaterialization {
         // Every published instance has validated declaration-order arguments.
         // Semantic identity with one can reuse its shape without rebinding.
-        if (global_types.genericInstance(self.graph, ty) != null) return false;
+        if (global_types.genericInstance(self.graph, ty) != null) return .complete;
         const identity = switch (self.graph.types.items[@intFromEnum(ty)]) {
             .generic => |value| value,
-            else => return false,
+            else => return .complete,
         };
-        const located = self.findTypeParameterized(identity.base) orelse return false;
+        const located = self.findTypeParameterized(identity.base) orelse return .pending;
         var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
         self.bindGlobalArguments(located.module_index, located.parameterized.parameters, identity.arguments, &bindings) catch |err| {
@@ -234,7 +297,7 @@ pub const Resolver = struct {
         }
         // Type identity, layouts and operation signatures use declaration order.
         // Validate and canonicalize before reusing an equivalent instance.
-        if (global_types.genericInstance(self.graph, ty) != null) return false;
+        if (global_types.genericInstance(self.graph, ty) != null) return .complete;
         const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings);
         const shape = switch (self.graph.types.items[@intFromEnum(body_type)]) {
             .structural => |value| @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .structure = .{
@@ -253,7 +316,7 @@ pub const Resolver = struct {
         };
         try self.graph.generic_instances.append(self.allocator, .{ .type_id = ty, .shape = shape });
         self.stats.type_instances += 1;
-        return true;
+        return .changed;
     }
 
     pub const LocatedTypeParameterized = struct {
@@ -1098,4 +1161,72 @@ test "type cache rollback discards rejected keys before graph IDs are reused" {
     try std.testing.expectEqual(primitives.BuiltinType.Bool, graph.semanticType(rejected).builtin);
     try std.testing.expectEqual(retained, try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } }));
     try std.testing.expect(rejected != try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } }));
+}
+
+test "pending generic types revisit old holes and discover appended types" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.markTypeUnresolved(a, @enumFromInt(0));
+    var core: core_mod.Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinit();
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer resolver.deinit();
+    var pending: Resolver.PendingTypes = .{};
+    defer pending.deinit(a);
+    try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+    try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);
+    // No defining module yet: keep the old generic candidate rather than
+    // treating a false materialization result as completion.
+    try graph.resolveType(a, @enumFromInt(0), .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } });
+    try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+    try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);
+    try graph.generic_instances.append(a, .{ .type_id = @enumFromInt(0), .shape = .{ .alias = @enumFromInt(1) } });
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.markTypeUnresolved(a, @enumFromInt(1));
+    try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+    try std.testing.expectEqualSlices(global_sg.GlobalTypeId, &.{@enumFromInt(1)}, pending.items.items);
+    try graph.resolveType(a, @enumFromInt(1), .{ .builtin = .Int32 });
+    try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+    try std.testing.expectEqual(@as(usize, 0), pending.items.items.len);
+    // A completed pool needs no worklist allocation, including setup calls.
+    var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    resolver.allocator = failing.allocator();
+    try std.testing.expect(!try resolver.materializeKnownTypes());
+}
+
+test "pending generic work is discarded across rollback and allocation failure" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.markTypeUnresolved(a, @enumFromInt(0));
+    try std.testing.checkAllAllocationFailures(a, struct {
+        fn collect(allocator: std.mem.Allocator, g: *global_sg.GlobalSemanticGraph) !void {
+            var core: core_mod.Resolver = .{ .allocator = allocator, .graph = g, .modules = &.{}, .offsets = &.{} };
+            defer core.deinit();
+            var resolver: Resolver = .{ .allocator = allocator, .graph = g, .modules = &.{}, .offsets = &.{}, .core = &core };
+            defer resolver.deinit();
+            var pending: Resolver.PendingTypes = .{};
+            defer pending.deinit(allocator);
+            try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+            try std.testing.expectEqualSlices(global_sg.GlobalTypeId, &.{@enumFromInt(0)}, pending.items.items);
+        }
+    }.collect, .{&graph});
+
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    {
+        var pending: Resolver.PendingTypes = .{};
+        defer pending.deinit(a);
+        try pending.discover(a, &graph, null);
+        try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .Int32 });
+        // The worklist is owned by the resolution call, not the transaction.
+    }
+    transaction.rollback();
+    var next: Resolver.PendingTypes = .{};
+    defer next.deinit(a);
+    try next.discover(a, &graph, null);
+    try std.testing.expectEqualSlices(global_sg.GlobalTypeId, &.{@enumFromInt(0)}, next.items.items);
 }

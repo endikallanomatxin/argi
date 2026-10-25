@@ -193,3 +193,33 @@ Logs: `.zig-cache/frontend-{before,after}-visits-minimal-1000.csv`,
 `.zig-cache/frontend-before-visits-prelude-1000.csv` and
 `.zig-cache/frontend-after-visits-source-prelude-1000.csv`. These cover the
 10/100/1,000 milestones in one cumulative session per workload and revision.
+
+### Pending generic representations within resolution
+
+Generic materialization now distinguishes a completed representation from one
+that is still pending (including a deferred compile-time evaluation or a defining
+module not yet available). During one `advanceResolution` call, a local worklist
+retains generic candidates and old unresolved type slots, discovers appended
+types, and retires completed candidates. It does not survive the resolution call
+or add checkpoint state. Setup retains its allocation-free full scan. Binding
+and expression type propagation, the outer fixed point and final graph
+verification are unchanged.
+
+Paired profiled Debug runs against `e2832c63`, using binaries in `.zig-cache/`
+and the same repository core:
+
+| Workload | Commands | Generic visits before | After | Generic ms before | After |
+|---|---:|---:|---:|---:|---:|
+| Prelude calls | 10 | 181,440 | 93,376 | 70.4 | 42.4 |
+| Prelude calls | 100 | 1,792,620 | 942,346 | 666.1 | 397.3 |
+| Minimal calls | 100 | 22,205 | 11,099 | 1.36 | 0.89 |
+| Minimal calls | 1,000 | 2,022,005 | 1,010,999 | 105.1 | 57.6 |
+
+Visits now count initial discovery plus candidate attempts, rather than full-pool
+visits on every round. Retained graph, bytecode, Safety counters, memory and
+fixed-point rounds agree. Frontend/publication for 100 prelude calls was
+14,314/13,766 ms; for 1,000 minimal calls it was 14,068/14,115 ms. This is a
+localized improvement, not a demonstrated overall throughput gain. An earlier
+baseline measured 557 ms for the prelude generic pass, illustrating run variation.
+Logs: `.zig-cache/generic-pending-{repeat-before,status}-prelude-100.csv` and
+`.zig-cache/generic-pending-{before,status}-minimal-1000.csv`.

@@ -1351,6 +1351,10 @@ fn advanceResolution(
     // cleanup calls to functions absent from the source call graph. Each newly
     // reachable body gets another resolution pass before its cleanup is built.
     const finalized_functions = &state.finalized_functions;
+    // Local to this resolution call: failure discards the work alongside the
+    // enclosing semantic transaction. Old unresolved slots remain candidates.
+    var pending_types: @import("generics.zig").Resolver.PendingTypes = .{};
+    defer pending_types.deinit(allocator);
     var changed = true;
     while (true) {
         while (changed) {
@@ -1419,7 +1423,7 @@ fn advanceResolution(
             if (try core.materializeAddresses()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_addresses_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (generics.materializeKnownTypes() catch |err| {
+            if (generics.materializePendingTypes(&pending_types) catch |err| {
                 try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
                 try reportGenericArgumentFailure(graph, options.diagnostics, generics);
                 try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
