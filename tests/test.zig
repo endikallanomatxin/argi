@@ -9132,7 +9132,7 @@ test "usecase_tests/05_python_csv_report" {
         .{ .data = "duration_ms\n-1\n", .diagnostic = "invalid_duration" },
         .{ .data = "duration_ms\nnan\n", .diagnostic = "invalid_input" },
         .{ .data = "duration_ms\ninf\n", .diagnostic = "invalid_input" },
-        .{ .data = "duration_ms\n\xff\n", .diagnostic = "UnicodeDecodeError" },
+        .{ .data = "duration_ms\n\xff\n", .diagnostic = "invalid_utf8" },
     }) |case| {
         try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "invalid.csv", .data = case.data });
         const result = try runChildInCwd(&.{ executable, "invalid.csv" }, root);
@@ -9140,7 +9140,7 @@ test "usecase_tests/05_python_csv_report" {
         defer allocator.free(result.stderr);
         try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
         try expectEqualStrings("", result.stdout);
-        try expect(std.mem.indexOf(u8, result.stderr, case.diagnostic) != null);
+        try expectDiagnostic("csv-report invalid input", result.stderr, case.diagnostic);
     }
     const missing = try runChildInCwd(&.{ executable, "missing.csv" }, root);
     defer allocator.free(missing.stdout);
