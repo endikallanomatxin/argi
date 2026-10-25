@@ -111,8 +111,11 @@ pub const Resolver = struct {
     pub fn materializeKnownTypes(self: *Resolver) !bool {
         self.argument_failure = null;
         var changed = false;
+        const measurement = if (self.core.scan_profile) |profile| profile.begin(.generic_types) else null;
+        defer if (measurement) |m| m.finish(changed);
         var index: usize = 0;
         while (index < self.graph.types.items.len) : (index += 1) {
+            if (measurement) |m| m.visit(1);
             const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(index)));
             switch (self.graph.types.items[index]) {
                 .generic => {

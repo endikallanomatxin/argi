@@ -38,8 +38,12 @@ pub const Resolver = struct {
         // Signatures can change between global rounds. Rebuild this list on
         // every invocation, but resolve each signature only once while its
         // reason summaries converge. Only scratch capacity survives the pass.
+        const measurement = if (self.core.scan_profile) |profile| profile.begin(.error_candidates) else null;
+        var profile_changed = false;
+        defer if (measurement) |m| m.finish(profile_changed);
         self.reason_candidates.clearRetainingCapacity();
         for (self.graph.functions.items, 0..) |function, raw| {
+            if (measurement) |m| m.visit(1);
             const id: global_sg.GlobalFunctionId = @enumFromInt(raw);
             // A newly specialized open signature may be inspected before its
             // call joins the execution graph. Preserve those signature roots.
@@ -64,6 +68,7 @@ pub const Resolver = struct {
             any_changed = any_changed or changed;
             if (!changed) break;
         }
+        profile_changed = any_changed;
         return any_changed;
     }
 

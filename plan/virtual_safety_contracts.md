@@ -9,8 +9,9 @@ Design boundary: [effect precision](safety_effect_precision.md).
   computed choice tests, and error propagation.
 - Add source selectors for record fields without expanding unrelated variants.
 - Model initialization and conditional hidden retention/replacement post-values.
-- Extend storage identities to grouped domains, reference mappings, erased
-  receivers, and indexed owners before permitting their ownership transitions.
+- Extend ownership transitions through erased receivers where concrete storage
+  and cleanup identities are unavailable. Typed indexed/indirect replacements
+  already use shared checked destinations; do not introduce a parallel mechanism.
 - Prove exact hidden ownership transfer and returned domain identity; dependency
   permissions alone must not establish occupancy or ownership.
 - Extend exact identity/transfer proofs beyond straight-line lexical forwarding.

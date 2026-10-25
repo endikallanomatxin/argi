@@ -153,7 +153,7 @@ fn reportGraphPools(session: *const interactive.Interactive, commands: usize) vo
     }
 }
 
-fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize, graph_pools: bool) !void {
+fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize, graph_pools: bool, resolution_profile: bool) !void {
     var memory: Memory = .{ .child = backing_allocator, .limit = limit };
     const allocator = memory.allocator();
     {
@@ -186,6 +186,8 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
         }
         if (scenario == .calls) try session.submitDefinitions("identity := (.value: Int32) -> (.result: Int32) { result = value }");
         try session.submitStatements("value :: Int32 = 42");
+        var scans: @import("4_semantics/global/resolution_profile.zig").Profile = .{ .io = io };
+        if (resolution_profile) session.compiler.semantic.resolvers.core.scan_profile = &scans;
         session.runtime.profile_io = io;
         session.runtime.stats = .{};
         session.compiler.summary_evaluations = 0;
@@ -221,7 +223,14 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
                 return err;
             };
             total_ns += elapsed(io, start);
-            if (index == 10 or index == 100 or index == 1000 or index == count) try report(&session, &memory, scenario, modules, index, total_ns);
+            if (index == 10 or index == 100 or index == 1000 or index == count) {
+                try report(&session, &memory, scenario, modules, index, total_ns);
+                if (resolution_profile) {
+                    for (std.enums.values(@import("4_semantics/global/resolution_profile.zig").Pass), scans.entries) |pass, entry| {
+                        std.debug.print("# resolution,{d},{s},{d},{d},{d},{d:.3},{d}\n", .{ index, @tagName(pass), entry.calls, entry.visits, entry.changed, ms(entry.ns), scans.rounds });
+                    }
+                }
+            }
         }
         if (scenario == .definitions) {
             const call = try std.fmt.allocPrint(allocator, "function_{d}()", .{count});
@@ -286,8 +295,14 @@ fn benchmarkVerifier(io: std.Io) !void {
 
 pub fn main(init: std.process.Init) !void {
     const raw_args = try init.minimal.args.toSlice(init.arena.allocator());
-    const graph_pools = raw_args.len > 1 and std.mem.eql(u8, raw_args[raw_args.len - 1], "--graph-pools");
-    const args = raw_args[0 .. raw_args.len - @intFromBool(graph_pools)];
+    var graph_pools = false;
+    var resolution_profile = false;
+    var end = raw_args.len;
+    while (end > 1) {
+        if (std.mem.eql(u8, raw_args[end - 1], "--graph-pools")) graph_pools = true else if (std.mem.eql(u8, raw_args[end - 1], "--resolution-profile")) resolution_profile = true else break;
+        end -= 1;
+    }
+    const args = raw_args[0..end];
     if (args.len == 2 and std.mem.eql(u8, args[1], "--verifier")) return benchmarkVerifier(init.io);
     if (args.len > 5) return error.InvalidArguments;
     const count = if (args.len >= 2) try std.fmt.parseInt(usize, args[1], 10) else 1000;
@@ -297,7 +312,8 @@ pub fn main(init: std.process.Init) !void {
     if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions|rejections] [memory-limit-MiB=2048] [--graph-pools]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions|rejections] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB\n", .{});
-    try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools);
+    if (resolution_profile) std.debug.print("# resolution,commands,pass,calls,pool_entries,changed_passes,inclusive_ms,fixed_point_rounds\n", .{});
+    try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools, resolution_profile);
 }

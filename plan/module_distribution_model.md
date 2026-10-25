@@ -4,13 +4,6 @@ The normative model is [Modules](../description/02_modules.md). There is one
 language abstraction: a directory module. Distribution is optional identity
 and delivery metadata, not another kind of namespace.
 
-## Current alignment
-
-- Document optional module configuration and explicit `[distribution]` identity.
-- Generate `[module]` configuration without a distribution version from `argi init`.
-- Use module terminology in CLI help, scaffolds, and build diagnostics.
-- Preserve current executable selection and explicit manifest-free module testing.
-
 ## Remaining implementation
 
 1. Parse and validate distribution metadata independently of module/tool settings.

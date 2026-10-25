@@ -544,7 +544,12 @@ pub const Session = struct {
     pub fn beginTransaction(self: *Session) !Transaction {
         if (self.transaction_active) return error.ActiveSemanticTransaction;
         if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
-        const saved_resolution = try self.resolution.checkpoint(self.allocator);
+        const measurement = if (self.resolvers.core.scan_profile) |profile| profile.begin(.checkpoint) else null;
+        const saved_resolution = saved: {
+            defer if (measurement) |m| m.finish(false);
+            if (measurement) |m| for (pending_phases) |phase| m.visit(self.resolution.worklists.forPhaseConst(phase).items.len);
+            break :saved try self.resolution.checkpoint(self.allocator);
+        };
         var transaction: Transaction = .{
             .owner = self,
             .graph = self.relocation.graph.beginTransaction(self.allocator),
@@ -968,6 +973,8 @@ pub const Session = struct {
     /// Complete and validate this unit without consuming the shared graph or
     /// its pending-slot metadata. Callers may extend resolution afterwards.
     pub fn completeUnit(self: *Session) !Stats {
+        const measurement = if (self.resolvers.core.scan_profile) |profile| profile.begin(.completion) else null;
+        defer if (measurement) |m| m.finish(false);
         if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
         errdefer self.phase = .failed;
         const allocator = self.allocator;
@@ -1201,7 +1208,11 @@ pub const Session = struct {
         };
 
         const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-        try global_verify.verifyUnit(&relocation.graph, reachable);
+        {
+            const verification = if (core.scan_profile) |profile| profile.begin(.unit_verification) else null;
+            defer if (verification) |m| m.finish(false);
+            try global_verify.verifyUnit(&relocation.graph, reachable);
+        }
         const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         stats.remaining = 0;
         var setup_stage_times: [setup_stage_count]u64 = undefined;
@@ -1303,6 +1314,8 @@ fn advanceResolution(
     state: *ResolutionState,
     reachable: ?*reachability_mod.FunctionSet,
 ) !void {
+    const measurement = if (resolvers.core.scan_profile) |profile| profile.begin(.resolution) else null;
+    defer if (measurement) |m| m.finish(false);
     const progress = &state.progress;
     const pending_resolution_stats = &state.pending_stats;
     const graph = resolvers.core.graph;
@@ -1333,6 +1346,7 @@ fn advanceResolution(
             staged_execution.stable_declaration_count = graph.declarations.items.len;
             staged_execution.stable_node_count = graph.nodes.items.len;
             progress.profile_rounds += 1;
+            if (core.scan_profile) |profile| profile.rounds += 1;
             changed = false;
             // Published operation signatures do not make their bodies roots.
             // Complete selected bodies before resolving their pending uses.
@@ -1375,7 +1389,6 @@ fn advanceResolution(
             if (options.profile_io) |io| progress.profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
             var sweep_start = profileTimestamp(options.profile_io);
-            sweep_start = profileTimestamp(options.profile_io);
             if (try core.materializeTextLiteralTypes()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_string_literal_types_ns);
             sweep_start = profileTimestamp(options.profile_io);

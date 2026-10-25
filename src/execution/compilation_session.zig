@@ -319,6 +319,8 @@ pub const CompilationSession = struct {
 // The graph stays owned by Session; only execution proofs belong to this unit.
 fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, proof: ?*TemporalProof, cache: *const SummaryCache.Store, bodies_cache: *const BodyCache.Store) !CheckedUnit {
     const stats = try semantic.completeUnit();
+    const measurement = if (semantic.resolvers.core.scan_profile) |profile| profile.begin(.checking) else null;
+    defer if (measurement) |m| m.finish(false);
     const graph = &semantic.relocation.graph;
     const unit: ?*const @import("../4_semantics/global/reachability.zig").FunctionSet = if (semantic.reachable) |*selected| selected else null;
     var temporary = std.heap.ArenaAllocator.init(allocator);

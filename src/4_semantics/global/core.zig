@@ -37,6 +37,7 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     profile_io: ?std.Io = null,
+    scan_profile: ?*@import("resolution_profile.zig").Profile = null,
     argument_defaults: ?*const ArgumentDefaults = null,
 
     stats: Stats = .{},
@@ -193,56 +194,69 @@ pub const Resolver = struct {
 
     pub fn materializeDereferences(self: *Resolver) !bool {
         var changed = false;
-        for (self.graph.nodes.items, 0..) |node, raw| switch (node.content) {
-            .dereference => |dereference| {
-                const pointer_type = self.graph.nodes.items[@intFromEnum(dereference.pointer)].ty orelse continue;
-                const child = switch (self.graph.types.items[@intFromEnum(pointer_type)]) {
-                    .pointer => |pointer| pointer.child,
-                    else => continue,
-                };
-                if (node.ty != null and types.equal(self.graph, node.ty.?, child) and types.equal(self.graph, dereference.pointer_type, pointer_type)) continue;
-                var updated = node;
-                updated.ty = child;
-                updated.content.dereference.ty = child;
-                updated.content.dereference.pointer_type = pointer_type;
-                try self.graph.setNode(self.allocator, @enumFromInt(raw), updated);
-                self.stats.dereferences += 1;
-                changed = true;
-            },
-            else => {},
-        };
+        const measurement = if (self.scan_profile) |profile| profile.begin(.dereferences) else null;
+        defer if (measurement) |m| m.finish(changed);
+        for (self.graph.nodes.items, 0..) |node, raw| {
+            if (measurement) |m| m.visit(1);
+            switch (node.content) {
+                .dereference => |dereference| {
+                    const pointer_type = self.graph.nodes.items[@intFromEnum(dereference.pointer)].ty orelse continue;
+                    const child = switch (self.graph.types.items[@intFromEnum(pointer_type)]) {
+                        .pointer => |pointer| pointer.child,
+                        else => continue,
+                    };
+                    if (node.ty != null and types.equal(self.graph, node.ty.?, child) and types.equal(self.graph, dereference.pointer_type, pointer_type)) continue;
+                    var updated = node;
+                    updated.ty = child;
+                    updated.content.dereference.ty = child;
+                    updated.content.dereference.pointer_type = pointer_type;
+                    try self.graph.setNode(self.allocator, @enumFromInt(raw), updated);
+                    self.stats.dereferences += 1;
+                    changed = true;
+                },
+                else => {},
+            }
+        }
         return changed;
     }
 
     pub fn materializeAddresses(self: *Resolver) !bool {
         var changed = false;
-        for (self.graph.nodes.items, 0..) |node, raw| switch (node.content) {
-            .address_of => |value| {
-                const child = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
-                if (self.graph.isTypeUnresolved(child)) continue;
-                const mutability = if (node.ty) |old| switch (self.graph.types.items[@intFromEnum(old)]) {
-                    .pointer => |pointer| blk: {
-                        // The existing pointer already has the required semantic
-                        // type when its child matches. Avoid interning it again,
-                        // which otherwise scans every global type each round.
-                        if (types.equal(self.graph, pointer.child, child)) continue;
-                        break :blk pointer.mutability;
-                    },
-                    else => continue,
-                } else continue;
-                const pointer_type = try self.pointerType(child, mutability);
-                if (node.ty != null and (node.ty.? == pointer_type or types.equal(self.graph, node.ty.?, pointer_type))) continue;
-                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), pointer_type);
-                changed = true;
-            },
-            else => {},
-        };
+        const measurement = if (self.scan_profile) |profile| profile.begin(.addresses) else null;
+        defer if (measurement) |m| m.finish(changed);
+        for (self.graph.nodes.items, 0..) |node, raw| {
+            if (measurement) |m| m.visit(1);
+            switch (node.content) {
+                .address_of => |value| {
+                    const child = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
+                    if (self.graph.isTypeUnresolved(child)) continue;
+                    const mutability = if (node.ty) |old| switch (self.graph.types.items[@intFromEnum(old)]) {
+                        .pointer => |pointer| blk: {
+                            // The existing pointer already has the required semantic
+                            // type when its child matches. Avoid interning it again,
+                            // which otherwise scans every global type each round.
+                            if (types.equal(self.graph, pointer.child, child)) continue;
+                            break :blk pointer.mutability;
+                        },
+                        else => continue,
+                    } else continue;
+                    const pointer_type = try self.pointerType(child, mutability);
+                    if (node.ty != null and (node.ty.? == pointer_type or types.equal(self.graph, node.ty.?, pointer_type))) continue;
+                    try self.graph.setNodeType(self.allocator, @enumFromInt(raw), pointer_type);
+                    changed = true;
+                },
+                else => {},
+            }
+        }
         return changed;
     }
 
     pub fn materializeBindingTypes(self: *Resolver) !bool {
         var changed = false;
+        const measurement = if (self.scan_profile) |profile| profile.begin(.binding_types) else null;
+        defer if (measurement) |m| m.finish(changed);
         for (self.graph.construction.binding_type_resolution.items, 0..) |state, raw| {
+            if (measurement) |m| m.visit(1);
             if (state != .unresolved) continue;
             const id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
             const binding = &self.graph.bindings.items[raw];
@@ -257,41 +271,44 @@ pub const Resolver = struct {
             self.stats.binding_types += 1;
             changed = true;
         }
-        for (self.graph.nodes.items, 0..) |node, raw| switch (node.content) {
-            .binding_declaration, .binding_use => |binding_id| {
-                if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
-                const inferred = self.graph.bindings.items[@intFromEnum(binding_id)].ty;
-                // An unresolved type is unequal even to itself in semantic
-                // matching, but writing the same slot cannot advance the
-                // fixed point.
-                if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
-                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
-                changed = true;
-            },
-            .value_sequence, .replacement => |block| {
-                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse continue;
-                const inferred = self.graph.node(value).ty orelse continue;
-                if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
-                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
-                changed = true;
-            },
-            .move_value => |value| {
-                const inferred = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
-                if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
-                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
-                changed = true;
-            },
-            .binary_operation => |operation| {
-                var left_ty = self.graph.nodes.items[@intFromEnum(operation.left)].ty orelse continue;
-                var right_ty = self.graph.nodes.items[@intFromEnum(operation.right)].ty orelse continue;
-                try self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
-                if (!self.isScalarArithmeticRepresentation(left_ty, right_ty)) continue;
-                if (node.ty != null and (node.ty.? == left_ty or types.equal(self.graph, node.ty.?, left_ty))) continue;
-                try self.graph.setNodeType(self.allocator, @enumFromInt(raw), left_ty);
-                changed = true;
-            },
-            else => {},
-        };
+        for (self.graph.nodes.items, 0..) |node, raw| {
+            if (measurement) |m| m.visit(1);
+            switch (node.content) {
+                .binding_declaration, .binding_use => |binding_id| {
+                    if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
+                    const inferred = self.graph.bindings.items[@intFromEnum(binding_id)].ty;
+                    // An unresolved type is unequal even to itself in semantic
+                    // matching, but writing the same slot cannot advance the
+                    // fixed point.
+                    if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
+                    try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
+                    changed = true;
+                },
+                .value_sequence, .replacement => |block| {
+                    const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse continue;
+                    const inferred = self.graph.node(value).ty orelse continue;
+                    if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
+                    try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
+                    changed = true;
+                },
+                .move_value => |value| {
+                    const inferred = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
+                    if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
+                    try self.graph.setNodeType(self.allocator, @enumFromInt(raw), inferred);
+                    changed = true;
+                },
+                .binary_operation => |operation| {
+                    var left_ty = self.graph.nodes.items[@intFromEnum(operation.left)].ty orelse continue;
+                    var right_ty = self.graph.nodes.items[@intFromEnum(operation.right)].ty orelse continue;
+                    try self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
+                    if (!self.isScalarArithmeticRepresentation(left_ty, right_ty)) continue;
+                    if (node.ty != null and (node.ty.? == left_ty or types.equal(self.graph, node.ty.?, left_ty))) continue;
+                    try self.graph.setNodeType(self.allocator, @enumFromInt(raw), left_ty);
+                    changed = true;
+                },
+                else => {},
+            }
+        }
         return changed;
     }
 
@@ -2143,17 +2160,21 @@ pub const Resolver = struct {
 
     pub fn materializeAssignmentValues(self: *Resolver) !bool {
         var changed = false;
+        const measurement = if (self.scan_profile) |profile| profile.begin(.assignment_values) else null;
+        defer if (measurement) |m| m.finish(changed);
         // Specialized generic bodies can already carry their contextual type.
         // Normalize their literals too, even without an assignment type change.
         const count = self.graph.nodes.items.len;
         var index: usize = 0;
         while (index < count) : (index += 1) {
+            if (measurement) |m| m.visit(1);
             const node = self.graph.nodes.items[index];
             if (node.content != .struct_value_literal) continue;
             const target = node.ty orelse continue;
             if (try self.normalizeNamedStructLiteral(@enumFromInt(index), target)) changed = true;
         }
         for (self.graph.bindings.items, 0..) |binding, raw| {
+            if (measurement) |m| m.visit(1);
             if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
             const initialization = binding.initialization orelse continue;
             const current = self.graph.node(initialization).ty;
@@ -2164,6 +2185,7 @@ pub const Resolver = struct {
                 };
         }
         for (self.graph.nodes.items) |node| {
+            if (measurement) |m| m.visit(1);
             const assignment = switch (node.content) {
                 .assignment => |value| value,
                 .pointer_assignment => |value| {
