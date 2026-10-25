@@ -413,6 +413,8 @@ pub const Resolver = struct {
     pub fn refreshPropagationResults(self: *Resolver) !bool {
         if (self.graph.error_propagations.items.len == 0 and self.graph.error_contexts.items.len == 0) return false;
         var changed = false;
+        const measurement = if (self.core.scan_profile) |profile| profile.begin(.error_results) else null;
+        defer if (measurement) |m| m.finish(changed);
         for (self.graph.nodes.items, 0..) |node, raw| {
             switch (node.content) {
                 .error_propagation => |id| {

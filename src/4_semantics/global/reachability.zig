@@ -113,15 +113,8 @@ pub fn expand(
     graph: *const graph_mod.GlobalSemanticGraph,
     functions: *FunctionSet,
 ) !bool {
-    var state = State{
-        .allocator = allocator,
-        .graph = graph,
-        .functions = functions,
-        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
-        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
-    };
-    defer state.visited_functions.deinit();
-    defer state.visited_nodes.deinit();
+    var state = try State.init(allocator, graph, functions);
+    defer state.deinit();
 
     for (graph.roots.items) |node_id| try state.walkNode(node_id);
 
@@ -139,15 +132,8 @@ pub fn expand(
 pub fn expressionUnit(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, root: graph_mod.GlobalNodeId) !FunctionSet {
     var result = FunctionSet.init(allocator);
     errdefer result.deinit();
-    var state = State{
-        .allocator = allocator,
-        .graph = graph,
-        .functions = &result,
-        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
-        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
-    };
-    defer state.visited_functions.deinit();
-    defer state.visited_nodes.deinit();
+    var state = try State.init(allocator, graph, &result);
+    defer state.deinit();
     try state.walkNode(root);
     return result;
 }
@@ -156,15 +142,8 @@ pub fn dependencyUnit(allocator: std.mem.Allocator, graph: *const graph_mod.Glob
     for (roots) |root| if (@intFromEnum(root) >= graph.functions.items.len) return error.InvalidEntry;
     var result = FunctionSet.init(allocator);
     errdefer result.deinit();
-    var state = State{
-        .allocator = allocator,
-        .graph = graph,
-        .functions = &result,
-        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
-        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
-    };
-    defer state.visited_functions.deinit();
-    defer state.visited_nodes.deinit();
+    var state = try State.init(allocator, graph, &result);
+    defer state.deinit();
     for (roots) |root| try state.includeFunction(root);
     return result;
 }
@@ -177,16 +156,9 @@ pub fn dependencyOrder(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
     defer included.deinit();
     var order: std.ArrayList(graph_mod.GlobalFunctionId) = .empty;
     errdefer order.deinit(allocator);
-    var state = State{
-        .allocator = allocator,
-        .graph = graph,
-        .functions = &included,
-        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
-        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
-        .dependency_order = &order,
-    };
-    defer state.visited_functions.deinit();
-    defer state.visited_nodes.deinit();
+    var state = try State.init(allocator, graph, &included);
+    defer state.deinit();
+    state.dependency_order = &order;
     for (functions) |function| try state.walkFunction(function);
     return order.toOwnedSlice(allocator);
 }
@@ -195,10 +167,25 @@ const State = struct {
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
     functions: *FunctionSet,
-    visited_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
-    visited_nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+    visited_functions: std.DynamicBitSetUnmanaged,
+    visited_nodes: std.DynamicBitSetUnmanaged,
     changed: bool = false,
     dependency_order: ?*std.ArrayList(graph_mod.GlobalFunctionId) = null,
+
+    // The graph is borrowed read-only for one traversal. Dense IDs allow
+    // temporary marks without hashing; each expansion starts with fresh marks
+    // so newly resolved nodes and completed bodies are always revisited.
+    fn init(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, functions: *FunctionSet) !State {
+        var visited_functions = try std.DynamicBitSetUnmanaged.initEmpty(allocator, graph.functions.items.len);
+        errdefer visited_functions.deinit(allocator);
+        const visited_nodes = try std.DynamicBitSetUnmanaged.initEmpty(allocator, graph.nodes.items.len);
+        return .{ .allocator = allocator, .graph = graph, .functions = functions, .visited_functions = visited_functions, .visited_nodes = visited_nodes };
+    }
+
+    fn deinit(self: *State) void {
+        self.visited_functions.deinit(self.allocator);
+        self.visited_nodes.deinit(self.allocator);
+    }
 
     fn includeCleanupFunction(self: *State, function_id: graph_mod.GlobalFunctionId) !void {
         try self.functions.cleanup_functions.put(function_id, {});
@@ -211,7 +198,9 @@ const State = struct {
     }
 
     fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
-        if ((try self.visited_functions.getOrPut(function_id)).found_existing) return;
+        const raw = @intFromEnum(function_id);
+        if (self.visited_functions.isSet(raw)) return;
+        self.visited_functions.set(raw);
         const function = self.graph.functions.items[@intFromEnum(function_id)];
         try self.includeBindingRange(function.input_bindings);
         try self.includeBindingRange(function.output_bindings);
@@ -242,7 +231,9 @@ const State = struct {
     }
 
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
-        if ((try self.visited_nodes.getOrPut(node_id)).found_existing) return;
+        const raw = @intFromEnum(node_id);
+        if (self.visited_nodes.isSet(raw)) return;
+        self.visited_nodes.set(raw);
         try self.functions.nodes.put(node_id, {});
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
@@ -539,4 +530,60 @@ test "runtime support follows metadata independently of declaration spelling" {
     try includeRuntimeSupport(&graph, &retained);
     try std.testing.expect(!retained.contains(@enumFromInt(0)));
     for (1..4) |index| try std.testing.expect(retained.contains(@enumFromInt(index)));
+}
+
+test "reachability revisits completed bodies after pool growth and releases failed traversals" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.nodes.appendSlice(allocator, &.{
+        .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } } },
+        .{ .source = source, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(1), .input = @enumFromInt(0) } } },
+    });
+    try graph.node_refs.append(allocator, @enumFromInt(1));
+    try graph.blocks.append(allocator, .{ .nodes = .{ .start = 0, .len = 1 } });
+    for (0..2) |index| try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .body = if (index == 0) @enumFromInt(0) else null,
+    });
+    var selected = FunctionSet.init(allocator);
+    defer selected.deinit();
+    _ = try selected.include(@enumFromInt(0));
+    try std.testing.expect(try expand(allocator, &graph, &selected));
+    try std.testing.expect(selected.contains(@enumFromInt(1)));
+
+    // A previously reached signature gains a body calling a newly added
+    // function. The next expansion must revisit it with the new pool bounds.
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(2), .input = @enumFromInt(0) } } });
+    try graph.node_refs.append(allocator, @enumFromInt(2));
+    try graph.blocks.append(allocator, .{ .nodes = .{ .start = 1, .len = 1 } });
+    graph.functions.items[1].body = @enumFromInt(1);
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .body = @enumFromInt(0), // Recursive edge back to function 1.
+    });
+    try std.testing.expect(try expand(allocator, &graph, &selected));
+    try std.testing.expect(selected.contains(@enumFromInt(2)));
+    try std.testing.expect(!try expand(allocator, &graph, &selected));
+
+    try std.testing.checkAllAllocationFailures(allocator, struct {
+        fn traverse(a: std.mem.Allocator, g: *const graph_mod.GlobalSemanticGraph) !void {
+            const roots = [_]graph_mod.GlobalFunctionId{@enumFromInt(0)};
+            var dependencies = try dependencyUnit(a, g, &roots);
+            defer dependencies.deinit();
+            try std.testing.expect(dependencies.contains(@enumFromInt(2)));
+            _ = try expand(a, g, &dependencies);
+            const ordered = try dependencyOrder(a, g, &roots);
+            defer a.free(ordered);
+            try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, &.{ @enumFromInt(2), @enumFromInt(1), @enumFromInt(0) }, ordered);
+            var expression = try expressionUnit(a, g, @enumFromInt(1));
+            defer expression.deinit();
+            try std.testing.expect(expression.contains(@enumFromInt(2)));
+        }
+    }.traverse, .{&graph});
 }

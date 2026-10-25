@@ -145,3 +145,51 @@ not evidence that the incomplete filter preserved validation coverage.
 Keep the distinction between candidate filtering and validation caching: the
 former removes work that cannot affect a result, while the latter would need
 explicit dependencies and rollback rules.
+
+### Temporary reachability marks
+
+The resolution profile now also times pending operations, published bodies,
+text-literal and field-access types, error result refresh, propagated reached
+inputs and reachability expansion. The additional entries report timings and
+change counts; their pool-visit counters remain zero unless explicitly counted.
+
+Reachability expansion accounted for 2,095 ms of 7,306 ms of resolution in a
+Debug 100-call prelude session. Each traversal rebuilt two temporary hash tables
+for visited function/node IDs. Those IDs index fixed pools while the traversal
+borrows the graph read-only, so temporary bitsets replace the hash tables. The
+retained executable selections remain sparse maps. Fresh marks on every traversal
+preserve late body completion, newly resolved calls and recursive dependencies;
+no cross-command cache or rollback state is added.
+
+The baseline is `develop` `78aaaa9f` plus the expanded profile counters; the
+comparison changes only the temporary traversal marks.
+
+For comparisons, keep both benchmark executables in the same directory and use
+the same core tree: executable-relative installed core takes precedence over the
+development fallback. The paired runs below use binaries in `.zig-cache/`, so
+both load the repository core. These are individual profiled Debug runs, not a
+statistical throughput comparison. The retained graph and fixed-point rounds
+must agree before attributing timing differences to traversal changes.
+
+| Session | Commands | Reachability before ms | After ms | Frontend/publication before ms | After ms | Retained MiB, both |
+|---|---:|---:|---:|---:|---:|---:|
+| Prelude | 10 | 202.8 | 103.2 | 1,362.0 | 1,406.1 | 100.755 |
+| Prelude | 100 | 2,094.6 | 981.5 | 14,264.5 | 13,450.2 | 102.133 |
+| Prelude | 1,000 | 22,873.3 | 10,914.3 | 159,717.4 | 143,177.2 | 119.032 |
+| Minimal | 10 | 10.8 | 6.6 | 47.9 | 37.7 | 0.237 |
+| Minimal | 100 | 106.8 | 62.6 | 490.2 | 351.0 | 1.732 |
+| Minimal | 1,000 | 2,467.2 | 1,916.7 | 13,124.0 | 11,354.8 | 18.107 |
+
+Pass calls, pool visits, fixed-point rounds, compiled bodies/instructions and
+Safety reuse counters agree across each pair. Retained memory is identical;
+1,000-command tracked peaks are 119.373/119.375 MiB for prelude and
+18.123/18.125 MiB for minimal. The prelude startup peak is slightly higher with
+bitsets (103.815/104.305 MiB); dense marks cover whole pools even in sparse
+traversals. Reachability improves consistently in these samples, while other
+phase timings vary, including slower frontend/publication at ten prelude calls.
+Do not interpret the aggregate differences as an isolated traversal speedup.
+
+Logs: `.zig-cache/frontend-{before,after}-visits-minimal-1000.csv`,
+`.zig-cache/frontend-before-visits-prelude-1000.csv` and
+`.zig-cache/frontend-after-visits-source-prelude-1000.csv`. These cover the
+10/100/1,000 milestones in one cumulative session per workload and revision.

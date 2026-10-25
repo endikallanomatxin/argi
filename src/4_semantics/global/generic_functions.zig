@@ -1997,6 +1997,8 @@ pub const Resolver = struct {
     /// Reachability and exhaustive semantizing complete those same identities.
     pub fn materializePublishedBodies(self: *Resolver, reachable: ?*const @import("reachability.zig").FunctionSet) !bool {
         var changed = false;
+        const measurement = if (self.core.scan_profile) |profile| profile.begin(.published_bodies) else null;
+        defer if (measurement) |m| m.finish(changed);
         // Copy each instance before lowering: nested specialization can grow
         // the instance and function pools. Newly published bodies join a later pass.
         const count = self.graph.generic_function_instances.items.len;

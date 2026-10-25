@@ -373,6 +373,8 @@ pub const Resolver = struct {
         const string_ty = self.defaultStringLiteralType();
         const scalar_ty = self.defaultScalarLiteralType();
         var changed = false;
+        const measurement = if (self.scan_profile) |profile| profile.begin(.text_literal_types) else null;
+        defer if (measurement) |m| m.finish(changed);
         for (self.graph.nodes.items, 0..) |node, raw| {
             if (node.ty != null) continue;
             const ty = switch (node.content) {

@@ -1368,7 +1368,10 @@ fn advanceResolution(
                 return err;
             }) changed = true;
             if (reachable) |set| {
-                if (try reachability_mod.expand(allocator, graph, set)) changed = true;
+                const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
+                const expanded = try reachability_mod.expand(allocator, graph, set);
+                if (reach_profile) |m| m.finish(expanded);
+                if (expanded) changed = true;
             }
             const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
@@ -1457,7 +1460,10 @@ fn advanceResolution(
                 evidence_conformances != graph.contract_conformances.items.len) changed = true;
             if (try staged_execution.materialize()) changed = true;
             if (reachable) |set| {
-                if (try reachability_mod.expand(allocator, graph, set)) changed = true;
+                const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
+                const expanded = try reachability_mod.expand(allocator, graph, set);
+                if (reach_profile) |m| m.finish(expanded);
+                if (expanded) changed = true;
             }
         }
         var finalized_any = false;
@@ -1478,10 +1484,12 @@ fn advanceResolution(
             try state.markFinalized(allocator, id);
             finalized_any = true;
         }
+        const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
         const reached_cleanup = if (reachable) |set|
             try reachability_mod.expand(allocator, graph, set)
         else
             false;
+        if (reach_profile) |m| m.finish(reached_cleanup);
         var pending_bodies = std.AutoHashMap(global_sg.GlobalFunctionId, void).init(allocator);
         defer pending_bodies.deinit();
         if (staged_execution.requests.items.len != 0) {
@@ -2195,9 +2203,11 @@ fn completePropagatedReachCalls(
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
 ) !bool {
+    const measurement = if (core.scan_profile) |profile| profile.begin(.propagated_reach) else null;
     // A callee can acquire reached inputs after its callers have resolved.
     // Rebuild those call inputs until their shape follows the final signature.
     var changed = try core.completeTrackedReachedCalls();
+    defer if (measurement) |m| m.finish(changed);
     for (modules, offsets) |*module, offset| {
         for (module.semantic.pending_operations.items) |operation| {
             const call = switch (operation) {
@@ -2250,7 +2260,9 @@ fn resolvePendingPhase(
     profile_io: ?std.Io,
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
+    const measurement = if (core.scan_profile) |profile| profile.begin(.pending_operations) else null;
     var changed = false;
+    defer if (measurement) |m| m.finish(changed);
     var write: usize = 0;
     const original_len = work.items.len;
     for (work.items[0..original_len]) |item| {
