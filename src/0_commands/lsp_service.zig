@@ -1073,18 +1073,14 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
 }
 
 fn classifyToken(content: token.Content) ?TokenClass {
-    return switch (content) {
-        .comment => .{ .type_index = TOKEN_INDEX.comment },
-        .identifier => .{ .type_index = TOKEN_INDEX.variable },
-        .literal => |literal| switch (literal) {
-            .string_literal, .char_literal => .{ .type_index = TOKEN_INDEX.string },
-            .bool_literal => .{ .type_index = TOKEN_INDEX.keyword },
-            else => .{ .type_index = TOKEN_INDEX.number },
-        },
-        .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_implement, .keyword_defer, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
-        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .triple_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
-        else => null,
-    };
+    return .{ .type_index = switch (token.lexicalClass(content) orelse return null) {
+        .identifier => TOKEN_INDEX.variable,
+        .keyword => TOKEN_INDEX.keyword,
+        .number => TOKEN_INDEX.number,
+        .string => TOKEN_INDEX.string,
+        .comment => TOKEN_INDEX.comment,
+        .operator => TOKEN_INDEX.operator,
+    } };
 }
 
 fn tokenLength(content: token.Content, source: []const u8, offset: u32) u32 {

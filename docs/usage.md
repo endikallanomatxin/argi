@@ -302,6 +302,11 @@ so `print("hola")` works directly. An ordinary `CAllocator` supplies the persist
 healthy exit and reset run their checked cleanup before releasing the context.
 Allocation uses VM regions rather than native pointers; the supported value and
 storage restrictions still apply.
+Terminal input uses lexical syntax colors; `NO_COLOR` or `TERM=dumb` disables
+colors. Continuing inside braces inserts four spaces per nesting level, and a
+closing `}` typed on the untouched indentation dedents one level. Braces in
+comments and strings do not affect indentation; continued strings receive no
+inserted spaces. These editor features do not alter piped input.
 In a terminal, Up/Down recall earlier lines and restore the unfinished draft.
 Recalled lines can be edited before submission; Ctrl-C discards the current line
 and Ctrl-D on an empty line exits. History lasts for the current REPL process.

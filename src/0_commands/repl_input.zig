@@ -46,13 +46,15 @@ pub const Terminal = struct {
     }
 };
 
-/// Bounded session-local history. No source or execution state is stored here.
+/// Bounded session-local editing. No semantic or execution state is stored here.
 pub const Editor = struct {
     allocator: std.mem.Allocator,
     history: std.ArrayList([]const u8) = .empty,
     line: std.ArrayList(u8) = .empty,
     cancelled: bool = false,
     draft: std.ArrayList(u8) = .empty,
+    highlight: bool = false,
+    context: @import("../1_base/lexical.zig").Completion = .{},
     const max_history = 256;
     const max_line = 64 * 1024;
 
@@ -86,7 +88,8 @@ pub const Editor = struct {
     }
 
     fn redraw(self: *Editor, output: *std.Io.Writer, prompt: []const u8, cursor: usize) !void {
-        try output.print("\r\x1b[2K{s}{s}", .{ prompt, self.line.items });
+        try output.print("\r\x1b[2K{s}", .{prompt});
+        if (self.highlight) try @import("repl_highlight.zig").render(self.allocator, output, self.line.items, self.context.quote) else try output.writeAll(self.line.items);
         // Move by characters rather than UTF-8 bytes. Full terminal display-width
         // accounting is deliberately left to a future multiline editor.
         var remaining: usize = 0;
@@ -97,14 +100,24 @@ pub const Editor = struct {
         try output.flush();
     }
 
+    fn indentation(self: *const Editor) usize {
+        if (self.context.quote != null or self.context.invalid) return 0;
+        var spaces: usize = 0;
+        for (self.context.stack[0..self.context.depth]) |open| if (open == '{') {
+            spaces += 4;
+        };
+        return spaces;
+    }
+
     pub fn read(self: *Editor, input: *std.Io.Reader, output: *std.Io.Writer, prompt: []const u8) !?[]const u8 {
         self.line.clearRetainingCapacity();
         self.cancelled = false;
         self.draft.clearRetainingCapacity();
         var selected = self.history.items.len;
-        var cursor: usize = 0;
-        try output.writeAll(prompt);
-        try output.flush();
+        var automatic_indent = self.indentation();
+        try self.line.appendNTimes(self.allocator, ' ', automatic_indent);
+        var cursor = automatic_indent;
+        try self.redraw(output, prompt, cursor);
         while (true) {
             const byte = input.takeByte() catch |err| switch (err) {
                 error.EndOfStream => return null,
@@ -122,7 +135,7 @@ pub const Editor = struct {
                     try output.writeAll("^C\n");
                     return self.line.items;
                 },
-                4 => if (self.line.items.len == 0) {
+                4 => if (std.mem.trim(u8, self.line.items, " \t").len == 0) {
                     try output.writeByte('\n');
                     return null;
                 },
@@ -158,6 +171,7 @@ pub const Editor = struct {
                             self.line.clearRetainingCapacity();
                             try self.line.appendSlice(self.allocator, replacement);
                             cursor = self.line.items.len;
+                            automatic_indent = 0;
                         },
                         'C' => if (cursor < self.line.items.len) {
                             cursor = nextBoundary(self.line.items, cursor);
@@ -181,7 +195,13 @@ pub const Editor = struct {
                 0...2, 5...7, 9, 11...12, 14...26, 28...31 => continue,
                 else => {
                     if (self.line.items.len == max_line) continue;
+                    if (byte == '}' and automatic_indent >= 4 and cursor == automatic_indent and self.line.items.len == automatic_indent) {
+                        try self.line.replaceRange(self.allocator, 0, 4, &.{});
+                        cursor -= 4;
+                        automatic_indent -= 4;
+                    }
                     try self.line.insert(self.allocator, cursor, byte);
+                    automatic_indent = 0;
                     cursor += 1;
                 },
             }
@@ -232,4 +252,36 @@ test "REPL history bounds memory and ignores empty and consecutive duplicate lin
     try editor.remember();
     try std.testing.expectEqual(Editor.max_history, editor.history.items.len);
     try std.testing.expectEqualStrings("line 5", editor.history.items[0]);
+}
+
+test "REPL continuation indentation follows lexical braces and dedents a closing line" {
+    var editor: Editor = .{ .allocator = std.testing.allocator, .highlight = true };
+    defer editor.deinit();
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    var input = std.Io.Reader.fixed("result = 42\n}\n\x1b[A\n\x03\x04");
+    editor.context.feedLine("answer := () -> () { -- } ignored");
+    editor.context.feedLine("if true { text ::= \"}\"");
+    try std.testing.expectEqualStrings("        result = 42", (try editor.read(&input, &output.writer, "... ")).?);
+    try std.testing.expectEqualStrings("    }", (try editor.read(&input, &output.writer, "... ")).?);
+    try std.testing.expectEqualStrings("    }", (try editor.read(&input, &output.writer, "... ")).?);
+    try std.testing.expectEqualStrings("", (try editor.read(&input, &output.writer, "... ")).?);
+    try std.testing.expect(editor.cancelled);
+    try std.testing.expectEqual(@as(?[]const u8, null), try editor.read(&input, &output.writer, "... "));
+    for (editor.history.items) |line| try std.testing.expect(std.mem.indexOfScalar(u8, line, 27) == null);
+}
+
+test "REPL continuation strings preserve their bytes and manual indentation stays editable" {
+    var editor: Editor = .{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    var input = std.Io.Reader.fixed("continued }\"\n \x7f}\n");
+    editor.context.feedLine("function := () -> () {");
+    editor.context.feedLine("text ::= \"open {");
+    try std.testing.expectEqualStrings("continued }\"", (try editor.read(&input, &output.writer, "... ")).?);
+    editor.context.feedLine(editor.line.items);
+    try std.testing.expect(editor.context.quote == null);
+    // A manual indentation edit takes precedence over automatic dedentation.
+    try std.testing.expectEqualStrings("    }", (try editor.read(&input, &output.writer, "... ")).?);
 }

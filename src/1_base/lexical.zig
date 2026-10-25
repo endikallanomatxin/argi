@@ -37,7 +37,8 @@ pub fn quoted(source: []const u8, start: usize) Quoted {
     return quotedTail(source, start + 1, quote);
 }
 
-fn quotedTail(source: []const u8, start: usize, quote: u8) Quoted {
+/// Scan a continued literal after its opening quote, without issuing diagnostics.
+pub fn quotedTail(source: []const u8, start: usize, quote: u8) Quoted {
     var offset = start;
     var invalid: ?usize = null;
     while (offset < source.len) {

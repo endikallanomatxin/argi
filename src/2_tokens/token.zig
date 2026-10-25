@@ -212,3 +212,22 @@ pub fn decodeStringLiteral(allocator: std.mem.Allocator, raw: []const u8) ![]con
     }
     return try decoded.toOwnedSlice();
 }
+
+/// Context-free token categories shared by editor presentations. Semantic
+/// classification (functions, fields, actual types) belongs to their analyzers.
+pub const LexicalClass = enum { identifier, keyword, number, string, comment, operator };
+
+pub fn lexicalClass(content: Content) ?LexicalClass {
+    return switch (content) {
+        .comment => .comment,
+        .identifier => .identifier,
+        .literal => |literal| switch (literal) {
+            .string_literal, .char_literal => .string,
+            .bool_literal => .keyword,
+            else => .number,
+        },
+        .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_implement, .keyword_defer, .keyword_and, .keyword_or => .keyword,
+        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .triple_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .operator,
+        else => null,
+    };
+}

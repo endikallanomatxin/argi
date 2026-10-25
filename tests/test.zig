@@ -5808,6 +5808,20 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "--vm-value-cells <N>") != null);
 }
 
+test "argi repl terminal colors indentation and history" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    const result = runChild(&.{ "python3", "tests/repl_editor.py", installed_argi }) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) std.debug.print("REPL editor probe failed:\n{s}\n{s}\n", .{ result.stdout, result.stderr });
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
 test "argi VM execution interrupts and REPL reset" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const installed_argi = try installedArgiPath();
