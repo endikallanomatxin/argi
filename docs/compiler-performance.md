@@ -81,3 +81,29 @@ completion takes 11.38 s, resolution 7.20 s and checking 1.50 s across 100 comma
 These are diagnostic observations, not attribution to individual inner routines.
 Profile verification components and remaining completion work before changing
 validation boundaries or introducing new caches.
+
+### Ordered module ownership lookup
+
+`moduleForDeclaration` now searches the existing ordered physical declaration
+ranges with binary search. It allocates no index and does not canonicalize source
+fragments into their namespace owners. Graph partition validation still runs
+before verifier symbol checks; no verification is skipped or cached.
+
+A same-session Debug comparison on Linux x86-64, rebuilding the benchmark with
+only that lookup changed (same profile instrumentation and workloads):
+
+| Workload | Linear lookup total ms | Binary lookup total ms | Linear global verification ms | Binary global verification ms |
+|---|---:|---:|---:|---:|
+| 1,000 minimal calls | 25,529 | 17,090 | 9,839 | 1,163 |
+| 100 prelude calls | 29,110 | 30,190 | 952 | 906 |
+
+The minimal workload's total falls about 33%, and its global verification about
+88%. Retained memory, pool visits, completed bodies and reuse counters are
+unchanged. The prelude workload shows no end-to-end improvement in these single
+runs; its verification cost is a small part of the total. Do not extrapolate the
+minimal-session speedup to core-heavy programs. Raw run logs are local under
+`.zig-cache/module-lookup-{baseline-,}{minimal,prelude}-calls.csv`.
+
+Next investigate the remaining resolution/completion work in core-heavy sessions
+and the other accumulated verifier traversals. This change addresses repeated
+linear module ownership searches, not general incremental verification.

@@ -1126,11 +1126,21 @@ pub const GlobalSemanticGraph = struct {
     }
 
     pub fn moduleForDeclaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) ?GlobalModuleId {
+        // Relocation appends ordered, disjoint physical declaration ranges;
+        // verifyModulePartitions checks that invariant before graph validation
+        // uses this lookup. Empty modules and source fragments retain their own
+        // positions. Canonical namespace ownership is a separate operation.
         const raw = @intFromEnum(id);
-        for (self.modules.items, 0..) |module, index| {
-            const start: usize = module.declarations.start;
-            const end = start + module.declarations.len;
-            if (raw >= start and raw < end) return @enumFromInt(@as(u32, @intCast(index)));
+        var first: usize = 0;
+        var end = self.modules.items.len;
+        while (first < end) {
+            const middle = first + (end - first) / 2;
+            const range = self.modules.items[middle].declarations;
+            if (raw < range.start) {
+                end = middle;
+            } else if (raw - range.start >= range.len) {
+                first = middle + 1;
+            } else return @enumFromInt(@as(u32, @intCast(middle)));
         }
         return null;
     }
@@ -2118,4 +2128,33 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             try std.testing.expectEqualDeep(saved, graph.checkpoint());
         }
     }.run, .{});
+}
+
+test "module ownership lookup preserves empty partitions fragments and rollback" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    for ([_]u32{ 0, 2, 0, 0, 3, 0, 1, 0 }) |length| {
+        const start = if (graph.modules.items.len == 0) 0 else last: {
+            const previous = graph.modules.items[graph.modules.items.len - 1].declarations;
+            break :last previous.start + previous.len;
+        };
+        try graph.modules.append(a, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = start, .len = length } });
+    }
+    // An appended fragment belongs physically to itself and logically to its
+    // original namespace; lookup must not collapse these two identities.
+    graph.modules.items[6].namespace = @enumFromInt(1);
+    for ([_]u32{ 1, 1, 4, 4, 4, 6 }, 0..) |owner, raw| {
+        try std.testing.expectEqual(@as(?GlobalModuleId, @enumFromInt(owner)), graph.moduleForDeclaration(@enumFromInt(raw)));
+    }
+    try std.testing.expectEqual(@as(GlobalModuleId, @enumFromInt(1)), graph.moduleNamespace(graph.moduleForDeclaration(@enumFromInt(5)).?));
+    try std.testing.expectEqual(null, graph.moduleForDeclaration(@enumFromInt(6)));
+    try std.testing.expectEqual(null, graph.moduleForDeclaration(@enumFromInt(std.math.maxInt(u32))));
+    const saved = graph.checkpoint();
+    try graph.modules.append(a, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 6, .len = 2 } });
+    try std.testing.expectEqual(@as(?GlobalModuleId, @enumFromInt(8)), graph.moduleForDeclaration(@enumFromInt(7)));
+    graph.rollback(a, saved);
+    try std.testing.expectEqual(null, graph.moduleForDeclaration(@enumFromInt(7)));
+    graph.modules.clearRetainingCapacity();
+    try std.testing.expectEqual(null, graph.moduleForDeclaration(@enumFromInt(0)));
 }

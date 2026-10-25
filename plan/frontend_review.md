@@ -2,8 +2,8 @@
 These are risks to measure, not demonstrated regressions or release commitments.
 
 - **Global verification:** `verifyUnit` rechecks accumulated pools on each command.
-  Measure its components, including symbol owner lookups through the linear
-  `moduleForDeclaration`, before designing incremental verification. Preserve
+  Module ownership lookup now uses ordered ranges and binary search. Measure
+  the remaining components before designing incremental verification. Preserve
   validation of completed old entities and reject malformed transactions.
 - **Global scans:** dereference/address/binding/assignment materialization, generic
   types and error-reason inference revisit pools during fixed-point resolution.
