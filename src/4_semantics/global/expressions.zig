@@ -21,7 +21,6 @@ pub const Resolver = struct {
     stats: Stats = .{},
     session_bindings: std.ArrayList(global_sg.GlobalBindingId) = .empty,
     continuation_function: ?global_sg.GlobalFunctionId = null,
-    operation_owner: ?global_sg.GlobalFunctionId = null,
 
     pub fn deinit(self: *Resolver) void {
         self.session_bindings.deinit(self.allocator);
@@ -39,20 +38,17 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn sessionBinding(self: *const Resolver, name: []const u8) ?global_sg.GlobalBindingId {
-        return self.sessionBindingForOwner(name, self.operation_owner);
-    }
-
     pub fn tryResolve(
         self: *Resolver,
         module_index: usize,
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
+        owner: ?global_sg.GlobalFunctionId,
     ) !resolution.Result {
         return switch (operation) {
-            .resolve_name_use => |value| resolution.Result.fromBool(try self.resolveNameUse(module_index, module, o, value)),
-            .resolve_name_assignment => |value| resolution.Result.fromBool(try self.resolveNameAssignment(module_index, o, value)),
+            .resolve_name_use => |value| resolution.Result.fromBool(try self.resolveNameUse(module_index, module, o, value, owner)),
+            .resolve_name_assignment => |value| resolution.Result.fromBool(try self.resolveNameAssignment(module_index, o, value, owner)),
             // Module values need a first-class representation before imports can
             // be materialized. The operation is nevertheless explicit now, so
             // no unrelated resolver can accidentally reinterpret it as a name.
@@ -61,7 +57,7 @@ pub const Resolver = struct {
         };
     }
 
-    fn resolveNameUse(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveNameUse(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype, owner: ?global_sg.GlobalFunctionId) !bool {
         // A callback constructor resolves a function selector against its
         // signature; ordinary name lookup must preserve that selected address.
         if (self.graph.node(globalizer.globalNode(o, value.node)).content == .function_address) return true;
@@ -79,16 +75,16 @@ pub const Resolver = struct {
             const binding = name_lookup.bindingInNamespace(self.graph, self.modules, self.offsets, target_index, name) orelse return false;
             return self.patchNameUse(o, value.node, binding, value.source);
         }
-        if (self.sessionBinding(name)) |binding|
+        if (self.sessionBindingForOwner(name, owner)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
         if (name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
         return self.patchTypeExpression(module_index, o, value.node, name);
     }
 
-    fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype, owner: ?global_sg.GlobalFunctionId) !bool {
         const name = self.modules[module_index].text(value.name);
-        const binding = self.sessionBinding(name) orelse name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name) orelse return false;
+        const binding = self.sessionBindingForOwner(name, owner) orelse name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name) orelse return false;
         const target = globalizer.globalNode(o, value.node);
         var source = value.source;
         source.file_index += o.file_base;
@@ -213,7 +209,7 @@ test "expression resolver preserves global binding reads and assignments" {
     const original = graph.node(@enumFromInt(0));
     var transaction = graph.beginTransaction(allocator);
     defer transaction.deinit();
-    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], read)).isResolved());
+    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], read, null)).isResolved());
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(0)), graph.nodes.items[0].content.binding_use);
     transaction.rollback();
     try std.testing.expectEqualDeep(original, graph.node(@enumFromInt(0)));
@@ -225,7 +221,7 @@ test "expression resolver preserves global binding reads and assignments" {
         .name = name,
         .value = @enumFromInt(1),
     } };
-    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], assignment)).isResolved());
+    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], assignment, null)).isResolved());
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(0)), graph.nodes.items[0].content.assignment.binding);
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), graph.nodes.items[0].content.assignment.value);
 }
@@ -252,7 +248,7 @@ test "expression resolver accepts duplicated global builtin storage" {
         .name = name,
     } };
 
-    try std.testing.expect((try resolver.tryResolve(0, &module, offsets[0], operation)).isResolved());
+    try std.testing.expect((try resolver.tryResolve(0, &module, offsets[0], operation, null)).isResolved());
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), graph.nodes.items[0].content.type_literal);
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(3)), graph.nodes.items[0].ty.?);
 }

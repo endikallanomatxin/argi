@@ -29,6 +29,9 @@ pub const Context = struct {
         errors: @FieldType(error_mod.Resolver, "stats"),
         ownership: @FieldType(ownership_mod.Resolver, "stats"),
     };
+    // Retained semantic additions and suspended diagnostics need coordinated
+    // undo. Operation owners and loop cleanup boundaries are call arguments,
+    // so recursive work cannot overwrite them or add checkpoint obligations.
     pub const StateCheckpoint = struct {
         effects: generic_functions_mod.Resolver.SideEffectCheckpoint,
         execution: execution.Scheduler.StateCheckpoint,
@@ -36,10 +39,8 @@ pub const Context = struct {
         bindings: usize,
         continuation_bindings: usize,
         expression_continuation: ?global_sg.GlobalFunctionId,
-        operation_owner: ?global_sg.GlobalFunctionId,
         ownership_continuation: ?global_sg.GlobalFunctionId,
         denied_copy: @FieldType(ownership_mod.Resolver, "denied_copy"),
-        loop_cleanup: @FieldType(ownership_mod.Resolver, "loop_cleanup_base"),
         argument_failure: @FieldType(generic_mod.Resolver, "argument_failure"),
         constraint_failure: @FieldType(generic_functions_mod.Resolver, "failed_constraint"),
         virtual_failure: @FieldType(contract_mod.Resolver, "virtual_signature_failure"),
@@ -194,10 +195,8 @@ pub const Context = struct {
             .bindings = self.expressions.session_bindings.items.len,
             .continuation_bindings = self.ownership.continuation_bindings.items.len,
             .expression_continuation = self.expressions.continuation_function,
-            .operation_owner = self.expressions.operation_owner,
             .ownership_continuation = self.ownership.continuation_function,
             .denied_copy = self.ownership.denied_copy,
-            .loop_cleanup = self.ownership.loop_cleanup_base,
             .argument_failure = self.generics.argument_failure,
             .constraint_failure = self.generic_functions.failed_constraint,
             .virtual_failure = self.contracts.virtual_signature_failure,
@@ -231,10 +230,8 @@ pub const Context = struct {
         self.expressions.session_bindings.shrinkRetainingCapacity(saved.bindings);
         self.ownership.continuation_bindings.shrinkRetainingCapacity(saved.continuation_bindings);
         self.expressions.continuation_function = saved.expression_continuation;
-        self.expressions.operation_owner = saved.operation_owner;
         self.ownership.continuation_function = saved.ownership_continuation;
         self.ownership.denied_copy = saved.denied_copy;
-        self.ownership.loop_cleanup_base = saved.loop_cleanup;
         self.generics.argument_failure = saved.argument_failure;
         self.generic_functions.failed_constraint = saved.constraint_failure;
         self.contracts.virtual_signature_failure = saved.virtual_failure;
@@ -250,7 +247,7 @@ pub const Context = struct {
     /// Source modules remain borrowed; all mutable caches and effects are owned.
     pub fn cloneFrom(self: *Context, source: *const Context, allocator: std.mem.Allocator, graph: *global_sg.GlobalSemanticGraph, offsets: []const globalizer.Offsets, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
         if (self == source or offsets.len != source.core.modules.len or graph.modules.items.len != source.core.modules.len or
-            source.generic_functions.publishing_signature or source.generic_functions.active_instance != null or source.ownership.loop_cleanup_base != null)
+            source.generic_functions.publishing_signature or source.generic_functions.active_instance != null)
             return error.InvalidSemanticForkState;
         self.init(allocator, graph, source.core.modules, offsets, diagnostics, source.core.profile_io);
         errdefer self.deinit();
@@ -296,7 +293,6 @@ pub const Context = struct {
         self.ownership.denied_copy = source.ownership.denied_copy;
         self.ownership.empty_block = source.ownership.empty_block;
         self.ownership.continuation_function = source.ownership.continuation_function;
-        self.ownership.loop_cleanup_base = source.ownership.loop_cleanup_base;
         self.control.for_each_failure = source.control.for_each_failure;
         self.generic_functions.failed_constraint = source.generic_functions.failed_constraint;
         self.staged_execution = try source.staged_execution.clone(allocator, &self.generic_functions);

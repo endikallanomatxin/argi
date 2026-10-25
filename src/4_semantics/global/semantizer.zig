@@ -2271,8 +2271,6 @@ fn resolvePendingPhase(
         const module = &modules[module_index];
         const operation = module.semantic.pending_operations.items[operation_index];
         const attempt_start = if (detailed_stats != null) profileTimestamp(profile_io) else 0;
-        expressions.operation_owner = item.owner_function;
-        defer expressions.operation_owner = null;
         const result = resolvePendingOperation(
             core,
             expressions,
@@ -2286,6 +2284,7 @@ fn resolvePendingPhase(
             module,
             offsets[module_index],
             operation,
+            item.owner_function,
         ) catch |err| {
             if (err == error.ComptimeExecutionPending) {
                 work.items[write] = item;
@@ -2436,6 +2435,7 @@ fn resolvePendingOperation(
     module: *const module_sg.ModuleSemanticGraph,
     o: globalizer.Offsets,
     operation: module_entities.PendingOperation,
+    owner: ?global_sg.GlobalFunctionId,
 ) !resolution.Result {
     return switch (pendingOwner(operation)) {
         .types => resolveTypeOperation(core, generics, module_index, module, o, operation),
@@ -2459,7 +2459,7 @@ fn resolvePendingOperation(
             }
             break :blk ownedResult(core_result);
         },
-        .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),
+        .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation, owner)),
         .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),
         .contracts => ownedResult(try contracts.tryResolve(module_index, module, o, operation)),
         .errors => ownedResult(try errors.tryResolve(module_index, module, o, operation)),

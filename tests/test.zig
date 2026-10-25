@@ -15585,3 +15585,9 @@ test "argi repl rolls back newly discovered submodules after rejection" {
     ;
     try expectReplFixtureWithDiagnostic(null, commands, "_1 = 42\n", "no function named 'missing' exists");
 }
+
+test "feature_tests/execution/282_nested_loop_cleanup_context" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/282_nested_loop_cleanup_context");
+    try runExpect("tests/feature_tests/execution/282_nested_loop_cleanup_context", 0);
+    try vmExpect("tests/feature_tests/execution/282_nested_loop_cleanup_context", 0, null);
+}
