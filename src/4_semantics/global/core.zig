@@ -2101,22 +2101,24 @@ pub const Resolver = struct {
             }
         }
         if (ordered) return false;
-        // Safety projections and codegen both consume storage positions. Match
-        // named literals to that order before attaching their target
-        // type, filling omitted defaults through the constructor completion path.
-        // Positional structural conversions retain their existing ordering.
-        var named = true;
-        var reordered = literal.fields.len != expected_fields.len;
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
-            const hit = types.findField(self.graph, target, self.graph.text(field.name)) orelse {
-                named = false;
-                break;
-            };
-            if (hit.index != offset) reordered = true;
+        // Defaults need the caller's lexical capabilities. Context-free type
+        // coercion only orders complete records; completeRecordValue performs
+        // missing-field completion with its checked reach context.
+        if (literal.fields.len != expected_fields.len) return false;
+        var values: std.ArrayList(global_sg.ValueField) = .empty;
+        defer values.deinit(self.allocator);
+        for (self.graph.fields.items[expected_fields.start..][0..expected_fields.len]) |expected| {
+            const value = for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+                if (std.mem.eql(u8, self.graph.text(field.name), self.graph.text(expected.name))) break field.value;
+            } else return false;
+            try values.append(self.allocator, .{ .name = expected.name, .value = value });
         }
-        if (!named or !reordered) return false;
-        if (!(try self.completeCallInputFields(expected_fields, node))) return false;
-        try self.graph.setNodeType(self.allocator, node, target);
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.appendSlice(self.allocator, values.items);
+        var completed = self.graph.node(node);
+        completed.ty = target;
+        completed.content.struct_value_literal.fields = .{ .start = start, .len = expected_fields.len };
+        try self.graph.setNode(self.allocator, node, completed);
         return true;
     }
 
