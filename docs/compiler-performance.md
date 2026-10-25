@@ -223,3 +223,17 @@ localized improvement, not a demonstrated overall throughput gain. An earlier
 baseline measured 557 ms for the prelude generic pass, illustrating run variation.
 Logs: `.zig-cache/generic-pending-{repeat-before,status}-prelude-100.csv` and
 `.zig-cache/generic-pending-{before,status}-minimal-1000.csv`.
+
+### Binding inference and expression propagation
+
+The binding-type profile now separates `binding_initializers` from
+`expression_types`. Their visits sum to the existing `binding_types` counter;
+its time includes both. Initializers are still inferred before the expression
+sweep, and expressions retain node order. Already typed expressions are revisited
+because later contextualization can change operand types.
+
+Arithmetic propagation skips coercion and representation queries when both
+operands and the result already carry the same resolved type ID. A later operand
+type change takes the ordinary path again. No worklist or completion cache is
+introduced for expressions. Timing comparisons for these subpasses remain to be
+collected without an active test suite; no speedup is claimed here.

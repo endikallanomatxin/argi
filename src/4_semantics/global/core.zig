@@ -252,11 +252,23 @@ pub const Resolver = struct {
     }
 
     pub fn materializeBindingTypes(self: *Resolver) !bool {
-        var changed = false;
         const measurement = if (self.scan_profile) |profile| profile.begin(.binding_types) else null;
+        var changed = false;
+        defer if (measurement) |m| m.finish(changed);
+        changed = try self.inferBindingTypes(measurement);
+        if (try self.propagateExpressionTypes(measurement)) changed = true;
+        return changed;
+    }
+
+    // Initializers can depend on types propagated in a previous round. Only
+    // explicitly unresolved bindings participate; declared types stay intact.
+    fn inferBindingTypes(self: *Resolver, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
+        const measurement = if (self.scan_profile) |profile| profile.begin(.binding_initializers) else null;
+        var changed = false;
         defer if (measurement) |m| m.finish(changed);
         for (self.graph.construction.binding_type_resolution.items, 0..) |state, raw| {
             if (measurement) |m| m.visit(1);
+            if (parent) |m| m.visit(1);
             if (state != .unresolved) continue;
             const id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
             const binding = &self.graph.bindings.items[raw];
@@ -271,8 +283,19 @@ pub const Resolver = struct {
             self.stats.binding_types += 1;
             changed = true;
         }
+        return changed;
+    }
+
+    // Keep source/node order: a later expression can observe a type completed
+    // earlier in the same sweep. Typed expressions can still be contextualized
+    // again, so an existing result type is not a completion certificate.
+    fn propagateExpressionTypes(self: *Resolver, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
+        const measurement = if (self.scan_profile) |profile| profile.begin(.expression_types) else null;
+        var changed = false;
+        defer if (measurement) |m| m.finish(changed);
         for (self.graph.nodes.items, 0..) |node, raw| {
             if (measurement) |m| m.visit(1);
+            if (parent) |m| m.visit(1);
             switch (node.content) {
                 .binding_declaration, .binding_use => |binding_id| {
                     if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
@@ -300,6 +323,10 @@ pub const Resolver = struct {
                 .binary_operation => |operation| {
                     var left_ty = self.graph.nodes.items[@intFromEnum(operation.left)].ty orelse continue;
                     var right_ty = self.graph.nodes.items[@intFromEnum(operation.right)].ty orelse continue;
+                    // Matching resolved IDs already make coercion a no-op and
+                    // the result current. Recheck on every sweep: operands can
+                    // receive a different contextual type in a later round.
+                    if (node.ty == left_ty and left_ty == right_ty and !self.graph.isTypeUnresolved(left_ty)) continue;
                     try self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
                     if (!self.isScalarArithmeticRepresentation(left_ty, right_ty)) continue;
                     if (node.ty != null and (node.ty.? == left_ty or types.equal(self.graph, node.ty.?, left_ty))) continue;
@@ -2670,4 +2697,38 @@ test "contextual literal normalization rolls back every changed node on allocati
             try std.testing.expectEqualDeep(saved, graph.checkpoint());
         }
     }.run, .{});
+}
+
+test "arithmetic type propagation rechecks contextualized operands and preserves node order" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const int: global_sg.GlobalTypeId = @enumFromInt(0);
+    const byte: global_sg.GlobalTypeId = @enumFromInt(1);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .UInt8 } });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = int, .content = .{ .int_literal = 1 } },
+        .{ .source = source, .ty = int, .content = .{ .int_literal = 2 } },
+        .{ .source = source, .ty = int, .content = .{ .binary_operation = .{ .operator = .addition, .left = @enumFromInt(0), .right = @enumFromInt(1) } } },
+        .{ .source = source, .ty = int, .content = .{ .move_value = @enumFromInt(2) } },
+    });
+    var core: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinit();
+    try std.testing.expect(!try core.materializeBindingTypes());
+    // A later context retypes one literal. The old binary result type does
+    // not authorize retiring this expression from subsequent sweeps.
+    try graph.setNodeType(a, @enumFromInt(0), byte);
+    try std.testing.expect(try core.materializeBindingTypes());
+    for (graph.nodes.items) |node| try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, byte), node.ty);
+    try std.testing.expect(!try core.materializeBindingTypes());
+
+    // Failure inside a semantic transaction restores all propagated types.
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    try graph.setNodeType(a, @enumFromInt(0), int);
+    try graph.setNodeType(a, @enumFromInt(1), int);
+    try std.testing.expect(try core.materializeBindingTypes());
+    transaction.rollback();
+    for (graph.nodes.items) |node| try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, byte), node.ty);
 }
