@@ -304,43 +304,65 @@ pub fn owningTypes(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticG
             }
         }
     }
+    if (selected.count() == 0) return cleanup_types;
+
     // Globalization and generic materialization can retain equivalent types
     // in distinct slots. Propagate existing evidence without resolving again.
     for (cleanup_types, 0..) |*owns, index| {
         if (!owns.*) owns.* = selected.containsContext(@enumFromInt(index), context);
     }
-    // Read selected frontend evidence and structural ownership. This is
-    // only a lowering boundary check, never another conformance resolver.
+    // Decode storage children once per classification, not once per fixed-point
+    // round. The graph is read-only here; only the local ownership bits grow.
+    // Keep discovery order so late children propagate exactly as in a full sweep.
+    const Children = union(enum) {
+        element: g.GlobalTypeId,
+        fields: g.FieldRange,
+        variants: g.VariantRange,
+
+        fn owns(self: @This(), source: *const g.GlobalSemanticGraph, owning: []const bool) bool {
+            return switch (self) {
+                .element => |element| owning[@intFromEnum(element)],
+                .fields => |fields| for (source.fields.items[fields.start..][0..fields.len]) |field| {
+                    if (owning[@intFromEnum(field.ty)]) break true;
+                } else false,
+                .variants => |variants| for (source.variants.items[variants.start..][0..variants.len]) |variant| {
+                    if (variant.payload_type) |payload| if (owning[@intFromEnum(payload)]) break true;
+                } else false,
+            };
+        }
+    };
+    var pending: std.ArrayList(struct { ty: g.GlobalTypeId, children: Children }) = .empty;
+    defer pending.deinit(allocator);
+    for (cleanup_types, 0..) |owns, index| {
+        if (owns) continue;
+        const ty: g.GlobalTypeId = @enumFromInt(index);
+        if (graph.semanticType(ty) == .pointer) continue;
+        const children: Children = if (types.arrayElement(graph, ty)) |element|
+            .{ .element = element }
+        else if (types.fields(graph, ty)) |fields|
+            .{ .fields = fields }
+        else if (types.variants(graph, ty)) |variants|
+            .{ .variants = variants }
+        else
+            continue;
+        try pending.append(allocator, .{ .ty = ty, .children = children });
+    }
+    // No conformance is resolved here. Selected nominal evidence and structural
+    // children still determine the same conservative ownership fixed point.
     var changed = true;
     while (changed) {
         changed = false;
-        for (graph.types.items, 0..) |_, index| {
-            if (cleanup_types[index]) continue;
-            const ty: g.GlobalTypeId = @enumFromInt(index);
-            if (graph.semanticType(ty) == .pointer) continue;
-            var owns_cleanup = false;
-            if (types.arrayElement(graph, ty)) |element| {
-                owns_cleanup = cleanup_types[@intFromEnum(element)];
-            } else if (types.fields(graph, ty)) |fields| {
-                for (graph.fields.items[fields.start..][0..fields.len]) |field| {
-                    if (cleanup_types[@intFromEnum(field.ty)]) {
-                        owns_cleanup = true;
-                        break;
-                    }
-                }
-            } else if (types.variants(graph, ty)) |variants| {
-                for (graph.variants.items[variants.start..][0..variants.len]) |variant| {
-                    if (variant.payload_type) |payload| if (cleanup_types[@intFromEnum(payload)]) {
-                        owns_cleanup = true;
-                        break;
-                    };
-                }
-            }
-            if (owns_cleanup) {
-                cleanup_types[index] = true;
+        var write: usize = 0;
+        for (pending.items) |candidate| {
+            if (candidate.children.owns(graph, cleanup_types)) {
+                cleanup_types[@intFromEnum(candidate.ty)] = true;
                 changed = true;
+            } else {
+                pending.items[write] = candidate;
+                write += 1;
             }
         }
+        pending.shrinkRetainingCapacity(write);
     }
     return cleanup_types;
 }
@@ -519,4 +541,52 @@ test "selected cleanup evidence covers equivalent generic argument slots" {
     try std.testing.expect(types.equal(&graph, @enumFromInt(3), @enumFromInt(4)));
     try std.testing.expect(owning[3] and owning[4]);
     try std.testing.expect(!owning[0] and !owning[1] and !owning[2] and !owning[5]);
+}
+
+test "cleanup ownership follows late aggregate children and generic aliases without following pointers" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "Deinit");
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source });
+    try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Resource"), .source = source });
+    try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Alias"), .source = source });
+    try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 3 }, .is_bundled_core = true });
+    try graph.fields.appendSlice(a, &.{
+        .{ .name = name, .source = source, .ty = @enumFromInt(1) },
+        .{ .name = name, .source = source, .ty = @enumFromInt(5) },
+    });
+    try graph.variants.appendSlice(a, &.{
+        .{ .name = name, .source = source, .value = 0, .payload_type = @enumFromInt(3) },
+        .{ .name = name, .source = source, .value = 1, .payload_type = null },
+    });
+    try graph.types.appendSlice(a, &.{
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } },
+        .{ .array = .{ .element = @enumFromInt(4), .length = 2 } },
+        .{ .generic = .{ .base = @enumFromInt(2), .arguments = .{ .start = 0, .len = 0 } } },
+        .{ .declared = @enumFromInt(1) },
+        .{ .pointer = .{ .child = @enumFromInt(4), .mutability = .read_write } },
+        .{ .structural = .{ .fields = .{ .start = 1, .len = 1 } } },
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(4), .length = 0 } },
+        .{ .structural_choice = .{ .variants = .{ .start = 1, .len = 1 } } },
+    });
+    try graph.generic_instances.append(a, .{ .type_id = @enumFromInt(3), .shape = .{ .alias = @enumFromInt(2) } });
+    try graph.generic_arguments.append(a, .{ .name = name, .value = .{ .type = @enumFromInt(4) } });
+    try graph.contract_conformances.append(a, .{ .declaration = @enumFromInt(0), .participants = .{ .start = 0, .len = 1 }, .associated_arguments = .{ .start = 0, .len = 0 }, .source = source });
+    try std.testing.checkAllAllocationFailures(a, struct {
+        fn classify(allocator: std.mem.Allocator, g_: *const g.GlobalSemanticGraph) !void {
+            const owning = try owningTypes(allocator, g_);
+            defer allocator.free(owning);
+            try std.testing.expectEqualSlices(bool, &.{ true, true, true, true, true, false, false, false, true, false }, owning);
+        }
+    }.classify, .{&graph});
+    // No seed evidence means no structural type can acquire cleanup merely
+    // from a layout. Recompute from the current graph, never a previous result.
+    graph.contract_conformances.clearRetainingCapacity();
+    const empty = try owningTypes(a, &graph);
+    defer a.free(empty);
+    for (empty) |owns| try std.testing.expect(!owns);
 }

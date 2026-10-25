@@ -265,7 +265,11 @@ pub const CompilationSession = struct {
         }
         try candidate.advance();
         if (continuation) |function| try candidate.retainContinuationBindings(function);
-        const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
+        const proof = fork_state: {
+            const measurement = if (candidate.resolvers.core.scan_profile) |collector| collector.begin(.continuation_fork) else null;
+            defer if (measurement) |m| m.finish(false);
+            break :fork_state if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
+        };
         errdefer if (proof) |owned| owned.release();
         var checked = try checkUnit(candidate, self.allocator, diagnostics, continuation, proof, &self.summary_cache, &self.body_cache);
         errdefer checked.deinit(self.allocator);
@@ -281,6 +285,8 @@ pub const CompilationSession = struct {
     /// Executable descriptors have already copied their required proofs. They
     /// borrow the shared graph object, never this temporary checked candidate.
     pub fn accept(self: *CompilationSession, candidate: *Candidate) !void {
+        const measurement = if (self.semantic.resolvers.core.scan_profile) |collector| collector.begin(.semantic_publication) else null;
+        defer if (measurement) |m| m.finish(false);
         if (candidate.owner != self or candidate.revision != self.revision or candidate.semantic != self.semantic or candidate.transaction == null or candidate.checked == null)
             return error.StaleCompilationCandidate;
         if (self.revision == std.math.maxInt(u64)) return error.CompilationRevisionLimit;
@@ -374,7 +380,11 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
     if (continuation) |function| try safety.analyzeContinuation(function, &proof.?.state) else try safety.analyze();
     var annotations = try safety.annotations.clone(allocator);
     errdefer annotations.deinit(allocator);
-    if (proof) |owned| try owned.seal(temporary.allocator());
+    if (proof) |owned| {
+        const seal_measurement = if (semantic.resolvers.core.scan_profile) |collector| collector.begin(.continuation_seal) else null;
+        defer if (seal_measurement) |m| m.finish(false);
+        try owned.seal(temporary.allocator());
+    }
     return .{ .graph = graph, .stats = stats, .unit = unit, .annotations = annotations, .summaries = summaries, .bodies = bodies, .safety_stats = safety.stats };
 }
 

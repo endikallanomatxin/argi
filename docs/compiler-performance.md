@@ -237,3 +237,64 @@ operands and the result already carry the same resolved type ID. A later operand
 type change takes the ordinary path again. No worklist or completion cache is
 introduced for expressions. Timing comparisons for these subpasses remain to be
 collected without an active test suite; no speedup is claimed here.
+
+### Execution preparation and continuation publication
+
+The optional profile also separates `session_layout`, `bytecode_initialization`,
+`bytecode_lowering`, `bytecode_verification`, `vm_preparation`,
+`continuation_fork`, `continuation_seal` and `semantic_publication`. These remain
+`# resolution` rows for compatibility with the existing report. They are
+inclusive boundary timings; do not add them to their parent timings.
+Initialization includes cleanup metadata and lookup preparation, while lowering
+measures instruction/descriptor generation. Verification and VM preparation are
+separate. Fork precedes body checking; seal is inside checking. Publication
+includes committing semantic proofs and releasing the checked candidate.
+
+For 100 prelude calls before the cleanup-classification change, Debug measured
+3,019 ms initializing lowering, 26 ms generating bytecode and 3,078 ms verifying
+it. ReleaseSafe measured 187, 4 and 182 ms respectively. Both initialization and
+verification independently classify cleanup-owning types. The cost attributed
+to lowering was primarily preparation, rather than instruction generation.
+
+Ownership classification now discovers structural child ranges once per call
+and propagates only pending aggregate candidates, preserving discovery order,
+nominal equivalence and reference boundaries. Without selected destructor seeds,
+all ownership bits remain false. This scratch work belongs to one read-only
+classification; there is no cross-unit cache. Verification still computes its
+own classification rather than trusting lowering metadata.
+
+Paired ReleaseSafe profiles, using the repository core and a 1,024 MiB tracked
+allocation limit (`dfde6a60` plus boundary timers before the change):
+
+| Session | Commands | Initialization before/after ms | Verification before/after ms |
+|---|---:|---:|---:|
+| Prelude calls | 100 | 186.5 / 111.8 | 182.3 / 122.6 |
+| Prelude resources | 100 | 246.6 / 142.6 | 274.1 / 181.3 |
+| Minimal calls | 1,000 | 21.4 / 4.3 | 43.5 / 28.6 |
+| Minimal bindings | 1,000 | 122.7 / 93.7 | 39.1 / 19.5 |
+
+Emitting bytecode for 100 prelude calls costs 4.1/4.3 ms. Graph/bytecode and Safety
+reuse counters match, as do reported retained/peak memory. Rejected commands
+publish no executable unit in either version. Retained memory is 102.133 MiB for
+100 prelude calls, 145.689 MiB for 100 resource commands and 16.106 MiB for 1,000
+minimal bindings; these are tracked allocations, not process RSS.
+
+One profiled prelude run had a slower total despite faster preparation, due to
+frontend variation. Separate unprofiled A/B/B/A runs (two samples per binary)
+gave mean cumulative times of 1,994.6/1,866.1 ms for 100 prelude calls and
+3,280.9/3,046.9 ms for 100 prelude resource commands. This is a local observation,
+not a general throughput guarantee. Both saved executables reside in
+`.zig-cache/` so core resolution and optimization modes agree.
+
+Continuation copying depends strongly on live state. Before the change, fork
+and seal together cost 7.4 ms for 100 prelude calls, but 853.7 ms for 1,000
+minimal bindings (327.7 ms fork, 526.0 ms seal) out of 2,696.2 ms total. With the
+cleanup change the latter remains 830.5 ms out of 2,555.0 ms. This warrants a
+separate investigation of continuation facts and persistent session layouts;
+it does not show that function-summary/body-proof caches should be merged.
+
+Logs: `.zig-cache/execution-boundaries-{before,after}-release-*.csv` and
+`.zig-cache/execution-throughput-{calls,resources}-*.csv`. Workloads include
+prelude calls/resources/rejections and minimal calls/bindings. All report the
+10/100 milestones, plus 1,000 for the minimal workloads. Initial core/prelude
+preparation and reset/teardown are outside the cumulative command timings.

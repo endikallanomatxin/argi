@@ -54,7 +54,11 @@ pub const Session = struct {
         var scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer scratch.deinit();
         const layout_start = profile.timestamp(self.profile_io);
-        const bindings = try @import("../5_codegen/bytecode/session_layout.zig").build(scratch.allocator(), checked.graph, semantic.resolvers.expressions.session_bindings.items);
+        const bindings = layout: {
+            const measurement = if (semantic.resolvers.core.scan_profile) |collector| collector.begin(.session_layout) else null;
+            defer if (measurement) |m| m.finish(false);
+            break :layout try @import("../5_codegen/bytecode/session_layout.zig").build(scratch.allocator(), checked.graph, semantic.resolvers.expressions.session_bindings.items);
+        };
         profile.accumulate(self.profile_io, layout_start, &self.stats.lowering_ns);
         if (candidate.is_exit) return self.executeExit(candidate, function, bindings);
         return self.execute(candidate, function, bindings);
@@ -80,16 +84,25 @@ pub const Session = struct {
         const a = arena.allocator();
         var lowering_scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer lowering_scratch.deinit();
-        var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, checked, .{ .session = .{ .namespace = self.compiler.namespace, .bindings = bindings }, .scratch_allocator = lowering_scratch.allocator(), .bodies = &self.bodies, .proofs = &candidate.checked.?.bodies });
+        const collector = candidate.semantic.?.resolvers.core.scan_profile;
+        var lower = init_lower: {
+            const measurement = if (collector) |c| c.begin(.bytecode_initialization) else null;
+            defer if (measurement) |m| m.finish(false);
+            break :init_lower try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, checked, .{ .session = .{ .namespace = self.compiler.namespace, .bindings = bindings }, .scratch_allocator = lowering_scratch.allocator(), .bodies = &self.bodies, .proofs = &candidate.checked.?.bodies });
+        };
         lower.annotations = &candidate.checked.?.annotations;
         const diagnostics = candidate.semantic.?.options.diagnostics orelse return error.MissingSessionDiagnostics;
         lower.diagnostics = diagnostics;
-        const program = lower.compile(function) catch |err| {
-            if (err == error.UnsupportedExecution) {
-                try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, lower.source), .codegen, "bytecode execution does not support {s}", .{lower.unsupported});
-                return error.Reported;
-            }
-            return err;
+        const program = compile_unit: {
+            const measurement = if (collector) |c| c.begin(.bytecode_lowering) else null;
+            defer if (measurement) |m| m.finish(false);
+            break :compile_unit lower.compile(function) catch |err| {
+                if (err == error.UnsupportedExecution) {
+                    try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, lower.source), .codegen, "bytecode execution does not support {s}", .{lower.unsupported});
+                    return error.Reported;
+                }
+                return err;
+            };
         };
         _ = lowering_scratch.reset(.free_all);
         profile.accumulate(self.profile_io, lower_start, &self.stats.lowering_ns);
@@ -102,23 +115,31 @@ pub const Session = struct {
             }
         };
         const verify_start = profile.timestamp(self.profile_io);
-        const verified = try bytecode.Verified.create(a, self.allocator, program);
-        var vm = execution.Vm.initVerifiedShared(self.allocator, verified, self.limits, &self.context) catch |err| {
-            switch (err) {
-                error.MissingHostBinding, error.IncompatibleHostBinding, error.AmbiguousHostBinding => {
-                    const host = @import("host.zig");
-                    const dependencies = try program.dependencies(self.allocator);
-                    defer self.allocator.free(dependencies);
-                    const failure = found: {
-                        if (host.findFailure(program, self.context.host_bindings)) |value| break :found value;
-                        for (dependencies) |dependency| if (host.findFailure(dependency.*, self.context.host_bindings)) |value| break :found value;
-                        return err;
-                    };
-                    try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, failure.source), .codegen, "bytecode host binding for '{s}' is unavailable: {s}", .{ host.symbol(checked, failure.function), @errorName(failure.reason) });
-                    return error.Reported;
-                },
-                else => return err,
-            }
+        const verified = verify_unit: {
+            const measurement = if (collector) |c| c.begin(.bytecode_verification) else null;
+            defer if (measurement) |m| m.finish(false);
+            break :verify_unit try bytecode.Verified.create(a, self.allocator, program);
+        };
+        var vm = prepare_vm: {
+            const measurement = if (collector) |c| c.begin(.vm_preparation) else null;
+            defer if (measurement) |m| m.finish(false);
+            break :prepare_vm execution.Vm.initVerifiedShared(self.allocator, verified, self.limits, &self.context) catch |err| {
+                switch (err) {
+                    error.MissingHostBinding, error.IncompatibleHostBinding, error.AmbiguousHostBinding => {
+                        const host = @import("host.zig");
+                        const dependencies = try program.dependencies(self.allocator);
+                        defer self.allocator.free(dependencies);
+                        const failure = found: {
+                            if (host.findFailure(program, self.context.host_bindings)) |value| break :found value;
+                            for (dependencies) |dependency| if (host.findFailure(dependency.*, self.context.host_bindings)) |value| break :found value;
+                            return err;
+                        };
+                        try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(checked, diagnostics, failure.source), .codegen, "bytecode host binding for '{s}' is unavailable: {s}", .{ host.symbol(checked, failure.function), @errorName(failure.reason) });
+                        return error.Reported;
+                    },
+                    else => return err,
+                }
+            };
         };
         profile.accumulate(self.profile_io, verify_start, &self.stats.verification_ns);
         defer vm.deinit();
