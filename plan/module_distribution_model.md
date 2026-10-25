@@ -1,30 +1,17 @@
-# Unified module and distribution model
+# Module distribution implementation
 
-The normative model is [Modules](../description/02_modules.md). There is one
-language abstraction: a directory module. Distribution is optional identity
-and delivery metadata, not another kind of namespace.
+Model: [Modules](../description/02_modules.md). Directory modules remain usable
+without a manifest or programmable build script.
 
-## Remaining implementation
+1. Parse distribution metadata and validate nested roots. Separate configuration
+   lookup from distribution ownership and project-root imports.
+2. Resolve provenance, exact versions and internal paths into an immutable module
+   map. Preserve those identities in frontend caches; never collapse origins or
+   versions by directory basename. Download complete distributions.
+3. Manage exact resolutions in `[lock]` within `argi.toml`. Preserve user content
+   outside the marked section; never silently re-resolve locked dependencies.
+4. Specify and implement optional `build.rg` task execution.
+5. Add publication tooling separately from distribution declarations.
 
-1. Parse and validate distribution metadata independently of module/tool settings.
-   Reject nested distribution declarations; retain one version and dependency
-   resolution for every submodule in a distribution.
-2. Separate configuration lookup from distribution ownership and project-root
-   imports. A nested configuration file must not create another distribution.
-   Allow configuration-only manifests to retain ordinary direct-module builds.
-3. Define dependency declarations, provenance, exact versions, and internal paths.
-   Resolve/download complete distributions and feed an immutable resolution map
-   to the compiler. Keep origin/version/path in module and frontend-cache identities.
-4. Specify and implement the automatically managed `[lock]` section in `argi.toml`,
-   including validation of exact resolutions and reproducibility. Mark it with a
-   comment, preserve user-authored configuration and comments outside it, and do
-   not create a separate lockfile or silently re-resolve locked dependencies.
-5. Specify optional `build.rg` task execution separately from declarative metadata.
-   Keep ordinary modules usable without it or any manifest.
-6. Add publication tooling separately: declaring a distribution never publishes it.
-
-Tokenizing and language syntax need no changes for the formalization. Resolution,
-module collection, frontend/cache identities, CLI configuration, and tooling are
-involved in the remaining implementation. Codegen continues to consume resolved
-modules. Add positive and negative fixtures for nested configurations, conflicting
-distribution roots, and multiple versions/origins before enabling resolution.
+Cover configuration-only manifests, nested/conflicting distribution roots,
+multiple versions/origins and locked reproducibility before enabling resolution.

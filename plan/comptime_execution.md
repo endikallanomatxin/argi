@@ -1,21 +1,13 @@
 # Execution follow-ups
 
-Release: [0.4](0.4.md). Current behavior: [usage](../docs/usage.md#experimental-bytecode-execution).
-
-## Compile-time host
-
-- Keep external reads disabled until their build dependencies are recorded.
-  The initial host policy provides empty arguments, stdout/stderr and VM allocation.
-
-## Later
-
-- Prepare raw/inherited resource storage explicitly when a concrete consumer needs it.
+- Record external compile-time reads as build dependencies before exposing those
+  host capabilities. Define their reproducibility and cache identity.
 - Separate host execution from target semantics for cross-compilation.
-
 - Measure retained frame identities, aggregate backing and metadata before further
-  reclamation. Call value/cleanup buffers already reuse exact-size bins; preserve
-  dead identities, live references and cross-unit calls.
-- Measure verifier join-state memory on real workloads before changing representation.
-  Use the existing session benchmarks and graph-pool statistics.
+  reclamation; preserve dead identities, live references and cross-unit calls.
+- Measure verifier join-state memory on real workloads before changing its
+  representation. Use the execution benchmark and graph-pool statistics.
+- Prepare raw/inherited resource storage when a concrete consumer requires it.
 
-Frontend investigations: [frontend review](frontend_review.md).
+Frontend work: [incremental frontend](frontend_review.md).
+Current behavior: [usage](../docs/usage.md#experimental-bytecode-execution).
