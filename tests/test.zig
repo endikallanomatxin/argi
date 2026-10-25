@@ -5695,12 +5695,28 @@ test "feature_tests/testing/07_build_ignores_tests" {
     try run(test_path);
 }
 
+test "feature_tests/testing/22_optional_system" {
+    try argiTestExpectStderr("tests/feature_tests/testing/22_optional_system", &.{}, 0, "PASS without_system\nPASS with_system\n");
+}
+
+test "feature_tests/testing/23_no_system_failure" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/23_no_system_failure", &.{}, 1, "FAIL fails_without_system\n");
+}
+
+test "feature_tests/testing/24_no_system_skip" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/24_no_system_skip", &.{}, 0, "SKIP skips_without_system\n");
+}
+
+test "feature_tests/testing/25X_wrong_system_type" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/25X_wrong_system_type", &.{}, 1, "no function named 'wrong_system_type'");
+}
+
 test "feature_tests/testing/08X_test_signature_requires_v1_shape" {
     try argiTestExpectStderrContains(
         "tests/feature_tests/testing/08X_test_signature_requires_v1_shape",
         &.{},
         1,
-        "tests must declare exactly one input: '.system: System'",
+        "tests accept no inputs or one '.system: System'",
     );
 }
 
@@ -15590,4 +15606,8 @@ test "feature_tests/execution/282_nested_loop_cleanup_context" {
     try expectSuccessfulBuild("tests/feature_tests/execution/282_nested_loop_cleanup_context");
     try runExpect("tests/feature_tests/execution/282_nested_loop_cleanup_context", 0);
     try vmExpect("tests/feature_tests/execution/282_nested_loop_cleanup_context", 0, null);
+}
+
+test "feature_tests/basics/100X_main_extra_outputs" {
+    try buildExpectFail("tests/feature_tests/basics/100X_main_extra_outputs", "main must return no values or (.status_code: Int32)");
 }

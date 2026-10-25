@@ -1,4 +1,5 @@
 const std = @import("std");
+const entry_interface = @import("../entry_interface.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 const source_db = @import("../../1_base/source_db.zig");
 const syn = @import("../../3_syntax/syntax_tree.zig");
@@ -34,7 +35,6 @@ fn validateOne(
     function: syn.FunctionDeclaration,
 ) !bool {
     const loc = file.location(node);
-    const input = file.structTypeLiteral(function.input) orelse return false;
     const output = file.structTypeLiteral(function.output) orelse return false;
 
     if (function.is_once) {
@@ -49,33 +49,10 @@ fn validateOne(
         try diagnostics.add(loc, .semantic, "tests must define a body", .{});
         return false;
     }
-    if (input.fields.len != 1) {
-        try diagnostics.add(loc, .semantic, "tests must declare exactly one input: '.system: System'", .{});
-        return false;
-    }
-
-    const system_field = file.structTypeField(input.fields[0]) orelse return false;
-    if (!std.mem.eql(u8, file.tokenText(db, system_field.name_token), "system")) {
-        try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System' as their only input", .{});
-        return false;
-    }
-    const system_type_node = system_field.type_node orelse {
-        try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System' as their only input", .{});
+    _ = entry_interface.classifyInput(file, db.get(file.file_id).source, function.input, .isolated) catch {
+        try diagnostics.add(loc, .semantic, "{s}", .{entry_interface.test_input_message});
         return false;
     };
-    const system_type = file.syntaxType(system_type_node) orelse return false;
-    switch (system_type) {
-        .name => |name| {
-            if (!std.mem.eql(u8, file.tokenText(db, name.name_token), "System")) {
-                try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System' as their only input", .{});
-                return false;
-            }
-        },
-        else => {
-            try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System' as their only input", .{});
-            return false;
-        },
-    }
 
     if (output.fields.len != 1) {
         try diagnostics.add(loc, .semantic, "tests must return exactly '-> !()' in v1", .{});

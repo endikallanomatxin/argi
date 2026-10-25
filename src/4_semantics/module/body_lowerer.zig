@@ -1,4 +1,5 @@
 const std = @import("std");
+const entry_interface = @import("../entry_interface.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 const literals = @import("../semantic_literals.zig");
 const tok = @import("../../2_tokens/token.zig");
@@ -817,11 +818,9 @@ const Context = struct {
 
     fn lowerComptimeEntry(self: *Context, node: syn.NodeIndex) anyerror!Lowered {
         const entry = self.tree.comptimeEntry(node).?;
+        _ = entry_interface.classifyInput(self.tree, self.source, entry.input, .isolated) catch
+            return self.foreignOptionError(node, entry_interface.comptime_input_message);
         const input = try self.entryFields(entry.input);
-        if (input.len != 0) {
-            if (input.len != 1 or !std.mem.eql(u8, self.graph.text((try views.fieldView(self.graph, @enumFromInt(input.start))).name), "system"))
-                return self.foreignOptionError(node, "compile-time entries accept no inputs or one '.system: System' input; pass ordinary arguments to functions inside the entry body");
-        }
         const output = try self.entryFields(entry.output);
         const declaration_id: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
         const function_id: entities.ModuleFunctionId = @enumFromInt(self.graph.functions.items.len);
@@ -934,15 +933,8 @@ const Context = struct {
         const input: graph_mod.FieldRange = .{ .start = input_start, .len = @intCast(captures.len) };
         try self.graph.functions.append(self.allocator, .{ .declaration = declaration, .input = input, .output = output });
 
-        const text = "bootstrap() -> () := {\n" ++ @embedFile("../../0_commands/system_scope.rg") ++ "}\n";
-        var diagnostics = diagnostics_mod.Diagnostics.init(&self.allocator, &.{});
-        defer diagnostics.deinit();
-        var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(self.allocator, &diagnostics, text, @enumFromInt(0));
-        defer tokenizer.deinit();
-        _ = try tokenizer.tokenize();
-        const file = syn.FileSyntaxTree.initOwnedTokens(@enumFromInt(0), tokenizer.takeTokens());
-        var parser = @import("../../3_syntax/syntaxer.zig").Syntaxer.initFile(self.allocator, file, text, &diagnostics);
-        var tree = try parser.parse();
+        const text = entry_interface.bootstrap_source;
+        var tree = try entry_interface.parseSystemScope(self.allocator);
         defer tree.deinit(self.allocator);
         var body: Context = .{
             .allocator = self.allocator,

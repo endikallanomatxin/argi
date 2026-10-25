@@ -1649,11 +1649,14 @@ test "bytecode anonymous compile-time entries preserve named multiple outputs" {
 }
 
 test "anonymous compile-time entries diagnose unsupported argument interfaces" {
-    for ([_][]const u8{ ".value: Int32", ".system: Int32, .extra: Int32" }) |inputs| {
+    for ([_][]const u8{ ".value: Int32", ".system: Int32, .extra: Int32" }) |inputs| for ([_]bool{ false, true }) |generic| {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        const source = try std.fmt.allocPrint(a, "main() -> () := {{ #run ({s}) -> () {{}} }}", .{inputs});
+        const source = if (generic)
+            try std.fmt.allocPrint(a, "entry#(.T: Type) := () -> () {{ #run ({s}) -> () {{}} }}\nmain := () -> () {{ entry#(Int32)() }}", .{inputs})
+        else
+            try std.fmt.allocPrint(a, "main() -> () := {{ #run ({s}) -> () {{}} }}", .{inputs});
         const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
         var diagnostics = diag.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
@@ -1665,7 +1668,7 @@ test "anonymous compile-time entries diagnose unsupported argument interfaces" {
             found = true;
         };
         try std.testing.expect(found);
-    }
+    };
 }
 
 test "nested compile-time entries retain their output representation boundary" {

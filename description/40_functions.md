@@ -29,6 +29,14 @@ Empty `()` denotes no input or no output. A `return` leaves the function; it
 does not carry a separate result expression. Results come from the output
 bindings.
 
+`main`, tests and `#run` are invoked through checked entry scopes using ordinary
+function calls. Each can request `.system: System` or declare no inputs.
+`main` also retains ordinary default and reached dependencies.
+Their output policies differ: `main` returns no values or `status_code: Int32`,
+tests return `!()`, and `#run` returns values that can freeze into compiler
+constants. Runtime adapters interpret process/test status; compile-time
+execution enforces the constant-value boundary instead.
+
 ## Calls and results
 
 Arguments may be named or supplied positionally in declaration order. A

@@ -1,4 +1,5 @@
 const std = @import("std");
+const entry_interface = @import("../4_semantics/entry_interface.zig");
 
 const sf = @import("../1_base/source_files.zig");
 const source_db = @import("../1_base/source_db.zig");
@@ -344,12 +345,11 @@ pub const FrontendPipeline = struct {
                             return error.Reported;
                         }
                     }
-                    if (file.structTypeLiteral(function.input)) |input| {
-                        for (input.fields) |field_node| {
-                            const field = file.structTypeField(field_node) orelse continue;
-                            if (std.mem.eql(u8, file.tokenText(self.source_db, field.name_token), "system")) takes_system = true;
-                        }
-                    }
+                    const input_kind = entry_interface.classifyInput(file, source.source, function.input, if (self.options.semantizing.selected_test_name == null) .program else .isolated) catch {
+                        try self.diagnostics.add(file.location(root), .semantic, "invalid entry input interface", .{});
+                        return error.Reported;
+                    };
+                    takes_system = input_kind == .system;
                 }
                 if (std.mem.eql(u8, name, "__argi_entry")) {
                     try self.diagnostics.add(file.location(root), .semantic, "'__argi_entry' is reserved for program entry", .{});
@@ -361,7 +361,7 @@ pub const FrontendPipeline = struct {
         const is_test = self.options.semantizing.selected_test_name != null;
         const output = if (is_test) "!()" else "(.status_code: Int32 = 0)";
         const result = if (is_test) "result" else "status_code";
-        const template = if (takes_system) @embedFile("program_entry.rg") else @embedFile("plain_entry.rg");
+        const template = @embedFile("program_entry.rg");
         const tracer = if (needs_reporting)
             "trace_buffer :: [4096]UInt8 = zeroed#(.t: [4096]UInt8)()\n" ++
                 "    tracer_storage ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))\n" ++
@@ -389,13 +389,13 @@ pub const FrontendPipeline = struct {
         else
             try std.fmt.allocPrint(self.allocator, "__main_result ::= {s}({s})", .{ target, call_args });
         defer self.allocator.free(call);
-        const with_system = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_SYSTEM_SCOPE__", @embedFile("system_scope.rg"));
+        const with_system = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_SYSTEM_SCOPE__", if (takes_system) entry_interface.system_scope else "");
         defer self.allocator.free(with_system);
         const with_output = try std.mem.replaceOwned(u8, self.allocator, with_system, "__ARGI_OUTPUT__", output);
         defer self.allocator.free(with_output);
         const with_tracer = try std.mem.replaceOwned(u8, self.allocator, with_output, "__ARGI_TRACER_SETUP__", tracer);
         defer self.allocator.free(with_tracer);
-        const report_setup = if (!needs_reporting) "" else if (takes_system) "assume writer ::= $&terminal&.stderr" else "ffi_storage ::= ForeignFunctionInterface()\n    assume ffi ::= $&ffi_storage\n    terminal_storage ::= Terminal()\n    assume writer ::= $&terminal_storage.stderr";
+        const report_setup = if (!needs_reporting) "" else if (takes_system) "assume writer ::= $&terminal&.stderr" else "ffi_storage ::= ForeignFunctionInterface()\n    assume ffi ::= $&ffi_storage\n    terminal_storage ::= Terminal()\n    terminal ::= $&terminal_storage\n    assume writer ::= $&terminal&.stderr";
         const with_report = try std.mem.replaceOwned(u8, self.allocator, with_tracer, "__ARGI_REPORT_SETUP__", report_setup);
         defer self.allocator.free(with_report);
         self.entry_source = try std.mem.replaceOwned(u8, self.allocator, with_report, "__ARGI_CALL__", call);

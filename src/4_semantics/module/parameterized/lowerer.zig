@@ -1,3 +1,4 @@
+const entry_interface = @import("../../entry_interface.zig");
 const type_arguments = @import("../type_arguments.zig");
 const std = @import("std");
 const literals = @import("../../semantic_literals.zig");
@@ -1059,12 +1060,11 @@ pub const Context = struct {
 
     fn lowerAnonymousEntry(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
         const entry = self.tree.comptimeEntry(node).?;
-        const takes_system = if (entry.input) |syntax| self.tree.structTypeLiteral(syntax).?.fields.len != 0 else false;
-        if (takes_system) {
-            const fields = self.tree.structTypeLiteral(entry.input.?).?.fields;
-            if (fields.len != 1 or !std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, self.tree.structTypeField(fields[0]).?.name_token), "system"))
-                return error.UnsupportedParameterizedEntryInput;
-        }
+        const input_kind = entry_interface.classifyInput(self.tree, self.source, entry.input, .isolated) catch {
+            try self.contractError(node, entry_interface.comptime_input_message);
+            unreachable;
+        };
+        const takes_system = input_kind == .system;
         // The same default syntax can be lowered in distinct semantic contexts;
         // source coordinates alone do not identify a generated declaration.
         const name_text = try std.fmt.allocPrint(self.allocator, "_comptime_entry_{d}_{d}_{d}", .{ self.file_index, self.sourceRef(node).offset, self.graph.declarations.items.len });
@@ -1156,15 +1156,8 @@ pub const Context = struct {
         const declaration: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
         try self.graph.declarations.append(self.allocator, .{ .kind = .function, .name = name, .source_offset = source.offset, .module_file_index = self.file_index, .generic_parameter_count = parameters.len });
         self.graph.generated_declaration_count += 1;
-        const text = "bootstrap() -> () := {\n" ++ @embedFile("../../../0_commands/system_scope.rg") ++ "}\n";
-        var diagnostics = @import("../../../1_base/diagnostic.zig").Diagnostics.init(&self.allocator, &.{});
-        defer diagnostics.deinit();
-        var tokenizer = @import("../../../2_tokens/tokenizer.zig").Tokenizer.init(self.allocator, &diagnostics, text, @enumFromInt(0));
-        defer tokenizer.deinit();
-        _ = try tokenizer.tokenize();
-        const file = syn.FileSyntaxTree.initOwnedTokens(@enumFromInt(0), tokenizer.takeTokens());
-        var parser = @import("../../../3_syntax/syntaxer.zig").Syntaxer.initFile(self.allocator, file, text, &diagnostics);
-        var tree = try parser.parse();
+        const text = entry_interface.bootstrap_source;
+        var tree = try entry_interface.parseSystemScope(self.allocator);
         defer tree.deinit(self.allocator);
         var wrapper: Context = .{
             .allocator = self.allocator,

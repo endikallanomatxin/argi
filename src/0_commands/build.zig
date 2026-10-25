@@ -73,7 +73,7 @@ fn printMissingMainError(module_dir: []const u8, from_manifest: bool) void {
         std.debug.print("Error: executable module has no valid main function:\n  {s}\n\n", .{module_dir})
     else
         std.debug.print("Error: module has no executable main function:\n  {s}\n\n", .{module_dir});
-    std.debug.print("Expected main() -> () or main() -> (.status_code: Int32).\n", .{});
+    std.debug.print("Expected main with no outputs or (.status_code: Int32), optionally accepting System.\n", .{});
 }
 
 fn dumpDiagnostics(diagnostics: *diag.Diagnostics, flags: BuildFlags) void {

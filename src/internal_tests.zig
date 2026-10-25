@@ -70,6 +70,7 @@ const c_abi = @import("4_semantics/global/c_abi.zig");
 
 // Register imported tests independently of the runner's name filters.
 comptime {
+    _ = @import("4_semantics/entry_interface.zig");
     _ = @import("5_codegen/bytecode/verify.zig");
     _ = @import("0_commands/repl.zig");
     _ = @import("0_commands/execution_options.zig");

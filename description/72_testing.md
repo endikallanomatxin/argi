@@ -6,7 +6,7 @@ Tests are declared explicitly at top level with the same named-function syntax
 used by `main`, prefixed with `test`. The assignment precedes the signature:
 
 ```rg
-test my_test := (.system: System) -> !() {
+test my_test := () -> !() {
     testing.expect(true)!
 }
 ```
@@ -14,8 +14,13 @@ test my_test := (.system: System) -> !() {
 The test entry contract requires:
 
 - top-level only
-- one input: `.system: System`, supplied by the checked entry wrapper
+- no inputs, or one `.system: System` input supplied by the checked entry wrapper
 - return: `-> !()`
+
+As with `main` and `#run`, requesting `System` is optional. Input types are
+checked through the ordinary generated call, rather than requiring the literal
+spelling `System`. Test failure reporting owns its terminal and trace resources
+even when the test requests no system input.
 
 As with ordinary named functions, the legacy spelling
 `test my_test(.system: System) -> !() := { ... }` remains accepted.
