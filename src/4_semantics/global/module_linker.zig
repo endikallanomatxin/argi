@@ -89,7 +89,7 @@ pub fn resolveImportPath(
         var found: ?global_sg.GlobalModuleId = null;
         for (graph.modules.items, 0..) |module, index| {
             const dir = graph.text(module.dir);
-            if (!std.mem.eql(u8, dir, resolved)) continue;
+            if (!@import("../../1_base/path_identity.zig").equal(dir, resolved)) continue;
             const candidate = graph.moduleNamespace(@enumFromInt(index));
             if (found != null and found.? != candidate) return error.AmbiguousModuleReference;
             found = candidate;
@@ -124,7 +124,7 @@ pub fn resolveImportPathFromDirs(
         defer allocator.free(resolved);
         var found: ?usize = null;
         for (module_dirs, 0..) |dir, index| {
-            if (!std.mem.eql(u8, dir, resolved)) continue;
+            if (!@import("../../1_base/path_identity.zig").equal(dir, resolved)) continue;
             if (found != null) return error.AmbiguousModuleReference;
             found = index;
         }

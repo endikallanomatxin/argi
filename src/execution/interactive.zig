@@ -1242,7 +1242,9 @@ test "interactive computed imports share staged selection without replaying acce
     var found_current_source = false;
     for (session.diagnostics.list.items) |diagnostic| {
         const file = session.diagnostics.source_db.get(diagnostic.loc.file);
-        if (std.mem.endsWith(u8, file.path, "/broken/main.rg")) {
+        if (std.mem.eql(u8, std.fs.path.basename(file.path), "main.rg") and
+            std.mem.eql(u8, std.fs.path.basename(std.fs.path.dirname(file.path) orelse ""), "broken"))
+        {
             try std.testing.expectEqualStrings(unsafe_revision, file.source);
             found_current_source = true;
         }

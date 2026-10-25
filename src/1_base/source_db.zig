@@ -120,7 +120,7 @@ pub const SourceDb = struct {
     pub fn findVersion(self: *const SourceDb, wanted_path: []const u8, content_hash: ?u64) ?FileId {
         for (self.files, 0..) |file, index| {
             if (content_hash) |hash| if (file.content_hash != hash) continue;
-            if (std.mem.eql(u8, file.path, wanted_path)) return self.fileId(index);
+            if (@import("path_identity.zig").equal(file.path, wanted_path)) return self.fileId(index);
         }
         return null;
     }
@@ -194,4 +194,20 @@ fn exerciseSourceDbAllocationFailures(allocator: std.mem.Allocator) !void {
 
 test "SourceDb growth and cloning preserve identities on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, exerciseSourceDbAllocationFailures, .{});
+}
+
+test "SourceDb path matching preserves source versions across native separators" {
+    const a = std.testing.allocator;
+    var db = try SourceDb.init(a, &.{
+        .{ .path = "/project/app/main.rg", .code = "old" },
+        .{ .path = "/project/app/main.rg", .code = "new" },
+    });
+    defer db.deinit(a);
+    const query = if (@import("builtin").os.tag == .windows) "\\project\\app\\main.rg" else "/project/app/main.rg";
+    try std.testing.expectEqual(@as(?FileId, @enumFromInt(0)), db.findVersion(query, contentHash("old")));
+    try std.testing.expectEqual(@as(?FileId, @enumFromInt(1)), db.findVersion(query, contentHash("new")));
+    try std.testing.expectEqual(null, db.findVersion(query, contentHash("missing")));
+    try std.testing.expectEqualStrings("/project/app/main.rg", db.path(@enumFromInt(1)));
+    if (@import("builtin").os.tag != .windows)
+        try std.testing.expectEqual(null, db.findPath("/project\\app\\main.rg"));
 }

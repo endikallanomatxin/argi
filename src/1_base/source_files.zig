@@ -441,10 +441,14 @@ fn collectModuleImportsWithAliases(alloc: *const std.mem.Allocator, io: std.Io, 
     }
 }
 
-fn validateDirectoryPrivacy(importer_path: []const u8, resolved: []const u8, trusted_prefix: ?[]const u8) !void {
+fn validateDirectoryPrivacy(importer_path: []const u8, resolved_path: []const u8, trusted_path: ?[]const u8) !void {
     const allocator = std.heap.page_allocator;
     const importer = try std.fs.path.resolve(allocator, &.{std.fs.path.dirname(importer_path) orelse "."});
     defer allocator.free(importer);
+    const resolved = try std.fs.path.resolve(allocator, &.{resolved_path});
+    defer allocator.free(resolved);
+    const trusted_prefix = if (trusted_path) |path| try std.fs.path.resolve(allocator, &.{path}) else null;
+    defer if (trusted_prefix) |path| allocator.free(path);
     var components = std.fs.path.componentIterator(resolved);
     while (components.next()) |component| {
         // Installation directories and an already-checked imported root do not

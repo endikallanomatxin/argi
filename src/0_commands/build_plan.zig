@@ -669,8 +669,12 @@ test "test modules resolve multiline paths relative to manifest and preserve ord
         \\default = "app"
     );
     try std.testing.expectEqual(@as(usize, 2), manifest.test_modules.?.len);
-    try std.testing.expectEqualStrings("/project/tests/unit", manifest.test_modules.?[0]);
-    try std.testing.expectEqualStrings("/project/tests/hash#name]", manifest.test_modules.?[1]);
+    const expected_unit = try std.fs.path.resolve(std.testing.allocator, &.{"/project/tests/unit"});
+    defer std.testing.allocator.free(expected_unit);
+    const expected_hash = try std.fs.path.resolve(std.testing.allocator, &.{"/project/tests/hash#name]"});
+    defer std.testing.allocator.free(expected_hash);
+    try std.testing.expectEqualStrings(expected_unit, manifest.test_modules.?[0]);
+    try std.testing.expectEqualStrings(expected_hash, manifest.test_modules.?[1]);
     try std.testing.expectEqualStrings("app", manifest.run_default.?);
 }
 
