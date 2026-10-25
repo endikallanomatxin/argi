@@ -862,7 +862,9 @@ test "error inference reuses scratch storage without retaining prior reasons" {
         try graph.functions.append(allocator, .{ .declaration = @enumFromInt(index), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = output, .len = 1 }, .body = @enumFromInt(index), .inferred_error_reasons = reason });
     }
     var failing = std.testing.FailingAllocator.init(allocator, .{});
-    var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    var core: core_mod.Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinit();
+    var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer resolver.deinit();
     var reachable = reachability.FunctionSet.init(allocator);
     defer reachable.deinit();
