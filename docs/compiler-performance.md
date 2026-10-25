@@ -134,6 +134,14 @@ unchanged; every relevant selected node still receives the same checks. No state
 cache, or validation exemption is added. The observations are individual Debug
 runs, not stable throughput guarantees.
 
+The first array-diagnostic filter accidentally omitted standalone typed record
+and array literals. Those node kinds are restored. A direct regression fails with
+the incomplete filter and checks selected literals without declarations or
+assignments, recursive dimensions and corrected valid values. Repeating the
+100-call prelude measurement with that fix gives 536 ms for input diagnostics and
+658 ms for value diagnostics. Earlier prefilter timings are historical observations,
+not evidence that the incomplete filter preserved validation coverage.
+
 Keep the distinction between candidate filtering and validation caching: the
 former removes work that cannot affect a result, while the latter would need
 explicit dependencies and rollback rules.

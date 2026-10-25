@@ -1707,7 +1707,7 @@ fn diagnoseArrayAssignments(
 ) !bool {
     for (graph.nodes.items, 0..) |node, raw| {
         switch (node.content) {
-            .binding_declaration, .assignment, .array_store, .pointer_assignment => {},
+            .binding_declaration, .assignment, .array_store, .pointer_assignment, .struct_value_literal, .array_literal => {},
             else => continue,
         }
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
@@ -4407,4 +4407,42 @@ test "argument diagnostics tolerate absent source metadata" {
     const location = argumentFieldLocation(&graph, &diagnostics, .{ .file_index = 0, .offset = 12 }, "value");
     try std.testing.expectEqual(@import("../../1_base/source_db.zig").FileId.unknown, location.file);
     try std.testing.expectEqual(@as(u32, 12), location.offset);
+}
+
+test "array diagnostics validate selected typed literals without assignments" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "values");
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 2 } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(1), .source = source });
+    try graph.node_refs.appendSlice(a, &.{ @enumFromInt(0), @enumFromInt(0) });
+    try graph.value_fields.append(a, .{ .name = name, .value = @enumFromInt(1) });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .list_literal = .{ .elements = .{ .start = 0, .len = 1 } } } },
+        .{ .source = source, .ty = @enumFromInt(2), .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .array_literal = .{ .elements = .{ .start = 0, .len = 1 }, .element_type = @enumFromInt(0), .length = 2 } } },
+    });
+    var unit = reachability_mod.FunctionSet.init(a);
+    defer unit.deinit();
+    try std.testing.expect(!try diagnoseArrayAssignments(a, &graph, &unit, null));
+    // Neither literal is attached to a binding or assignment. Selecting only
+    // the record must still check its contextually typed list recursively.
+    try unit.nodes.put(@enumFromInt(2), {});
+    try std.testing.expect(try diagnoseArrayAssignments(a, &graph, &unit, null));
+    unit.nodes.clearRetainingCapacity();
+    try unit.nodes.put(@enumFromInt(3), {});
+    try std.testing.expect(try diagnoseArrayAssignments(a, &graph, &unit, null));
+    // The same selected literals are accepted once their dimensions agree.
+    graph.nodes.items[1].content.list_literal.elements.len = 2;
+    graph.nodes.items[3].content.array_literal.elements.len = 2;
+    try unit.nodes.put(@enumFromInt(2), {});
+    try std.testing.expect(!try diagnoseArrayAssignments(a, &graph, &unit, null));
+    try std.testing.expect(!try diagnoseArrayAssignments(a, &graph, null, null));
 }
