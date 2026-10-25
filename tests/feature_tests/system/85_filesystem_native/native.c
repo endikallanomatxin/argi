@@ -1,6 +1,9 @@
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
 #include <unistd.h>
+#else
+#include <io.h>
+#include <fcntl.h>
 #endif
 #include "../../../../core/platforms/shared/filesystem.h"
 #include <stdio.h>
@@ -12,6 +15,16 @@ int32_t argi_filesystem_probe(void) {
     FILE *file = NULL;
     char *path = NULL, *child = NULL, *link_path = NULL;
     int result = 0, child_exists = 0, link_exists = 0;
+#ifdef _WIN32
+    // Acquiring any standard endpoint must undo CRT text translation, even
+    // when the endpoint was already opened or redirected by the parent.
+    FILE *streams[3] = {stdin, stdout, stderr};
+    for (int32_t descriptor = 0; descriptor < 3; ++descriptor) {
+        if (_setmode(_fileno(streams[descriptor]), _O_TEXT) == -1) return 25;
+        if (_argi_standard_stream(descriptor) != (uintptr_t)streams[descriptor]) return 26;
+        if (_setmode(_fileno(streams[descriptor]), _O_BINARY) != _O_BINARY) return 27;
+    }
+#endif
     const uint8_t invalid[3] = {'a', 0, 'b'};
     if (_argi_fs_mkdir(invalid, 3) != -2 || _argi_fs_mkdir(invalid, 0) != -2) return 1;
     if (_argi_fs_temp_create((const uint8_t *)".", 1, (const uint8_t *)"argi-native-", 12, &temporary)) return 2;

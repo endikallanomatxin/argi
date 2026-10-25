@@ -321,6 +321,7 @@ void _argi_fs_temp_cleanup(uintptr_t handle) {
     free(path);
 }
 
+#ifndef _WIN32
 /* Borrow the process endpoints; callers must never close these handles. */
 uintptr_t _argi_standard_stream(int32_t descriptor) {
     switch (descriptor) {
@@ -330,6 +331,7 @@ uintptr_t _argi_standard_stream(int32_t descriptor) {
         default: return 0;
     }
 }
+#endif
 int32_t _argi_file_write_byte(uintptr_t stream, uint8_t byte) {
     if (!stream) return -1;
     return fputc(byte, (FILE *)stream) == EOF ? -1 : 0;
