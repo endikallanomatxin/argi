@@ -279,6 +279,10 @@ fn appendGenericArguments(allocator: std.mem.Allocator, result: *global_sg.Globa
         try result.generic_arguments.append(allocator, .{
             .name = try relocateString(module, value.name, o.string_base),
             .value = switch (value.value) {
+                .definition => |definition| .{ .definition = .{
+                    .origin = globalFamilyDefinition(o, definition.origin),
+                    .captures = relocateEntityRange(global_sg.GlobalGenericArgId, o.generic_argument_base, definition.captures),
+                } },
                 .type => |id| .{ .type = globalType(o, id) },
                 .comptime_int => |number| .{ .comptime_int = number },
             },

@@ -103,6 +103,10 @@ pub const Resolver = struct {
             if (supplied.types[raw]) |ty| {
                 if (actual.value != .type or !types.equal(self.graph, ty, actual.value.type)) return false;
             }
+            if (supplied.definitions[raw]) |definition| {
+                if (actual.value != .definition or definition.origin != actual.value.definition.origin or
+                    !types.genericArgumentsEqual(self.graph, definition.captures, actual.value.definition.captures)) return false;
+            }
             if (supplied.ints[raw]) |integer| {
                 if (actual.value != .comptime_int or integer != actual.value.comptime_int) return false;
             }
@@ -130,6 +134,10 @@ pub const Resolver = struct {
                     error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
                     else => return err,
                 },
+                .definition => |definition| inferred.definitions[raw] = self.generics.instantiateDefinitionValue(module_index, definition, bindings) catch |err| switch (err) {
+                    error.UnboundDefinitionParameter => null,
+                    else => return err,
+                },
                 .comptime_int => |expression| inferred.ints[raw] = self.generics.evalInt(module_index, expression, bindings) catch |err| switch (err) {
                     error.UnboundComptimeParameter => null,
                     else => return err,
@@ -153,6 +161,9 @@ pub const Resolver = struct {
             switch (argument.value) {
                 .type => |ty| if (actual.types[raw]) |value| {
                     if (!try self.contracts.inferConstraintTypePattern(module_index, ty, value, bindings)) return false;
+                },
+                .definition => |definition| if (actual.definitions[raw]) |value| {
+                    if (!try self.generics.inferDefinitionValue(module_index, definition, value, bindings)) return false;
                 },
                 .comptime_int => |expression| if (actual.ints[raw]) |value| {
                     if (!try self.contracts.inferConstraintIntPattern(module_index, expression, value, bindings)) return false;

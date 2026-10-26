@@ -12,7 +12,7 @@ pub const ContractDefinitionId = enum(u32) { _ };
 
 pub const DeclarationRef = ir.DeclarationRef;
 
-pub const ComptimeParameterKind = enum(u8) { type, comptime_int };
+pub const ComptimeParameterKind = enum(u8) { type, comptime_int, definition };
 
 pub const ComptimeParameter = struct {
     name: primitives.StringRange,
@@ -21,6 +21,7 @@ pub const ComptimeParameter = struct {
     default_type: ?ir.ParameterizedTypeId = null,
     default_integer: ?ir.ParameterizedIntExprId = null,
     constraint: ?ContractConstraintId = null,
+    family_parameters: ?primitives.Range(ComptimeParameterId) = null,
 };
 
 pub const ContractConstraint = struct {

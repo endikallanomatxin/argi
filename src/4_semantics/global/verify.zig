@@ -324,6 +324,10 @@ fn genericArgumentRangesEqual(
         const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(offset))];
         if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
         switch (left.value) {
+            .definition => |left_definition| {
+                if (right.value != .definition or left_definition.origin != right.value.definition.origin or
+                    !genericArgumentRangesEqual(graph, left_definition.captures, right.value.definition.captures)) return false;
+            },
             .type => |left_ty| switch (right.value) {
                 .type => |right_ty| if (left_ty != right_ty) return false,
                 else => return false,

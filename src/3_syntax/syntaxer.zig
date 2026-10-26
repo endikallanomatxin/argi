@@ -412,6 +412,12 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
+        if (self.angleOpen()) {
+            const parameters = try self.parseGenericParamsStruct();
+            const result = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+            return try self.parameterizedDefinition(self.file.data(parameters).extra_range, parameters, result);
+        }
+
         if (self.tokenIs(.question_mark)) {
             const question_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const question_loc = self.tokenLocation();
@@ -606,7 +612,7 @@ pub const Syntaxer = struct {
                 self.advanceOne();
                 const parameters = if (self.angleOpen()) try self.parseGenericParamsStruct() else null;
                 var member_type = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
-                if (self.tokenIs(.arrow) or parameters != null) {
+                if (self.tokenIs(.arrow)) {
                     try self.scratch.append(self.allocator, try self.parseContractRequirement(member, member_type, parameters));
                     self.skipNewLinesAndComments();
                     if (self.tokenIs(.comma)) {
@@ -614,6 +620,9 @@ pub const Syntaxer = struct {
                         self.skipNewLinesAndComments();
                     }
                     continue;
+                }
+                if (parameters) |signature_parameters| {
+                    member_type = try self.parameterizedDefinition(self.file.data(signature_parameters).extra_range, signature_parameters, member_type);
                 }
                 if (self.tokenIs(.colon)) {
                     if (self.file.tag(member_type) != .type_name or !std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(member_type))).identifier), "Type")) {

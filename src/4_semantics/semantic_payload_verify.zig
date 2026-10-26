@@ -111,6 +111,10 @@ pub fn variant(comptime Ids: type, value: primitives.ChoiceVariant(Ids), bounds:
 pub fn genericArgument(comptime Ids: type, value: primitives.GenericArgument(Ids), bounds: Bounds) !void {
     try require(verify.stringFits(value.name, bounds.strings));
     switch (value.value) {
+        .definition => |definition| {
+            try require(verify.idFits(definition.origin, bounds.family_definitions));
+            try require(verify.rangeFits(definition.captures, bounds.generic_arguments));
+        },
         .type => |id| try require(verify.idFits(id, bounds.types)),
         .comptime_int => {},
     }

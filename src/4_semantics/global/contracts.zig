@@ -488,6 +488,11 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (located.definition.parameters.start..located.definition.parameters.start + located.definition.parameters.len) |raw| {
             switch (storage.comptime_parameters.items[raw].kind) {
+                .definition => {
+                    const actual = bindings.definitions[raw] orelse return false;
+                    const expected_value = wanted.definitions[raw] orelse return false;
+                    if (actual.origin != expected_value.origin or !global_types.genericArgumentsEqual(self.graph, actual.captures, expected_value.captures)) return false;
+                },
                 .type => {
                     const actual = bindings.types[raw] orelse return false;
                     if (!global_types.equal(self.graph, actual, wanted.types[raw].?)) return false;
@@ -1178,6 +1183,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, self.modules[module_index].text(parameter.name)), .value = switch (parameter.kind) {
                 .type => .{ .type = bindings.types[raw].? },
                 .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                .definition => .{ .definition = bindings.definitions[raw].? },
             } });
         }
         return .{ .start = start, .len = parameters.len };
@@ -1275,6 +1281,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{
                 .name = name,
                 .value = switch (parameter.kind) {
+                    .definition => .{ .definition = bindings.definitions[raw] orelse return error.UnboundDefinitionParameter },
                     .type => .{ .type = bindings.types[raw].? },
                     .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
                 },
@@ -2374,6 +2381,7 @@ pub const Resolver = struct {
                 const raw = located.definition.parameters.start + @as(u32, @intCast(index));
                 if (name.len == 0 or !std.mem.eql(u8, name, target_module.text(parameters[raw].name))) continue;
                 switch (argument.value) {
+                    .definition => |pattern| if (!try self.generics.inferDefinitionValue(module_index, pattern, selected.definitions[raw] orelse return false, bindings)) return false,
                     .type => |pattern| if (!try self.inferConstraintTypePattern(module_index, pattern, selected.types[raw] orelse return false, bindings)) return false,
                     .comptime_int => |pattern| if (!try self.inferConstraintIntPattern(module_index, pattern, selected.ints[raw] orelse return false, bindings)) return false,
                 }
@@ -2420,6 +2428,9 @@ pub const Resolver = struct {
                     const wanted = ir_storage.generic_arguments.items[arguments.pattern.start + position];
                     const given = self.graph.generic_arguments.items[arguments.actual.start + position];
                     switch (wanted.value) {
+                        .definition => |definition_value| {
+                            if (given.value != .definition or !try self.generics.inferDefinitionValue(module_index, definition_value, given.value.definition, bindings)) return false;
+                        },
                         .type => |ty| {
                             if (given.value != .type or !try self.inferConstraintTypePattern(module_index, ty, given.value.type, bindings)) return false;
                         },
@@ -2749,6 +2760,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{
                 .name = name,
                 .value = switch (parameter.kind) {
+                    .definition => .{ .definition = bindings.definitions[raw] orelse return error.UnboundDefinitionParameter },
                     .type => .{ .type = bindings.types[raw] orelse return error.UnboundGenericTypeParameter },
                     .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse return error.UnboundComptimeParameter },
                 },
@@ -2796,6 +2808,7 @@ pub const Resolver = struct {
                 before += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
 
@@ -2813,6 +2826,7 @@ pub const Resolver = struct {
                 after += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
             made_progress = after > before;

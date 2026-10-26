@@ -68,6 +68,13 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (storage.generic_arguments.items) |value| {
         try require(verify.stringFits(value.name, graph.strings.items));
         switch (value.value) {
+            .definition => |definition| switch (definition) {
+                .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
+                .literal => |literal| {
+                    try require(verify.idFits(literal.origin, storage.declarations.items.len));
+                    try require(verify.rangeFits(literal.captures, storage.generic_arguments.items.len));
+                },
+            },
             .type => |id| try require(verify.idFits(id, storage.types.items.len)),
             .comptime_int => |id| try require(verify.idFits(id, storage.int_expressions.items.len)),
         }

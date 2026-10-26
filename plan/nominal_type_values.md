@@ -352,6 +352,16 @@ before adding implementation exceptions.
   idempotence checks remain active. Combined `>=` closers keep their original
   layout until their assignment token can be represented independently.
 
+- Compile-time argument pools now distinguish definition values from concrete
+  types and integers. Inference, relocation, equality and argument publication
+  preserve their origins and captures. Deferred defaults and speculative type
+  recipes retain the same environment through rollback; allocation-failure tests
+  cover reconstruction. Type-family parameter signatures use `<.Item: Type> Type`
+  in annotations and associated declarations. Their nested binders have separate
+  scopes and do not add arguments to the enclosing definition. Module verification
+  checks their ranges and parameter kinds. Associated family construction,
+  application and implementation-signature compatibility remain open.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, explicit unqualified operation specialization, remaining generic-call inference parity,

@@ -538,6 +538,10 @@ pub fn genericArgumentsEqual(graph: *const graph_mod.GlobalSemanticGraph, a: any
         // specialization when their declaration-order values agree.
         if (left.name.len != 0 and right.name.len != 0 and !std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
         switch (left.value) {
+            .definition => |left_definition| {
+                if (right.value != .definition or left_definition.origin != right.value.definition.origin or
+                    !genericArgumentsEqual(graph, left_definition.captures, right.value.definition.captures)) return false;
+            },
             .type => |left_ty| switch (right.value) {
                 .type => |right_ty| if (!identityEqual(graph, left_ty, right_ty)) return false,
                 else => return false,

@@ -742,6 +742,10 @@ pub const Resolver = struct {
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
             const argument = self.generics.findPatternArgument(module_index, application.arguments, offset, module.text(parameter.name)) orelse continue;
             switch (argument.value) {
+                .definition => |definition_value| local.definitions[raw] = self.generics.instantiateDefinitionValue(module_index, definition_value, bindings) catch |err| switch (err) {
+                    error.UnboundDefinitionParameter => null,
+                    else => return err,
+                },
                 .type => |ty| local.types[raw] = self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
                     error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
                     else => return err,
@@ -768,6 +772,10 @@ pub const Resolver = struct {
             const raw = located.parameterized.parameters.start + offset;
             const captured = self.graph.generic_arguments.items[definition.captures.start + offset].value;
             switch (captured) {
+                .definition => |value| {
+                    const actual = local.definitions[raw] orelse return false;
+                    if (value.origin != actual.origin or !global_types.genericArgumentsEqual(self.graph, value.captures, actual.captures)) return false;
+                },
                 .type => |ty| if (local.types[raw] == null or !global_types.equal(self.graph, local.types[raw].?, ty)) return false,
                 .comptime_int => |integer| if (local.ints[raw] != integer) return false,
             }
@@ -779,6 +787,9 @@ pub const Resolver = struct {
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
             const argument = self.generics.findPatternArgument(module_index, application.arguments, offset, module.text(parameter.name)) orelse continue;
             switch (argument.value) {
+                .definition => |definition_value| if (local.definitions[raw]) |actual| {
+                    if (!try self.generics.inferDefinitionValue(module_index, definition_value, actual, bindings)) return false;
+                },
                 .type => |ty| if (local.types[raw]) |actual| {
                     if (!try self.inferInputType(module_index, ty, actual, bindings)) return false;
                 },
@@ -1028,6 +1039,7 @@ pub const Resolver = struct {
                 before += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
 
@@ -1055,6 +1067,7 @@ pub const Resolver = struct {
                 after += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
             made_progress = after > before;
@@ -1085,6 +1098,7 @@ pub const Resolver = struct {
             if (switch (parameter.kind) {
                 .type => bindings.types[raw] == null,
                 .comptime_int => bindings.ints[raw] == null,
+                .definition => bindings.definitions[raw] == null,
             }) return false;
         }
         return true;
@@ -1259,6 +1273,8 @@ pub const Resolver = struct {
         defer binding_types.deinit(self.allocator);
         var binding_ints: std.ArrayList(?i64) = .empty;
         defer binding_ints.deinit(self.allocator);
+        var binding_definitions: std.ArrayList(?global_sg.DefinitionValue) = .empty;
+        defer binding_definitions.deinit(self.allocator);
         const function_candidates = try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name);
         for (function_candidates) |candidate| {
             if (self.profile_io != null) self.selection_profile.implicit_candidates += 1;
@@ -1281,11 +1297,14 @@ pub const Resolver = struct {
             const parameter_count = candidate_module.semantic.parameterized_storage.comptime_parameters.items.len;
             try binding_types.resize(self.allocator, parameter_count);
             try binding_ints.resize(self.allocator, parameter_count);
+            try binding_definitions.resize(self.allocator, parameter_count);
             @memset(binding_types.items, null);
             @memset(binding_ints.items, null);
+            @memset(binding_definitions.items, null);
             var bindings: generic_mod.Resolver.Bindings = .{
                 .types = binding_types.items,
                 .ints = binding_ints.items,
+                .definitions = binding_definitions.items,
             };
             if (selected_definition) |definition| _ = try self.generics.bindDefinitionCaptures(candidate_index, parameterized.parameters, definition, &bindings);
             var candidate_deferred = false;
@@ -1657,6 +1676,10 @@ pub const Resolver = struct {
                     const wanted = storage.generic_arguments.items[arguments.pattern.start + position];
                     const given = self.graph.generic_arguments.items[arguments.actual.start + position];
                     switch (wanted.value) {
+                        .definition => |definition| {
+                            if (given.value != .definition) return false;
+                            if (!try self.generics.inferDefinitionValue(module_index, definition, given.value.definition, bindings)) return false;
+                        },
                         .type => |ty| {
                             if (given.value != .type or !try self.inferInputType(module_index, ty, given.value.type, bindings)) return false;
                         },
@@ -1759,6 +1782,9 @@ pub const Resolver = struct {
                         const argument = self.generics.findPatternArgument(module_index, generic.arguments, position - definition.captures.len, name) orelse return false;
                         const concrete = self.generics.findGlobalArgument(name, value.arguments, position) orelse return false;
                         switch (argument.value) {
+                            .definition => |definition_value| {
+                                if (concrete.value != .definition or !try self.generics.inferDefinitionValue(module_index, definition_value, concrete.value.definition, bindings)) return false;
+                            },
                             .type => |ty| {
                                 if (concrete.value != .type) return false;
                                 if (!try self.inferInputType(module_index, ty, concrete.value.type, bindings)) return false;
@@ -1822,7 +1848,7 @@ pub const Resolver = struct {
             if (!std.mem.eql(u8, self.graph.text(argument.name), "to")) continue;
             target_type = switch (argument.value) {
                 .type => |ty| ty,
-                .comptime_int => return error.ReferenceTargetMustBeType,
+                .comptime_int, .definition => return error.ReferenceTargetMustBeType,
             };
             break;
         }
@@ -2421,6 +2447,7 @@ pub const Resolver = struct {
         for (self.graph.argument_default_bindings.items[recipe.bindings.start..][0..recipe.bindings.len], 0..) |binding, index| {
             substitutions.types[index] = binding.ty;
             substitutions.ints[index] = binding.integer;
+            substitutions.definitions[index] = binding.definition;
         }
         var instance = InstanceContext.init(self, recipe.module_index, .{
             .declaration = @enumFromInt(0),

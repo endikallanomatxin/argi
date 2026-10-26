@@ -405,6 +405,7 @@ pub fn GenericArgument(comptime Ids: type) type {
         value: Value,
 
         pub const Value = union(enum) {
+            definition: DefinitionValue(Ids),
             type: Ids.TypeId,
             comptime_int: i64,
         };

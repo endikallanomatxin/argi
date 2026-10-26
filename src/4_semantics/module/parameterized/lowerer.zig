@@ -233,9 +233,10 @@ pub const Context = struct {
                     self.parameters.clearRetainingCapacity();
                     self.bindings.clearRetainingCapacity();
                     const explicit = hasGenericParameters(function.generic_params, function.generic_params_struct);
-                    const parameter_start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
+                    var params: primitives.Range(ir.ComptimeParameterId) = .{ .start = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len), .len = 0 };
                     if (explicit) {
                         const registered = try self.registerParameters(function.generic_params, function.generic_params_struct);
+                        params = registered;
                         if (function.contract_member) for (self.parameters.items[function.captured_parameter_count..], function.captured_parameter_count..) |current, position| {
                             for (self.parameters.items[0..position]) |previous|
                                 if (std.mem.eql(u8, previous.name, current.name))
@@ -246,10 +247,6 @@ pub const Context = struct {
                         // constraints and defaults.
                         try self.lowerParameterBoundsAfter(registered, function.generic_params_struct, function.captured_parameter_count);
                     }
-                    const params: primitives.Range(ir.ComptimeParameterId) = .{
-                        .start = parameter_start,
-                        .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - parameter_start),
-                    };
                     const staged_body = if (function.body) |body| self.tree.hasComptimeSelection(body) else false;
                     const deferred_signature = if (declaration.function_id) |id| views.functionSignatureDeferred(self.graph, id) else false;
                     if (params.len == 0 and !function.contract_member and !staged_body and !deferred_signature) continue;
@@ -792,10 +789,16 @@ pub const Context = struct {
         for (literal.fields[captured..], captured..) |field_node, offset| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
             const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
-            const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
-                start + @as(u32, @intCast(offset))
-            ];
+            const parameter_index = start + @as(u32, @intCast(offset));
+            if (self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].kind == .definition) {
+                const signature = try self.lowerDefinitionParameterSignature(value_type_node);
+                self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].family_parameters = signature;
+                if (field.default_value != null) return error.DefinitionParameterDefaultNotLowered;
+                continue;
+            }
+            const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index];
             switch (parameter_record.kind) {
+                .definition => unreachable,
                 .comptime_int => parameter_record.value_type = try self.lowerType(value_type_node, false),
                 .type => {
                     if (!isTypeBuiltin(self.tree, self.source, value_type_node))
@@ -805,6 +808,7 @@ pub const Context = struct {
             // Lower defaults after registering all parameters, keeping their
             // expressions symbolic until explicit/input bindings are known.
             if (field.default_value) |value| switch (parameter_record.kind) {
+                .definition => return error.DefinitionParameterDefaultNotLowered,
                 .type => parameter_record.default_type = switch (try self.lowerGenericValue(value, false)) {
                     .type => |ty| ty,
                     else => return error.InvalidGenericArgumentKind,
@@ -812,6 +816,23 @@ pub const Context = struct {
                 .comptime_int => parameter_record.default_integer = try self.lowerIntExpression(value),
             };
         }
+    }
+
+    pub fn lowerDefinitionParameterSignature(self: *Context, node: syn.NodeIndex) anyerror!primitives.Range(ir.ComptimeParameterId) {
+        const signature = self.tree.parameterizedDefinition(node) orelse return error.InvalidDefinitionParameterSignature;
+        if (!isTypeBuiltin(self.tree, self.source, signature.value)) {
+            try self.contractError(node, "a type-family parameter signature must produce Type");
+            unreachable;
+        }
+        // Nested signature parameters have their own scope. Some callers borrow
+        // the enclosing binding list, so growing it in place would invalidate them.
+        const outer_parameters = self.parameters;
+        self.parameters = try outer_parameters.clone();
+        defer {
+            self.parameters.deinit();
+            self.parameters = outer_parameters;
+        }
+        return self.lowerParameters(signature.parameters, signature.parameters_struct);
     }
 
     fn registerParameters(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
@@ -827,7 +848,7 @@ pub const Context = struct {
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
                 _ = field.type_node orelse return error.InvalidGenericParameter;
                 const kind: parameterized_storage.ComptimeParameterKind =
-                    if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                    if (self.tree.parameterizedDefinition(field.type_node.?) != null) .definition else if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
@@ -1072,6 +1093,7 @@ pub const Context = struct {
         for (captures) |captured| try arguments.append(self.allocator, .{
             .name = try self.writer.addString(captured.name),
             .value = switch (captured.kind) {
+                .definition => .{ .definition = .{ .parameter = captured.id } },
                 .type => .{ .type = try self.addType(.{ .parameter = captured.id }) },
                 .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = captured.id }) },
             },
@@ -1219,6 +1241,7 @@ pub const Context = struct {
             try arguments.append(self.allocator, .{
                 .name = try self.writer.addString(parameter_binding.name),
                 .value = switch (parameter_binding.kind) {
+                    .definition => .{ .definition = .{ .parameter = parameter_binding.id } },
                     .type => .{ .type = try self.addType(.{ .parameter = parameter_binding.id }) },
                     .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = parameter_binding.id }) },
                 },
@@ -1728,6 +1751,7 @@ pub const Context = struct {
             if (try self.captureEntryValue(node, name)) |value| return value;
             if (self.parameter(name)) |parameter_binding| {
                 switch (parameter_binding.kind) {
+                    .definition => return error.DefinitionParameterValueNotLowered,
                     .type => {
                         const value = try self.addType(.{ .parameter = parameter_binding.id });
                         return self.addResolvedNode(node, try self.parameterizedBuiltin(.Type), .{ .type_literal = value });

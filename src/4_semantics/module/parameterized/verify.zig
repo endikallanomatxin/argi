@@ -60,6 +60,9 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.optionalIdFits(parameter.default_integer, storage.ir.int_expressions.items.len));
         try require(parameter.default_type == null or parameter.kind == .type);
         try require(parameter.default_integer == null or parameter.kind == .comptime_int);
+        try require((parameter.family_parameters != null) == (parameter.kind == .definition));
+        if (parameter.family_parameters) |parameters|
+            try require(verify.rangeFits(parameters, storage.comptime_parameters.items.len));
         try require(verify.optionalIdFits(parameter.constraint, storage.contract_constraints.items.len));
     }
 

@@ -291,6 +291,7 @@ pub const Resolver = struct {
                 try arguments.append(self.allocator, .{
                     .name = try self.graph.addString(self.allocator, module.text(parameter.name)),
                     .value = switch (parameter.kind) {
+                        .definition => .{ .definition = bindings.definitions[raw].? },
                         .type => .{ .type = bindings.types[raw].? },
                         .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
                     },
@@ -368,19 +369,24 @@ pub const Resolver = struct {
     pub const Bindings = struct {
         types: []?global_sg.GlobalTypeId,
         ints: []?i64,
+        definitions: []?global_sg.DefinitionValue = &.{},
 
         pub fn init(allocator: std.mem.Allocator, count: usize) !Bindings {
             const types_slice = try allocator.alloc(?global_sg.GlobalTypeId, count);
             errdefer allocator.free(types_slice);
             const ints_slice = try allocator.alloc(?i64, count);
+            errdefer allocator.free(ints_slice);
+            const definitions = try allocator.alloc(?global_sg.DefinitionValue, count);
+            @memset(definitions, null);
             @memset(types_slice, null);
             @memset(ints_slice, null);
-            return .{ .types = types_slice, .ints = ints_slice };
+            return .{ .types = types_slice, .ints = ints_slice, .definitions = definitions };
         }
 
         pub fn deinit(self: *Bindings, allocator: std.mem.Allocator) void {
             allocator.free(self.types);
             allocator.free(self.ints);
+            allocator.free(self.definitions);
             self.* = undefined;
         }
     };
@@ -406,6 +412,7 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage;
         // Missing bindings must not publish a partial argument tail.
         for (parameters.start..parameters.start + parameters.len) |raw| switch (storage.comptime_parameters.items[raw].kind) {
+            .definition => if (bindings.definitions[raw] == null) return error.MissingGenericArgument,
             .type => if (bindings.types[raw] == null) return error.MissingGenericArgument,
             .comptime_int => if (bindings.ints[raw] == null) return error.MissingGenericArgument,
         };
@@ -415,6 +422,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(parameter.name)),
                 .value = switch (parameter.kind) {
+                    .definition => .{ .definition = bindings.definitions[raw].? },
                     .type => .{ .type = bindings.types[raw].? },
                     .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
                 },
@@ -436,6 +444,7 @@ pub const Resolver = struct {
             const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[param_raw];
             if (parameter.kind == .type and bindings.types[param_raw] == null) return error.MissingGenericArgument;
             if (parameter.kind == .comptime_int and bindings.ints[param_raw] == null) return error.MissingGenericArgument;
+            if (parameter.kind == .definition and bindings.definitions[param_raw] == null) return error.MissingGenericArgument;
         }
     }
 
@@ -487,6 +496,10 @@ pub const Resolver = struct {
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[param_raw];
             const argument = self.findGlobalArgument(module.text(parameter.name), arguments, position) orelse continue;
             switch (parameter.kind) {
+                .definition => switch (argument.value) {
+                    .definition => |value| bindings.definitions[param_raw] = value,
+                    else => return error.GenericArgumentKindMismatch,
+                },
                 .type => switch (argument.value) {
                     .type => |value| bindings.types[param_raw] = value,
                     else => return error.GenericArgumentKindMismatch,
@@ -550,6 +563,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(argument.name)),
                 .value = switch (argument.value) {
+                    .definition => |value| .{ .definition = .{ .origin = globalizer.globalFamilyDefinition(self.offsets[module_index], value.origin), .captures = .{ .start = self.offsets[module_index].generic_argument_base + value.captures.start, .len = value.captures.len } } },
                     .type => |value| .{ .type = globalizer.globalType(self.offsets[module_index], value) },
                     .comptime_int => |value| .{ .comptime_int = value },
                 },
@@ -865,6 +879,27 @@ pub const Resolver = struct {
         return null;
     }
 
+    pub fn inferDefinitionValue(self: *Resolver, module_index: usize, pattern: @FieldType(ir.GenericArgument.Value, "definition"), actual: global_sg.DefinitionValue, bindings: *Bindings) !bool {
+        if (pattern == .parameter) {
+            const slot = &bindings.definitions[@intFromEnum(pattern.parameter)];
+            if (slot.*) |previous| return previous.origin == actual.origin and global_types.genericArgumentsEqual(self.graph, previous.captures, actual.captures);
+            slot.* = actual;
+            return true;
+        }
+        const expected = try self.instantiateDefinitionValue(module_index, pattern, bindings);
+        return expected.origin == actual.origin and global_types.genericArgumentsEqual(self.graph, expected.captures, actual.captures);
+    }
+
+    pub fn instantiateDefinitionValue(self: *Resolver, module_index: usize, value: @FieldType(ir.GenericArgument.Value, "definition"), bindings: *Bindings) anyerror!global_sg.DefinitionValue {
+        return switch (value) {
+            .parameter => |id| bindings.definitions[@intFromEnum(id)] orelse error.UnboundDefinitionParameter,
+            .literal => |literal| .{
+                .origin = try self.resolveParameterizedFamily(module_index, literal.origin),
+                .captures = try self.instantiateParameterizedArguments(module_index, literal.captures, bindings),
+            },
+        };
+    }
+
     pub fn instantiateParameterizedArguments(
         self: *Resolver,
         module_index: usize,
@@ -880,6 +915,7 @@ pub const Resolver = struct {
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(argument.name)),
                 .value = switch (argument.value) {
+                    .definition => |value| .{ .definition = try self.instantiateDefinitionValue(module_index, value, bindings) },
                     .type => |value| .{ .type = try self.instantiateParameterizedType(module_index, value, bindings) },
                     .comptime_int => |value| .{ .comptime_int = try self.evalInt(module_index, value, bindings) },
                 },
@@ -962,8 +998,8 @@ pub const Resolver = struct {
 
     fn recordArgumentDefault(self: *Resolver, module_index: usize, expression: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !global_sg.GlobalNodeId {
         const binding_start: u32 = @intCast(self.graph.argument_default_bindings.items.len);
-        for (bindings.types, bindings.ints) |bound_type, integer|
-            try self.graph.argument_default_bindings.append(self.allocator, .{ .ty = bound_type, .integer = integer });
+        for (bindings.types, bindings.ints, 0..) |bound_type, integer, index|
+            try self.graph.argument_default_bindings.append(self.allocator, .{ .ty = bound_type, .integer = integer, .definition = if (index < bindings.definitions.len) bindings.definitions[index] else null });
         const recipe: u32 = @intCast(self.graph.argument_defaults.items.len);
         try self.graph.argument_defaults.append(self.allocator, .{
             .module_index = module_index,
@@ -1162,6 +1198,11 @@ pub const Resolver = struct {
             const kind: u8 = @intFromEnum(std.meta.activeTag(argument.value));
             hash.update(std.mem.asBytes(&kind));
             switch (argument.value) {
+                .definition => |value| {
+                    hash.update(std.mem.asBytes(&value.origin));
+                    hash.update(std.mem.asBytes(&value.captures.start));
+                    hash.update(std.mem.asBytes(&value.captures.len));
+                },
                 .type => |value| hash.update(std.mem.asBytes(&value)),
                 .comptime_int => |value| hash.update(std.mem.asBytes(&value)),
             }
@@ -1524,4 +1565,29 @@ test "nominal specializations share the generic identity index and survive specu
     // A wrong/colliding cache entry cannot become semantic evidence.
     try resolver.generic_types.put(a, resolver.applicationKey(.{ .nominal = @enumFromInt(0) }, arguments), @enumFromInt(0));
     try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), arguments)).?);
+}
+
+test "definition arguments infer captures without conflating concrete types or integers" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .builtin = .Int32 } });
+    for (0..2) |index| try graph.generic_arguments.append(a, .{
+        .name = .{ .start = 0, .len = 0 },
+        .value = .{ .type = @enumFromInt(index) },
+    });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    var bindings = try Resolver.Bindings.init(a, 1);
+    defer bindings.deinit(a);
+    const first: global_sg.DefinitionValue = .{ .origin = @enumFromInt(0), .captures = .{ .start = 0, .len = 1 } };
+    const second: global_sg.DefinitionValue = .{ .origin = @enumFromInt(0), .captures = .{ .start = 1, .len = 1 } };
+    const pattern: @FieldType(ir.GenericArgument.Value, "definition") = .{ .parameter = @enumFromInt(0) };
+    try std.testing.expectError(error.UnboundDefinitionParameter, resolver.instantiateDefinitionValue(0, pattern, &bindings));
+    try std.testing.expect(try resolver.inferDefinitionValue(0, pattern, first, &bindings));
+    try std.testing.expect(try resolver.inferDefinitionValue(0, pattern, first, &bindings));
+    try std.testing.expect(!try resolver.inferDefinitionValue(0, pattern, second, &bindings));
+    try std.testing.expectEqualDeep(first, try resolver.instantiateDefinitionValue(0, pattern, &bindings));
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, null), bindings.types[0]);
+    try std.testing.expectEqual(@as(?i64, null), bindings.ints[0]);
 }

@@ -3980,6 +3980,10 @@ pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_
                         if (name.len != 0) try buffer.appendSlice(": ");
                         try appendTypeName(buffer, graph, value);
                     },
+                    .definition => |value| {
+                        if (name.len != 0) try buffer.appendSlice(": ");
+                        try buffer.appendSlice(graph.familyDefinitionName(value.origin));
+                    },
                     .comptime_int => |value| {
                         if (name.len != 0) try buffer.appendSlice(" = ");
                         var storage: [32]u8 = undefined;

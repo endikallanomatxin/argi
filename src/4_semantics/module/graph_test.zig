@@ -1559,3 +1559,39 @@ test "contract safety selectors traverse a named signature family without instan
         try std.testing.expectEqual(null, definition.specialization);
     try @import("verify.zig").verifyModule(&graph);
 }
+
+test "type-family parameter signatures keep nested binders outside definition arguments" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Factory#(.Owner: Type): Contract = (
+        \\    .Args: <.Provider: Type> Type
+        \\    .Result: Type
+        \\)
+        \\identity := <.Family: <.Item: Type> Type> (.value: Bool) -> (.result: Bool) {
+        \\    result = value
+        \\}
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "families/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "families", &inputs);
+    defer graph.deinit(allocator);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const storage = &graph.semantic.parameterized_storage;
+    const contract = storage.contract_definitions.items[0];
+    try std.testing.expectEqual(@as(u32, 2), contract.parameters.len);
+    try std.testing.expectEqual(@as(u32, 1), contract.participants.len);
+    const args = storage.comptime_parameters.items[contract.parameters.start];
+    try std.testing.expectEqual(.definition, args.kind);
+    const provider = args.family_parameters.?;
+    try std.testing.expectEqual(@as(u32, 1), provider.len);
+    try std.testing.expectEqualStrings("Provider", graph.text(storage.comptime_parameters.items[provider.start].name));
+    try std.testing.expect(provider.start >= contract.participants.start + contract.participants.len);
+    const function = storage.parameterized_functions.items[0];
+    try std.testing.expectEqual(@as(u32, 1), function.parameters.len);
+    const family = storage.comptime_parameters.items[function.parameters.start];
+    try std.testing.expectEqual(.definition, family.kind);
+    try std.testing.expectEqual(@as(u32, 1), family.family_parameters.?.len);
+    try std.testing.expect(family.family_parameters.?.start >= function.parameters.start + function.parameters.len);
+    try @import("verify.zig").verifyModule(&graph);
+}

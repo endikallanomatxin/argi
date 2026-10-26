@@ -224,7 +224,7 @@ const Context = struct {
         const value = try lowerer.lowerGenericValue(node, false);
         return switch (value) {
             .comptime_int => |integer| integer,
-            .type => error.InvalidContractArgument,
+            .type, .definition => error.InvalidContractArgument,
         };
     }
 
@@ -282,7 +282,7 @@ const Context = struct {
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
                 _ = field.type_node orelse return error.InvalidGenericParameter;
                 const kind: parameterized_storage.ComptimeParameterKind =
-                    if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                    if (self.tree.parameterizedDefinition(field.type_node.?) != null) .definition else if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
@@ -300,6 +300,10 @@ const Context = struct {
                 var lowerer = self.parameterizedContext();
                 defer lowerer.bindings.deinit();
                 switch (parameter_record.kind) {
+                    .definition => {
+                        const signature = try lowerer.lowerDefinitionParameterSignature(value_type_node);
+                        self.graph.semantic.parameterized_storage.comptime_parameters.items[start + @as(u32, @intCast(offset))].family_parameters = signature;
+                    },
                     .comptime_int => parameter_record.value_type = try lowerer.lowerType(value_type_node, false),
                     .type => {
                         if (!isTypeName(self.tree, self.source, value_type_node, "Type"))
@@ -318,7 +322,7 @@ const Context = struct {
                 try self.params.append(.{ .name = name_text, .id = id, .kind = .type });
             }
         }
-        return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
+        return .{ .start = start, .len = @intCast(if (params_struct) |node| self.tree.parameterList(node).?.fields.len else params.len) };
     }
 
     fn lowerParameterizedType(self: *Context, node: syn.NodeIndex) !ir.ParameterizedTypeId {

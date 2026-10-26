@@ -122,6 +122,10 @@ pub const GenericArgument = struct {
     value: Value,
 
     pub const Value = union(enum) {
+        definition: union(enum) {
+            literal: primitives.DefinitionValue(Ids),
+            parameter: ComptimeParameterId,
+        },
         type: ParameterizedTypeId,
         comptime_int: ParameterizedIntExprId,
     };

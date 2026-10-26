@@ -935,6 +935,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
                 switch (argument.value) {
                     .type => |value| try writeType(writer, graph, value),
                     .comptime_int => |value| try writer.print("{d}", .{value}),
+                    .definition => |value| try writer.writeAll(graph.familyDefinitionName(value.origin)),
                 }
             }
             try writer.writeAll(")");
