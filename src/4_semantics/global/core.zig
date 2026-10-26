@@ -799,6 +799,7 @@ pub const Resolver = struct {
 
     pub fn functionOutputType(self: *Resolver, id: global_sg.GlobalFunctionId) !global_sg.GlobalTypeId {
         const function = self.graph.functions.items[@intFromEnum(id)];
+        if (function.output.len > 1) if (function.output_type) |ty| return ty;
         return self.outputTypeForFields(function.output);
     }
 

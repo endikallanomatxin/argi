@@ -41,7 +41,8 @@ read_provider := <.P: Type> ReachedArgs<P> -> Result {
 }
 
 computed ::= #run () -> (.result: Bool) {
-    result = forward_identity(.value = identity(.value = read().result).result).result
+    outputs: MultipleResults = multiple()
+    result = forward_identity(.value = identity(.value = read().result).result).result and outputs.first
 }
 
 computed_provider ::= #run () -> (.result: Bool) {
@@ -61,6 +62,11 @@ main() -> () := {
     if reference& {} else { abort }
     if pair[0] {} else { abort }
     if pair[1] { abort }
+    multiple_values: MultipleResults = multiple()
+    if multiple_values.first {} else { abort }
+    if multiple_values.second { abort }
+    generic_values: MultipleResults = generic_multiple(.value = true)
+    if generic_values.first {} else { abort }
     if restored.value {} else { abort }
     if read_forwarded(.input = &original).result {} else { abort }
     if read_identity(.input = true).result {} else { abort }
@@ -72,4 +78,15 @@ main() -> () := {
     if identity<Bool>(.value = true).result {} else { abort }
     if identity(.value = true).result {} else { abort }
     if forward_identity(.value = true).result {} else { abort }
+}
+
+MultipleResults := (.first: Bool, .second: Bool)
+multiple := () -> MultipleResults {
+    first = true
+    second = false
+}
+
+generic_multiple := <.T: Type> (.value: T) -> MultipleResults {
+    first = true
+    second = false
 }

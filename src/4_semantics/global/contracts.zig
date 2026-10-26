@@ -655,7 +655,7 @@ pub const Resolver = struct {
                 });
                 return .{
                     .source = source,
-                    .ty = try self.core.outputTypeForFields(output_fields),
+                    .ty = if (output_fields.len > 1) instance.output else try self.core.outputTypeForFields(output_fields),
                     .content = .{ .virtual_call = call_id },
                 };
             }

@@ -310,6 +310,12 @@ before adding implementation exceptions.
   path. Parser and native/VM/`#run` tests cover both argument groups and reject
   unknown/excess operation parameters with semantic diagnostics.
 
+- Multiple-output calls retain the signature's nominal output type rather than
+  reconstructing a structural record from its field range. Static and virtual
+  result typing share that rule; named-output assignments are covered in concrete
+  and generic functions across native, VM and `#run`. Single-output unpacking
+  remains an explicit outstanding part of the result-model consolidation.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, explicit unqualified operation specialization, remaining generic-call inference parity,
