@@ -8,7 +8,6 @@ const parameterized_lowerer = @import("parameterized/lowerer.zig");
 const function_identity_lowerer = @import("function_identity_lowerer.zig");
 const contract_relation_lowerer = @import("contract_relation_lowerer.zig");
 const generic_call_args_lowerer = @import("generic_call_args_lowerer.zig");
-const canonicalize_storage = @import("canonicalize_storage.zig");
 const complete_verify = @import("complete_verify.zig");
 const diagnostic = @import("../../1_base/diagnostic.zig");
 const source_files = @import("../../1_base/source_files.zig");
@@ -57,15 +56,12 @@ pub fn finish(
 ) !BuildStats {
     if (graph.semantic.local_semantics_complete) return error.ModuleSemanticGraphAlreadyComplete;
 
-    // Declaration discovery can leave interfaces whose imported/generic types
-    // and default values still need source syntax. Finish that construction
-    // work first; everything after canonicalization consumes one Module* ID
-    // space and must not depend on the discovery-time construction prefixes.
+    // Discovery publishes names and forward type identities. Construct every
+    // interface and body in the same canonical semantic pools.
     try function_identity_lowerer.validateOrdinaryIdentities(graph, files, diagnostics);
     const module_aliases = try module_alias_lowerer.lower(allocator, graph, files);
     const initializers = try initializer_lowerer.lower(allocator, graph, files, diagnostics);
     try lowerNominalLayouts(allocator, graph, files);
-    try canonicalize_storage.run(allocator, graph);
 
     const global_roots = try global_roots_lowerer.lower(allocator, graph);
 

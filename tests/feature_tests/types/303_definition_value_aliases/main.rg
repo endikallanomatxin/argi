@@ -24,4 +24,5 @@ main := () -> (.status_code: Int32 = 0) {
         result = copied_identity<Int32>(.value = box.value).result
     }
     if evaluated != constructed.value { abort }
+    if source.measure<Int32>(.value = evaluated).result != size_of(.type = Int32) { abort }
 }

@@ -3,15 +3,15 @@ const graph_mod = @import("graph.zig");
 const entities = @import("entities.zig");
 
 pub fn typeCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
-    return graph.types.items.len + graph.semantic.types.items.len;
+    return graph.semantic.types.items.len;
 }
 
 pub fn fieldCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
-    return graph.fields.items.len + graph.structural_fields.items.len + graph.semantic.fields.items.len;
+    return graph.semantic.fields.items.len;
 }
 
 pub fn variantCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
-    return graph.choice_variant_entries.items.len + graph.structural_choice_variants.items.len + graph.semantic.variants.items.len;
+    return graph.semantic.variants.items.len;
 }
 
 pub fn genericArgumentCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
@@ -53,94 +53,21 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
 }
 
 pub fn typeView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleTypeId) !entities.ModuleType {
-    var raw: usize = @intFromEnum(id);
-
-    if (raw < graph.types.items.len) {
-        const resolved: entities.ResolvedType = switch (graph.types.items[raw]) {
-            .builtin => |value| .{ .builtin = value },
-            .declared => |value| .{ .declared = value },
-            .pointer => |value| .{ .pointer = .{ .child = value.child, .mutability = value.mutability } },
-            .array => |value| .{ .array = .{ .length = value.length, .element = value.element } },
-            .nullable => |value| .{ .nullable = value },
-            .inferred_errable => |value| .{ .inferred_errable = value },
-            .structural => |range| .{ .structural = .{
-                .fields = .{ .start = @as(u32, @intCast(graph.fields.items.len)) + range.start, .len = range.len },
-                .layout = .regular,
-            } },
-            .structural_choice => |range| .{ .structural_choice = .{
-                .variants = .{ .start = @as(u32, @intCast(graph.choice_variant_entries.items.len)) + range.start, .len = range.len },
-                .layout = .regular,
-            } },
-            .generic => |value| .{ .generic = .{
-                .base = value.base,
-                .arguments = .{ .start = value.arguments.start, .len = value.arguments.len },
-            } },
-        };
-        return .{ .resolved = resolved };
-    }
-    raw -= graph.types.items.len;
-
-    if (raw < graph.semantic.types.items.len)
-        return graph.semantic.types.items[raw];
-    return error.InvalidModuleTypeId;
+    const raw: usize = @intFromEnum(id);
+    if (raw >= graph.semantic.types.items.len) return error.InvalidModuleTypeId;
+    return graph.semantic.types.items[raw];
 }
 
 pub fn fieldView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId) !entities.Field {
-    var raw: usize = @intFromEnum(id);
-    if (raw < graph.fields.items.len) return constructionField(graph, id, graph.fields.items[raw]);
-    raw -= graph.fields.items.len;
-
-    if (raw < graph.structural_fields.items.len) {
-        const logical: entities.ModuleFieldId = @enumFromInt(@as(u32, @intCast(graph.fields.items.len + raw)));
-        return constructionField(graph, logical, graph.structural_fields.items[raw]);
-    }
-    raw -= graph.structural_fields.items.len;
-
-    if (raw < graph.semantic.fields.items.len) return graph.semantic.fields.items[raw];
-    return error.InvalidModuleFieldId;
-}
-
-fn constructionField(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId, field: graph_mod.Field) !entities.Field {
-    if (field.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
-    const semantic = findFieldSemantic(graph, id);
-    if (field.has_default and (semantic == null or (semantic.?.default_value == null and !semantic.?.default_at_entry)))
-        return error.ModuleFieldDefaultNotLowered;
-    return .{
-        .name = field.name,
-        .ty = field.ty,
-
-        .source = .{ .file_index = field.module_file_index, .offset = field.source_offset },
-        .default_value = if (semantic) |value| value.default_value else null,
-    };
+    const raw: usize = @intFromEnum(id);
+    if (raw >= graph.semantic.fields.items.len) return error.InvalidModuleFieldId;
+    return graph.semantic.fields.items[raw];
 }
 
 pub fn variantView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleVariantId) !entities.ChoiceVariant {
-    var raw: usize = @intFromEnum(id);
-    if (raw < graph.choice_variant_entries.items.len)
-        return constructionVariant(graph, id, graph.choice_variant_entries.items[raw]);
-    raw -= graph.choice_variant_entries.items.len;
-
-    if (raw < graph.structural_choice_variants.items.len) {
-        const logical: entities.ModuleVariantId = @enumFromInt(@as(u32, @intCast(graph.choice_variant_entries.items.len + raw)));
-        return constructionVariant(graph, logical, graph.structural_choice_variants.items[raw]);
-    }
-    raw -= graph.structural_choice_variants.items.len;
-
-    if (raw < graph.semantic.variants.items.len) return graph.semantic.variants.items[raw];
-    return error.InvalidModuleVariantId;
-}
-
-fn constructionVariant(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleVariantId, variant: graph_mod.ChoiceVariant) !entities.ChoiceVariant {
-    if (variant.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
-    const semantic = findVariantSemantic(graph, id);
-    return .{
-        .name = variant.name,
-        .qualifier = variant.qualifier,
-        .payload_type = variant.payload_type,
-        .option_decl = if (semantic) |value| value.option_decl else null,
-        .source = .{ .file_index = variant.module_file_index, .offset = variant.source_offset },
-        .value = variant.value orelse if (semantic) |value| value.value else @intCast(@intFromEnum(id)),
-    };
+    const raw: usize = @intFromEnum(id);
+    if (raw >= graph.semantic.variants.items.len) return error.InvalidModuleVariantId;
+    return graph.semantic.variants.items[raw];
 }
 
 pub fn genericArgumentView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleGenericArgId) !entities.GenericArgument {
@@ -176,21 +103,12 @@ fn findFunctionSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entitie
     for (graph.semantic.function_semantics.items) |value| if (value.function == id) return value;
     return null;
 }
-fn findFieldSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId) ?entities.FieldSemantic {
-    for (graph.semantic.field_semantics.items) |value| if (value.field == id) return value;
-    return null;
-}
-fn findVariantSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleVariantId) ?entities.VariantSemantic {
-    for (graph.semantic.variant_semantics.items) |value| if (value.variant == id) return value;
-    return null;
-}
-
-test "module views expose construction types followed by one canonical type tail" {
+test "module views expose one canonical type pool" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
 
-    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.semantic.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
     try graph.semantic.external_refs.append(allocator, .{
         .kind = .type,
         .module_path = null,

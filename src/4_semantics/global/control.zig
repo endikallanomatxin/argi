@@ -168,8 +168,7 @@ pub const Resolver = struct {
     fn errorTracerType(self: *Resolver) !global_sg.GlobalTypeId {
         for (self.graph.declarations.items, 0..) |declaration, index| {
             if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTracer")) continue;
-            const contract: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
-            try self.graph.types.append(self.allocator, .{ .declared = @enumFromInt(@as(u32, @intCast(index))) });
+            const contract = try types.definitionClass(self.allocator, self.graph, @enumFromInt(@as(u32, @intCast(index))));
             const handle: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
             try self.graph.types.append(self.allocator, .{ .virtual = contract });
             const reference: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));

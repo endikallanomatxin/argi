@@ -1,54 +1,27 @@
 const std = @import("std");
 const graph_mod = @import("graph.zig");
 const entities = @import("entities.zig");
-const storage = @import("storage.zig");
 const strings = @import("../primitives/strings.zig");
 const primitives = @import("../primitives/schema.zig");
 
-/// Canonical mutation API for ModuleSema. New semantic lowering should use this
-/// instead of appending to discovery-time construction tables directly.
+/// Canonical append API for module-owned semantic identities.
 pub const Writer = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
-    construction_bases: storage.ConstructionBases,
     pending_owner_function: ?entities.ModuleFunctionId = null,
 
     pub fn init(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) Writer {
-        const bases = graph.semantic.construction_bases orelse blk: {
-            const value = storage.ConstructionBases{
-                .types = @intCast(graph.types.items.len),
-                .fields = @intCast(graph.fields.items.len + graph.structural_fields.items.len),
-                .variants = @intCast(graph.choice_variant_entries.items.len + graph.structural_choice_variants.items.len),
-            };
-            graph.semantic.construction_bases = value;
-            break :blk value;
-        };
-        return .{ .allocator = allocator, .graph = graph, .construction_bases = bases };
+        return .{ .allocator = allocator, .graph = graph };
     }
 
     pub fn addString(self: *Writer, text: []const u8) !graph_mod.StringRange {
         return strings.append(&self.graph.strings, self.allocator, text);
     }
 
-    fn ensureConstructionPrefixesStable(self: *const Writer) !void {
-        const bases = self.construction_bases;
-        if (self.graph.types.items.len != @as(usize, bases.types) or
-            self.graph.fields.items.len + self.graph.structural_fields.items.len != @as(usize, bases.fields) or
-            self.graph.choice_variant_entries.items.len + self.graph.structural_choice_variants.items.len != @as(usize, bases.variants))
-        {
-            return error.ModuleSemanticConstructionPrefixMutated;
-        }
-    }
-
-    fn canonicalTypeBase(self: *const Writer) usize {
-        return self.construction_bases.types;
-    }
-
     pub fn addType(self: *Writer, ty: entities.ModuleType) !entities.ModuleTypeId {
-        try self.ensureConstructionPrefixesStable();
-        const id = try logicalId(
+        const id = try directId(
             entities.ModuleTypeId,
-            self.canonicalTypeBase() + self.graph.semantic.types.items.len,
+            self.graph.semantic.types.items.len,
         );
         try self.graph.semantic.types.append(self.allocator, ty);
         return id;
@@ -71,20 +44,18 @@ pub const Writer = struct {
     }
 
     pub fn addField(self: *Writer, field: entities.Field) !entities.ModuleFieldId {
-        try self.ensureConstructionPrefixesStable();
-        const id = try logicalId(
+        const id = try directId(
             entities.ModuleFieldId,
-            @as(usize, self.construction_bases.fields) + self.graph.semantic.fields.items.len,
+            self.graph.semantic.fields.items.len,
         );
         try self.graph.semantic.fields.append(self.allocator, field);
         return id;
     }
 
     pub fn addVariant(self: *Writer, variant: entities.ChoiceVariant) !entities.ModuleVariantId {
-        try self.ensureConstructionPrefixesStable();
-        const id = try logicalId(
+        const id = try directId(
             entities.ModuleVariantId,
-            @as(usize, self.construction_bases.variants) + self.graph.semantic.variants.items.len,
+            self.graph.semantic.variants.items.len,
         );
         try self.graph.semantic.variants.append(self.allocator, variant);
         return id;
@@ -183,26 +154,21 @@ fn directId(comptime Id: type, index: usize) !Id {
     return @enumFromInt(try index32(index));
 }
 
-fn logicalId(comptime Id: type, index: usize) !Id {
-    return directId(Id, index);
-}
-
 fn index32(value: usize) !u32 {
     if (value > std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
     return @intCast(value);
 }
 
-test "module semantic writer allocates canonical ids after compatibility prefixes" {
+test "module semantic writers share canonical ids across construction contexts" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
 
-    try graph.types.append(allocator, .{ .builtin = .Int32 });
-    try graph.fields.append(allocator, .{
+    try graph.semantic.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
+    try graph.semantic.fields.append(allocator, .{
         .name = .{ .start = 0, .len = 0 },
         .ty = @enumFromInt(0),
-        .source_offset = 0,
-        .has_default = false,
+        .source = .{ .file_index = 0, .offset = 0 },
     });
 
     var writer = Writer.init(allocator, &graph);
@@ -237,21 +203,6 @@ test "module semantic writer interleaves external and resolved canonical types" 
     } });
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(external_ty));
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(pointer_ty));
-}
-
-test "module semantic writer rejects compatibility prefix growth after canonical ids exist" {
-    const allocator = std.testing.allocator;
-    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
-    defer graph.deinit(allocator);
-
-    var writer = Writer.init(allocator, &graph);
-    _ = try writer.addResolvedType(.{ .builtin = .Int32 });
-    try graph.types.append(allocator, .{ .builtin = .Bool });
-
-    try std.testing.expectError(
-        error.ModuleSemanticConstructionPrefixMutated,
-        writer.addResolvedType(.{ .builtin = .Float32 }),
-    );
 }
 
 test "external type values register deferred resolution in the current owner" {

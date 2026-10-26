@@ -1534,6 +1534,7 @@ pub const Context = struct {
         }
         if (self.tree.assignment(node)) |assignment| {
             const name = self.tree.tokenTextFromSource(self.source, assignment.name_token);
+            if (std.mem.eql(u8, name, "_")) return self.lowerBodyNode(assignment.value);
             const binding = self.parameterizedBinding(name) orelse {
                 const target = try self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, .none);
                 const address = try self.addPending(node, .address_of, &.{target}, null, null, .{ .pointer_mutability = .read_write });

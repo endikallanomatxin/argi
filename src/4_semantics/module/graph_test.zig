@@ -167,7 +167,7 @@ test "module semantic graph owns declarations from all direct files" {
     defer first.deinit(allocator);
     var second = try parseSource(allocator, second_source, @enumFromInt(1));
     defer second.deinit(allocator);
-    var graph = try module_graph.build(allocator, "geometry", &.{
+    var graph = try buildInterfaces(allocator, "geometry", &.{
         .{ .path = "geometry/a.rg", .tree = &first, .source = first_source },
         .{ .path = "geometry/b.rg", .tree = &second, .source = second_source },
     });
@@ -197,12 +197,12 @@ test "module semantic graph owns declarations from all direct files" {
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(distance_interface.declaration));
     try std.testing.expectEqual(@as(u32, 1), distance_interface.input.len);
     try std.testing.expectEqual(@as(u32, 0), distance_interface.output.len);
-    const point_field = graph.fields.items[distance_interface.input.start];
+    const point_field = graph.semantic.fields.items[distance_interface.input.start];
     try std.testing.expectEqualStrings("point", graph.text(point_field.name));
-    try std.testing.expectEqual(module_graph.ModuleType{ .declared = @enumFromInt(0) }, graph.types.items[@intFromEnum(point_field.ty)]);
+    try std.testing.expectEqual(@import("entities.zig").ModuleType{ .resolved = .{ .declared = @enumFromInt(0) } }, graph.semantic.types.items[@intFromEnum(point_field.ty)]);
     const point_fields = graph.declarations.items[0].struct_fields.?;
     try std.testing.expectEqual(@as(u32, 1), point_fields.len);
-    try std.testing.expectEqualStrings("x", graph.text(graph.fields.items[point_fields.start].name));
+    try std.testing.expectEqualStrings("x", graph.text(graph.semantic.fields.items[point_fields.start].name));
 }
 
 test "module symbol index retains duplicate declarations for diagnostics" {
@@ -213,7 +213,7 @@ test "module symbol index retains duplicate declarations for diagnostics" {
     defer first.deinit(allocator);
     var second = try parseSource(allocator, second_source, @enumFromInt(1));
     defer second.deinit(allocator);
-    var graph = try module_graph.build(allocator, "conversion", &.{
+    var graph = try buildInterfaces(allocator, "conversion", &.{
         .{ .path = "conversion/a.rg", .tree = &first, .source = first_source },
         .{ .path = "conversion/b.rg", .tree = &second, .source = second_source },
     });
@@ -230,18 +230,18 @@ test "module callable interfaces intern pointer and array types" {
     const source = "consume(.first: [2]&Int32, .second: [2]&Int32) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "arrays", &.{.{ .path = "arrays/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "arrays", &.{.{ .path = "arrays/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    const first = graph.fields.items[interface.input.start];
-    const second = graph.fields.items[interface.input.start + 1];
+    const first = graph.semantic.fields.items[interface.input.start];
+    const second = graph.semantic.fields.items[interface.input.start + 1];
     try std.testing.expectEqual(first.ty, second.ty);
-    const array = graph.types.items[@intFromEnum(first.ty)].array;
+    const array = graph.semantic.types.items[@intFromEnum(first.ty)].resolved.array;
     try std.testing.expectEqual(@as(u64, 2), array.length);
-    const pointer = graph.types.items[@intFromEnum(array.element)].pointer;
+    const pointer = graph.semantic.types.items[@intFromEnum(array.element)].resolved.pointer;
     try std.testing.expectEqual(.read_only, pointer.mutability);
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(pointer.child)].builtin);
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(pointer.child)].resolved.builtin);
 }
 
 test "module callable interfaces lower literal Array generic types" {
@@ -249,13 +249,13 @@ test "module callable interfaces lower literal Array generic types" {
     const source = "consume(.values: Array#(.n = 3, .t: Int32)) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "generic_arrays", &.{.{ .path = "generic_arrays/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "generic_arrays", &.{.{ .path = "generic_arrays/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    const array = graph.types.items[@intFromEnum(graph.fields.items[interface.input.start].ty)].array;
+    const array = graph.semantic.types.items[@intFromEnum(graph.semantic.fields.items[interface.input.start].ty)].resolved.array;
     try std.testing.expectEqual(@as(u64, 3), array.length);
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(array.element)].builtin);
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(array.element)].resolved.builtin);
 }
 
 test "module callable interfaces preserve nullable types" {
@@ -263,15 +263,15 @@ test "module callable interfaces preserve nullable types" {
     const source = "find(.fallback: ?Int32) -> (.result: ?Int32) := { result = fallback }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "nullable", &.{.{ .path = "nullable/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "nullable", &.{.{ .path = "nullable/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    const input = graph.fields.items[interface.input.start];
-    const output = graph.fields.items[interface.output.start];
+    const input = graph.semantic.fields.items[interface.input.start];
+    const output = graph.semantic.fields.items[interface.output.start];
     try std.testing.expectEqual(input.ty, output.ty);
-    const child = graph.types.items[@intFromEnum(input.ty)].nullable;
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(child)].builtin);
+    const child = graph.semantic.types.items[@intFromEnum(input.ty)].resolved.nullable;
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(child)].resolved.builtin);
 }
 
 test "module callable interfaces preserve inferred errable types" {
@@ -279,13 +279,13 @@ test "module callable interfaces preserve inferred errable types" {
     const source = "run() -> !Int32 := { return 1 }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "errable", &.{.{ .path = "errable/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "errable", &.{.{ .path = "errable/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    const output = graph.fields.items[interface.output.start];
-    const child = graph.types.items[@intFromEnum(output.ty)].inferred_errable;
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(child)].builtin);
+    const output = graph.semantic.fields.items[interface.output.start];
+    const child = graph.semantic.types.items[@intFromEnum(output.ty)].resolved.inferred_errable;
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(child)].resolved.builtin);
 }
 
 test "module semantizing marks inferred error signatures" {
@@ -303,20 +303,20 @@ test "module callable interfaces preserve anonymous structural types" {
     const source = "read(.value: (.nested: (.number: Int32))) -> (.result: (.nested: (.number: Int32))) := { result = value }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "structural", &.{.{ .path = "structural/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "structural", &.{.{ .path = "structural/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    for ([_]module_graph.Field{ graph.fields.items[interface.input.start], graph.fields.items[interface.output.start] }) |field| {
-        const shape = graph.types.items[@intFromEnum(field.ty)].structural;
+    for ([_]@import("entities.zig").Field{ graph.semantic.fields.items[interface.input.start], graph.semantic.fields.items[interface.output.start] }) |field| {
+        const shape = graph.semantic.types.items[@intFromEnum(field.ty)].resolved.structural.fields;
         try std.testing.expectEqual(@as(u32, 1), shape.len);
-        const nested = graph.structural_fields.items[shape.start];
+        const nested = graph.semantic.fields.items[shape.start];
         try std.testing.expectEqualStrings("nested", graph.text(nested.name));
-        const nested_shape = graph.types.items[@intFromEnum(nested.ty)].structural;
+        const nested_shape = graph.semantic.types.items[@intFromEnum(nested.ty)].resolved.structural.fields;
         try std.testing.expectEqual(@as(u32, 1), nested_shape.len);
-        const number = graph.structural_fields.items[nested_shape.start];
+        const number = graph.semantic.fields.items[nested_shape.start];
         try std.testing.expectEqualStrings("number", graph.text(number.name));
-        try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(number.ty)].builtin);
+        try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(number.ty)].resolved.builtin);
     }
 }
 
@@ -325,16 +325,18 @@ test "anonymous structural types retain module-local default provenance" {
     const source = "read(.value: (.number: Int32 = 4)) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "structural_defaults", &.{.{ .path = "structural_defaults/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "structural_defaults", &.{.{ .path = "structural_defaults/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    const input = graph.fields.items[interface.input.start];
-    const shape = graph.types.items[@intFromEnum(input.ty)].structural;
-    const number = graph.structural_fields.items[shape.start];
-    try std.testing.expect(number.has_default);
-    try std.testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, source, "number").?)), number.source_offset);
-    try std.testing.expectEqual(@as(u32, 0), number.module_file_index);
+    const input = graph.semantic.fields.items[interface.input.start];
+    const external = graph.semantic.types.items[@intFromEnum(input.ty)].external;
+    const reference = graph.semantic.external_refs.items[@intFromEnum(external)];
+    const recipe = graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(reference.computed_type.?)].resolved.structural;
+    const number = graph.semantic.parameterized_storage.ir.fields.items[recipe.fields.start];
+    try std.testing.expect(number.default_value != null);
+    try std.testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, source, "number").?)), number.source.offset);
+    try std.testing.expectEqual(@as(u32, 0), number.source.file_index);
 }
 
 test "module callable interfaces preserve anonymous choice types" {
@@ -342,35 +344,33 @@ test "module callable interfaces preserve anonymous choice types" {
     const source = "inspect(.value: (..some Int32, ..none)) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "choices", &.{.{ .path = "choices/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "choices", &.{.{ .path = "choices/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    const input = graph.fields.items[interface.input.start];
-    const shape = graph.types.items[@intFromEnum(input.ty)].structural_choice;
+    const input = graph.semantic.fields.items[interface.input.start];
+    const shape = graph.semantic.types.items[@intFromEnum(input.ty)].resolved.structural_choice.variants;
     try std.testing.expectEqual(@as(u32, 2), shape.len);
-    const some = graph.structural_choice_variants.items[shape.start];
+    const some = graph.semantic.variants.items[shape.start];
     try std.testing.expectEqualStrings("some", graph.text(some.name));
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(some.payload_type.?)].builtin);
-    try std.testing.expectEqualStrings("none", graph.text(graph.structural_choice_variants.items[shape.start + 1].name));
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(some.payload_type.?)].resolved.builtin);
+    try std.testing.expectEqualStrings("none", graph.text(graph.semantic.variants.items[shape.start + 1].name));
 }
 
-test "module callable interfaces normalize choice unions" {
+test "module callable interfaces retain choice union evaluation recipes" {
     const allocator = std.testing.allocator;
     const source = "Left : Type = (..first, ..shared)\nRight : Type = (..shared, ..second)\nmerge() -> (.result: choice_union#(.a: Left, .b: Right)) := { result = ..shared }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "choice_unions", &.{.{ .path = "choice_unions/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "choice_unions", &.{.{ .path = "choice_unions/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    const output = graph.fields.items[interface.output.start];
-    const shape = graph.types.items[@intFromEnum(output.ty)].structural_choice;
-    try std.testing.expectEqual(@as(u32, 3), shape.len);
-    const variants = graph.structural_choice_variants.items[shape.start..][0..shape.len];
-    try std.testing.expectEqualStrings("first", graph.text(variants[0].name));
-    try std.testing.expectEqualStrings("second", graph.text(variants[1].name));
-    try std.testing.expectEqualStrings("shared", graph.text(variants[2].name));
+    const output = graph.semantic.fields.items[interface.output.start];
+    const external = graph.semantic.types.items[@intFromEnum(output.ty)].external;
+    const reference = graph.semantic.external_refs.items[@intFromEnum(external)];
+    const union_recipe = graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(reference.computed_type.?)].choice_union;
+    try std.testing.expect(union_recipe.left != union_recipe.right);
 }
 
 test "module callable interfaces preserve type-only generic instantiations" {
@@ -381,40 +381,39 @@ test "module callable interfaces preserve type-only generic instantiations" {
     defer type_tree.deinit(allocator);
     var function_tree = try parseSource(allocator, function_source, @enumFromInt(1));
     defer function_tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "generics", &.{
+    var graph = try buildInterfaces(allocator, "generics", &.{
         .{ .path = "generics/type.rg", .tree = &type_tree, .source = type_source },
         .{ .path = "generics/function.rg", .tree = &function_tree, .source = function_source },
     });
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
-    const input = graph.fields.items[interface.input.start];
-    const generic = graph.types.items[@intFromEnum(input.ty)].generic;
+    const input = graph.semantic.fields.items[interface.input.start];
+    const generic = graph.semantic.types.items[@intFromEnum(input.ty)].resolved.generic;
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(generic.base));
     try std.testing.expectEqual(@as(u32, 1), generic.arguments.len);
     const argument = graph.semantic.generic_arguments.items[generic.arguments.start];
     try std.testing.expectEqualStrings("t", graph.text(argument.name));
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(argument.value.type)].builtin);
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(argument.value.type)].resolved.builtin);
 }
 
-test "discovery and lowering share nested generic arguments across canonicalization" {
+test "discovery and lowering share nested generic arguments across construction contexts" {
     const allocator = std.testing.allocator;
     const source = "Box#(.t: Type): Type = (.value: t)\nread(.box: Box#(.t: Box#(.t: Int32))) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "generics", &.{
+    var graph = try buildInterfaces(allocator, "generics", &.{
         .{ .path = "generics/main.rg", .tree = &tree, .source = source },
     });
     defer graph.deinit(allocator);
 
     const views = @import("views.zig");
-    const canonicalize = @import("canonicalize_storage.zig");
-    const input = graph.fields.items[graph.functions.items[0].input.start];
-    const outer = graph.types.items[@intFromEnum(input.ty)].generic;
+    const input = graph.semantic.fields.items[graph.functions.items[0].input.start];
+    const outer = graph.semantic.types.items[@intFromEnum(input.ty)].resolved.generic;
     const outer_argument = try views.genericArgumentView(&graph, @enumFromInt(outer.arguments.start));
-    const inner = graph.types.items[@intFromEnum(outer_argument.value.type)].generic;
+    const inner = graph.semantic.types.items[@intFromEnum(outer_argument.value.type)].resolved.generic;
     const inner_argument = try views.genericArgumentView(&graph, @enumFromInt(inner.arguments.start));
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(inner_argument.value.type)].builtin);
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(inner_argument.value.type)].resolved.builtin);
 
     const discovered_count = views.genericArgumentCount(&graph);
     var writer = @import("writer.zig").Writer.init(allocator, &graph);
@@ -424,7 +423,6 @@ test "discovery and lowering share nested generic arguments across canonicalizat
     });
     try std.testing.expectEqual(discovered_count, @intFromEnum(appended));
     const backing = graph.semantic.generic_arguments.items.ptr;
-    try canonicalize.run(allocator, &graph);
     try std.testing.expectEqual(backing, graph.semantic.generic_arguments.items.ptr);
     try std.testing.expectEqual(outer_argument.value.type, (try views.genericArgumentView(&graph, @enumFromInt(outer.arguments.start))).value.type);
     const canonical_outer = (try views.typeView(&graph, input.ty)).resolved.generic;
@@ -440,15 +438,15 @@ test "module graph builds nominal choice variants" {
     const source = "Result : Type = (\n    ..ok Int32\n    ..done\n)\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "results", &.{.{ .path = "results/main.rg", .tree = &tree, .source = source }});
+    var graph = try buildInterfaces(allocator, "results", &.{.{ .path = "results/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const range = graph.declarations.items[0].choice_variants.?;
     try std.testing.expectEqual(@as(u32, 2), range.len);
-    const ok = graph.choice_variant_entries.items[range.start];
+    const ok = graph.semantic.variants.items[range.start];
     try std.testing.expectEqualStrings("ok", graph.text(ok.name));
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(ok.payload_type.?)].builtin);
-    const done = graph.choice_variant_entries.items[range.start + 1];
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(ok.payload_type.?)].resolved.builtin);
+    const done = graph.semantic.variants.items[range.start + 1];
     try std.testing.expectEqualStrings("done", graph.text(done.name));
     try std.testing.expectEqual(@as(?module_graph.ModuleTypeId, null), done.payload_type);
 }
@@ -1311,4 +1309,32 @@ test "inferred module aggregates retain unresolved root types until global resol
         try std.testing.expectEqual(@as(?module_graph.ModuleTypeId, null), node.resolved.ty);
     }
     try std.testing.expect(found);
+}
+
+fn buildInterfaces(allocator: std.mem.Allocator, directory: []const u8, files: []const module_graph.FileInput) !module_graph.ModuleSemanticGraph {
+    var graph = try module_graph.build(allocator, directory, files);
+    errdefer graph.deinit(allocator);
+    _ = try initializer_lowerer.lower(allocator, &graph, files, null);
+    return graph;
+}
+
+test "canonical choice construction keeps siblings contiguous across nested payloads" {
+    const allocator = std.testing.allocator;
+    const source = "Result := (..first (..inner Int32, ..empty), ..second UInt8)\ninspect := (.value: (..left (..nested Int32, ..none), ..right UInt8)) -> () {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try buildInterfaces(allocator, "nested_choices", &.{.{ .path = "nested_choices/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+    const named = graph.declarations.items[0].choice_variants.?;
+    try std.testing.expectEqualStrings("first", graph.text(graph.semantic.variants.items[named.start].name));
+    try std.testing.expectEqualStrings("second", graph.text(graph.semantic.variants.items[named.start + 1].name));
+    const nested = graph.semantic.types.items[@intFromEnum(graph.semantic.variants.items[named.start].payload_type.?)].resolved.structural_choice.variants;
+    try std.testing.expectEqualStrings("inner", graph.text(graph.semantic.variants.items[nested.start].name));
+    try std.testing.expectEqualStrings("empty", graph.text(graph.semantic.variants.items[nested.start + 1].name));
+    try std.testing.expect(nested.start + nested.len <= named.start);
+    const function = graph.functions.items[0];
+    const input = graph.semantic.fields.items[function.input.start].ty;
+    const anonymous = graph.semantic.types.items[@intFromEnum(input)].resolved.structural_choice.variants;
+    try std.testing.expectEqualStrings("left", graph.text(graph.semantic.variants.items[anonymous.start].name));
+    try std.testing.expectEqualStrings("right", graph.text(graph.semantic.variants.items[anonymous.start + 1].name));
 }

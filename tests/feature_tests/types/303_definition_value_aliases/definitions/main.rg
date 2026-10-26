@@ -7,3 +7,10 @@ identity := <.T: Type> (.value: T) -> (.result: T) {
 }
 
 ExportedIdentity := identity
+
+Marker := (.value: Int32)
+
+measure := <.T: Type> (.value: T) -> (.result: UIntNative) {
+    _ = identity<T>(.value = value)
+    result = size_of(.type = Marker)
+}

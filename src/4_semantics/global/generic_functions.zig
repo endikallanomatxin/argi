@@ -540,7 +540,7 @@ pub const Resolver = struct {
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
             null;
-        const selected_definition = try self.core.resolveDefinitionReference(current_module, reference, &.{.function});
+        const selected_definition = try self.core.resolveDefinitionAlias(current_module, reference);
         const name = if (selected_definition) |id| self.graph.text(self.graph.declaration(id).name) else module.text(reference.name);
         var selected: ?global_sg.GlobalDeclId = null;
         var selected_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
@@ -988,7 +988,7 @@ pub const Resolver = struct {
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
             null;
-        const selected_definition = try self.core.resolveDefinitionReference(current_module, reference, &.{.function});
+        const selected_definition = try self.core.resolveDefinitionAlias(current_module, reference);
         return self.resolveImplicitGenericFunctionFiltered(
             current_module,
             if (selected_definition) |id| self.graph.text(self.graph.declaration(id).name) else module.text(reference.name),
@@ -2873,6 +2873,25 @@ pub const Resolver = struct {
             if (self.findGlobalBinding(name)) |binding| {
                 const record = self.resolver.graph.bindings.items[@intFromEnum(binding)];
                 return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = record.ty, .content = .{ .binding_use = binding } };
+            }
+            if (try self.resolver.core.resolveEntityValue(self.module_index, .{
+                .kind = .type,
+                .module_path = null,
+                .name = value.name,
+                .source = value.source,
+            })) |entity| {
+                return switch (entity) {
+                    .type => |ty| .{
+                        .source = self.resolver.sourceFor(self.module_index, value.source),
+                        .ty = try self.resolver.core.builtin(.Type),
+                        .content = .{ .type_literal = ty },
+                    },
+                    .definition => |definition| .{
+                        .source = self.resolver.sourceFor(self.module_index, value.source),
+                        .ty = try global_types.definitionClass(self.resolver.allocator, self.resolver.graph, definition),
+                        .content = .{ .definition_literal = definition },
+                    },
+                };
             }
             if (self.resolver.generics.comptime_failure == null) self.resolver.generics.comptime_failure = .{
                 .source = self.resolver.sourceFor(self.module_index, value.source),

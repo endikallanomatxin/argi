@@ -150,7 +150,11 @@ before adding implementation exceptions.
 
 ## Progress
 
-- Discovery and later lowering share one canonical generic-argument pool.
+- Discovery and later lowering share canonical type, field, variant, and
+  generic-argument pools. One interface constructor handles local/imported types;
+  the early duplicate builder, prefix offsets, field/variant overlays, and final
+  canonicalization copy are removed. Function/declaration metadata still needs
+  consolidation.
 - Syntax stores function definitions and parameterized definitions independently
   of their binding names. Calls reference callee expressions; type and function
   applications share specialization nodes. Parameter and specialization lists

@@ -4,28 +4,17 @@ const parameterized_storage = @import("parameterized/storage.zig");
 const primitives = @import("../primitives/schema.zig");
 const type_shapes = @import("../primitives/type_shapes.zig");
 
-/// Frozen sizes of the discovery-time prefixes that precede canonical Module*
-/// identities. Once canonical lowering starts these prefixes must never grow:
-/// doing so would shift every already-issued logical ID.
-pub const ConstructionBases = struct {
-    types: u32,
-    fields: u32,
-    variants: u32,
-};
-
+/// Canonical module-owned semantic pools. IDs remain stable as construction
+/// appends types, fields, variants and executable entities.
 pub const Storage = struct {
     local_semantics_complete: bool = false,
-    construction_bases: ?ConstructionBases = null,
 
     declaration_semantics: std.ArrayList(entities.DeclarationSemantic) = .empty,
     declaration_bindings: std.ArrayList(entities.DeclarationBinding) = .empty,
     module_aliases: std.ArrayList(entities.ModuleAlias) = .empty,
     function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
-    field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
-    variant_semantics: std.ArrayList(entities.VariantSemantic) = .empty,
 
-    /// Canonical semantic tails appended after the discovery-time
-    /// prefixes owned by ModuleSemanticGraph itself.
+    /// Canonical pools shared by discovery and subsequent lowering.
     fields: std.ArrayList(entities.Field) = .empty,
     variants: std.ArrayList(entities.ChoiceVariant) = .empty,
     /// One canonical pool shared by discovery and subsequent lowering.
@@ -79,8 +68,6 @@ pub const Storage = struct {
         self.declaration_bindings.deinit(allocator);
         self.module_aliases.deinit(allocator);
         self.function_semantics.deinit(allocator);
-        self.field_semantics.deinit(allocator);
-        self.variant_semantics.deinit(allocator);
         self.fields.deinit(allocator);
         self.variants.deinit(allocator);
         self.generic_arguments.deinit(allocator);
@@ -122,13 +109,11 @@ pub const Storage = struct {
     }
 
     pub fn storageBytes(self: *const Storage) usize {
-        return @sizeOf(bool) + @sizeOf(?ConstructionBases) +
+        return @sizeOf(bool) +
             self.declaration_semantics.items.len * @sizeOf(entities.DeclarationSemantic) +
             self.declaration_bindings.items.len * @sizeOf(entities.DeclarationBinding) +
             self.module_aliases.items.len * @sizeOf(entities.ModuleAlias) +
             self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
-            self.field_semantics.items.len * @sizeOf(entities.FieldSemantic) +
-            self.variant_semantics.items.len * @sizeOf(entities.VariantSemantic) +
             self.fields.items.len * @sizeOf(entities.Field) +
             self.variants.items.len * @sizeOf(entities.ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(entities.GenericArgument) +

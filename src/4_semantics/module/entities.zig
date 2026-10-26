@@ -132,19 +132,6 @@ pub const FunctionSemantic = struct {
     flags: primitives.FunctionFlags = .{},
 };
 
-pub const FieldSemantic = struct {
-    field: ModuleFieldId,
-    default_value: ?ModuleNodeId = null,
-    // Executable outputs initialize through their function entry statements.
-    default_at_entry: bool = false,
-};
-
-pub const VariantSemantic = struct {
-    variant: ModuleVariantId,
-    value: i32,
-    option_decl: ?ModuleDeclId = null,
-};
-
 pub const Scope = struct {
     parent: ModuleScopeId = .none,
     bindings: BindingRange = .{ .start = 0, .len = 0 },

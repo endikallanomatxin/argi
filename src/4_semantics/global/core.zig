@@ -527,6 +527,16 @@ pub const Resolver = struct {
     /// Resolve the visible binding first, then follow its definition value.
     /// Visibility applies to that binding; an exported alias may name a private
     /// underlying definition without changing its lexical context.
+    pub fn resolveDefinitionAlias(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?global_sg.GlobalDeclId {
+        const id = self.resolveDeclaration(module_index, reference, &.{.binding}) catch |err| switch (err) {
+            error.UnknownGlobalDeclaration => return null,
+            else => return err,
+        };
+        const binding = self.declarationBinding(id) orelse return null;
+        if (self.graph.isBindingTypeUnresolved(binding)) return null;
+        return types.staticDefinitionBinding(self.graph, binding);
+    }
+
     pub fn resolveDefinitionReference(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, kinds: []const primitives.DeclarationKind) !?global_sg.GlobalDeclId {
         const id = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type, .function, .binding }) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return null,
@@ -539,6 +549,23 @@ pub const Resolver = struct {
             break :blk types.staticDefinitionBinding(self.graph, binding) orelse return null;
         } else id;
         for (kinds) |kind| if (self.graph.declaration(definition).kind == kind) return definition;
+        return null;
+    }
+
+    /// Resolve an entity in value position without converting a family into a
+    /// concrete Type. Ordinary and specialized bodies share this boundary.
+    pub fn resolveEntityValue(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?types.EntityValue {
+        if (reference.module_path == null) {
+            const name = self.modules[module_index].text(reference.name);
+            if (primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget())) |kind|
+                return .{ .type = try self.builtin(kind) };
+        }
+        if (try self.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type, .function })) |id| {
+            const declaration = self.graph.declaration(id);
+            if (declaration.generic_parameter_count != null or declaration.kind == .contract_type)
+                return .{ .definition = id };
+        }
+        if (try self.resolveTypeValue(module_index, reference)) |ty| return .{ .type = ty };
         return null;
     }
 

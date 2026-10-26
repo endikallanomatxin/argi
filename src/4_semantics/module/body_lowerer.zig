@@ -878,7 +878,7 @@ const Context = struct {
             try body.lowerBlock(entry.body);
         var captured_bindings = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
         defer captured_bindings.deinit();
-        const captured_fields_start: u32 = @intCast(self.graph.fields.items.len + self.graph.structural_fields.items.len + self.graph.semantic.fields.items.len);
+        const captured_fields_start: u32 = @intCast(self.graph.semantic.fields.items.len);
         const captured_values_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
         for (0..input.len) |index| {
             const field = try views.fieldView(self.graph, @enumFromInt(input.start + @as(u32, @intCast(index))));
@@ -928,7 +928,7 @@ const Context = struct {
         const name = try self.writer.addString(spelling);
         try self.graph.declarations.append(self.allocator, .{ .kind = .function, .name = name, .source_offset = source.offset, .module_file_index = self.file_index, .function_id = function });
         self.graph.generated_declaration_count += 1;
-        const input_start: u32 = @intCast(self.graph.fields.items.len + self.graph.structural_fields.items.len + self.graph.semantic.fields.items.len);
+        const input_start: u32 = @intCast(self.graph.semantic.fields.items.len);
         for (captures) |capture| _ = try self.writer.addField(.{ .name = capture.name, .source = source, .ty = capture.ty });
         const input: graph_mod.FieldRange = .{ .start = input_start, .len = @intCast(captures.len) };
         try self.graph.functions.append(self.allocator, .{ .declaration = declaration, .input = input, .output = output });

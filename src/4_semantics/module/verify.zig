@@ -180,18 +180,6 @@ fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(verify.optionalIdFits(value.inferred_error_reasons, views.typeCount(graph)));
         if (value.foreign_symbol) |name| try require(verify.stringFits(name, graph.strings.items));
     }
-    for (graph.semantic.field_semantics.items, 0..) |value, index| {
-        try require(verify.idFits(value.field, views.fieldCount(graph)));
-        try require(!hasFieldOverlayBefore(graph, index, value.field));
-
-        try require(verify.optionalIdFits(value.default_value, graph.semantic.nodes.items.len));
-        try require(!value.default_at_entry or value.default_value == null);
-    }
-    for (graph.semantic.variant_semantics.items, 0..) |value, index| {
-        try require(verify.idFits(value.variant, views.variantCount(graph)));
-        try require(!hasVariantOverlayBefore(graph, index, value.variant));
-        try require(verify.optionalIdFits(value.option_decl, graph.declarations.items.len));
-    }
 }
 
 fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entities.PendingOperation) !void {
@@ -392,14 +380,6 @@ fn hasDeclarationOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end:
 }
 fn hasFunctionOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleFunctionId) bool {
     for (graph.semantic.function_semantics.items[0..end]) |value| if (value.function == id) return true;
-    return false;
-}
-fn hasFieldOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleFieldId) bool {
-    for (graph.semantic.field_semantics.items[0..end]) |value| if (value.field == id) return true;
-    return false;
-}
-fn hasVariantOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleVariantId) bool {
-    for (graph.semantic.variant_semantics.items[0..end]) |value| if (value.variant == id) return true;
     return false;
 }
 
