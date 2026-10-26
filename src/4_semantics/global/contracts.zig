@@ -1324,6 +1324,10 @@ pub const Resolver = struct {
     }
 
     pub fn operationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, module_filter: ?global_sg.GlobalModuleId) !OperationCandidates {
+        return self.specializedOperationCandidatesFiltered(module_index, name, input, context, module_filter, .{ .start = 0, .len = 0 });
+    }
+
+    pub fn specializedOperationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, module_filter: ?global_sg.GlobalModuleId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !OperationCandidates {
         var result: OperationCandidates = .{};
         errdefer result.deinit(self.allocator);
         if (std.mem.startsWith(u8, name, "_")) return result;
@@ -1335,7 +1339,7 @@ pub const Resolver = struct {
                 const storage = &module.semantic.parameterized_storage;
                 for (storage.contract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
                     if (!std.mem.eql(u8, module.text(requirement.name), name)) continue;
-                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, &result.deferred, &result.failure)) |candidate| {
+                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, arguments, &result.deferred, &result.failure)) |candidate| {
                         errdefer self.allocator.free(candidate.participants);
                         try result.items.append(self.allocator, candidate);
                     }
@@ -1356,7 +1360,7 @@ pub const Resolver = struct {
         return self.inferConstraintTypePattern(module_index, pattern, actual, bindings);
     }
 
-    fn probeOperationCandidate(self: *Resolver, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
+    fn probeOperationCandidate(self: *Resolver, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -1377,6 +1381,10 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
+        self.generics.bindGlobalArgumentsPartial(located.module_index, requirement.parameters, arguments, &bindings) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return null,
+        };
         const input_pattern = storage.ir.representation(requirement.input);
         const fields = if (input_pattern == .resolved and input_pattern.resolved == .structural)
             input_pattern.resolved.structural.fields
@@ -1512,6 +1520,10 @@ pub const Resolver = struct {
     }
 
     pub fn callOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        return self.callSpecializedOperationCandidate(module_index, candidate, name, input, context, source, .{ .start = 0, .len = 0 });
+    }
+
+    pub fn callSpecializedOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !?global_sg.Node {
         if (candidate.virtual) {
             const located = self.findContractDefinition(candidate.declaration) orelse return null;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
@@ -1534,7 +1546,7 @@ pub const Resolver = struct {
         if (!candidate.virtual) for (candidate.participants) |participant|
             try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
         const base = try self.generics.internType(.{ .generic = .{ .base = candidate.declaration, .arguments = .{ .start = start, .len = if (candidate.virtual) 0 else @intCast(candidate.participants.len) } } });
-        return self.makeScopedOperationCall(module_index, base, name, input, context, source);
+        return self.makeSpecializedScopedOperationCall(module_index, base, name, arguments, input, context, source);
     }
 
     pub fn makeScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {

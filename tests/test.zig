@@ -15784,3 +15784,7 @@ test "feature_tests/types/328X_associated_type_as_family" {
 test "feature_tests/types/329X_associated_family_capture_identity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/329X_associated_family_capture_identity", "distinct nominal types require explicit conversion", "without a diagnostic");
 }
+
+test "feature_tests/types/330X_explicit_operation_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/330X_explicit_operation_identity", "multiple applicable operation identities", "without a diagnostic");
+}

@@ -1673,20 +1673,21 @@ test "interactive generic contract operations retain instances across rejected s
     defer session.deinit();
     try session.submitDefinitions(
         \\Identity#(.Owner: Type): Contract = (
-        \\    .apply: <.Value: Type> (.value: Value) -> (.result: Value) where { depends_on(result, value) }
+        \\    .apply: <.Value: Type> (.owner: &Owner, .value: Value) -> (.result: Value) where { depends_on(result, value) }
         \\)
         \\Owner := (.flag: Bool)
         \\implement Identity#(Owner) (
-        \\    .apply = <.Item: Type> (.value: Item) -> (.result: Item) { result = value }
+        \\    .apply = <.Item: Type> (.owner: &Owner, .value: Item) -> (.result: Item) { result = value }
         \\)
     );
-    try std.testing.expect((try session.submitInput("Identity#(Owner).apply(.value = true).result")).?.value.runtime.boolean);
+    try session.submitStatements("owner: Owner = (.flag = true)");
+    try std.testing.expect((try session.submitInput("apply<Bool>(.owner = &owner, .value = true).result")).?.value.runtime.boolean);
     const instances = session.compiler.semantic.resolvers.core.graph.generic_function_instances.items.len;
     const revision = session.compiler.revision;
-    try std.testing.expectError(error.Reported, session.submitStatements("rejected ::= Identity#(Owner).apply(.value = 42).result\nmissing()"));
+    try std.testing.expectError(error.Reported, session.submitStatements("rejected ::= apply<Int32>(.owner = &owner, .value = 42).result\nmissing()"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(instances, session.compiler.semantic.resolvers.core.graph.generic_function_instances.items.len);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("Identity#(Owner).apply(.value = 42).result")).?.value.runtime.integer);
-    try std.testing.expect((try session.submitInput("Identity#(Owner).apply(.value = true).result")).?.value.runtime.boolean);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("apply<Int32>(.owner = &owner, .value = 42).result")).?.value.runtime.integer);
+    try std.testing.expect((try session.submitInput("apply<Bool>(.owner = &owner, .value = true).result")).?.value.runtime.boolean);
     try session.close();
 }

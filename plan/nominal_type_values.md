@@ -405,9 +405,16 @@ before adding implementation exceptions.
   conformances remain nominally distinct. No associated-family template registry
   or separate identity cache is introduced.
 
+- Unqualified operation calls accept positional/named explicit operation arguments.
+  Candidate probes bind them before input inference, bounds and conformance
+  selection; distinct applicable identities remain ambiguous. Concrete, staged and
+  interactive calls use the same selection path. Ordinary generic applicability
+  reuses explicit selection without materializing bodies during probes. Native,
+  VM, `#run` and REPL rollback tests cover explicit operation instances.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
-inference, explicit unqualified operation specialization, remaining generic-call inference parity,
+inference, remaining generic-call inference parity,
 associated type-family signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
 Broad validation still exposes explicit argument-type identity and stale
