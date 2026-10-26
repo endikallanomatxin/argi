@@ -114,6 +114,23 @@ test "compact syntaxing separates comparison syntax from angle specialization wi
     try std.testing.expectEqual(@as(usize, 3), sequence.roots.len);
 }
 
+test "compact syntaxing distinguishes choice definitions from choice value collections" {
+    const cases = [_]struct { source: []const u8, tag: syntax_tree.Node.Tag }{
+        .{ .source = "Choice := (..pair(.left: Resource, .right: Resource), ..empty)", .tag = .choice_type_literal },
+        .{ .source = "Choice := (..items [2]Resource, ..empty)", .tag = .choice_type_literal },
+        .{ .source = "values: [2]Choice = (..pair(.left = (.id = 7), .right = (.id = 11)), ..empty)", .tag = .list_literal },
+        .{ .source = "values: [2]Choice = (..number 7, ..number 11)", .tag = .list_literal },
+    };
+    for (cases) |case| {
+        var tree = try parseTestSource("choices.rg", case.source);
+        defer tree.deinit(std.testing.allocator);
+        const value = tree.symbolDeclaration(tree.roots[0]).?.value.?;
+        try std.testing.expectEqual(case.tag, tree.tag(value));
+        if (case.tag == .list_literal) for (tree.nodes.items(.tag)) |tag|
+            try std.testing.expect(tag != .choice_type_literal and tag != .struct_type_literal);
+    }
+}
+
 test "compact syntaxing permits ordinary named input and output types on function values" {
     var tree = try parseTestSource("signatures.rg", "f := Args -> Results { result = x }\ng := <.T: Type> Args -> Results { result = x }\nh := schema.Args -> schema.Results { result = x }\ni := schema.Args<Bool> -> schema.Results<Bool> { result = x }");
     defer tree.deinit(std.testing.allocator);

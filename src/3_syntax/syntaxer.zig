@@ -542,6 +542,63 @@ pub const Syntaxer = struct {
         return base;
     }
 
+    /// Definition and value collections share their opening tokens. Commit a
+    /// choice definition only when its payloads contain complete type syntax.
+    fn tryChoiceDefinition(self: *Syntaxer) SyntaxerError!?syn.NodeIndex {
+        if (!self.parenthesizedTypeIsChoiceLiteral()) return null;
+        const index = self.index;
+        const pending_equal = self.pending_equal;
+        const nodes = self.file.nodes.len;
+        const extras = self.file.extra_data.items.len;
+        const diagnostics = self.diags;
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const temporary = arena.allocator();
+        var speculative = diagnostic.Diagnostics.initBorrowed(&temporary, diagnostics);
+        defer speculative.deinit();
+        self.diags = &speculative;
+        defer self.diags = diagnostics;
+        const definition = self.parseChoiceTypeLiteral(false) catch |err| {
+            self.index = index;
+            self.pending_equal = pending_equal;
+            self.file.nodes.len = nodes;
+            self.file.extra_data.shrinkRetainingCapacity(extras);
+            if (err == error.OutOfMemory) return err;
+            return null;
+        };
+        if (self.completeTypeSyntax(definition, 0)) return definition;
+        self.index = index;
+        self.pending_equal = pending_equal;
+        self.file.nodes.len = nodes;
+        self.file.extra_data.shrinkRetainingCapacity(extras);
+        return null;
+    }
+
+    fn completeTypeSyntax(self: *const Syntaxer, node: syn.NodeIndex, depth: usize) bool {
+        if (depth > 128) return false;
+        const ty = self.file.typeReference(node) orelse return false;
+        return switch (ty) {
+            .struct_literal => |literal| blk: {
+                for (literal.fields) |field_node| {
+                    const field = self.file.structTypeField(field_node) orelse break :blk false;
+                    if (!self.completeTypeSyntax(field.type_node orelse break :blk false, depth + 1)) break :blk false;
+                }
+                break :blk true;
+            },
+            .choice_literal => |literal| blk: {
+                for (literal.variants) |variant_node| {
+                    const variant = self.file.choiceTypeVariant(variant_node) orelse break :blk false;
+                    if (variant.payload_type) |payload| if (!self.completeTypeSyntax(payload, depth + 1)) break :blk false;
+                }
+                break :blk true;
+            },
+            .pointer => |pointer| self.completeTypeSyntax(pointer.child, depth + 1),
+            .array => |array| self.completeTypeSyntax(array.element, depth + 1),
+            .nullable, .inferred_errable => |child| self.completeTypeSyntax(child, depth + 1),
+            .name, .generic, .projection => true,
+        };
+    }
+
     fn specializationArguments(self: *Syntaxer, token: syn.TokenIndex, arguments: syn.NodeRange, named_arguments: ?syn.NodeIndex) SyntaxerError!syn.NodeIndex {
         if (named_arguments) |arguments_node| {
             if (self.file.parameterList(arguments_node) != null)
@@ -1914,7 +1971,7 @@ pub const Syntaxer = struct {
                     const input = try self.parseStructTypeLiteral();
                     break :blk try self.parseFunctionValue(input, false);
                 }
-                if (self.parenthesizedTypeIsChoiceLiteral()) break :blk try self.parseChoiceTypeLiteral(false);
+                if (try self.tryChoiceDefinition()) |definition| break :blk definition;
                 if (self.parenthesizedStructDefinition()) break :blk try self.parseStructTypeLiteral();
                 break :blk try self.parseCollectionLiteral(false);
             },
