@@ -188,13 +188,15 @@ before adding implementation exceptions.
   arguments, representation and defaults, including completion of retained IDs.
 - Concrete and specialized function interfaces retain input/output Type IDs.
   Local named records supply signatures and defaults; explicitly specialized
-  functions also bind fields from named generic signature types. Inline implementations are
+  functions also bind fields from named generic signature types. Input inference
+  follows those definitions and maps their parameter bindings back to the caller,
+  including ordinary reached defaults. Inline implementations are
   constructed against their selected required signature. Ordinary operation
   aliases infer parameters from corresponding inputs and retain their own types.
 - Named once capability constructors share explicit Args definitions with Init.
   A native/VM fixture covers named signatures, defaults and calls through #run.
 
-Still pending: deferred/imported signatures, inference through open named signatures,
+Still pending: deferred/imported signatures, inference through composed signature families,
 nominal choices versus structural option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.

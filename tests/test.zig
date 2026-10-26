@@ -15657,3 +15657,7 @@ test "feature_tests/types/304_named_nominal_signatures" {
     try runExpect(path, 0);
     try vmExpect(path, 0, null);
 }
+
+test "feature_tests/types/305X_named_signature_conflicting_types" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/305X_named_signature_conflicting_types", "conflicting inferred generic parameters", "failed without a diagnostic");
+}

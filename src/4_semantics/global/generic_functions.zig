@@ -662,6 +662,59 @@ pub const Resolver = struct {
         return self.inferBindingsFromInputFields(module_index, pattern, input, bindings, 0, true);
     }
 
+    fn inferNamedSignature(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, reach: ?ReachInferenceContext) anyerror!bool {
+        const caller = &self.modules[module_index];
+        const expression = caller.semantic.parameterized_storage.ir.representation(pattern);
+        if (expression != .resolved or expression.resolved != .generic)
+            return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset);
+        const application = expression.resolved.generic;
+        const family = try self.generics.resolveParameterizedFamily(module_index, application.base);
+        const located = self.generics.findTypeParameterized(family) orelse return false;
+        const module = &self.modules[located.module_index];
+        const body = module.semantic.parameterized_storage.ir.representation(located.parameterized.body);
+        if (body != .resolved or body.resolved != .structural)
+            return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset);
+        const parameters = located.parameterized.parameters;
+        var local = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+        defer local.deinit(self.allocator);
+        // Transfer known arguments into the definition's lexical parameter IDs.
+        for (0..parameters.len) |offset| {
+            const raw = parameters.start + offset;
+            const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
+            const argument = self.generics.findPatternArgument(module_index, application.arguments, offset, module.text(parameter.name)) orelse continue;
+            switch (argument.value) {
+                .type => |ty| local.types[raw] = self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
+                    error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
+                    else => return err,
+                },
+                .comptime_int => |integer| local.ints[raw] = self.generics.evalInt(module_index, integer, bindings) catch |err| switch (err) {
+                    error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
+                    else => return err,
+                },
+            }
+        }
+        if (!try self.inferBindingsFromInputFields(located.module_index, located.parameterized.body, input, &local, field_offset, true)) return false;
+        if (reach) |context|
+            if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.parameterized.body, input, &local, context, field_offset)) return false;
+        try self.generics.applyParameterDefaults(located.module_index, parameters, &local);
+        // Return only evidence inferred from inputs/defaults. Result types never
+        // determine these bindings, and no nominal identity is changed.
+        for (0..parameters.len) |offset| {
+            const raw = parameters.start + offset;
+            const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
+            const argument = self.generics.findPatternArgument(module_index, application.arguments, offset, module.text(parameter.name)) orelse continue;
+            switch (argument.value) {
+                .type => |ty| if (local.types[raw]) |actual| {
+                    if (!try self.inferInputType(module_index, ty, actual, bindings)) return false;
+                },
+                .comptime_int => |integer| if (local.ints[raw]) |actual| {
+                    if (!try self.inferIntExpression(module_index, integer, actual, bindings)) return false;
+                },
+            }
+        }
+        return true;
+    }
+
     fn matchClosedSignatureInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, field_offset: u32) !bool {
         const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
             error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.ComptimeExecutionPending => return false,
@@ -690,9 +743,9 @@ pub const Resolver = struct {
         const shape = switch (storage.representation(pattern)) {
             .resolved => |ty| switch (ty) {
                 .structural => |value| value,
-                else => return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset),
+                else => return self.inferNamedSignature(module_index, pattern, input, bindings, field_offset, null),
             },
-            else => return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset),
+            else => return self.inferNamedSignature(module_index, pattern, input, bindings, field_offset, null),
         };
         if (field_offset > shape.fields.len) return false;
 
@@ -741,9 +794,9 @@ pub const Resolver = struct {
         const shape = switch (storage.representation(pattern)) {
             .resolved => |resolved| switch (resolved) {
                 .structural => |value| value,
-                else => return true,
+                else => return self.inferNamedSignature(module_index, pattern, input, bindings, field_offset, context),
             },
-            else => return true,
+            else => return self.inferNamedSignature(module_index, pattern, input, bindings, field_offset, context),
         };
         if (field_offset > shape.fields.len) return false;
 
@@ -1130,7 +1183,7 @@ pub const Resolver = struct {
         selected_definition: ?global_sg.GlobalFamilyDefinitionId,
     ) !ImplicitGenericSelection {
         if (self.profile_io != null) self.selection_profile.implicit_calls += 1;
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+        _ = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |literal| literal,
             else => return error.MissingGenericInputType,
         };
@@ -1174,46 +1227,13 @@ pub const Resolver = struct {
                 .types = binding_types.items,
                 .ints = binding_ints.items,
             };
-            const storage = &candidate_module.semantic.parameterized_storage.ir;
-            const shape = switch (storage.representation(parameterized.input)) {
-                .resolved => |ty| switch (ty) {
-                    .structural => |shape| shape,
-                    else => continue,
-                },
-                else => continue,
-            };
-            var matches = true;
             var candidate_deferred = false;
-            for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
-                if (self.core.callArgumentNamed(literal, position, candidate_module.text(field.name))) |supplied| {
-                    if (self.graph.node(supplied).ty) |actual| {
-                        if (self.definiteNominalReferenceMismatch(candidate_index, field.ty, actual)) {
-                            matches = false;
-                            break;
-                        }
-                    }
-                    // Earlier typed inputs may determine a generic scalar.
-                    // A literal then supplies context-compatible data, rather
-                    // than conflicting evidence from its default numeric type.
-                    if (try self.contextualParameterizedLiteralFits(candidate_index, field.ty, &bindings, supplied)) continue;
-                    const actual = self.graph.node(supplied).ty orelse {
-                        candidate_deferred = true;
-                        matches = false;
-                        break;
-                    };
-                    _ = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
-                        if (err == error.ConflictingGenericArgument) {
-                            conflicting_candidates += 1;
-                            matches = false;
-                            break;
-                        }
-                        candidate_deferred = true;
-                        matches = false;
-                        break;
-                    };
-                }
-                if (!matches) break;
-            }
+            const matches = self.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings) catch |err| matches: {
+                if (err == error.ConflictingGenericArgument) {
+                    conflicting_candidates += 1;
+                } else candidate_deferred = true;
+                break :matches false;
+            };
             if (!matches) {
                 if (candidate_deferred) saw_deferred = true;
                 continue;
