@@ -1705,5 +1705,9 @@ test "interactive specialized definition values preserve captures across rejecti
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(arguments, session.compiler.semantic.resolvers.core.graph.generic_arguments.items.len);
     try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("selected(.value = 7)")).?.value.runtime.integer);
+    try session.submitDefinitions("Record := (.value: Int32)");
+    try session.submitStatements("record_identity := identity<Record>");
+    try session.submitStatements("record ::= record_identity(.value = (.value = 42))");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("record.value")).?.value.runtime.integer);
     try session.close();
 }

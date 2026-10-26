@@ -503,7 +503,13 @@ pub const Resolver = struct {
         if (input_value == .struct_value_literal) {
             const fields = input_value.struct_value_literal.fields;
             for (self.graph.value_fields.items[fields.start..][0..fields.len]) |field| {
-                const ty = self.graph.node(field.value).ty orelse return error.DeferredGenericFunction;
+                const node = self.graph.node(field.value);
+                const ty = node.ty orelse switch (node.content) {
+                    // Aggregate literals receive their nominal identity from
+                    // the selected signature rather than establishing it here.
+                    .struct_value_literal, .list_literal => continue,
+                    else => return error.DeferredGenericFunction,
+                };
                 if (self.graph.isTypeUnresolved(ty)) return error.DeferredGenericFunction;
             }
         }
