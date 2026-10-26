@@ -15,7 +15,7 @@ pub fn variantCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
 }
 
 pub fn genericArgumentCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
-    return graph.generic_type_arguments.items.len + graph.semantic.generic_arguments.items.len;
+    return graph.semantic.generic_arguments.items.len;
 }
 
 pub fn bindingTypeUnresolved(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleBindingId) bool {
@@ -144,12 +144,7 @@ fn constructionVariant(graph: *const graph_mod.ModuleSemanticGraph, id: entities
 }
 
 pub fn genericArgumentView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleGenericArgId) !entities.GenericArgument {
-    var raw: usize = @intFromEnum(id);
-    if (raw < graph.generic_type_arguments.items.len) {
-        const value = graph.generic_type_arguments.items[raw];
-        return .{ .name = value.name, .value = .{ .type = value.ty } };
-    }
-    raw -= graph.generic_type_arguments.items.len;
+    const raw: usize = @intFromEnum(id);
     if (raw < graph.semantic.generic_arguments.items.len) return graph.semantic.generic_arguments.items[raw];
     return error.InvalidModuleGenericArgumentId;
 }

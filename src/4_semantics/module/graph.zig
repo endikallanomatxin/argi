@@ -55,7 +55,6 @@ pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRa
 /// Explicit C enum tags survive canonicalization and relocation; ordinary
 /// choices leave this unset and derive their tags from variant order.
 pub const ChoiceVariant = struct { value: ?i32 = null, name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
-pub const GenericTypeArgument = struct { name: StringRange, ty: ModuleTypeId };
 
 pub const DeclarationKind = primitives.DeclarationKind;
 
@@ -114,7 +113,6 @@ pub const ModuleSemanticGraph = struct {
     structural_fields: std.ArrayList(Field) = .empty,
     choice_variant_entries: std.ArrayList(ChoiceVariant) = .empty,
     structural_choice_variants: std.ArrayList(ChoiceVariant) = .empty,
-    generic_type_arguments: std.ArrayList(GenericTypeArgument) = .empty,
     strings: std.ArrayList(u8) = .empty,
     type_references: std.ArrayList(TypeReference) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
@@ -132,7 +130,6 @@ pub const ModuleSemanticGraph = struct {
         self.structural_fields.deinit(allocator);
         self.choice_variant_entries.deinit(allocator);
         self.structural_choice_variants.deinit(allocator);
-        self.generic_type_arguments.deinit(allocator);
         self.strings.deinit(allocator);
         self.type_references.deinit(allocator);
         self.file_offsets.deinit(allocator);
@@ -170,7 +167,6 @@ pub const ModuleSemanticGraph = struct {
             self.types.items.len * @sizeOf(ModuleType) + self.functions.items.len * @sizeOf(FunctionInterface) +
             (self.fields.items.len + self.structural_fields.items.len) * @sizeOf(Field) +
             (self.choice_variant_entries.items.len + self.structural_choice_variants.items.len) * @sizeOf(ChoiceVariant) +
-            self.generic_type_arguments.items.len * @sizeOf(GenericTypeArgument) +
             self.strings.items.len +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.file_offsets.items.len * @sizeOf(FileOffsets) +
@@ -556,12 +552,12 @@ fn lowerGenericType(
     };
     const parameter_count = graph.declaration(declaration_id).generic_parameter_count orelse return null;
     if (literal.fields.len != parameter_count) return null;
-    const argument_start = graph.generic_type_arguments.items.len;
+    const argument_start = graph.semantic.generic_arguments.items.len;
     const type_start = graph.types.items.len;
-    var arguments: std.ArrayList(GenericTypeArgument) = .empty;
+    var arguments: std.ArrayList(module_entities.GenericArgument) = .empty;
     defer arguments.deinit(allocator);
     errdefer {
-        graph.generic_type_arguments.shrinkRetainingCapacity(argument_start);
+        graph.semantic.generic_arguments.shrinkRetainingCapacity(argument_start);
         graph.types.shrinkRetainingCapacity(type_start);
     }
     for (literal.fields) |field_node| {
@@ -571,11 +567,11 @@ fn lowerGenericType(
         const ty = try lowerType(allocator, graph, tree, source, module_file_index, type_node) orelse break;
         try arguments.append(allocator, .{
             .name = try graph.addString(allocator, type_arguments.name(tree, source, field, base_name)),
-            .ty = ty,
+            .value = .{ .type = ty },
         });
     } else {
-        const start = graph.generic_type_arguments.items.len;
-        try graph.generic_type_arguments.appendSlice(allocator, arguments.items);
+        const start = graph.semantic.generic_arguments.items.len;
+        try graph.semantic.generic_arguments.appendSlice(allocator, arguments.items);
         const id: ModuleTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
         try graph.types.append(allocator, .{ .generic = .{
             .base = declaration_id,
@@ -583,7 +579,7 @@ fn lowerGenericType(
         } });
         return id;
     }
-    graph.generic_type_arguments.shrinkRetainingCapacity(argument_start);
+    graph.semantic.generic_arguments.shrinkRetainingCapacity(argument_start);
     graph.types.shrinkRetainingCapacity(type_start);
     return null;
 }

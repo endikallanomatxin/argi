@@ -11,7 +11,6 @@ pub const ConstructionBases = struct {
     types: u32,
     fields: u32,
     variants: u32,
-    generic_arguments: u32,
 };
 
 pub const Storage = struct {
@@ -29,6 +28,7 @@ pub const Storage = struct {
     /// prefixes owned by ModuleSemanticGraph itself.
     fields: std.ArrayList(entities.Field) = .empty,
     variants: std.ArrayList(entities.ChoiceVariant) = .empty,
+    /// One canonical pool shared by discovery and subsequent lowering.
     generic_arguments: std.ArrayList(entities.GenericArgument) = .empty,
     types: std.ArrayList(entities.ModuleType) = .empty,
 

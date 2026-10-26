@@ -392,9 +392,47 @@ test "module callable interfaces preserve type-only generic instantiations" {
     const generic = graph.types.items[@intFromEnum(input.ty)].generic;
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(generic.base));
     try std.testing.expectEqual(@as(u32, 1), generic.arguments.len);
-    const argument = graph.generic_type_arguments.items[generic.arguments.start];
+    const argument = graph.semantic.generic_arguments.items[generic.arguments.start];
     try std.testing.expectEqualStrings("t", graph.text(argument.name));
-    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(argument.ty)].builtin);
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(argument.value.type)].builtin);
+}
+
+test "discovery and lowering share nested generic arguments across canonicalization" {
+    const allocator = std.testing.allocator;
+    const source = "Box#(.t: Type): Type = (.value: t)\nread(.box: Box#(.t: Box#(.t: Int32))) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "generics", &.{
+        .{ .path = "generics/main.rg", .tree = &tree, .source = source },
+    });
+    defer graph.deinit(allocator);
+
+    const views = @import("views.zig");
+    const canonicalize = @import("canonicalize_storage.zig");
+    const input = graph.fields.items[graph.functions.items[0].input.start];
+    const outer = graph.types.items[@intFromEnum(input.ty)].generic;
+    const outer_argument = try views.genericArgumentView(&graph, @enumFromInt(outer.arguments.start));
+    const inner = graph.types.items[@intFromEnum(outer_argument.value.type)].generic;
+    const inner_argument = try views.genericArgumentView(&graph, @enumFromInt(inner.arguments.start));
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(inner_argument.value.type)].builtin);
+
+    const discovered_count = views.genericArgumentCount(&graph);
+    var writer = @import("writer.zig").Writer.init(allocator, &graph);
+    const appended = try writer.addGenericArgument(.{
+        .name = outer_argument.name,
+        .value = .{ .comptime_int = 42 },
+    });
+    try std.testing.expectEqual(discovered_count, @intFromEnum(appended));
+    const backing = graph.semantic.generic_arguments.items.ptr;
+    try canonicalize.run(allocator, &graph);
+    try std.testing.expectEqual(backing, graph.semantic.generic_arguments.items.ptr);
+    try std.testing.expectEqual(outer_argument.value.type, (try views.genericArgumentView(&graph, @enumFromInt(outer.arguments.start))).value.type);
+    const canonical_outer = (try views.typeView(&graph, input.ty)).resolved.generic;
+    try std.testing.expectEqual(outer.arguments.start, canonical_outer.arguments.start);
+    try std.testing.expectEqual(@as(i64, 42), (try views.genericArgumentView(&graph, appended)).value.comptime_int);
+    writer = @import("writer.zig").Writer.init(allocator, &graph);
+    const next = try writer.addGenericArgument(inner_argument);
+    try std.testing.expectEqual(discovered_count + 1, @intFromEnum(next));
 }
 
 test "module graph builds nominal choice variants" {

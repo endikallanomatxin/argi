@@ -19,7 +19,6 @@ pub const Writer = struct {
                 .types = @intCast(graph.types.items.len),
                 .fields = @intCast(graph.fields.items.len + graph.structural_fields.items.len),
                 .variants = @intCast(graph.choice_variant_entries.items.len + graph.structural_choice_variants.items.len),
-                .generic_arguments = @intCast(graph.generic_type_arguments.items.len),
             };
             graph.semantic.construction_bases = value;
             break :blk value;
@@ -35,8 +34,7 @@ pub const Writer = struct {
         const bases = self.construction_bases;
         if (self.graph.types.items.len != @as(usize, bases.types) or
             self.graph.fields.items.len + self.graph.structural_fields.items.len != @as(usize, bases.fields) or
-            self.graph.choice_variant_entries.items.len + self.graph.structural_choice_variants.items.len != @as(usize, bases.variants) or
-            self.graph.generic_type_arguments.items.len != @as(usize, bases.generic_arguments))
+            self.graph.choice_variant_entries.items.len + self.graph.structural_choice_variants.items.len != @as(usize, bases.variants))
         {
             return error.ModuleSemanticConstructionPrefixMutated;
         }
@@ -91,11 +89,7 @@ pub const Writer = struct {
     }
 
     pub fn addGenericArgument(self: *Writer, argument: entities.GenericArgument) !entities.ModuleGenericArgId {
-        try self.ensureConstructionPrefixesStable();
-        const id = try logicalId(
-            entities.ModuleGenericArgId,
-            @as(usize, self.construction_bases.generic_arguments) + self.graph.semantic.generic_arguments.items.len,
-        );
+        const id = try directId(entities.ModuleGenericArgId, self.graph.semantic.generic_arguments.items.len);
         try self.graph.semantic.generic_arguments.append(self.allocator, argument);
         return id;
     }

@@ -6,7 +6,7 @@ const views = @import("views.zig");
 /// Collapse the discovery-time construction prefixes and canonical semantic tails
 /// into one Module* ID space without changing any logical ID. This runs only
 /// after ModuleSema has finished writing, so downstream GlobalSema never has to
-/// reason about split type/field/variant/generic-argument storage.
+/// reason about split type/field/variant storage.
 pub fn run(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) !void {
     var types: std.ArrayList(entities.ModuleType) = .empty;
     errdefer types.deinit(allocator);
@@ -26,12 +26,6 @@ pub fn run(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) 
     for (0..views.variantCount(graph)) |raw|
         variants.appendAssumeCapacity(try views.variantView(graph, @enumFromInt(@as(u32, @intCast(raw)))));
 
-    var generic_arguments: std.ArrayList(entities.GenericArgument) = .empty;
-    errdefer generic_arguments.deinit(allocator);
-    try generic_arguments.ensureTotalCapacity(allocator, views.genericArgumentCount(graph));
-    for (0..views.genericArgumentCount(graph)) |raw|
-        generic_arguments.appendAssumeCapacity(try views.genericArgumentView(graph, @enumFromInt(@as(u32, @intCast(raw)))));
-
     // From this point onward no fallible work remains: atomically replace the
     // split representation while preserving the logical ordering used by IDs.
     graph.types.deinit(allocator);
@@ -44,8 +38,6 @@ pub fn run(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) 
     graph.choice_variant_entries = .empty;
     graph.structural_choice_variants.deinit(allocator);
     graph.structural_choice_variants = .empty;
-    graph.generic_type_arguments.deinit(allocator);
-    graph.generic_type_arguments = .empty;
 
     graph.semantic.types.deinit(allocator);
     graph.semantic.types = types;
@@ -56,9 +48,6 @@ pub fn run(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) 
     graph.semantic.variants.deinit(allocator);
     graph.semantic.variants = variants;
     variants = .empty;
-    graph.semantic.generic_arguments.deinit(allocator);
-    graph.semantic.generic_arguments = generic_arguments;
-    generic_arguments = .empty;
 
     // Field/variant overlays have been folded into their canonical rows.
     graph.semantic.field_semantics.deinit(allocator);
@@ -69,7 +58,6 @@ pub fn run(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) 
         .types = 0,
         .fields = 0,
         .variants = 0,
-        .generic_arguments = 0,
     };
 }
 
@@ -78,8 +66,7 @@ pub fn hasConstructionPrefixes(graph: *const graph_mod.ModuleSemanticGraph) bool
         graph.fields.items.len != 0 or
         graph.structural_fields.items.len != 0 or
         graph.choice_variant_entries.items.len != 0 or
-        graph.structural_choice_variants.items.len != 0 or
-        graph.generic_type_arguments.items.len != 0;
+        graph.structural_choice_variants.items.len != 0;
 }
 
 test "canonicalization preserves logical type IDs while draining prefixes" {
