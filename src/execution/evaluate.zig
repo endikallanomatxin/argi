@@ -73,9 +73,9 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     var environment: @import("comptime_host.zig").Environment = .{ .output = .{ .writer = &output.interface, .error_writer = &errors.interface } };
     const bindings = environment.bindings();
     var executor = if (host_entry)
-        try Vm.initWithHost(temporary, program, budget.*, &bindings)
+        try Vm.initWithHost(allocator, program, budget.*, &bindings)
     else
-        try Vm.init(temporary, program, budget.*);
+        try Vm.init(allocator, program, budget.*);
     defer executor.deinit();
     defer {
         budget.instructions -|= executor.steps;
@@ -195,7 +195,7 @@ pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemantic
         if (!freezable(graph, lower.cleanup_types, input, 0)) return error.UnfreezableEvaluationInput;
     }
     const program = try lower.compileExpression(root, operands);
-    var executor = try Vm.init(temporary, program, budget.*);
+    var executor = try Vm.init(allocator, program, budget.*);
     defer executor.deinit();
     defer {
         budget.instructions -|= executor.steps;

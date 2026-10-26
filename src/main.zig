@@ -130,7 +130,7 @@ pub fn main(init: std.process.Init) !void {
             exitCommandError("REPL error", err);
         };
     } else if (std.mem.eql(u8, command, "run")) {
-        const exit_code = run_cmd.run(io, init.environ_map, args[2..]) catch |err| {
+        const exit_code = run_cmd.run(init.gpa, io, init.environ_map, args[2..]) catch |err| {
             exitRunError(err);
         };
         std.process.exit(exit_code);

@@ -311,6 +311,11 @@ test "bytecode VM retains invocations and resets poisoned execution contexts" {
     const input = [_]b.Value{.{ .array = &.{.{ .integer = 42 }} }};
     _ = try retained.invoke(@enumFromInt(0), &input);
     try std.testing.expectEqual(@as(usize, 1), retained.steps);
+    // Reusing backing leaves exactly enough room for a second invocation:
+    // two copied input cells, one fresh frame ID and one public result cell.
+    _ = try retained.invoke(@enumFromInt(0), &input);
+    try std.testing.expectEqual(@as(usize, 9), retained.context().storage.cells);
+    try std.testing.expectEqual(@as(usize, 1), retained.steps);
     try std.testing.expectError(error.ExecutionMemoryLimit, retained.invoke(@enumFromInt(0), &input));
     try std.testing.expectError(error.ExecutionContextPoisoned, retained.invoke(@enumFromInt(0), &input));
     retained.reset();
@@ -3722,4 +3727,46 @@ test "virtual contract declarations retain domains without concrete implementati
         if (std.mem.eql(u8, graph.text(decl.name), "Storage")) break decl;
     } else return error.MissingStorageContract;
     try std.testing.expectEqual(@as(u32, 2), declaration.contract_domain_count);
+}
+
+fn transientCallAllocationFailures(a: std.mem.Allocator) !void {
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
+    var code: [130]b.Instruction = undefined;
+    code[0] = .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } };
+    for (code[1..129]) |*instruction| instruction.* = .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(1), .args = &.{0}, .outputs = &.{0} } } };
+    code[129] = .{ .source = source, .op = .{ .ret = &.{0} } };
+    const leaf = [_]b.Instruction{.{ .source = source, .op = .{ .ret = &.{0} } }};
+    const functions = [_]b.Function{
+        .{ .slots = &.{@enumFromInt(0)}, .inputs = &.{}, .outputs = &.{0}, .code = &code, .write_destinations = &.{@enumFromInt(0)} },
+        .{ .slots = &.{@enumFromInt(0)}, .inputs = &.{0}, .outputs = &.{0}, .code = &leaf, .write_destinations = &.{@enumFromInt(0)} },
+    };
+    const program: b.Program = .{ .graph = &graph, .functions = &functionEntries(&functions) };
+    // There is room for every immutable frame ID and retained result, but not
+    // for retaining another transport envelope/capture on every nested call.
+    var executor = try vm.Vm.init(a, program, .{ .value_cells = 160 });
+    defer executor.deinit();
+    const first = try executor.invoke(@enumFromInt(0), &.{});
+    try std.testing.expectEqual(@as(u64, 42), first[0].integer);
+    const initial_cells = executor.context().storage.cells;
+    const second = try executor.invoke(@enumFromInt(1), &.{.{ .integer = 7 }});
+    try std.testing.expectEqual(@as(u64, 7), second[0].integer);
+    try std.testing.expectEqual(@as(u64, 42), first[0].integer);
+    // Only the new input snapshot, fresh frame ID and public result survive.
+    try std.testing.expectEqual(initial_cells + 3, executor.context().storage.cells);
+    try std.testing.expect(executor.context().storage.cells < 160);
+}
+
+test "VM transient call transport preserves public results within retained memory limits" {
+    try transientCallAllocationFailures(std.testing.allocator);
+}
+
+test "VM transient transport and frame captures release every failed allocation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, transientCallAllocationFailures, .{});
 }

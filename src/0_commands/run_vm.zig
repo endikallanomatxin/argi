@@ -9,7 +9,7 @@ const p = @import("../4_semantics/primitives/schema.zig");
 
 // Deliberately no runtime capabilities, native calls, or host I/O are exposed to
 // interpreted code. Source collection still uses the normal checked frontend.
-pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const []const u8) !u8 {
+pub fn run(execution_allocator: std.mem.Allocator, io: std.Io, environ: ?*const std.process.Environ.Map, args: []const []const u8) !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -84,7 +84,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     const interrupts = try @import("execution_interrupt.zig").Guard.init();
     defer interrupts.deinit();
     limits.cancellation = interrupts.token();
-    var executor = vm.Vm.init(allocator, program, limits) catch |err| {
+    var executor = vm.Vm.init(execution_allocator, program, limits) catch |err| {
         if (err == error.MissingHostBinding or err == error.IncompatibleHostBinding or err == error.AmbiguousHostBinding) {
             const host = @import("../execution/host.zig");
             if (host.findFailure(program, &.{})) |failure| {

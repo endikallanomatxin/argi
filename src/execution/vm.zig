@@ -26,13 +26,15 @@ pub const Cancellation = struct {
     }
 };
 
+pub const AllocationProfile = @import("storage.zig").AllocationProfile;
+
 pub const Limits = struct {
     instructions: usize = 1_000_000,
     call_depth: usize = 128,
     cancellation: ?*const Cancellation = null,
     // Retained value cells, including every frame identity and record snapshot.
-    // Reused call backing is charged once; temporary snapshots remain charged
-    // until reset. This bounds the execution arena even in allocation loops.
+    // Reused call backing is charged once. Frame scratch is released on return;
+    // immutable snapshots remain charged until reset, bounding allocation loops.
     value_cells: usize = 1_000_000,
 };
 
@@ -56,6 +58,7 @@ pub const Context = struct {
     allocator: std.mem.Allocator,
     storage: Storage = undefined,
     limit: usize,
+    allocation_profile: ?*AllocationProfile = null,
     host_bindings: []const host.Binding = &.{},
     state: enum { fresh, ready, poisoned } = .fresh,
     running: bool = false,
@@ -73,14 +76,16 @@ pub const Context = struct {
         if (self.state == .poisoned) return error.ExecutionContextPoisoned;
         if (self.state == .fresh) {
             self.storage = try Storage.init(self.arena.allocator(), self.limit);
+            self.storage.bookkeeping_allocator = self.allocator;
             self.state = .ready;
         }
+        self.storage.allocation_profile = self.allocation_profile;
     }
     pub fn sessionSlots(self: *Context, count: usize, cleanup: []const b.Cleanup) !@import("storage.zig").Slots {
         if (self.running) return error.ExecutionContextBusy;
         if (self.state == .poisoned) return error.ExecutionContextPoisoned;
-        errdefer self.state = .poisoned;
         try self.ensureStorage();
+        errdefer self.state = .poisoned;
         return self.storage.enterSession(count, cleanup);
     }
     /// Host-side acquisition protocol only. These receipts cannot be supplied
@@ -107,6 +112,7 @@ pub const Context = struct {
     }
     pub fn deinit(self: *Context) void {
         std.debug.assert(!self.running);
+        if (self.state != .fresh) self.storage.deinitBookkeeping();
         self.arena.deinit();
         self.* = undefined;
     }
@@ -114,6 +120,7 @@ pub const Context = struct {
     /// arena alive while copying supplied arguments; reset releases it at once.
     fn detachStorage(self: *Context) std.heap.ArenaAllocator {
         std.debug.assert(!self.running);
+        if (self.state != .fresh) self.storage.deinitBookkeeping();
         const previous = self.arena;
         self.arena = .init(self.allocator);
         self.state = .fresh;
@@ -342,13 +349,36 @@ pub const Vm = struct {
     fn frame(self: *Vm, program: *const b.Program, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
         const linked = try self.linked_hosts.get(self.allocator, program, self.context().host_bindings);
         const id = try self.context().storage.enterCleanup(function.slots.len, function.cleanup);
+        errdefer self.context().storage.leave(id);
         const slots = try self.context().storage.slots(id);
         for (args, function.inputs) |value, slot| try slots.put(slot, value);
+        if (self.context().allocation_profile) |counts| counts.write_destination_cells +|= function.write_destinations.len;
         try self.context().storage.charge(function.write_destinations.len);
-        const destinations = try self.context().arena.allocator().alloc(?WriteDestination, function.write_destinations.len);
+        errdefer self.context().storage.cells -= function.write_destinations.len;
+        const destinations = try self.allocator.alloc(?WriteDestination, function.write_destinations.len);
         @memset(destinations, null);
         return .{ .program = program, .function = function, .host_bindings = linked, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
     }
+    fn retireFrame(self: *Vm, completed: Frame) void {
+        self.context().storage.leave(completed.storage);
+        self.context().storage.cells -= completed.write_destinations.len;
+        self.allocator.free(completed.write_destinations);
+    }
+
+    // Only the transport envelope is scratch. Aggregate fields and reference
+    // paths remain owned by Storage; no language value points into this buffer.
+    // Reserve live capacity against the same memory budget before allocating.
+    fn transfer(self: *Vm, buffer: *std.ArrayList(b.Value), count: usize) ![]b.Value {
+        if (count > buffer.capacity) {
+            const additional = count - buffer.capacity;
+            try self.context().storage.charge(additional);
+            errdefer self.context().storage.cells -= additional;
+            try buffer.ensureTotalCapacityPrecise(self.allocator, count);
+        }
+        buffer.items.len = count;
+        return buffer.items;
+    }
+
     fn resolvePlace(self: *Vm, program: *const b.Program, frame_id: runtime_value.FrameId, place: b.Place, path: *[64]runtime_value.Projection, comptime read_value: bool) !runtime_value.Reference {
         if (place.region == .global) {
             const key = Context.globalKey(program, @enumFromInt(place.root));
@@ -384,13 +414,19 @@ pub const Vm = struct {
     fn execute(self: *Vm, program: *const b.Program, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         var frames: std.ArrayList(Frame) = .empty;
         defer frames.deinit(self.allocator);
+        var transfers: std.ArrayList(b.Value) = .empty;
+        defer {
+            self.context().storage.cells -= transfers.capacity;
+            transfers.deinit(self.allocator);
+        }
         // Runtime failures end frame liveness without running user cleanup,
         // matching the current abort policy. Persistent sessions must not
         // treat this path as a recoverable cleanup/unwind protocol.
-        defer for (frames.items) |active| self.context().storage.leave(active.storage);
+        defer for (frames.items) |active| self.retireFrame(active);
         errdefer self.captureFailure(frames.items);
         if (self.limits.call_depth == 0) return error.ExecutionCallDepthLimit;
-        try frames.append(self.allocator, try self.frame(program, function, args, &.{}));
+        try frames.ensureUnusedCapacity(self.allocator, 1);
+        frames.appendAssumeCapacity(try self.frame(program, function, args, &.{}));
         while (true) {
             // Never retain this pointer across a push: the frame array may move.
             const current = &frames.items[frames.items.len - 1];
@@ -455,7 +491,8 @@ pub const Vm = struct {
                     const target = virtual.program.resolve(method.function).?;
                     const callee = target.body;
                     if (callee.inputs.len != x.args.len or callee.outputs.len != x.outputs.len) return error.ExecutionInvalidVirtual;
-                    const values = try self.allocate(x.args.len);
+                    if (self.context().allocation_profile) |counts| counts.call_input_cells +|= x.args.len;
+                    const values = try self.transfer(&transfers, x.args.len);
                     for (values, x.args, callee.inputs, 0..) |*value, slot, input, index| {
                         if (index == signature.receiver_input_index) {
                             var receiver = virtual.receiver;
@@ -471,7 +508,8 @@ pub const Vm = struct {
                     for (x.outputs, callee.outputs) |slot, output| {
                         if (!types.equal(unit.graph, f.slots[slot], callee.slots[output])) return error.ExecutionInvalidVirtual;
                     }
-                    try frames.append(self.allocator, try self.frame(target.program, callee, values, x.outputs));
+                    try frames.ensureUnusedCapacity(self.allocator, 1);
+                    frames.appendAssumeCapacity(try self.frame(target.program, callee, values, x.outputs));
                 },
                 .prepare_acquired => |x| {
                     const storage = &self.context().storage;
@@ -719,18 +757,23 @@ pub const Vm = struct {
                 },
                 .call => |x| {
                     if (frames.items.len >= self.limits.call_depth) return error.ExecutionCallDepthLimit;
-                    const values = try self.allocate(x.args.len);
+                    if (self.context().allocation_profile) |counts| counts.call_input_cells +|= x.args.len;
+                    const values = try self.transfer(&transfers, x.args.len);
                     for (values, x.args) |*value, slot| value.* = try slots.get(slot);
                     const callee = unit.resolve(x.function).?;
-                    try frames.append(self.allocator, try self.frame(callee.program, callee.body, values, x.outputs));
+                    try frames.ensureUnusedCapacity(self.allocator, 1);
+                    frames.appendAssumeCapacity(try self.frame(callee.program, callee.body, values, x.outputs));
                 },
                 .branch => |x| current.pc = if ((try slots.get(x.condition)).boolean) x.yes else x.no,
                 .jump => |target| current.pc = target,
                 .ret => |outputs| {
-                    const result = try self.allocate(outputs.len);
+                    if (frames.items.len > 1) if (self.context().allocation_profile) |counts| {
+                        counts.nested_output_cells +|= outputs.len;
+                    };
+                    const result = if (frames.items.len == 1) try self.allocate(outputs.len) else try self.transfer(&transfers, outputs.len);
                     for (result, outputs) |*value, slot| value.* = try slots.get(slot);
                     const completed = frames.pop().?;
-                    self.context().storage.leave(completed.storage);
+                    self.retireFrame(completed);
                     try self.context().storage.validateLive(result);
                     if (frames.items.len == 0) return result;
                     const caller = try self.context().storage.slots(frames.items[frames.items.len - 1].storage);
@@ -775,4 +818,30 @@ fn fromFloatValue(value: @import("../5_codegen/numeric_value.zig").Value) b.Valu
     return switch (value) {
         inline .float16, .float32, .float64 => |number, kind| @unionInit(b.Value, @tagName(kind), number),
     };
+}
+
+test "execution bookkeeping growth preserves session references and acquisition identities" {
+    var context_ = Context.init(std.testing.allocator, 10000);
+    defer context_.deinit();
+    const root = try context_.sessionSlots(1, &.{});
+    try root.put(0, .{ .integer = 42 });
+    const reference: runtime_value.Reference = .{ .context = context_.storage.context, .frame = root.frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    const region = try context_.acquireRegion(1, 1);
+    try context_.writeRegion(region, 0, &.{7});
+    const initial_capacity = context_.storage.frames.capacity;
+    for (0..1000) |_| {
+        const next = try context_.storage.enter(1);
+        context_.storage.leave(next);
+        const temporary = try context_.acquireRegion(1, 1);
+        try context_.releaseRegion(temporary);
+    }
+    try std.testing.expect(context_.storage.frames.capacity > initial_capacity);
+    try std.testing.expectEqual(@as(u64, 42), (try context_.storage.read(reference)).integer);
+    var byte: [1]u8 = undefined;
+    try context_.readRegion(region, 0, &byte);
+    try std.testing.expectEqual(@as(u8, 7), byte[0]);
+    context_.reset();
+    _ = try context_.sessionSlots(1, &.{});
+    try std.testing.expectError(error.ExecutionForeignReference, context_.storage.read(reference));
+    try std.testing.expectError(error.ExecutionForeignReference, context_.readRegion(region, 0, &byte));
 }

@@ -7,6 +7,19 @@ const numeric = @import("../5_codegen/bytecode/numeric_layout.zig");
 const partial = @import("partial_storage.zig");
 const cleanup_layout = @import("../5_codegen/cleanup_layout.zig");
 
+/// Optional attribution of successful payload requests and transfer traffic.
+/// Counts are cumulative, including backing subsequently reclaimed. Attached
+/// observers must outlive the operations that use them.
+pub const AllocationProfile = struct {
+    call_input_cells: u64 = 0,
+    nested_output_cells: u64 = 0,
+    write_destination_cells: u64 = 0,
+    aggregate_cells: u64 = 0,
+    partial_cells: u64 = 0,
+    projection_cells: u64 = 0,
+    virtual_bytes: u64 = 0,
+};
+
 const Frame = struct {
     values: []?b.Value,
     partial_storage: std.AutoHashMapUnmanaged(b.Slot, partial.Storage) = .empty,
@@ -43,7 +56,8 @@ pub const Slots = struct {
         const values = try self.cells();
         if (index >= values.len) return error.ExecutionInvalidReference;
         values[index] = value;
-        _ = self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.remove(index);
+        if (self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.fetchRemove(index)) |entry|
+            self.storage.discardPartial(self.frame, entry.value);
     }
 
     fn cells(self: Slots) ![]?b.Value {
@@ -77,7 +91,11 @@ const CleanupSelection = struct { offset: usize, layout: *const cleanup_layout.L
 pub const Storage = struct {
     context: v.ContextId,
     allocator: std.mem.Allocator,
+    // Resizable identity/index pools and unexposed call scratch have ordinary
+    // allocation lifetimes. Complete values/snapshots still belong to allocator.
+    bookkeeping_allocator: ?std.mem.Allocator = null,
     limit: usize,
+    allocation_profile: ?*AllocationProfile = null,
     cells: usize = 0,
     frames: std.ArrayList(Frame) = .empty,
     // Exact-size bins hold dead call buffers, never reusable frame identities.
@@ -250,11 +268,11 @@ pub const Storage = struct {
     fn publishAcquiredFrame(self: *Storage, view: AcquiredView, cleanup: []const b.Cleanup) !v.FrameId {
         // Reserve both indexes before publishing the frame. Metadata remains
         // arena-owned, and every lookup checks acquisition liveness first.
-        try self.acquired_views.ensureUnusedCapacity(self.allocator, 1);
-        try self.acquired_frames.ensureUnusedCapacity(self.allocator, 1);
+        try self.acquired_views.ensureUnusedCapacity(self.bookkeepingAllocator(), 1);
+        try self.acquired_frames.ensureUnusedCapacity(self.bookkeepingAllocator(), 1);
         if (view.layout.has_references) {
             if (view.value_layout == null) return error.ExecutionMissingCleanup;
-            try self.reference_acquired_frames.ensureUnusedCapacity(self.allocator, 1);
+            try self.reference_acquired_frames.ensureUnusedCapacity(self.bookkeepingAllocator(), 1);
         }
         const values = if (view.value_layout) |logical| std.math.mul(usize, view.count, logical.nodes[0].span) catch return error.ExecutionMemoryLimit else 1;
         const flags = std.math.mul(usize, view.count, b.cleanupFlagCount(cleanup) catch return error.ExecutionInvalidReference) catch return error.ExecutionMemoryLimit;
@@ -391,6 +409,10 @@ pub const Storage = struct {
         }
     }
 
+    pub fn bookkeepingAllocator(self: *const Storage) std.mem.Allocator {
+        return self.bookkeeping_allocator orelse self.allocator;
+    }
+
     pub fn charge(self: *Storage, count: usize) !void {
         if (count > self.limit -| self.cells) return error.ExecutionMemoryLimit;
         self.cells += count;
@@ -405,9 +427,11 @@ pub const Storage = struct {
         const charge_count = if (layout.nodes.len == 0) 0 else layout.nodes[0].span;
         try self.charge(charge_count);
         errdefer self.cells -= charge_count;
-        const record = try partial.Storage.init(self.allocator, layout);
-        errdefer self.allocator.free(record.values);
-        try self.frames.items[@intFromEnum(frame)].partial_storage.put(self.allocator, root, record);
+        const a = if (self.frames.items[@intFromEnum(frame)].duration == .call) self.bookkeeping_allocator orelse self.allocator else self.allocator;
+        const record = try partial.Storage.init(a, layout);
+        errdefer a.free(record.values);
+        try self.frames.items[@intFromEnum(frame)].partial_storage.put(self.bookkeepingAllocator(), root, record);
+        if (self.allocation_profile) |counts| counts.partial_cells +|= charge_count;
     }
     /// Re-enter lexical storage after its previous cleanup has finished.
     /// Existing leaf cells are reused; no old initialized value survives entry.
@@ -430,7 +454,9 @@ pub const Storage = struct {
     pub fn allocate(self: *Storage, count: usize) ![]b.Value {
         try self.charge(count);
         errdefer self.cells -= count;
-        return self.allocator.alloc(b.Value, count);
+        const result = try self.allocator.alloc(b.Value, count);
+        if (self.allocation_profile) |counts| counts.aggregate_cells +|= count;
+        return result;
     }
     pub fn virtualize(self: *Storage, receiver: v.Reference, program: *const b.Program, table: *const b.VirtualTable) !b.Value {
         _ = try self.read(receiver);
@@ -443,6 +469,10 @@ pub const Storage = struct {
         var retained = receiver;
         retained.path = try self.allocator.dupe(v.Projection, receiver.path);
         descriptor.* = .{ .receiver = retained, .program = program.*, .table = table };
+        if (self.allocation_profile) |counts| {
+            counts.virtual_bytes +|= @sizeOf(v.Virtual);
+            counts.projection_cells +|= receiver.path.len;
+        }
         return .{ .virtual_ = descriptor };
     }
     /// Copy complete value data into this context's arena. Copying data never
@@ -462,6 +492,10 @@ pub const Storage = struct {
         var remaining_paths = paths;
         const result = fillClone(values, &remaining_values, &remaining_paths);
         std.debug.assert(remaining_values.len == 0 and remaining_paths.len == 0);
+        if (self.allocation_profile) |counts| {
+            counts.aggregate_cells +|= count.values;
+            counts.projection_cells +|= count.projections;
+        }
         return result;
     }
 
@@ -603,6 +637,7 @@ pub const Storage = struct {
         const frame = try self.enter(0);
         self.frames.items[@intFromEnum(frame)].bytes = data;
         self.frames.items[@intFromEnum(frame)].duration = .static;
+        if (self.allocation_profile) |counts| counts.projection_cells +|= 1;
         return .{ .context = self.context, .frame = frame, .root = 0, .path = path, .mutability = .read_only };
     }
 
@@ -643,7 +678,9 @@ pub const Storage = struct {
     fn retainPath(self: *Storage, path: []const v.Projection) ![]const v.Projection {
         try self.charge(path.len);
         errdefer self.cells -= path.len;
-        return self.allocator.dupe(v.Projection, path);
+        const result = try self.allocator.dupe(v.Projection, path);
+        if (self.allocation_profile) |counts| counts.projection_cells +|= path.len;
+        return result;
     }
 
     pub fn offsetReference(self: *Storage, reference: v.Reference, elements: i128) !v.Reference {
@@ -701,8 +738,8 @@ pub const Storage = struct {
         const charge_count = try self.frameCharge(count, flag_count);
         try self.charge(charge_count);
         errdefer self.cells -= charge_count;
-        try self.frames.ensureUnusedCapacity(self.allocator, 1);
-        const bin = try self.reusable_frames.getOrPut(self.allocator, size);
+        try self.frames.ensureUnusedCapacity(self.bookkeepingAllocator(), 1);
+        const bin = try self.reusable_frames.getOrPut(self.bookkeepingAllocator(), size);
         if (!bin.found_existing) bin.value_ptr.* = null;
         const buffers: FrameBuffers = if (bin.value_ptr.*) |previous| reused: {
             const retired = &self.frames.items[@intFromEnum(previous)];
@@ -725,11 +762,43 @@ pub const Storage = struct {
         self.frames.appendAssumeCapacity(.{ .values = buffers.values, .cleanup = cleanup, .cleanup_flags = buffers.flags });
         return id;
     }
+    fn discardPartial(self: *Storage, id: v.FrameId, record: partial.Storage) void {
+        if (self.frames.items[@intFromEnum(id)].duration != .call) return;
+        const a = self.bookkeeping_allocator orelse return;
+        self.cells -= record.values.len;
+        a.free(record.values);
+    }
+
+    fn clearCallScratch(self: *Storage, id: v.FrameId) void {
+        const a = self.bookkeeping_allocator orelse return;
+        const frame = &self.frames.items[@intFromEnum(id)];
+        var records = frame.partial_storage.valueIterator();
+        while (records.next()) |record| self.discardPartial(id, record.*);
+        frame.partial_storage.deinit(a);
+        frame.partial_storage = .empty;
+    }
+
+    /// Release ordinary bookkeeping before discarding the value arena. This
+    /// neither runs language cleanup nor releases receipts through user code.
+    pub fn deinitBookkeeping(self: *Storage) void {
+        const a = self.bookkeeping_allocator orelse return;
+        for (self.frames.items, 0..) |*frame, index| {
+            if (frame.duration == .call) self.clearCallScratch(@enumFromInt(index)) else frame.partial_storage.deinit(a);
+        }
+        self.frames.deinit(a);
+        self.reusable_frames.deinit(a);
+        self.acquisitions.entries.deinit(a);
+        self.acquired_views.deinit(a);
+        self.acquired_frames.deinit(a);
+        self.reference_acquired_frames.deinit(a);
+    }
+
     pub fn leave(self: *Storage, id: v.FrameId) void {
         const frame = &self.frames.items[@intFromEnum(id)];
         std.debug.assert(frame.duration == .call);
         if (!frame.alive) return;
         frame.alive = false;
+        self.clearCallScratch(id);
         const bin = self.reusable_frames.getPtr(.{ .values = frame.values.len, .flags = frame.cleanup_flags.len }).?;
         frame.reusable_next = bin.*;
         bin.* = id;
@@ -811,7 +880,9 @@ pub const Storage = struct {
         const cells = try record.materializationCells(path);
         try self.charge(cells);
         errdefer self.cells -= cells;
-        return record.read(self.allocator, path);
+        const result = try record.read(self.allocator, path);
+        if (self.allocation_profile) |counts| counts.aggregate_cells +|= cells;
+        return result;
     }
     fn child(value: b.Value, projection: v.Projection) !b.Value {
         return switch (projection) {
@@ -2712,4 +2783,38 @@ test "session publication preflights reused backing with its actual retained cha
     try std.testing.expectError(error.ExecutionDeadReference, storage.slots(old));
     try std.testing.expectError(error.ExecutionUninitializedStorage, session.get(0));
     try std.testing.expectError(error.ExecutionMemoryLimit, storage.enter(0));
+}
+
+fn callPartialScratchFailures(a: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1000);
+    storage.bookkeeping_allocator = a;
+    defer storage.deinitBookkeeping();
+    const frame = try storage.enter(1);
+    const layout: partial.Layout = .{ .nodes = &.{ .{ .kind = .record, .first = 1, .count = 2, .span = 3 }, .{ .offset = 1 }, .{ .offset = 2 } } };
+    try storage.prepareStorage(frame, 0, layout);
+    const record = storage.frames.items[@intFromEnum(frame)].partial_storage.getPtr(0).?;
+    try record.write(&.{.{ .field = 0 }}, .{ .integer = 42 });
+    try record.write(&.{.{ .field = 1 }}, .{ .integer = 7 });
+    const slots_ = try storage.slots(frame);
+    const snapshot = try slots_.get(0);
+    const charged = storage.cells;
+    try slots_.put(0, snapshot);
+    try std.testing.expectEqual(charged - 3, storage.cells);
+    try std.testing.expectEqual(@as(u32, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+    try storage.prepareStorage(try storage.enter(1), 0, layout);
+    storage.leave(frame);
+    try std.testing.expectEqual(@as(u32, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.capacity());
+    try std.testing.expectEqual(@as(u64, 42), snapshot.record[0].integer);
+    try std.testing.expectEqual(@as(u64, 7), snapshot.record[1].integer);
+    try std.testing.expectError(error.ExecutionDeadReference, slots_.get(0));
+}
+
+test "call partial scratch releases backing while materialized values survive" {
+    try callPartialScratchFailures(std.testing.allocator);
+}
+
+test "call partial scratch releases every failed allocation and unpublished frame" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, callPartialScratchFailures, .{});
 }

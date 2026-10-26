@@ -21,11 +21,12 @@ fn cwdHasManifest(io: std.Io) bool {
 }
 
 pub fn run(
+    execution_allocator: std.mem.Allocator,
     io: std.Io,
     environ_map: ?*const std.process.Environ.Map,
     args: []const []const u8,
 ) !u8 {
-    for (args) |arg| if (std.mem.eql(u8, arg, "--vm")) return @import("run_vm.zig").run(io, environ_map, args);
+    for (args) |arg| if (std.mem.eql(u8, arg, "--vm")) return @import("run_vm.zig").run(execution_allocator, io, environ_map, args);
     try rejectUnsupportedRunFlags(args);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -72,7 +73,7 @@ pub fn run(
 }
 
 test "run command rejects output path override" {
-    try std.testing.expectError(error.RunOutputFlagUnsupported, run(std.testing.io, null, &.{ "/tmp/module", "--output", "bin/app" }));
+    try std.testing.expectError(error.RunOutputFlagUnsupported, run(std.testing.allocator, std.testing.io, null, &.{ "/tmp/module", "--output", "bin/app" }));
 }
 
 test "run command builds and runs a module" {
@@ -91,7 +92,7 @@ test "run command builds and runs a module" {
     const module_dir = try tmpDirPath(&tmp);
     defer std.testing.allocator.free(module_dir);
 
-    const code = try run(std.testing.io, null, &.{module_dir});
+    const code = try run(std.testing.allocator, std.testing.io, null, &.{module_dir});
     try std.testing.expectEqual(@as(u8, 0), code);
 }
 
@@ -111,6 +112,6 @@ test "run command returns executable status code" {
     const module_dir = try tmpDirPath(&tmp);
     defer std.testing.allocator.free(module_dir);
 
-    const code = try run(std.testing.io, null, &.{module_dir});
+    const code = try run(std.testing.allocator, std.testing.io, null, &.{module_dir});
     try std.testing.expectEqual(@as(u8, 7), code);
 }

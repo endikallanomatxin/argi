@@ -41,7 +41,7 @@ pub const Regions = struct {
         // Check the quota before allocating large backing, then reserve every
         // allocation before charging or publishing the complete acquisition.
         if (charge > storage.limit -| storage.cells) return error.ExecutionMemoryLimit;
-        try self.entries.ensureUnusedCapacity(storage.allocator, 1);
+        try self.entries.ensureUnusedCapacity(storage.bookkeepingAllocator(), 1);
         const bytes = try storage.allocator.alloc(u8, length);
         errdefer storage.allocator.free(bytes);
         const initialized = try storage.allocator.alloc(u8, bitmap_length);
