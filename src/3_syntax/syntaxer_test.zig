@@ -145,6 +145,14 @@ test "compact syntaxing distinguishes choice definitions from choice value colle
     }
 }
 
+test "compact syntaxing retains named array dimensions for semantic resolution" {
+    var tree = try parseTestSource("dimensions.rg", "values: [count]Int32 = (20, 22)");
+    defer tree.deinit(std.testing.allocator);
+    const annotation = tree.symbolDeclaration(tree.roots[0]).?.type_node.?;
+    const dimension = tree.typeReference(annotation).?.array;
+    try std.testing.expectEqualStrings("count", tree.tokenTextFromSource("values: [count]Int32 = (20, 22)", dimension.length_token));
+}
+
 test "compact syntaxing permits ordinary named input and output types on function values" {
     var tree = try parseTestSource("signatures.rg", "f := Args -> Results { result = x }\ng := <.T: Type> Args -> Results { result = x }\nh := schema.Args -> schema.Results { result = x }\ni := schema.Args<Bool> -> schema.Results<Bool> { result = x }");
     defer tree.deinit(std.testing.allocator);

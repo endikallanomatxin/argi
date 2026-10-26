@@ -367,16 +367,18 @@ pub const Syntaxer = struct {
             self.advanceOne();
             self.skipNewLinesAndComments();
 
-            if (std.meta.activeTag(self.currentContent()) != .literal) {
-                try self.diags.add(len_loc, .syntax, "expected array length integer literal", .{});
-                return SyntaxerError.ExpectedIntLiteral;
-            }
-
             const length_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            switch (self.currentContent().literal) {
-                .decimal_int_literal => {},
+            switch (self.currentContent()) {
+                .identifier => {},
+                .literal => |literal| switch (literal) {
+                    .decimal_int_literal => {},
+                    else => {
+                        try self.diags.add(len_loc, .syntax, "array length must be a decimal integer literal or compile-time name", .{});
+                        return SyntaxerError.ExpectedIntLiteral;
+                    },
+                },
                 else => {
-                    try self.diags.add(len_loc, .syntax, "array length must be a decimal integer literal", .{});
+                    try self.diags.add(len_loc, .syntax, "expected array length integer literal or compile-time name", .{});
                     return SyntaxerError.ExpectedIntLiteral;
                 },
             }

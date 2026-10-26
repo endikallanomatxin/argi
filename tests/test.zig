@@ -15841,3 +15841,14 @@ test "feature_tests/types/336_family_integer_parameter_alias" {
 test "feature_tests/types/337X_nested_family_integer_parameter_type" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/337X_nested_family_integer_parameter_type", "type-family argument does not match its parameter signature", "failed without a diagnostic");
 }
+
+test "feature_tests/types/338_named_array_dimensions" {
+    const path = "tests/feature_tests/types/338_named_array_dimensions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/339X_runtime_array_dimension" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/339X_runtime_array_dimension", "runtime values cannot be used", "failed without a diagnostic");
+}

@@ -52,6 +52,8 @@ pub const Context = struct {
                 } });
             },
             .array => |array| blk: {
+                if (self.tree.tokens.items(.content)[@intFromEnum(array.length_token)] == .identifier)
+                    break :blk try self.lowerComputedType(node);
                 const length_text = self.tree.tokenTextFromSource(self.source, array.length_token);
                 const length = std.fmt.parseInt(u64, length_text, 0) catch return error.InvalidArrayLength;
                 const element = try self.lower(array.element);

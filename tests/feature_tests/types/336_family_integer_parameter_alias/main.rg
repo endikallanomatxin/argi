@@ -1,6 +1,6 @@
 Count := UIntNative
 
-Items := <.count: Count> (.values: Array<.n = count, .t: Int32>)
+Items := <.count: Count> (.values: [count]Int32)
 
 Nested := <.Family: <.count: Count> Type> (.flag: Bool)
 

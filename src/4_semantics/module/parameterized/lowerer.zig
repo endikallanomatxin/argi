@@ -954,7 +954,7 @@ pub const Context = struct {
             .nullable => |child| try self.addType(.{ .resolved = .{ .nullable = try self.lowerType(child, allow_self) } }),
             .inferred_errable => |child| try self.addType(.{ .resolved = .{ .inferred_errable = try self.lowerType(child, allow_self) } }),
             .array => |value| blk: {
-                const length = try self.lowerIntExpressionFromToken(value.length_token);
+                const length = try self.lowerIntExpressionFromToken(node, value.length_token);
                 const element = try self.lowerType(value.element, allow_self);
                 break :blk try self.addType(.{ .array = .{ .length = length, .element = element, .source = self.sourceRef(node) } });
             },
@@ -1232,11 +1232,16 @@ pub const Context = struct {
         } } });
     }
 
-    fn lowerIntExpressionFromToken(self: *Context, token_index: syn.TokenIndex) !ir.ParameterizedIntExprId {
+    fn lowerIntExpressionFromToken(self: *Context, owner: syn.NodeIndex, token_index: syn.TokenIndex) !ir.ParameterizedIntExprId {
         const text = self.tree.tokenTextFromSource(self.source, token_index);
-        if (self.parameter(text)) |binding| if (binding.kind == .comptime_int) {
+        if (self.parameter(text)) |binding| {
+            if (binding.kind != .comptime_int) return error.ExpectedParameterizedComptimeParameter;
             return self.addInt(.{ .parameter = binding.id });
-        };
+        }
+        if (self.tree.tokens.items(.content)[@intFromEnum(token_index)] == .identifier) {
+            const value = try self.addPending(owner, .unknown_identifier, &.{}, try self.writer.addString(text), null, .none);
+            return self.addInt(.{ .execution = value });
+        }
         const value = std.fmt.parseInt(i64, text, 0) catch return error.InvalidParameterizedComptimeInteger;
         return self.addInt(.{ .literal = value });
     }
@@ -1454,12 +1459,8 @@ pub const Context = struct {
             if (literal.negative) value = -value;
             return self.addInt(.{ .literal = value });
         }
-        if (self.tree.tag(node) == .identifier) {
-            const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
-            const binding = self.parameter(name) orelse return error.UnknownParameterizedComptimeParameter;
-            if (binding.kind != .comptime_int) return error.ExpectedParameterizedComptimeParameter;
-            return self.addInt(.{ .parameter = binding.id });
-        }
+        if (self.tree.tag(node) == .identifier)
+            return self.lowerIntExpressionFromToken(node, self.tree.mainToken(node));
         const op = self.tree.binaryOperation(node) orelse return error.InvalidParameterizedComptimeInteger;
         const operator: ir.IntBinaryOperator = switch (self.tree.tag(node)) {
             .binary_add => .add,

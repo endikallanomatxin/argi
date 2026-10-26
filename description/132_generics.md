@@ -53,6 +53,11 @@ pair: Pair<Int32, .right: Bool> = (.left = 1, .right = true)
 bytes: Array<4, UInt8> = (0, 0, 0, 0)
 ```
 
+Array dimensions can use an integer specialization parameter or a named
+compile-time constant: `[count]Element` and `Array<.n = count, .t: Element>`
+resolve through the same compile-time rules. Mutable runtime values cannot
+determine a type's layout.
+
 A positional type argument is written directly; a named type argument uses
 `.name: Type`. In type applications, positional integer expressions begin with a literal or
 a sign; use the
