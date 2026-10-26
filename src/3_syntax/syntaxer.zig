@@ -141,9 +141,16 @@ pub const Syntaxer = struct {
         return token == .comparison_operator and token.comparison_operator == .less_than;
     }
 
+    fn rejectLegacySpecialization(self: *Syntaxer) SyntaxerError!void {
+        if (!self.tokenIs(.hash)) return;
+        try self.diags.add(self.tokenLocation(), .syntax, "legacy '#(...)' specialization is unsupported; use '<...>' and place definition parameters after ':='", .{});
+        return error.ExpectedDeclarationOrAssignment;
+    }
+
     /// Syntactic speculation shares the actual argument grammar. Only newly
     /// appended syntax and temporary diagnostics are discarded on a losing parse.
     fn trySpecialization(self: *Syntaxer) SyntaxerError!?syn.NodeIndex {
+        try self.rejectLegacySpecialization();
         if (self.pending_equal or !self.angleOpen()) return null;
         var first = self.index + 1;
         while (first < self.tokens.len and (self.contentAt(first) == .new_line or self.contentAt(first) == .comment)) : (first += 1) {}
@@ -217,35 +224,6 @@ pub const Syntaxer = struct {
             => true,
             else => false,
         };
-    }
-
-    fn lookaheadIsTypeArgument(self: *Syntaxer) bool {
-        if (!self.tokenIs(.open_bracket)) return false;
-
-        var depth: i32 = 0;
-        var idx: usize = self.index;
-        while (idx < self.file.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.contentAt(idx));
-            switch (tag) {
-                .open_bracket => depth += 1,
-                .close_bracket => {
-                    depth -= 1;
-                    if (depth == 0) {
-                        var lookahead = idx + 1;
-                        while (lookahead < self.file.tokens.len) : (lookahead += 1) {
-                            const next_tag = std.meta.activeTag(self.contentAt(lookahead));
-                            switch (next_tag) {
-                                .new_line, .comment => continue,
-                                else => return next_tag == .open_parenthesis,
-                            }
-                        }
-                        return false;
-                    }
-                },
-                else => {},
-            }
-        }
-        return false;
     }
 
     fn skipNewLinesAndComments(self: *Syntaxer) void {
@@ -357,62 +335,6 @@ pub const Syntaxer = struct {
         }
     }
 
-    fn parseGenericParamNames(self: *Syntaxer) SyntaxerError!syn.NodeRange {
-        // Parses: [T, U, ...]
-        if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
-        self.advanceOne();
-        self.skipNewLinesAndComments();
-
-        const scratch_top = self.scratch.items.len;
-        defer self.scratch.shrinkRetainingCapacity(scratch_top);
-        while (!self.tokenIs(.close_bracket)) {
-            const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            _ = try self.parseIdentifier();
-            try self.scratch.append(self.allocator, try self.addNode(.type_name, token_index, .{ .unused = .{ 0, 0 } }));
-            self.skipNewLinesAndComments();
-            if (self.tokenIs(.comma)) {
-                self.advanceOne();
-                self.skipNewLinesAndComments();
-            } else break;
-        }
-        if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
-        self.advanceOne();
-        return self.addNodeRange(self.scratch.items[scratch_top..]);
-    }
-
-    fn comptime_arguments_are_named(self: *Syntaxer) bool {
-        const saved = self.index;
-        defer self.index = saved;
-        if (!self.tokenIs(.open_parenthesis)) return true;
-        self.advanceOne();
-        self.skipNewLinesAndComments();
-        return self.tokenIs(.dot) or self.tokenIs(.close_parenthesis);
-    }
-
-    fn parseTypeList(self: *Syntaxer) SyntaxerError!syn.NodeRange {
-        // Positional comptime type arguments use either legacy brackets or
-        // parentheses following '#'; named arguments keep their field form.
-        const parenthesized = self.tokenIs(.open_parenthesis);
-        if (!parenthesized and !self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
-        self.advanceOne();
-        self.skipNewLinesAndComments();
-        const scratch_top = self.scratch.items.len;
-        defer self.scratch.shrinkRetainingCapacity(scratch_top);
-        while (!self.tokenIs(if (parenthesized) .close_parenthesis else .close_bracket)) {
-            const t = (try self.parseType()) orelse return SyntaxerError.ExpectedIdentifier;
-            try self.scratch.append(self.allocator, t);
-            self.skipNewLinesAndComments();
-            if (self.tokenIs(.comma)) {
-                self.advanceOne();
-                self.skipNewLinesAndComments();
-            } else break;
-        }
-        if (!self.tokenIs(if (parenthesized) .close_parenthesis else .close_bracket))
-            return if (parenthesized) SyntaxerError.ExpectedRightParen else SyntaxerError.ExpectedRightBracket;
-        self.advanceOne();
-        return self.addNodeRange(self.scratch.items[scratch_top..]);
-    }
-
     // ────────────────────────────  TYPE ANNOTATIONS ──────────────────────────
     fn parseType(self: *Syntaxer) SyntaxerError!?syn.NodeIndex {
         // Allow the annotation to be omitted.
@@ -521,11 +443,11 @@ pub const Syntaxer = struct {
             .token = name_token,
             .optional = syn.OptionalTokenIndex.init(qualifier_token),
         } });
-        if (self.tokenIs(.hash) or self.angleOpen()) {
-            const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            if (self.tokenIs(.hash)) self.advanceOne();
+        try self.rejectLegacySpecialization();
+        if (self.angleOpen()) {
+            const open_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const gen_args = try self.parseStructTypeFields(true);
-            const instance = try self.addNode(.specialization, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
+            const instance = try self.addNode(.specialization, open_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
             if (self.tokenIs(.dot)) {
                 self.advanceOne();
                 const member = try self.parseName();
@@ -743,7 +665,7 @@ pub const Syntaxer = struct {
                 name = try self.parseOperatorName(name.token);
             }
 
-            if (self.tokenIs(.hash) or self.angleOpen()) {
+            if (self.angleOpen()) {
                 self.index = @intFromEnum(name.token);
                 const dependency = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
                 if (self.tokenIs(.open_parenthesis)) {
@@ -1651,7 +1573,7 @@ pub const Syntaxer = struct {
             else
                 null;
             const angled = angle_arguments != null;
-            if (self.tokenIs(.open_parenthesis) or self.tokenIs(.hash) or angled) {
+            if (self.tokenIs(.open_parenthesis) or angled) {
                 if (self.file.tag(node) == .struct_field_access or ((allow_identifier_calls or angled) and self.file.tag(node) == .identifier)) {
                     var qualifier: ?syn.TokenIndex = null;
                     const callee_token = if (self.file.tag(node) == .struct_field_access) blk: {
@@ -1662,19 +1584,9 @@ pub const Syntaxer = struct {
                         qualifier = self.file.mainToken(root);
                         break :blk sfa.token;
                     } else self.file.mainToken(node);
-                    var type_args = try self.addNodeRange(&.{});
-                    var type_args_struct: ?syn.NodeIndex = null;
-                    const has_comptime_arguments = self.tokenIs(.hash) or angled;
-                    if (angled) {
-                        type_args_struct = angle_arguments;
-                    } else if (self.tokenIs(.hash)) {
-                        self.advanceOne();
-                        if (self.comptime_arguments_are_named()) {
-                            type_args_struct = try self.parseStructTypeFields(true);
-                        } else {
-                            type_args = try self.parseTypeList();
-                        }
-                    }
+                    const type_args = try self.addNodeRange(&.{});
+                    const type_args_struct = angle_arguments;
+                    const has_comptime_arguments = angled;
                     if (self.tokenIs(.dot) and has_comptime_arguments) {
                         node = try self.parseAssociatedValueProjection(callee_token, qualifier, type_args, type_args_struct);
                         continue;
@@ -1929,24 +1841,9 @@ pub const Syntaxer = struct {
                 if (self.parsing_pipe_rhs and std.mem.eql(u8, name, "_")) {
                     break :blk try self.addNode(.pipe_placeholder, name_token, .{ .unused = .{ 0, 0 } });
                 }
-                var type_args = try self.addNodeRange(&.{});
-                var type_args_struct: ?syn.NodeIndex = null;
-                const angle_arguments = try self.trySpecialization();
-                const angled = angle_arguments != null;
-                const has_comptime_arguments = self.tokenIs(.hash) or angled;
-                if (angled) {
-                    type_args_struct = angle_arguments;
-                } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
-                    // Explicit type arguments on call site (old syntax)
-                    type_args = try self.parseTypeList();
-                } else if (self.tokenIs(.hash)) {
-                    self.advanceOne();
-                    if (self.comptime_arguments_are_named()) {
-                        type_args_struct = try self.parseStructTypeFields(true);
-                    } else {
-                        type_args = try self.parseTypeList();
-                    }
-                }
+                const type_args = try self.addNodeRange(&.{});
+                const type_args_struct = try self.trySpecialization();
+                const has_comptime_arguments = type_args_struct != null;
                 if (self.tokenIs(.dot) and has_comptime_arguments) {
                     break :blk try self.parseAssociatedValueProjection(name_token, null, type_args, type_args_struct);
                 }
@@ -2486,27 +2383,15 @@ pub const Syntaxer = struct {
             name = try self.parseOperatorName(name.token);
         }
 
-        // Optional generic params after name.
-        // In statement position this is ambiguous with generic call type arguments,
-        // so keep the parsed named-args block around and decide once we know
-        // whether this becomes a declaration or a call.
+        // Contract participants and implementation parameters belong to their
+        // declarations; ordinary definitions bind their parameterized value.
+        try self.rejectLegacySpecialization();
         var generic_params = try self.addNodeRange(&.{});
         var generic_params_struct: ?syn.NodeIndex = null;
-        if (self.tokenIs(.hash)) {
-            self.advanceOne();
-            if (self.comptime_arguments_are_named()) {
-                const gen_struct = try self.parseGenericParamsStruct();
-                generic_params = try self.addNodeRange(self.file.parameterList(gen_struct).?.fields);
-                generic_params_struct = gen_struct;
-            } else {
-                generic_params = try self.parseTypeList();
-            }
-        } else if (self.angleOpen() and (std.mem.eql(u8, name.text, "implement") or self.namedAngleList())) {
+        if (self.angleOpen() and (std.mem.eql(u8, name.text, "implement") or self.namedAngleList())) {
             const parameters = try self.parseGenericParamsStruct();
             generic_params = try self.addNodeRange(self.file.parameterList(parameters).?.fields);
             generic_params_struct = parameters;
-        } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
-            generic_params = try self.parseGenericParamNames();
         }
 
         if (std.mem.eql(u8, name.text, "implement")) {

@@ -13089,7 +13089,7 @@ test "feature_tests/contracts/314X_legacy_ordinary_duplicate_identity" {
 }
 
 test "feature_tests/contracts/315X_legacy_ordinary_compiletime_identity" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/315X_legacy_ordinary_compiletime_identity", "ordinary function 'value' has more than one declaration", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/315X_legacy_ordinary_compiletime_identity", "legacy '#(...)' specialization is unsupported", "panic");
 }
 
 test "feature_tests/contracts/316X_ordinary_concrete_generic_identity" {

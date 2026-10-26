@@ -87,6 +87,15 @@ test "compact syntaxing specializes values and calls with one angle-list represe
     try std.testing.expect(tree.symbolDeclaration(tree.roots[4]).?.value != null);
 }
 
+test "compact syntaxing rejects superseded hash specialization syntax" {
+    for ([_][]const u8{
+        "value := identity#(.T: Int32)(.value = 42)",
+        "value: Box#(Int32) = (.value = 42)",
+        "implement#(.T: Type) Protocol<T> ()",
+        "identity#(.T: Type)(.value: T) -> (.result: T) := { result = value }",
+    }) |source| try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy.rg", source));
+}
+
 test "compact syntaxing separates comparison syntax from angle specialization without names" {
     const cases = [_]struct { source: []const u8, tag: syntax_tree.Node.Tag }{
         .{ .source = "answer := a < b", .tag = .compare_less },

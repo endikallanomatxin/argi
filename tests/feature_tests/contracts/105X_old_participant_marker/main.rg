@@ -1,2 +1,2 @@
-Product <.Result: Type >: Contract#(.Left: Type, .Right: Type) = ()
+Product <.Result: Type >: Contract<.Left: Type, .Right: Type> = ()
 main := () -> () {}
