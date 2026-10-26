@@ -316,6 +316,13 @@ before adding implementation exceptions.
   and generic functions across native, VM and `#run`. Single-output unpacking
   remains an explicit outstanding part of the result-model consolidation.
 
+- Safety selector lowering and ModuleSema verification consult read-only semantic
+  signature field views, including closed named records, rather than assuming
+  syntax literals. Views retain concrete/parameterized field namespaces without
+  copying representations. Joint-output virtual Safety fixtures now share a named
+  result type and retain their original correlated-borrow diagnostics. Deferred
+  imported/generic signature fields still need late selector resolution.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, explicit unqualified operation specialization, remaining generic-call inference parity,

@@ -99,35 +99,33 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.sourceFits(requirement.source, graph.file_offsets.items.len));
         if (requirement.safety_contract) |contract| {
             try require(verify.sourceFits(contract.source, graph.file_offsets.items.len));
-            const input = storage.ir.representation(requirement.input);
-            const output = storage.ir.representation(requirement.output);
-            try require(input == .resolved and input.resolved == .structural);
-            try require(output == .resolved and output.resolved == .structural);
-            try require(contract.output_count == output.resolved.structural.fields.len);
+            const input = views.signatureFields(graph, requirement.input) orelse return error.InvalidModuleSemanticGraph;
+            const output = views.signatureFields(graph, requirement.output) orelse return error.InvalidModuleSemanticGraph;
+            try require(contract.output_count == output.count());
             for (contract.owned_outputs) |index| try require(index < contract.output_count);
-            for (contract.outcomes) |outcome| try verifyOutcome(graph, outcome, contract.output_count, input.resolved.structural.fields.len);
+            for (contract.outcomes) |outcome| try verifyOutcome(graph, outcome, contract.output_count, input.count());
             for (contract.transfers) |transfer| {
                 try require(transfer.output_index < contract.output_count);
-                try require(transfer.input_index < input.resolved.structural.fields.len);
+                try require(transfer.input_index < input.count());
             }
-            for (contract.invalidates) |index| try require(index < input.resolved.structural.fields.len);
-            for (contract.retained_inputs) |retained| try require(retained.storage.input_index < input.resolved.structural.fields.len and retained.input < input.resolved.structural.fields.len);
-            for (contract.emptied_inputs) |empty| try require(empty.input_index < input.resolved.structural.fields.len);
-            for (contract.storage_sources) |source| try require(source.output_index < contract.output_count and source.storage.input_index < input.resolved.structural.fields.len);
-            for (contract.relocations) |relocation| try require(relocation.destination < input.resolved.structural.fields.len and relocation.source < input.resolved.structural.fields.len);
-            for (contract.consumed_inputs) |index| try require(index < input.resolved.structural.fields.len);
+            for (contract.invalidates) |index| try require(index < input.count());
+            for (contract.retained_inputs) |retained| try require(retained.storage.input_index < input.count() and retained.input < input.count());
+            for (contract.emptied_inputs) |empty| try require(empty.input_index < input.count());
+            for (contract.storage_sources) |source| try require(source.output_index < contract.output_count and source.storage.input_index < input.count());
+            for (contract.relocations) |relocation| try require(relocation.destination < input.count() and relocation.source < input.count());
+            for (contract.consumed_inputs) |index| try require(index < input.count());
             for (contract.domain_dependencies) |dependency| {
                 try require(dependency.output_index < contract.output_count);
-                try require(dependency.input.input_index < input.resolved.structural.fields.len);
+                try require(dependency.input.input_index < input.count());
             }
-            for (contract.invalidated_domains) |domain| try require(domain.input_index < input.resolved.structural.fields.len);
+            for (contract.invalidated_domains) |domain| try require(domain.input_index < input.count());
             for (contract.dependencies) |dependency| {
                 try require(dependency.output_index < contract.output_count);
-                try require(dependency.input_index <= input.resolved.structural.fields.len);
+                try require(dependency.input_index <= input.count());
             }
             for (contract.referents, 0..) |referent, index| {
                 try require(referent.output_index < contract.output_count);
-                try require(referent.input_index < input.resolved.structural.fields.len);
+                try require(referent.input_index < input.count());
                 for (contract.referents[0..index]) |previous| try require(previous.output_index != referent.output_index);
                 var permitted = false;
                 for (contract.dependencies) |dependency| if (dependency.output_index == referent.output_index and dependency.input_index == referent.input_index) {

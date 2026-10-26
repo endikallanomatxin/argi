@@ -413,15 +413,17 @@ pub const Context = struct {
                     const data = self.tree.extraData(syn.ContractOutcomeExtra, self.tree.data(statement).extra);
                     const output_name = self.tree.tokenTextFromSource(self.source, data.output);
                     var output_index: ?u32 = null;
-                    for (self.tree.structTypeLiteral(requirement.output).?.fields, 0..) |field_node, index| {
-                        const field = self.tree.structTypeField(field_node).?;
-                        if (std.mem.eql(u8, output_name, self.tree.tokenTextFromSource(self.source, field.name_token))) output_index = @intCast(index);
+                    const output_fields = try self.contractSignatureFields(requirement.output);
+                    for (0..output_fields.count()) |index| {
+                        if (std.mem.eql(u8, output_name, self.graph.text(output_fields.name(self.graph, @intCast(index))))) output_index = @intCast(index);
                     }
                     var input_index: ?u32 = null;
-                    if (output_index == null) for (self.tree.structTypeLiteral(requirement.input).?.fields, 0..) |field_node, index| {
-                        const field = self.tree.structTypeField(field_node).?;
-                        if (std.mem.eql(u8, output_name, self.tree.tokenTextFromSource(self.source, field.name_token))) input_index = @intCast(index);
-                    };
+                    if (output_index == null) {
+                        const input_fields = try self.contractSignatureFields(requirement.input);
+                        for (0..input_fields.count()) |index| {
+                            if (std.mem.eql(u8, output_name, self.graph.text(input_fields.name(self.graph, @intCast(index))))) input_index = @intCast(index);
+                        }
+                    }
                     if (output_index == null and input_index == null) {
                         try self.contractError(statement, "on must select a named method input or output");
                         unreachable;
@@ -481,7 +483,7 @@ pub const Context = struct {
         } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources);
         var result: primitives.MethodSafetyContract = .{
             .general_conditions = general_conditions,
-            .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
+            .output_count = @intCast((try self.contractSignatureFields(requirement.output)).count()),
             .source = self.sourceRef(node),
         };
         errdefer result.deinit(self.allocator);
@@ -642,7 +644,7 @@ pub const Context = struct {
                 return self.contractError(field.value, "depends_on dependencies must name method inputs");
             const dependency = primitives.MethodSafetyContract.Dependency{ .output_index = output_index, .input_index = input_index };
             if (is_referent) {
-                if (input_index >= self.tree.structTypeLiteral(requirement.input).?.fields.len)
+                if (input_index >= (try self.contractSignatureFields(requirement.input)).count())
                     return self.contractError(field.value, "refers_to requires an explicit reference input");
                 for (referents.items) |item| {
                     if (item.output_index == output_index and item.input_index != input_index)
@@ -694,20 +696,58 @@ pub const Context = struct {
         if (try self.contractFieldIndex(requirement.input, node)) |index| return index;
         const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
         if (!std.mem.eql(u8, name, "error_tracer")) return null;
-        for (self.tree.structTypeLiteral(requirement.output).?.fields) |field_node| {
-            const field = self.tree.structTypeField(field_node).?;
-            const ty = self.tree.syntaxType(field.type_node orelse continue) orelse continue;
-            const fallible = switch (ty) {
-                .inferred_errable => true,
-                .generic => |generic| blk: {
-                    const base = self.tree.typeReference(generic.base) orelse break :blk false;
-                    break :blk base == .name and std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Errable");
-                },
-                else => false,
-            };
-            if (fallible) return @intCast(self.tree.structTypeLiteral(requirement.input).?.fields.len);
-        }
+        const fields = try self.contractSignatureFields(requirement.output);
+        for (0..fields.count()) |index|
+            if (self.contractFieldFallible(fields.fieldType(self.graph, @intCast(index))))
+                return (try self.contractSignatureFields(requirement.input)).count();
         return null;
+    }
+
+    fn contractFieldFallible(self: *const Context, field_type: views.SignatureFields.FieldType) bool {
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        switch (field_type) {
+            .concrete => |id| {
+                const value = views.typeView(self.graph, id) catch return false;
+                if (value != .resolved) {
+                    const reference = self.graph.semantic.external_refs.items[@intFromEnum(value.external)];
+                    return std.mem.eql(u8, self.graph.text(reference.name), "Errable");
+                }
+                return switch (value.resolved) {
+                    .inferred_errable => true,
+                    .generic => |generic| blk: {
+                        const family = self.graph.semantic.family_definitions.items[@intFromEnum(generic.base)];
+                        const declaration = family.declaration orelse break :blk false;
+                        break :blk std.mem.eql(u8, self.graph.text(self.graph.declaration(declaration).name), "Errable");
+                    },
+                    else => false,
+                };
+            },
+            .parameterized => |id| {
+                const value = storage.representation(id);
+                if (value == .concrete) return self.contractFieldFallible(.{ .concrete = value.concrete });
+                if (value != .resolved) return false;
+                return switch (value.resolved) {
+                    .inferred_errable => true,
+                    .generic => |generic| blk: {
+                        const reference = storage.declarations.items[@intFromEnum(generic.base)].target;
+                        const name = switch (reference) {
+                            .module => |declaration| self.graph.declaration(declaration).name,
+                            .external => |external| self.graph.semantic.external_refs.items[@intFromEnum(external)].name,
+                        };
+                        break :blk std.mem.eql(u8, self.graph.text(name), "Errable");
+                    },
+                    else => false,
+                };
+            },
+        }
+    }
+
+    fn contractSignatureFields(self: *Context, signature: syn.NodeIndex) !views.SignatureFields {
+        const ty = try self.lowerType(signature, true);
+        return views.signatureFields(self.graph, ty) orelse {
+            try self.contractError(signature, "safety clauses require signature record fields to be known when the contract is declared");
+            return error.Reported;
+        };
     }
 
     fn contractFieldIndex(self: *Context, signature: syn.NodeIndex, node: syn.NodeIndex) !?u32 {
@@ -716,9 +756,9 @@ pub const Context = struct {
             unreachable;
         }
         const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
-        for (self.tree.structTypeLiteral(signature).?.fields, 0..) |field_node, index| {
-            const field = self.tree.structTypeField(field_node).?;
-            if (field.position == null and std.mem.eql(u8, name, self.tree.tokenTextFromSource(self.source, field.name_token))) return @intCast(index);
+        const fields = try self.contractSignatureFields(signature);
+        for (0..fields.count()) |index| {
+            if (std.mem.eql(u8, name, self.graph.text(fields.name(self.graph, @intCast(index))))) return @intCast(index);
         }
         return null;
     }

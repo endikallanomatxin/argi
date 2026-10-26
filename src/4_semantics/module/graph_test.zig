@@ -1507,3 +1507,31 @@ test "operation safety metadata releases nested outcomes after lowering allocati
         }
     }.run, .{&tree});
 }
+
+test "contract safety selectors read ordinary named signature fields" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Input := (.source: &Bool)
+        \\Output := (.value: &Bool, .ready: Bool)
+        \\Observe#(.Participant: Type): Contract = (
+        \\    .observe: Input -> Output where { depends_on(value, source) }
+        \\)
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "observer/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "observer", &inputs);
+    defer graph.deinit(allocator);
+    _ = try initializer_lowerer.lower(allocator, &graph, &inputs, null);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const storage = &graph.semantic.parameterized_storage;
+    const requirement = storage.contract_requirements.items[0];
+    const contract = requirement.safety_contract.?;
+    try std.testing.expectEqual(@as(u32, 2), contract.output_count);
+    try std.testing.expectEqual(@as(usize, 1), contract.dependencies.len);
+    try std.testing.expectEqual(@as(u32, 0), contract.dependencies[0].output_index);
+    try std.testing.expectEqual(@as(u32, 0), contract.dependencies[0].input_index);
+    const fields = @import("views.zig").signatureFields(&graph, requirement.input).?;
+    try std.testing.expect(fields == .concrete);
+    try @import("verify.zig").verifyModule(&graph);
+}

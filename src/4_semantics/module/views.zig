@@ -115,3 +115,48 @@ test "module views expose one canonical type pool" {
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum((try typeView(&graph, @enumFromInt(3))).resolved.pointer.child));
     try std.testing.expectEqual(@as(usize, 4), typeCount(&graph));
 }
+
+/// A read-only signature view preserves the ID namespace of its fields. It
+/// never copies a named record into the parameterized representation.
+pub const SignatureFields = union(enum) {
+    concrete: entities.FieldRange,
+    parameterized: @import("../primitives/schema.zig").Range(@import("parameterized/ir.zig").ParameterizedFieldId),
+
+    pub fn count(self: SignatureFields) u32 {
+        return switch (self) {
+            inline else => |range| range.len,
+        };
+    }
+
+    pub const FieldType = union(enum) {
+        concrete: entities.ModuleTypeId,
+        parameterized: @import("parameterized/ir.zig").ParameterizedTypeId,
+    };
+
+    pub fn fieldType(self: SignatureFields, graph: *const graph_mod.ModuleSemanticGraph, index: u32) FieldType {
+        return switch (self) {
+            .concrete => |range| .{ .concrete = graph.semantic.fields.items[range.start + index].ty },
+            .parameterized => |range| .{ .parameterized = graph.semantic.parameterized_storage.ir.fields.items[range.start + index].ty },
+        };
+    }
+
+    pub fn name(self: SignatureFields, graph: *const graph_mod.ModuleSemanticGraph, index: u32) @import("../primitives/schema.zig").StringRange {
+        return switch (self) {
+            .concrete => |range| graph.semantic.fields.items[range.start + index].name,
+            .parameterized => |range| graph.semantic.parameterized_storage.ir.fields.items[range.start + index].name,
+        };
+    }
+};
+
+pub fn signatureFields(graph: *const graph_mod.ModuleSemanticGraph, ty: @import("parameterized/ir.zig").ParameterizedTypeId) ?SignatureFields {
+    const value = graph.semantic.parameterized_storage.ir.representation(ty);
+    return switch (value) {
+        .concrete => |id| if (recordFields(graph, id)) |fields| .{ .concrete = fields } else null,
+        .resolved => |resolved| switch (resolved) {
+            .structural => |shape| .{ .parameterized = shape.fields },
+            .nominal => |id| if (graph.semantic.type_definitions.items[@intFromEnum(id)].struct_fields) |fields| .{ .concrete = fields } else null,
+            else => null,
+        },
+        else => null,
+    };
+}
