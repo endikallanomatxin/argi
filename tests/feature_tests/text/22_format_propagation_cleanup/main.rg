@@ -1,10 +1,10 @@
-FailFirstAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
+FailFirstAllocator := (
+    .ffi           : $&ForeignFunctionInterface
     .allocations   : Int32
     .deallocations : Int32
 )
 
-implement Init#(FailFirstAllocator, (.ffi: $&ForeignFunctionInterface)) (
+implement Init<FailFirstAllocator, (.ffi: $&ForeignFunctionInterface)> (
     .Result : Type = FailFirstAllocator
     .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
         assume ffi := ~args.ffi
@@ -13,7 +13,7 @@ implement Init#(FailFirstAllocator, (.ffi: $&ForeignFunctionInterface)) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     backing ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     out ::= unwrap_or_abort(
         .value = string_with_capacity(.allocator = $&backing, .capacity = 1)
@@ -26,9 +26,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&out)
 }
 
-implement Allocator#(FailFirstAllocator) (
+implement Allocator<FailFirstAllocator> (
     .allocate = (.self: $&FailFirstAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable<.t: Allocation, .reasons: (..out_of_memory)>
     ) {
         self&.allocations = self&.allocations + 1
         if self&.allocations > 0 {
@@ -36,7 +36,7 @@ implement Allocator#(FailFirstAllocator) (
             return
         }
         storage ::= malloc(.size = size, .ffi = self&.ffi)
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual<.contract: Deallocator> = to_virtual<.contract: Deallocator>(
             .value = self
         )
         allocation ::= trusted_establish_allocation(
@@ -46,10 +46,10 @@ implement Allocator#(FailFirstAllocator) (
     }
 )
 
-implement Deallocator#(FailFirstAllocator) (
+implement Deallocator<FailFirstAllocator> (
     .deallocate = (
         .self      : $&FailFirstAllocator,
-        .data      : RawPointer#(.t: UInt8),
+        .data      : RawPointer<.t: UInt8>,
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {

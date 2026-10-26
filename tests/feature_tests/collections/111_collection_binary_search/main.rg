@@ -1,10 +1,10 @@
-Record: Type = (.key: Int32, .tag: Int32)
+Record := (.key: Int32, .tag: Int32)
 
-implement ImplicitlyCopyable#(Record) ()
+implement ImplicitlyCopyable<Record> ()
 
 ByKey: Type = ()
 
-implement OrderPolicy#(ByKey, Record) (
+implement OrderPolicy<ByKey, Record> (
     .less = (.self: &ByKey, .left: &Record, .right: &Record) -> (.ok: Bool) {
         ok = [left&.key < right&.key]
     }
@@ -12,23 +12,23 @@ implement OrderPolicy#(ByKey, Record) (
 
 Descending: Type = ()
 
-implement OrderPolicy#(Descending, Int32) (
+implement OrderPolicy<Descending, Int32> (
     .less = (.self: &Descending, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
         ok = left&> right&
     }
 )
 
-expect_index(.result: ?UIntNative, .expected: UIntNative) -> () := {
+expect_index := (.result: ?UIntNative, .expected: UIntNative) -> () {
     match result {
         ..none { abort }
         ..some entry { if entry.value != expected { abort } }
     }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= system.page_allocator
     order ::= Int32OrderPolicy()
-    array ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 6))
+    array ::= unwrap_or_abort(.value = DynamicArray<.t: Int32>(.capacity = 6))
     if is(
         .value   = binary_search(.self = &array, .value = 1, .order = &order).index
         .variant = ..some

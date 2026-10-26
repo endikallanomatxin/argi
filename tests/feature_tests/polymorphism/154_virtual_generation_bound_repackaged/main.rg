@@ -1,17 +1,17 @@
 ..failed
 
-SimpleEditor#(.Participant: Type): Contract = (
-    .edit: (.self: &Participant, .target: $&Int32, .mode: Int32) -> (.result: ?Int32) where {
+SimpleEditor<.Participant: Type>: Contract = (
+    .edit : (.self: &Participant, .target: $&Int32, .mode: Int32) -> (.result: ?Int32) where {
         on result ..some { invalidates(target) }
         on result ..none {}
     }
 )
 
-Cell: Type = (.unused: Int32)
+Cell := (.unused: Int32)
 
-implement SimpleEditor#(Cell) (.edit = _impl_edit_Cell)
+implement SimpleEditor<Cell> (.edit = _impl_edit_Cell)
 
-_impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: ?Int32)  {
+_impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: ?Int32) {
     if mode == 1 {
         target&= 42
         result = ..some(.value = 42)
@@ -20,23 +20,19 @@ _impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: ?
     result = ..none
 }
 
-apply_edit(
-        .editor : &Virtual#(SimpleEditor),
-        .target : $&Int32,
-        .mode   : Int32
-    ) -> (
-        .result : Errable#(?Int32, (..failed))
-    ) := {
+apply_edit := (.editor: &Virtual<SimpleEditor>, .target: $&Int32, .mode: Int32) -> (
+    .result: Errable<?Int32, (..failed)>
+) {
     pending ::= edit(editor, target, mode)
 
     result = ..ok pending
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     target :: Int32 = 41
     previous ::= &target
-    editor ::= to_virtual#(SimpleEditor)(&cell)
+    editor ::= to_virtual<SimpleEditor>(&cell)
     result ::= apply_edit(&editor, $&target, 0)
 
     match result {

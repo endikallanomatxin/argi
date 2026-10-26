@@ -1,13 +1,13 @@
-Tracked : Type = (
-    .id: Int32
-    .allocation: Allocation
+Tracked := (
+    .id         : Int32
+    .allocation : Allocation
 )
 
 first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 third_drops :: Int32 = 0
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         if self&.id == 1 { first_drops = first_drops + 1 }
         if self&.id == 2 { second_drops = second_drops + 1 }
@@ -16,47 +16,56 @@ implement Deinit#(Tracked) (
     }
 )
 
-make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+make_tracked := <.AllocatorType: Type: Allocator<AllocatorType>> (
+    .allocator: $&AllocatorType, .id: Int32
+) -> (.result: Errable<.t: Tracked, .reasons: (..out_of_memory)>) {
     assume allocator
 
     allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok ~ payload {
+        ..ok ~payload {
             value ::= Tracked(.id = id, .allocation = ~payload)
             result = ..ok ~value
         }
     }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 1))
+    array ::= unwrap_or_abort(.value = DynamicArray<.t: Tracked>(.capacity = 1))
     first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
     match first_result {
         ..error _ { status_code = 1 }
-        ..ok ~ first_payload {
+        ..ok ~first_payload {
             first ::= ~first_payload
             second_result ::= make_tracked(.allocator = $&allocator_storage, .id = 2)
             match second_result {
                 ..error _ { status_code = 2 }
-                ..ok ~ second_payload {
+                ..ok ~second_payload {
                     second ::= ~second_payload
                     third_result ::= make_tracked(.allocator = $&allocator_storage, .id = 3)
                     match third_result {
                         ..error _ { status_code = 3 }
-                        ..ok ~ third_payload {
+                        ..ok ~third_payload {
                             third ::= ~third_payload
                             first_push ::= push(.self = $&array, .value = ~first)
                             second_push ::= push(.self = $&array, .value = ~second)
                             third_push ::= push(.self = $&array, .value = ~third)
-                            if is(.value = first_push, .variant = ..error) or is(.value = second_push, .variant = ..error) or is(.value = third_push, .variant = ..error) {
+                            if [
+                                is(.value = first_push, .variant = ..error)
+                                or is(.value = second_push, .variant = ..error)
+                                or is(.value = third_push, .variant = ..error)
+                            ] {
                                 status_code = 4
                                 return
                             }
-                            if length(.self = &array).count != 3 or capacity(.self = &array).count < 3 {
+                            if [
+                                length(.self = &array).count != 3
+                                or capacity(.self = &array).count < 3
+                            ] {
                                 status_code = 5
                                 return
                             }

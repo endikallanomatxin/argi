@@ -2,11 +2,11 @@ Zero: Type = ()
 
 drops :: Int32 = 0
 
-implement Deinit#(Zero) (
+implement Deinit<Zero> (
     .deinit = (.self: $&Zero) -> () { drops = drops + 1 }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         values :: [2]Zero = (
             (),

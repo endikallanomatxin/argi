@@ -1,16 +1,16 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.counter&.count = self&.counter&.count + 1 }
 )
 
-choose(.left: $&Resource, .right: $&Resource, .use_left: &Bool) -> (.result: $&Resource) := {
+choose := (.left: $&Resource, .right: $&Resource, .use_left: &Bool) -> (.result: $&Resource) {
     if use_left&{ result = left } else { result = right }
 }
 
-main() -> () := {
+main := () -> () {
     counter :: Counter = Counter()
     {
         left :: Resource = Resource(.counter = $&counter)

@@ -1,6 +1,6 @@
-FailingAllocator: Type = (.attempts: Int32)
+FailingAllocator := (.attempts: Int32)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     failing :: FailingAllocator = (.attempts = 0)
     string_result ::= String(.allocator = $&failing, .length = 1)
     match string_result {
@@ -15,19 +15,19 @@ main() -> (.status_code: Int32 = 0) := {
     if failing.attempts != 2 { status_code = 3 }
 }
 
-implement Allocator#(FailingAllocator) (
+implement Allocator<FailingAllocator> (
     .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable<.t: Allocation, .reasons: (..out_of_memory)>
     ) {
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-implement Deallocator#(FailingAllocator) (
+implement Deallocator<FailingAllocator> (
     .deallocate = (
         .self      : $&FailingAllocator,
-        .data      : RawPointer#(.t: UInt8),
+        .data      : RawPointer<.t: UInt8>,
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {}

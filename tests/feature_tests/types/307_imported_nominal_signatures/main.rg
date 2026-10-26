@@ -1,4 +1,4 @@
-schema ::= import("./schema")
+schema ::= import ("./schema")
 
 read := schema.Args -> schema.Result {
     result = value
@@ -14,7 +14,7 @@ computed ::= #run () -> (.result: Bool) {
     result = read().result
 }
 
-main() -> () := {
+main := () -> () {
     if read().result {} else { abort }
     if read(.value = false).result { abort }
     if defaulted().result { abort }

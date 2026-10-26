@@ -3,7 +3,7 @@ Result: Type = (
     ..error(.code: UnicodeScalar),
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     value: Result = ..ok
     status_code = 0
 }

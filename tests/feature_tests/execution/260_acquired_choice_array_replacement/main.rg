@@ -1,25 +1,25 @@
 drops :: Int32 = 0
 
-Resource: Type = (.id: Int32)
+Resource := (.id: Int32)
 
 Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { drops = drops + self&.id }
 )
 
-replacement(.selection: $&UIntNative) -> (.value: Choice) := {
+replacement := (.selection: $&UIntNative) -> (.value: Choice) {
     selection&= 1
     value = ..empty
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     allocator ::= CAllocator(.ffi = ffi)
-    memory ::= unwrap_or_abort(.value = allocate#(.t: [2]Choice)(.self = $&allocator))
-    raw ::= raw_pointer#(.t: [2]Choice)(.address = memory.data.address).raw
-    slot ::= trusted_establish_allocation_slot#(.t: [2]Choice)(
+    memory ::= unwrap_or_abort(.value = allocate<.t: [2]Choice>(.self = $&allocator))
+    raw ::= raw_pointer<.t: [2]Choice>(.address = memory.data.address).raw
+    slot ::= trusted_establish_allocation_slot<.t: [2]Choice>(
         .allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)
     ).reference
     values :: [2]Choice = (

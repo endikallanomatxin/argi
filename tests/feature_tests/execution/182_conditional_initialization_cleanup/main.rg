@@ -1,12 +1,14 @@
 drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { drops = drops + 1 }
 )
 
-maybe_initialize(.target: $&Resource, .enabled: Bool) -> (.result: (..initialized, ..preserved)) := {
+maybe_initialize := (.target: $&Resource, .enabled: Bool) -> (
+    .result : (..initialized, ..preserved)
+) {
     if enabled {
         target&= Resource(.value = 9)
         result = ..initialized
@@ -15,9 +17,9 @@ maybe_initialize(.target: $&Resource, .enabled: Bool) -> (.result: (..initialize
     result = ..preserved
 }
 
-maybe_record(.args: (.target: $&Resource), .enabled: Bool) -> (
+maybe_record := (.args: (.target: $&Resource), .enabled: Bool) -> (
     .result : (..initialized, ..preserved)
-) := {
+) {
     if enabled {
         args.target&= Resource(.value = 9)
         result = ..initialized
@@ -26,7 +28,7 @@ maybe_record(.args: (.target: $&Resource), .enabled: Bool) -> (
     result = ..preserved
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         value :: Resource = Resource(.value = 1)
         deinit(.self = $&value)

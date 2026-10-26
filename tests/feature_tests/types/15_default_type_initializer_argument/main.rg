@@ -1,8 +1,8 @@
-Counter : Type = (
+Counter := (
     .value: Int32
 )
 
-implement Init#(Counter, ()) (
+implement Init<Counter, ()> (
     .Result: Type = Counter
     .init = (.args: ()) -> (.result: Result) {
         result = (
@@ -11,10 +11,10 @@ implement Init#(Counter, ()) (
     }
 )
 
-read_counter(.counter: Counter = Counter()) -> (.value: Int32) := {
+read_counter := (.counter: Counter = Counter()) -> (.value: Int32)  {
     value = counter.value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     status_code = read_counter()
 }

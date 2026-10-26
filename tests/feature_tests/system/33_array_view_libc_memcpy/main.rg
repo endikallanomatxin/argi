@@ -1,13 +1,13 @@
-main() -> (.status_code: Int32) := {
-    src_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
-    dst_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+main := () -> (.status_code: Int32) {
+    src_bytes: Array<.n = 4, .t: UInt8> = (0, 0, 0, 0)
+    dst_bytes: Array<.n = 4, .t: UInt8> = (0, 0, 0, 0)
     src ::= view(.self = $&src_bytes)
     dst ::= view(.self = $&dst_bytes)
 
-    src_set0 ::= set#(.t: UInt8)(.self = $&src, .index = 0, .value = 3).result
-    src_set1 ::= set#(.t: UInt8)(.self = $&src, .index = 1, .value = 5).result
-    src_set2 ::= set#(.t: UInt8)(.self = $&src, .index = 2, .value = 7).result
-    src_set3 ::= set#(.t: UInt8)(.self = $&src, .index = 3, .value = 11).result
+    src_set0 ::= set<.t: UInt8>(.self = $&src, .index = 0, .value = 3).result
+    src_set1 ::= set<.t: UInt8>(.self = $&src, .index = 1, .value = 5).result
+    src_set2 ::= set<.t: UInt8>(.self = $&src, .index = 2, .value = 7).result
+    src_set3 ::= set<.t: UInt8>(.self = $&src, .index = 3, .value = 11).result
     if [
         is(.value = src_set0, .variant = ..error)
         or is(.value = src_set1, .variant = ..error)

@@ -1,12 +1,12 @@
-Marker#(.Value: Type): Contract = ()
+Marker <.Value: Type >: Contract = ()
 
 -- Abstract composed + function requirement
-Animal#(.Participant: Type): Contract = (
+Animal <.Participant: Type >: Contract = (
     .speak : (.who: Participant) -> (.s: &CChar),
-    Marker#(Participant)
+    Marker < Participant >
 )
 
-Dog: Type = (
+Dog := (
     .name : Int32 = 0
 )
 
@@ -15,10 +15,10 @@ _impl_speak_Dog := (.who: Dog) -> (.s: &CChar) {
     s = "Woof"
 }
 
-implement Marker#(Dog) ()
+implement Marker < Dog > ()
 
-implement Animal#(Dog) (.speak = _impl_speak_Dog)
+implement Animal < Dog > (.speak = _impl_speak_Dog)
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     status_code = 0
 }

@@ -1,24 +1,24 @@
-Resettable#(.Participant: Type): Contract = (
-    .reset: (.self: $&Participant) -> () where {}
+Resettable<.Participant: Type>: Contract = (
+    .reset : (.self: $&Participant) -> () where {}
 )
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
 
     }
 )
 
-Cell: Type = (.resource: Resource)
+Cell := (.resource: Resource)
 
-implement Resettable#(Cell) (.reset = _impl_reset_Cell)
+implement Resettable<Cell> (.reset = _impl_reset_Cell)
 
-_impl_reset_Cell := (.self: $&Cell) -> ()  {
+_impl_reset_Cell := (.self: $&Cell) -> () {
     deinit($&self&.resource)
 }
 
-main() -> () := {
+main := () -> () {
     cell ::= Cell(Resource(42))
-    handle ::= to_virtual#(Resettable)($&cell)
+    handle ::= to_virtual<Resettable>($&cell)
 }

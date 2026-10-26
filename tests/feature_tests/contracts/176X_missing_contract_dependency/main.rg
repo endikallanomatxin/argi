@@ -1,5 +1,5 @@
-Readable#(.T: Type): Contract = ()
-Writable#(.T: Type): Contract = (Readable#(T))
+Readable <.T: Type >: Contract = ()
+Writable <.T: Type >: Contract = (Readable < T >)
 Cell: Type = ()
-implement Writable#(Cell) ()
+implement Writable < Cell > ()
 main := () -> () {}

@@ -1,15 +1,17 @@
 ..failure
 
-run_main(.error_tracer: $&Virtual#(.contract: ErrorTracer) = reach error_tracer) -> !Void = ..ok Void() := {
+check_fallible_result := (.error_tracer: $&Virtual<.contract: ErrorTracer> = reach error_tracer) -> !Void = ..ok Void(
+) {
     result = ..error(.reason = ..failure)
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    trace_buffer :: [4096]UInt8 = zeroed#(.t: [4096]UInt8)()
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
+    trace_buffer :: [4096]UInt8 = zeroed<.t: [4096]UInt8>()
     tracer ::= FixedSizeErrorTracer(view($&trace_buffer))
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)($&tracer)
+    virtual_tracer ::= to_virtual<.contract: ErrorTracer>($&tracer)
     assume error_tracer ::= $&virtual_tracer
 
-    run_main()!!!
+    check_fallible_result()!!!
     status_code = 0
 }

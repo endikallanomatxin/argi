@@ -1,16 +1,18 @@
-Backend#(.Participant: Type): Contract = ()
+Backend<.Participant: Type>: Contract = ()
 
-Concrete : Type = ()
-NotBackend : Type = ()
+Concrete: Type = ()
 
-implement Backend#(Concrete) ()
-Wrapper #(.backend_type: Type: Backend) : Type = (
-    .backend: $&backend_type
+NotBackend: Type = ()
+
+implement Backend<Concrete> ()
+
+Wrapper := <.backend_type: Type: Backend> (
+    .backend : $&backend_type
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value :: NotBackend
-    wrapper : Wrapper#(.backend_type: NotBackend) = (.backend = $&value)
+    wrapper: Wrapper<.backend_type: NotBackend> = (.backend = $&value)
     wrapper
     status_code = 0
 }

@@ -1,6 +1,6 @@
 ..some_reason
 
-some_fallible_call() -> (.result: Errable#(.t: Int32, .reasons: (..some_reason))) := {
+some_fallible_call := () -> (.result: Errable<.t: Int32, .reasons: (..some_reason)>) {
     result = ..ok(.value = 7)
 }
 

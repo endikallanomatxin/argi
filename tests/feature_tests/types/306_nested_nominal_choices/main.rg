@@ -14,7 +14,7 @@ computed ::= #run () -> (.result: Bool) {
     result = read(&box).result
 }
 
-main() -> () := {
+main := () -> () {
     box ::= Box<Bool>(.choice = ..present true)
     if read(&box).result {} else { abort }
     if computed {} else { abort }

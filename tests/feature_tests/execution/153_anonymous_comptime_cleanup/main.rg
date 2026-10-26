@@ -1,19 +1,19 @@
-Counter: Type = (.count: Int32)
+Counter := (.count: Int32)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-leave_scope(.counter: $&Counter) -> () := {
+leave_scope := (.counter: $&Counter) -> () {
     owner :: Resource = (.counter = counter)
     return
 }
 
-calculate() -> (.result: Int32) := {
+calculate := () -> (.result: Int32) {
     counter :: Counter = (.count = 39)
     {
         first :: Resource = (.counter = $&counter)
@@ -23,7 +23,7 @@ calculate() -> (.result: Int32) := {
     result = counter.count
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     answer ::= #run () -> (.result: Int32) { result = calculate() }
     if calculate() != answer { abort }
     #run {

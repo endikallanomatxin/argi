@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     separator ::= unwrap_or_abort(
         .value = String(.allocator = system.page_allocator, .length = 1)
     )

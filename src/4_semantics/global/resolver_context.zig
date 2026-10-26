@@ -401,11 +401,11 @@ fn registrationModule(allocator: std.mem.Allocator, dir: []const u8, source: []c
 
 test "resolver context extends conformance registration without duplicating retained evidence" {
     const a = std.testing.allocator;
-    var first = try registrationModule(a, "first", "Marker#(.Value: Type): Contract = ()\nimplement Marker#(Int32) ()\nimplement Marker#(UInt8) ()\n");
+    var first = try registrationModule(a, "first", "Marker<.Value: Type>: Contract = ()\nimplement Marker<Int32> ()\nimplement Marker<UInt8> ()\n");
     defer first.deinit(a);
-    var second = try registrationModule(a, "second", "Other#(.Value: Type): Contract = ()\nimplement Other#(Int64) ()\n");
+    var second = try registrationModule(a, "second", "Other<.Value: Type>: Contract = ()\nimplement Other<Int64> ()\n");
     defer second.deinit(a);
-    var duplicate = try registrationModule(a, "duplicate", "Broken#(.Value: Type): Contract = ()\nimplement Broken#(Int32) ()\nimplement Broken#(Int32) ()\n");
+    var duplicate = try registrationModule(a, "duplicate", "Broken<.Value: Type>: Contract = ()\nimplement Broken<Int32> ()\nimplement Broken<Int32> ()\n");
     defer duplicate.deinit(a);
     const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
     var retained = try globalizer.relocate(a, modules[0..1], .allow_holes);

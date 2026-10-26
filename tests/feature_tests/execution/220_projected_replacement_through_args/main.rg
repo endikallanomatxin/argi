@@ -1,20 +1,20 @@
 drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Holder: Type = (.item: Resource, .sibling: Resource)
+Holder := (.item: Resource, .sibling: Resource)
 
-implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { drops = drops + 1 })
+implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () { drops = drops + 1 })
 
-replace_field(.args: (.holder: $&Holder)) -> () := {
+replace_field := (.args: (.holder: $&Holder)) -> () {
     args.holder&.item = Resource(.value = 9)
 }
 
-replace_element(.args: (.items: $&[2]Resource)) -> () := {
+replace_element := (.args: (.items: $&[2]Resource)) -> () {
     args.items&[0] = Resource(.value = 8)
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         holder :: Holder = (.item = Resource(.value = 1), .sibling = Resource(.value = 2))
         replace_field(.args = (.holder = $&holder))

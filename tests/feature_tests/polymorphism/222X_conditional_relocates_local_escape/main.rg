@@ -1,6 +1,6 @@
-Resource: Type = (.value: &Int32)
+Resource := (.value: &Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
 
     }
@@ -8,7 +8,7 @@ implement Deinit#(Resource) (
 
 global :: Int32 = 1
 
-transfer_if(.source: $&Resource, .destination: $&Resource, .move: Bool) -> (.result: ?Int32) := {
+transfer_if := (.source: $&Resource, .destination: $&Resource, .move: Bool) -> (.result: ?Int32) {
     if move {
         relocate(source, destination)
         result = ..some(.value = 1)
@@ -18,7 +18,7 @@ transfer_if(.source: $&Resource, .destination: $&Resource, .move: Bool) -> (.res
     result = ..none
 }
 
-escape() -> (.resource: Resource) := {
+escape := () -> (.resource: Resource) {
     local :: Int32 = 42
     source ::= Resource(&local)
     destination ::= Resource(&global)
@@ -31,6 +31,6 @@ escape() -> (.resource: Resource) := {
     }
 }
 
-main() -> () := {
+main := () -> () {
     resource ::= escape()
 }

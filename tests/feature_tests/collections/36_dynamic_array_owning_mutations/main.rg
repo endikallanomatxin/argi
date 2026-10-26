@@ -1,4 +1,4 @@
-Tracked: Type = (
+Tracked := (
     .id         : Int32
     .allocation : Allocation
 )
@@ -8,7 +8,7 @@ second_drops :: Int32 = 0
 third_drops :: Int32 = 0
 fourth_drops :: Int32 = 0
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         if self&.id == 1 { first_drops = first_drops + 1 }
         if self&.id == 2 { second_drops = second_drops + 1 }
@@ -18,9 +18,9 @@ implement Deinit#(Tracked) (
     }
 )
 
-make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(
+make_tracked := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .allocator: $&AllocatorType, .id: Int32
-) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable<.t: Tracked, .reasons: (..out_of_memory)>) {
     assume allocator
 
     allocated ::= allocate_bytes(.self = allocator, .size = 1)
@@ -33,11 +33,11 @@ make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 4))
+    array ::= unwrap_or_abort(.value = DynamicArray<.t: Tracked>(.capacity = 4))
 
     first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
     second_result ::= make_tracked(.allocator = $&allocator_storage, .id = 2)
@@ -55,10 +55,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                             match fourth_result {
                                 ..error _ { status_code = 4 }
                                 ..ok ~fourth {
-                                    push_assume_capacity#(.t: Tracked)(
+                                    push_assume_capacity<.t: Tracked> (
                                         .self = $&array, .value = ~first
                                     )
-                                    push_assume_capacity#(.t: Tracked)(
+                                    push_assume_capacity<.t: Tracked> (
                                         .self = $&array, .value = ~third
                                     )
                                     inserted ::= insert(
@@ -70,7 +70,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                     }
 
                                     one :: UIntNative = 1
-                                    replacement_result ::= replace#(.t: Tracked)(
+                                    replacement_result ::= replace<.t: Tracked>(
                                         .self      = $&array
                                         .index     = one
                                         .value     = ~fourth

@@ -1,20 +1,20 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-Borrow: Type = (.resource: &Resource, .number: Int32)
+Borrow := (.resource: &Resource, .number: Int32)
 
-replace(.target: $&Borrow, .resource: &Resource) -> () := {
+replace := (.target: $&Borrow, .resource: &Resource) -> () {
     target&= Borrow(.resource = resource, .number = 42)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter)

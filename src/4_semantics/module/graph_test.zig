@@ -12,7 +12,7 @@ const parameterized_lowerer = @import("parameterized/lowerer.zig");
 
 test "deferred struct definitions retain fields with external generic types" {
     const allocator = std.testing.allocator;
-    const source = "Holder : Type = (.value: ExternalBox#(.t: Int32))\n";
+    const source = "Holder := (.value: ExternalBox<.t: Int32>)\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "holder/main.rg", .tree = &tree, .source = source }};
@@ -31,7 +31,7 @@ test "deferred struct definitions retain fields with external generic types" {
 
 test "deferred function interfaces retain external parameter types" {
     const allocator = std.testing.allocator;
-    const source = "consume(.value: ExternalValue) -> () := {}\n";
+    const source = "consume := (.value: ExternalValue) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "consumer/main.rg", .tree = &tree, .source = source }};
@@ -50,8 +50,8 @@ test "deferred function interfaces retain external parameter types" {
 test "constrained generic parameters remain type parameters" {
     const allocator = std.testing.allocator;
     const source =
-        "Capability#(.Participant: Type): Contract = ()\n" ++
-        "Box#(.t: Type: Capability) : Type = (.value: t)\n";
+        "Capability<.Participant: Type>: Contract = ()\n" ++
+        "Box := <.t: Type: Capability> (.value: t)\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "box/main.rg", .tree = &tree, .source = source }};
@@ -66,8 +66,8 @@ test "constrained generic parameters remain type parameters" {
 test "parameterized pools retain immediate children across recursive lowering" {
     const allocator = std.testing.allocator;
     const source =
-        "Box#(.t: Type): Type = (.value: t)\n" ++
-        "Nested#(.t: Type): Type = (.first: (.inner: t), .second: Box#(.t: Box#(.t = t)), .third: (..outer (..inner t)))\n";
+        "Box := <.t: Type> (.value: t)\n" ++
+        "Nested := <.t: Type> (.first: (.inner: t), .second: Box<.t: Box<.t = t>>, .third: (..outer (..inner t)))\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "parameterized_storage/main.rg", .tree = &tree, .source = source }};
@@ -124,9 +124,9 @@ test "parameterized pools retain immediate children across recursive lowering" {
 test "parameterized bodies own call metadata and binding ranges during lowering" {
     const allocator = std.testing.allocator;
     const source =
-        "first#(.t: Type)(.value: t) -> (.result: t) := {\n" ++
-        " local ::= value\n if true { result = local }\n result = second#(.t = t)(.value = local)\n}\n" ++
-        "second#(.t: Type)(.value: t) -> (.result: t) := { result = value }\n";
+        "first := <.t: Type> (.value: t) -> (.result: t)  {\n" ++
+        " local ::= value\n if true { result = local }\n result = second<.t = t>(.value = local)\n}\n" ++
+        "second := <.t: Type> (.value: t) -> (.result: t)  { result = value }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "parameterized_storage/main.rg", .tree = &tree, .source = source }};
@@ -166,8 +166,8 @@ fn parseSource(allocator: std.mem.Allocator, source: []const u8, file_id: source
 
 test "module semantic graph owns declarations from all direct files" {
     const allocator = std.testing.allocator;
-    const first_source = "Point : Type = (\n .x: Int32\n)\n";
-    const second_source = "distance(.point: Point) -> () := {}\n";
+    const first_source = "Point := (\n .x: Int32\n)\n";
+    const second_source = "distance := (.point: Point) -> ()  {}\n";
     var first = try parseSource(allocator, first_source, @enumFromInt(0));
     defer first.deinit(allocator);
     var second = try parseSource(allocator, second_source, @enumFromInt(1));
@@ -212,8 +212,8 @@ test "module semantic graph owns declarations from all direct files" {
 
 test "module symbol index retains duplicate declarations for diagnostics" {
     const allocator = std.testing.allocator;
-    const first_source = "convert(.value: Int32) -> () := {}\n";
-    const second_source = "convert(.value: Bool) -> () := {}\n";
+    const first_source = "convert := (.value: Int32) -> ()  {}\n";
+    const second_source = "convert := (.value: Bool) -> ()  {}\n";
     var first = try parseSource(allocator, first_source, @enumFromInt(0));
     defer first.deinit(allocator);
     var second = try parseSource(allocator, second_source, @enumFromInt(1));
@@ -232,7 +232,7 @@ test "module symbol index retains duplicate declarations for diagnostics" {
 
 test "module callable interfaces intern pointer and array types" {
     const allocator = std.testing.allocator;
-    const source = "consume(.first: [2]&Int32, .second: [2]&Int32) -> () := {}\n";
+    const source = "consume := (.first: [2]&Int32, .second: [2]&Int32) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "arrays", &.{.{ .path = "arrays/main.rg", .tree = &tree, .source = source }});
@@ -251,7 +251,7 @@ test "module callable interfaces intern pointer and array types" {
 
 test "module callable interfaces lower literal Array generic types" {
     const allocator = std.testing.allocator;
-    const source = "consume(.values: Array#(.n = 3, .t: Int32)) -> () := {}\n";
+    const source = "consume := (.values: Array<.n = 3, .t: Int32>) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "generic_arrays", &.{.{ .path = "generic_arrays/main.rg", .tree = &tree, .source = source }});
@@ -265,7 +265,7 @@ test "module callable interfaces lower literal Array generic types" {
 
 test "module callable interfaces preserve nullable types" {
     const allocator = std.testing.allocator;
-    const source = "find(.fallback: ?Int32) -> (.result: ?Int32) := { result = fallback }\n";
+    const source = "find := (.fallback: ?Int32) -> (.result: ?Int32)  { result = fallback }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "nullable", &.{.{ .path = "nullable/main.rg", .tree = &tree, .source = source }});
@@ -305,7 +305,7 @@ test "module semantizing marks inferred error signatures" {
 
 test "module callable interfaces preserve anonymous nominal definitions" {
     const allocator = std.testing.allocator;
-    const source = "read(.value: (.nested: (.number: Int32))) -> (.result: (.nested: (.number: Int32))) := { result = value }\n";
+    const source = "read := (.value: (.nested: (.number: Int32))) -> (.result: (.nested: (.number: Int32)))  { result = value }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "structural", &.{.{ .path = "structural/main.rg", .tree = &tree, .source = source }});
@@ -329,7 +329,7 @@ test "module callable interfaces preserve anonymous nominal definitions" {
 
 test "anonymous structural types retain module-local default provenance" {
     const allocator = std.testing.allocator;
-    const source = "read(.value: (.number: Int32 = 4)) -> () := {}\n";
+    const source = "read := (.value: (.number: Int32 = 4)) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "structural_defaults", &.{.{ .path = "structural_defaults/main.rg", .tree = &tree, .source = source }});
@@ -348,7 +348,7 @@ test "anonymous structural types retain module-local default provenance" {
 
 test "module callable interfaces preserve anonymous choice types" {
     const allocator = std.testing.allocator;
-    const source = "inspect(.value: (..some Int32, ..none)) -> () := {}\n";
+    const source = "inspect := (.value: (..some Int32, ..none)) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "choices", &.{.{ .path = "choices/main.rg", .tree = &tree, .source = source }});
@@ -367,7 +367,7 @@ test "module callable interfaces preserve anonymous choice types" {
 
 test "module callable interfaces retain choice union evaluation recipes" {
     const allocator = std.testing.allocator;
-    const source = "Left : Type = (..first, ..shared)\nRight : Type = (..shared, ..second)\nmerge() -> (.result: choice_union#(.a: Left, .b: Right)) := { result = ..shared }\n";
+    const source = "Left : Type = (..first, ..shared)\nRight : Type = (..shared, ..second)\nmerge := () -> (.result: choice_union<.a: Left, .b: Right>)  { result = ..shared }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "choice_unions", &.{.{ .path = "choice_unions/main.rg", .tree = &tree, .source = source }});
@@ -383,8 +383,8 @@ test "module callable interfaces retain choice union evaluation recipes" {
 
 test "module callable interfaces preserve type-only generic instantiations" {
     const allocator = std.testing.allocator;
-    const type_source = "Box#(.t: Type) : Type = (.value: t)\n";
-    const function_source = "read(.box: Box#(.t: Int32)) -> () := {}\n";
+    const type_source = "Box := <.t: Type> (.value: t)\n";
+    const function_source = "read := (.box: Box<.t: Int32>) -> ()  {}\n";
     var type_tree = try parseSource(allocator, type_source, @enumFromInt(0));
     defer type_tree.deinit(allocator);
     var function_tree = try parseSource(allocator, function_source, @enumFromInt(1));
@@ -407,7 +407,7 @@ test "module callable interfaces preserve type-only generic instantiations" {
 
 test "discovery and lowering share nested generic arguments across construction contexts" {
     const allocator = std.testing.allocator;
-    const source = "Box#(.t: Type): Type = (.value: t)\nread(.box: Box#(.t: Box#(.t: Int32))) -> () := {}\n";
+    const source = "Box := <.t: Type> (.value: t)\nread := (.box: Box<.t: Box<.t: Int32>>) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "generics", &.{
@@ -461,7 +461,7 @@ test "module graph builds nominal choice variants" {
 
 test "module type references distinguish builtin and external requirements" {
     const allocator = std.testing.allocator;
-    const source = "inspect(.local: Int32, .remote: dep.Value) -> () := {}\n";
+    const source = "inspect := (.local: Int32, .remote: dep.Value) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try module_graph.build(allocator, "consumer", &.{.{ .path = "consumer/main.rg", .tree = &tree, .source = source }});
@@ -501,10 +501,10 @@ test "module semantic graph owns stable file provenance" {
 test "implicit generic calls infer pointer parameters through nested calls" {
     const allocator = std.testing.allocator;
     const source =
-        "empty_with_required#(.t: Type)(.storage: $&t, .required: Int32) -> () := { absent() }\n" ++
-        "empty#(.t: Type)(.storage: $&t) -> () := {}\n" ++
-        "release#(.t: Type)(.self: $&t) -> () := { local ::= self empty(.storage = local) }\n" ++
-        "main() -> () := { value :: Int32 = 0 release(.self = $&value) }\n";
+        "empty_with_required := <.t: Type> (.storage: $&t, .required: Int32) -> ()  { absent() }\n" ++
+        "empty := <.t: Type> (.storage: $&t) -> ()  {}\n" ++
+        "release := <.t: Type> (.self: $&t) -> ()  { local ::= self empty(.storage = local) }\n" ++
+        "main := () -> ()  { value :: Int32 = 0 release(.self = $&value) }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "inference/main.rg", .tree = &tree, .source = source }};
@@ -522,8 +522,8 @@ test "implicit generic calls infer pointer parameters through nested calls" {
 test "implicit generic calls reject conflicting repeated parameters" {
     const allocator = std.testing.allocator;
     const source =
-        "same#(.t: Type)(.left: $&t, .right: $&t) -> () := {}\n" ++
-        "main() -> () := { left :: Int32 = 0 right :: Bool = false same(.left = $&left, .right = $&right) }\n";
+        "same := <.t: Type> (.left: $&t, .right: $&t) -> ()  {}\n" ++
+        "main := () -> ()  { left :: Int32 = 0 right :: Bool = false same(.left = $&left, .right = $&right) }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "conflict/main.rg", .tree = &tree, .source = source }};
@@ -534,7 +534,7 @@ test "implicit generic calls reject conflicting repeated parameters" {
 
 test "failed generic bodies do not publish reusable instances" {
     const allocator = std.testing.allocator;
-    const source = "broken#(.t: Type)(.value: t) -> () := { absent(.value = value) }\n";
+    const source = "broken := <.t: Type> (.value: t) -> ()  { absent(.value = value) }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "retry/main.rg", .tree = &tree, .source = source }};
@@ -565,11 +565,11 @@ test "failed generic bodies do not publish reusable instances" {
 test "explicit contract bounds specialize one body per concrete participant" {
     const allocator = std.testing.allocator;
     const source =
-        "Capability#(.Value: Type): Contract = ()\n" ++
-        "implement Capability#(Int32) ()\n" ++
-        "implement Capability#(UInt8) ()\n" ++
-        "use#(.Value: Type: Capability)(.value: Value) -> (.result: Int32) := { result = 1 }\n" ++
-        "main() -> (.result: Int32) := { byte :: UInt8 = 65\n result = use(.value = 7).result + use(.value = byte).result }\n";
+        "Capability<.Value: Type>: Contract = ()\n" ++
+        "implement Capability<Int32> ()\n" ++
+        "implement Capability<UInt8> ()\n" ++
+        "use := <.Value: Type: Capability> (.value: Value) -> (.result: Int32)  { result = 1 }\n" ++
+        "main := () -> (.result: Int32)  { byte :: UInt8 = 65\n result = use(.value = 7).result + use(.value = byte).result }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "contract/main.rg", .tree = &tree, .source = source }};
@@ -594,9 +594,9 @@ test "explicit contract bounds specialize one body per concrete participant" {
 test "explicit contract bound participates in a nested generic input" {
     const allocator = std.testing.allocator;
     const source =
-        "Capability#(.Value: Type): Contract = ()\n" ++
-        "Box#(.t: Type) : Type = (.value: t)\n" ++
-        "read#(.Value: Type: Capability)(.box: Box#(.t: Value)) -> () := {}\n";
+        "Capability<.Value: Type>: Contract = ()\n" ++
+        "Box := <.t: Type> (.value: t)\n" ++
+        "read := <.Value: Type: Capability> (.box: Box<.t: Value>) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "nested_contract/main.rg", .tree = &tree, .source = source }};
@@ -613,8 +613,8 @@ test "explicit contract bound participates in a nested generic input" {
 test "virtual type arguments remain runtime contracts in parameterized IR" {
     const allocator = std.testing.allocator;
     const source =
-        "Capability#(.Value: Type): Contract = ()\n" ++
-        "take#(.t: Type)(.value: Virtual#(.contract: Capability)) -> () := {}\n";
+        "Capability<.Value: Type>: Contract = ()\n" ++
+        "take := <.t: Type> (.value: Virtual<.contract: Capability>) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "runtime_contract/main.rg", .tree = &tree, .source = source }};
@@ -632,7 +632,7 @@ test "virtual type arguments remain runtime contracts in parameterized IR" {
 
 test "parameterized call defaults preserve reach alternatives" {
     const allocator = std.testing.allocator;
-    const source = "consume#(.t: Type)(.value: t = reach value, context.value) -> () := {}\n";
+    const source = "consume := <.t: Type> (.value: t = reach value, context.value) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "reach_template/main.rg", .tree = &tree, .source = source }};
@@ -656,7 +656,7 @@ test "parameterized call defaults preserve reach alternatives" {
 
 test "explicit imported contract bounds become constrained templates" {
     const allocator = std.testing.allocator;
-    const source = "dep := import(\"../dep\")\nwrite#(.t: Type, .Provider: Type: dep.Writer)(.value: t, .writer: $&Provider) -> () := {}\n";
+    const source = "dep := import(\"../dep\")\nwrite := <.t: Type, .Provider: Type: dep.Writer> (.value: t, .writer: $&Provider) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "consumer", &.{.{
@@ -682,7 +682,7 @@ test "local concrete type shadows unqualified prelude contract" {
     const allocator = std.testing.allocator;
     const source =
         "Shadowed : Type = ()\n" ++
-        "consume(.value: Shadowed) -> () := {}\n";
+        "consume := (.value: Shadowed) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "shadowing", &.{.{
@@ -701,8 +701,8 @@ test "local concrete type shadows unqualified prelude contract" {
 test "parameterized call defaults reach caller bindings after instantiation" {
     const allocator = std.testing.allocator;
     const source =
-        "consume#(.t: Type)(.item: t = reach value) -> () := {}\n" ++
-        "main(.value: Int32) -> () := { consume#(.t: Int32)() }\n";
+        "consume := <.t: Type> (.item: t = reach value) -> ()  {}\n" ++
+        "main := (.value: Int32) -> ()  { consume<.t: Int32>() }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "generic_reach", &.{.{
@@ -719,8 +719,8 @@ test "parameterized call defaults reach caller bindings after instantiation" {
 test "ordinary calls retain caller bindings for reached defaults" {
     const allocator = std.testing.allocator;
     const source =
-        "consume(.value: Int32) -> () := {}\n" ++
-        "main() -> () := {\n" ++
+        "consume := (.value: Int32) -> ()  {}\n" ++
+        "main := () -> ()  {\n" ++
         "    local :: Int32 = 7\n" ++
         "    consume(.value = local)\n" ++
         "}\n";
@@ -748,13 +748,13 @@ test "ordinary calls retain caller bindings for reached defaults" {
 test "named call inputs reject unrelated default-only operation identities" {
     const allocator = std.testing.allocator;
     const source =
-        "StdoutFill#(.Value: Type): Contract = (.fill: (.stdout: Value = 1) -> (.result: Int32))\n" ++
-        "ReceiverFill#(.Value: Type): Contract = (.fill: (.self: Value) -> (.result: Int32))\n" ++
+        "StdoutFill<.Value: Type>: Contract = (.fill: (.stdout: Value = 1) -> (.result: Int32))\n" ++
+        "ReceiverFill<.Value: Type>: Contract = (.fill: (.self: Value) -> (.result: Int32))\n" ++
         "_fill_stdout := (.stdout: Int32 = 1) -> (.result: Int32) { result = stdout }\n" ++
         "_fill_self := (.self: Int32) -> (.result: Int32) { result = self }\n" ++
-        "implement StdoutFill#(Int32) (.fill = _fill_stdout)\n" ++
-        "implement ReceiverFill#(Int32) (.fill = _fill_self)\n" ++
-        "main() -> (.result: Int32) := { result = fill(.self = 2).result }\n";
+        "implement StdoutFill<Int32> (.fill = _fill_stdout)\n" ++
+        "implement ReceiverFill<Int32> (.fill = _fill_self)\n" ++
+        "main := () -> (.result: Int32)  { result = fill(.self = 2).result }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "named_operations", &.{.{ .path = "named_operations/main.rg", .tree = &tree, .source = source }});
@@ -776,8 +776,8 @@ test "named call inputs reject unrelated default-only operation identities" {
 test "ordinary reached default selects a caller binding" {
     const allocator = std.testing.allocator;
     const source =
-        "consume(.value: Int32 = reach value) -> (.result: Int32) := { result = value }\n" ++
-        "main() -> (.result: Int32) := {\n" ++
+        "consume := (.value: Int32 = reach value) -> (.result: Int32)  { result = value }\n" ++
+        "main := () -> (.result: Int32)  {\n" ++
         "    value :: Int32 = 7\n" ++
         "    result = consume().result\n" ++
         "}\n";
@@ -807,9 +807,9 @@ test "ordinary reached default selects a caller binding" {
 test "reached defaults propagate through an intermediate function" {
     const allocator = std.testing.allocator;
     const source =
-        "consume(.value: Int32 = reach value) -> (.result: Int32) := { result = value }\n" ++
-        "forward() -> (.result: Int32) := { result = consume().result }\n" ++
-        "main() -> (.result: Int32) := {\n" ++
+        "consume := (.value: Int32 = reach value) -> (.result: Int32)  { result = value }\n" ++
+        "forward := () -> (.result: Int32)  { result = consume().result }\n" ++
+        "main := () -> (.result: Int32)  {\n" ++
         "    value :: Int32 = 7\n" ++
         "    result = forward().result\n" ++
         "}\n";
@@ -836,8 +836,8 @@ test "callback invocation preserves binding and field editor targets" {
     const allocator = std.testing.allocator;
     const source =
         "Callback() -> (.result: Int32) : CFunctionPointer\n" ++
-        "Holder : Type = (.callback: Callback)\n" ++
-        "main(.callback: Callback, .entry: Holder) -> (.result: Int32) := {\n" ++
+        "Holder := (.callback: Callback)\n" ++
+        "main := (.callback: Callback, .entry: Holder) -> (.result: Int32)  {\n" ++
         "    result = callback() + entry.callback()\n" ++
         "}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
@@ -877,11 +877,11 @@ test "callback invocation preserves binding and field editor targets" {
 test "unary and tuple contracts retain explicit symbolic participants" {
     const allocator = std.testing.allocator;
     const source =
-        \\First#(.Participant: Type): Contract = (.Other: Type, .borrow: (.other: &Other, .source: &Participant) -> (.value: &Participant))
-        \\Modern#(.Participant: Type): Contract = (
+        \\First<.Participant: Type>: Contract = (.Other: Type, .borrow: (.other: &Other, .source: &Participant) -> (.value: &Participant))
+        \\Modern<.Participant: Type>: Contract = (
         \\    .Other: Type
         \\    .borrow: (.other: &Other, .source: &Participant) -> (.value: &Participant))
-        \\Pair#(.Left: Type, .Right: Type): Contract = (
+        \\Pair<.Left: Type, .Right: Type>: Contract = (
         \\    .combine: (.left: &Left, .right: &Right) -> (.value: Result)
         \\    .Result: Type
         \\    .Count: Int
@@ -931,7 +931,7 @@ test "unary and tuple contracts retain explicit symbolic participants" {
 
 test "contract participants require ordinary bindings in generic evaluation" {
     const allocator = std.testing.allocator;
-    const source = "First#(.Input: Type): Contract = (.read: (.source: &Input) -> ())\nExplicit#(.Input: Type): Contract = (.read: (.source: &Input) -> ())\n";
+    const source = "First<.Input: Type>: Contract = (.read: (.source: &Input) -> ())\nExplicit<.Input: Type>: Contract = (.read: (.source: &Input) -> ())\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "contracts/main.rg", .tree = &tree, .source = source }};
@@ -965,13 +965,13 @@ test "contract participants require ordinary bindings in generic evaluation" {
 test "unary and tuple conformances publish canonical static evidence" {
     const allocator = std.testing.allocator;
     const source =
-        "Readable#(.Value: Type): Contract = (\n.Result: Type\n.Count: Int\n.read: (.source: &Value) -> (.value: Result)\n)\n" ++
-        "Product#(.Left: Type, .Right: Type): Contract = (\n.Result: Type\n.multiply: (.left: &Left, .right: &Right) -> (.value: Result)\n)\n" ++
-        "Cell: Type = (.value: Int32)\n" ++
-        "implement Readable#(Cell) (.Count: Int = 2, .Result: Type = Int32, .read = read)\n" ++
-        "implement Product#(Cell, Cell) (.Result: Type = Int32, .multiply = multiply)\n" ++
-        "read(.source: &Cell) -> (.value: Int32) := { value = source&.value }\n" ++
-        "multiply(.left: &Cell, .right: &Cell) -> (.value: Int32) := { value = left&.value * right&.value }\n";
+        "Readable<.Value: Type>: Contract = (\n.Result: Type\n.Count: Int\n.read: (.source: &Value) -> (.value: Result)\n)\n" ++
+        "Product<.Left: Type, .Right: Type>: Contract = (\n.Result: Type\n.multiply: (.left: &Left, .right: &Right) -> (.value: Result)\n)\n" ++
+        "Cell := (.value: Int32)\n" ++
+        "implement Readable<Cell> (.Count: Int = 2, .Result: Type = Int32, .read = read)\n" ++
+        "implement Product<Cell, Cell> (.Result: Type = Int32, .multiply = multiply)\n" ++
+        "read := (.source: &Cell) -> (.value: Int32)  { value = source&.value }\n" ++
+        "multiply := (.left: &Cell, .right: &Cell) -> (.value: Int32)  { value = left&.value * right&.value }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "evidence", &.{.{ .path = "evidence/main.rg", .tree = &tree, .source = source }});
@@ -1082,11 +1082,11 @@ test "scoped implementation evidence retains call and source identities" {
 test "generic contract implementations preserve participant and associated binders" {
     const allocator = std.testing.allocator;
     const source =
-        \\Copyable#(.Value: Type): Contract = (
+        \\Copyable<.Value: Type>: Contract = (
         \\    .Result: Type
         \\    .copy: (.value: Value) -> (.result: Result)
         \\)
-        \\implement#(.T: Type) Copyable#(T) (
+        \\implement<.T: Type> Copyable<T> (
         \\    .Result: Type = T
         \\    .copy = (.value: T) -> (.result: Result) { result = value }
         \\)
@@ -1112,14 +1112,14 @@ test "generic contract implementations preserve participant and associated binde
 test "generic implementation selection binds associated results and operation bodies" {
     const allocator = std.testing.allocator;
     const source =
-        \\Copyable#(.Value: Type): Contract = (.Result: Type, .copy: (.value: Value) -> (.result: Result))
-        \\implement#(.T: Type) Copyable#(T) (
+        \\Copyable<.Value: Type>: Contract = (.Result: Type, .copy: (.value: Value) -> (.result: Result))
+        \\implement<.T: Type> Copyable<T> (
         \\    .Result: Type = T
         \\    .copy = (.value: T) -> (.result: Result) { result = value }
         \\)
         \\main := () -> (.status_code: Int32 = 0) {
-        \\    first ::= Copyable#(Int32).copy(42).result
-        \\    second ::= Copyable#(UInt8).copy(7).result
+        \\    first ::= Copyable<Int32>.copy(42).result
+        \\    second ::= Copyable<UInt8>.copy(7).result
         \\    if first != 42 { abort }
         \\    if second != 7 { abort }
         \\}
@@ -1149,8 +1149,8 @@ test "repeated participant specificity is independent of declaration order" {
     const allocator = std.testing.allocator;
     const original = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/137_repeated_participant_specialization/main.rg", allocator, .limited(64 * 1024));
     defer allocator.free(original);
-    const first = std.mem.indexOf(u8, original, "implement#(.A").?;
-    const second = std.mem.indexOf(u8, original, "implement#(.T").?;
+    const first = std.mem.indexOf(u8, original, "implement<.A").?;
+    const second = std.mem.indexOf(u8, original, "implement<.T").?;
     const main = std.mem.indexOf(u8, original, "main :=").?;
     const reversed = try std.fmt.allocPrint(allocator, "{s}{s}{s}{s}", .{ original[0..first], original[second..main], original[first..second], original[main..] });
     defer allocator.free(reversed);
@@ -1185,9 +1185,9 @@ test "nested reference array specificity selects the element parameter" {
     const allocator = std.testing.allocator;
     const original = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/140_nested_reference_array_patterns/main.rg", allocator, .limited(64 * 1024));
     defer allocator.free(original);
-    const first = std.mem.indexOf(u8, original, "implement#").?;
-    const second = std.mem.indexOfPos(u8, original, first + 1, "implement#").?;
-    const third = std.mem.indexOfPos(u8, original, second + 1, "implement#").?;
+    const first = std.mem.indexOf(u8, original, "implement<").?;
+    const second = std.mem.indexOfPos(u8, original, first + 1, "implement<").?;
+    const third = std.mem.indexOfPos(u8, original, second + 1, "implement<").?;
     const main = std.mem.indexOf(u8, original, "main :=").?;
     const reversed = try std.fmt.allocPrint(allocator, "{s}{s}{s}{s}{s}", .{ original[0..first], original[third..main], original[second..third], original[first..second], original[main..] });
     defer allocator.free(reversed);
@@ -1226,11 +1226,11 @@ fn buildArithmeticTestCore(allocator: std.mem.Allocator) !module_semantizer.Buil
 test "compile-time integer calls retain executable parameterized nodes" {
     const allocator = std.testing.allocator;
     const source =
-        "compute(.value: Int32) -> (.result: Int32 = value) := {}\n" ++
-        "repeat#(.n: Int32)(.value: Int32) -> (.result: Int32 = value) := {}\n" ++
-        "Holder#(.n: Int32): Type = (.value: Int32)\n" ++
-        "main() -> () := { repeat#(.n = #run () -> (.answer: Int32) { answer = compute(.value = 4) })(.value = 42) }\n" ++
-        "use(.value: Holder#(.n = #run () -> (.answer: Int32) { answer = compute(.value = 3) })) -> () := {}\n";
+        "compute := (.value: Int32) -> (.result: Int32 = value)  {}\n" ++
+        "repeat := <.n: Int32> (.value: Int32) -> (.result: Int32 = value)  {}\n" ++
+        "Holder := <.n: Int32> (.value: Int32)\n" ++
+        "main := () -> ()  { repeat<.n = #run () -> (.answer: Int32) { answer = compute(.value = 4) }>(.value = 42) }\n" ++
+        "use := (.value: Holder<.n = #run () -> (.answer: Int32) { answer = compute(.value = 3) }>) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "staged", &.{.{ .path = "staged/main.rg", .tree = &tree, .source = source }});
@@ -1418,7 +1418,7 @@ test "payload choice definitions are nominal while option references compose set
 test "contract operation parameters have independent lexical scopes and do not select conformances" {
     const allocator = std.testing.allocator;
     const source =
-        \\Factory#(.Owner: Type): Contract = (
+        \\Factory<.Owner: Type>: Contract = (
         \\    .Result: Type
         \\    .make: <.Value: Type> (.owner: &Owner, .value: Value) -> (.result: Result)
         \\    .copy: <.Value: Type> (.value: Value) -> (.result: Value)
@@ -1456,11 +1456,11 @@ test "contract operation parameters have independent lexical scopes and do not s
 test "inline operation definitions preserve local parameters after conformance captures" {
     const allocator = std.testing.allocator;
     const source =
-        \\Factory#(.Owner: Type): Contract = (
+        \\Factory<.Owner: Type>: Contract = (
         \\    .Result: Type
         \\    .make: <.Value: Type> (.value: Value) -> (.result: Result)
         \\)
-        \\implement#(.Owner: Type) Factory#(Owner) (
+        \\implement<.Owner: Type> Factory<Owner> (
         \\    .Result: Type = Owner
         \\    .make = <.Value: Type = Bool> (.value: Value) -> (.result: Result) { abort }
         \\)
@@ -1490,7 +1490,7 @@ test "inline operation definitions preserve local parameters after conformance c
 
 test "operation safety metadata releases nested outcomes after lowering allocation failures" {
     const source =
-        \\Factory#(.Owner: Type): Contract = (
+        \\Factory<.Owner: Type>: Contract = (
         \\    .read: <.Value: Type> (.value: Value) -> (.result: (..some Value, ..none)) where {
         \\        on result..some { depends_on(result, value) }
         \\    }
@@ -1513,7 +1513,7 @@ test "contract safety selectors read ordinary named signature fields" {
     const source =
         \\Input := (.source: &Bool)
         \\Output := (.value: &Bool, .ready: Bool)
-        \\Observe#(.Participant: Type): Contract = (
+        \\Observe<.Participant: Type>: Contract = (
         \\    .observe: Input -> Output where { depends_on(value, source) }
         \\)
     ;
@@ -1540,7 +1540,7 @@ test "contract safety selectors traverse a named signature family without instan
     const allocator = std.testing.allocator;
     const source =
         \\Args := <.T: Type> (.owner: &T, .flag: Bool)
-        \\Read#(.Participant: Type): Contract = (
+        \\Read<.Participant: Type>: Contract = (
         \\    .read: Args<Participant> -> (.result: Bool) where { depends_on(result, flag) }
         \\)
     ;
@@ -1563,7 +1563,7 @@ test "contract safety selectors traverse a named signature family without instan
 test "type-family parameter signatures keep nested binders outside definition arguments" {
     const allocator = std.testing.allocator;
     const source =
-        \\Factory#(.Owner: Type): Contract = (
+        \\Factory<.Owner: Type>: Contract = (
         \\    .Args: <.Provider: Type> Type
         \\    .Result: Type
         \\)
@@ -1599,8 +1599,8 @@ test "type-family parameter signatures keep nested binders outside definition ar
 test "inline associated families retain private definition identities and lexical captures" {
     const allocator = std.testing.allocator;
     const source =
-        \\Protocol#(.Owner: Type): Contract = (.Args: <.Item: Type> Type)
-        \\implement#(.Owner: Type) Protocol#(Owner) (
+        \\Protocol<.Owner: Type>: Contract = (.Args: <.Item: Type> Type)
+        \\implement<.Owner: Type> Protocol<Owner> (
         \\    .Args: <.Item: Type> Type = <.Element: Type> (.owner: &Owner, .value: Element)
         \\)
     ;

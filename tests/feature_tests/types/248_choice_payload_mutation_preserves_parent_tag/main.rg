@@ -1,15 +1,15 @@
-Payload : Type = (
+Payload := (
     .value: Int32
 )
 
-implement ImplicitlyCopyable#(Payload) ()
+implement ImplicitlyCopyable<Payload> ()
 
 Result : Type = (
     ..ok Payload
     ..error Int32
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     result :: Result = ..ok Payload(.value = 1)
     result..ok.value = 42
 

@@ -1,6 +1,6 @@
-main() -> (.status_code: Int32) := {
-    present : ?Int32 = ..some(.value = 5)
-    missing : ?Int32 = ..none
+main := () -> (.status_code: Int32) {
+    present: ?Int32 = ..some(.value = 5)
+    missing: ?Int32 = ..none
 
     left ::= present unwrap_or_do {
         1

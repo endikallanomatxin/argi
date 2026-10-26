@@ -303,6 +303,6 @@ test "init executable scaffolds basic layout" {
     try expectFileContains(std.testing.io, entry_main, "assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n");
     try expectFileContains(std.testing.io, entry_main, "assume error_tracer ::= FixedSizeErrorTracer(");
     try expectFileContains(std.testing.io, entry_main, "assume reader ::= $&system.terminal&.stdin");
-    try expectFileContains(std.testing.io, entry_main, "assume writer ::= $&BufferedWriter#(.base_type: File)(");
-    try expectFileContains(std.testing.io, entry_main, "view($&zeroed#(.t: [4096]UInt8)())");
+    try expectFileContains(std.testing.io, entry_main, "assume writer ::= $&BufferedWriter<.base_type: File>(");
+    try expectFileContains(std.testing.io, entry_main, "view($&zeroed<.t: [4096]UInt8>())");
 }

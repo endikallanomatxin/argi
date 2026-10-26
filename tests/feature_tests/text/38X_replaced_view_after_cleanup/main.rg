@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     text ::= unwrap_or_abort(
         .value = replace(
             .self = "a", .pattern = "a", .replacement = "b", .allocator = system.page_allocator

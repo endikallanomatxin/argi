@@ -1,25 +1,25 @@
-Resource : Type = ()
+Resource: Type = ()
 
-implement Init#(Resource, ()) (
-    .Result: Type = Resource
-    .init = (.args: ()) -> (.result: Result) {
+implement Init<Resource, ()> (
+    .Result : Type = Resource
+    .init   = (.args: ()) -> (.result: Result) {
         result = ()
     }
 )
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
 
     }
 )
 
-Wrapper : Type = (
-    .res: Resource
+Wrapper := (
+    .res : Resource
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     handle := Resource()
-    wrapped : Wrapper = (.res = handle)
+    wrapped: Wrapper = (.res = handle)
     _ = wrapped
     status_code = 0
 }

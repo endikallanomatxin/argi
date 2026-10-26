@@ -1,1 +1,1 @@
-main() -> !Void = ..ok Void() := {}
+main := () -> !Void = ..ok Void() {}

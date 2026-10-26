@@ -1,15 +1,15 @@
-window(.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UIntNative) -> (
-    .result : Errable#(.t: MutableArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))
-) := {
+window := (.array: $&DynamicArray<.t: UIntNative>, .start: UIntNative, .count: UIntNative) -> (
+    .result: Errable<.t: MutableArrayView<.t: UIntNative>, .reasons: (..out_of_bounds)>
+) {
     borrowed_view ::= view(.self = array)
     result = slice(.self = &borrowed_view, .start = start, .count = count).result
 }
 
-exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (
+exercise := <.AllocatorType: Type: Allocator<AllocatorType>> (.allocator: $&AllocatorType) -> (
     .status : Int32 = 0
-) := {
+) {
     array ::= unwrap_or_abort(
-        .value = DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 8)
+        .value = DynamicArray<.t: UIntNative>(.allocator = allocator, .capacity = 8)
     )
     empty ::= view(.self = $&array)
     if length(.self = &empty).count != 0 { status = 1 }
@@ -17,13 +17,13 @@ exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocat
     if is(.value = absent, .variant = ..error) == false { status = 2 }
     i :: UIntNative = 0
     while i < 4 {
-        push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = i + 10)
+        push_assume_capacity<.t: UIntNative> (.self = $&array, .value = i + 10)
         i = i + 1
     }
     borrowed_view ::= unwrap_or_abort(.value = window(.array = $&array, .start = 1, .count = 2))
     if length(.self = &borrowed_view).count != 2 { status = 3 }
     unwrap_or_abort(
-        .value = set#(.t: UIntNative)(.self = $&borrowed_view, .index = 1, .value = 99).result
+        .value = set<.t: UIntNative>(.self = $&borrowed_view, .index = 1, .value = 99).result
     )
     nested ::= unwrap_or_abort(
         .value = slice(.self = &borrowed_view, .start = 1, .count = 1).result
@@ -57,7 +57,7 @@ exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocat
     deinit(.self = $&array)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     direct ::= exercise(.allocator = system.page_allocator).status
     if direct != 0 { status_code = direct }
     arena :: ArenaAllocator

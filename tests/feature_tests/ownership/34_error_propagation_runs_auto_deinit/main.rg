@@ -1,26 +1,28 @@
-Resource : Type = ()
+Resource: Type = ()
+
 ..test_error
 ..cleanup_error
 
 dummy_counter :: Int32 = 0
-implement Init#(Resource, ()) (
-    .Result: Type = Resource
-    .init = (.args: ()) -> (.result: Result) {
+
+implement Init<Resource, ()> (
+    .Result : Type = Resource
+    .init   = (.args: ()) -> (.result: Result) {
         result = ()
     }
 )
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         dummy_counter = dummy_counter + 1
     }
 )
 
-fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+fail := () -> (.result: Errable<.t: Int32, .reasons: (..test_error)>) {
     result = ..error(.reason = ..test_error)
 }
 
-propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error, ..cleanup_error))) := {
+propagate := () -> (.result: Errable<.t: Int32, .reasons: (..test_error, ..cleanup_error)>) {
     handle := Resource()
     value := fail()!
     if dummy_counter != 1 {
@@ -30,7 +32,7 @@ propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error, ..cleanup_
     result = ..ok value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     dummy_counter = 0
     result := propagate()
 

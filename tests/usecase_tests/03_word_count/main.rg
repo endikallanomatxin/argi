@@ -1,12 +1,12 @@
 words ::= import ("./library")
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     assume file_system := system.file_system
-    output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([8192]UInt8)()))
+    output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed<[8192]UInt8>()))
     defer {
-        Writer#().flush(output) handle error {
+        Writer<>.flush(output) handle error {
             status_code = 1
             report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
@@ -27,14 +27,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         }
     }
 
-    counts ::= HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy)(
+    counts ::= HashMap<.key: String, .value: UIntNative, .policy: StandardHashPolicy>(
         StandardHashPolicy()
     )!!! { status_code = 1 }
     words.count_directory(
         $&counts
         unwrap_or_abort(.value = argument_view_at(system.args, 1))
         limit
-        view($&zeroed#([8192]UInt8)())
+        view($&zeroed<[8192]UInt8>())
     )!!! { status_code = 1 }
 
     for entry in counts {

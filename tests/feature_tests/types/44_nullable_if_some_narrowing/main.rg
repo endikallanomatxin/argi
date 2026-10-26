@@ -1,8 +1,8 @@
-main() -> (.status_code: Int32) := {
-    value : ?Int32 = ..some(.value = 8)
-    missing : ?Int32 = ..none
+main := () -> (.status_code: Int32) {
+    value: ?Int32 = ..some(.value = 8)
+    missing: ?Int32 = ..none
 
-    if value? {
+    if value ?{
         if value != 8 {
             status_code = 1
             return
@@ -12,7 +12,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    if missing? {
+    if missing ?{
         status_code = 3
         return
     }

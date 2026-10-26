@@ -1,4 +1,4 @@
-RecordingWriter: Type = (
+RecordingWriter := (
     .expected      : StringView
     .count         : UIntNative = 0
     .flush_calls   : UIntNative = 0
@@ -6,15 +6,15 @@ RecordingWriter: Type = (
     .flush_failure : Bool       = false
 )
 
-expect_written#(.t: Type: Float)(.value: t, .expected: StringView) -> () := {
+expect_written := <.t: Type: Float> (.value: t, .expected: StringView) -> () {
     base ::= RecordingWriter(.expected = expected)
     unwrap_or_abort(
-        .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
+        .value = WriteValue<RecordingWriter, t>.write_value(.self = $&base, .value = value)
     )
     if base.count != byte_length(&expected).count { abort }
     base.count = 0
     unwrap_or_abort(
-        .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
+        .value = WriteValue<RecordingWriter, t>.write_value(.self = $&base, .value = value)
     )
     if base.count != byte_length(&expected).count { abort }
     base.count = 0
@@ -24,7 +24,7 @@ expect_written#(.t: Type: Float)(.value: t, .expected: StringView) -> () := {
 
 -- Expected texts come from exact rational midpoint intervals, independently
 -- generated for varied significands and all three binary widths.
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     value16 :: Float16 = 0.0
     expect_written(.value = value16, .expected = "0.0")
     value16 = -0.0
@@ -774,62 +774,62 @@ main() -> (.status_code: Int32 = 0) := {
     value64 = 1.2345678901234567
     expect_written(.value = value64, .expected = "1.2345678901234567")
     bits16_31744: UInt16 = 31744
-    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+    value16 = trusted_reinterpret_reference<.from: UInt16, .to: Float16>(
         .base = &bits16_31744
     ).reference&
     expect_written(.value = value16, .expected = "inf")
     bits16_64512: UInt16 = 64512
-    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+    value16 = trusted_reinterpret_reference<.from: UInt16, .to: Float16>(
         .base = &bits16_64512
     ).reference&
     expect_written(.value = value16, .expected = "-inf")
     bits16_31745: UInt16 = 31745
-    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+    value16 = trusted_reinterpret_reference<.from: UInt16, .to: Float16>(
         .base = &bits16_31745
     ).reference&
     expect_written(.value = value16, .expected = "nan")
     bits16_64513: UInt16 = 64513
-    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+    value16 = trusted_reinterpret_reference<.from: UInt16, .to: Float16>(
         .base = &bits16_64513
     ).reference&
     expect_written(.value = value16, .expected = "nan")
     bits32_2139095040: UInt32 = 2139095040
-    value32 = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(
+    value32 = trusted_reinterpret_reference<.from: UInt32, .to: Float32>(
         .base = &bits32_2139095040
     ).reference&
     expect_written(.value = value32, .expected = "inf")
     bits32_4286578688: UInt32 = 4286578688
-    value32 = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(
+    value32 = trusted_reinterpret_reference<.from: UInt32, .to: Float32>(
         .base = &bits32_4286578688
     ).reference&
     expect_written(.value = value32, .expected = "-inf")
     bits32_2139095041: UInt32 = 2139095041
-    value32 = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(
+    value32 = trusted_reinterpret_reference<.from: UInt32, .to: Float32>(
         .base = &bits32_2139095041
     ).reference&
     expect_written(.value = value32, .expected = "nan")
     bits32_4286578689: UInt32 = 4286578689
-    value32 = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(
+    value32 = trusted_reinterpret_reference<.from: UInt32, .to: Float32>(
         .base = &bits32_4286578689
     ).reference&
     expect_written(.value = value32, .expected = "nan")
     bits64_9218868437227405312: UInt64 = 9218868437227405312
-    value64 = trusted_reinterpret_reference#(.from: UInt64, .to: Float64)(
+    value64 = trusted_reinterpret_reference<.from: UInt64, .to: Float64>(
         .base = &bits64_9218868437227405312
     ).reference&
     expect_written(.value = value64, .expected = "inf")
     bits64_18442240474082181120: UInt64 = 18442240474082181120
-    value64 = trusted_reinterpret_reference#(.from: UInt64, .to: Float64)(
+    value64 = trusted_reinterpret_reference<.from: UInt64, .to: Float64>(
         .base = &bits64_18442240474082181120
     ).reference&
     expect_written(.value = value64, .expected = "-inf")
     bits64_9218868437227405313: UInt64 = 9218868437227405313
-    value64 = trusted_reinterpret_reference#(.from: UInt64, .to: Float64)(
+    value64 = trusted_reinterpret_reference<.from: UInt64, .to: Float64>(
         .base = &bits64_9218868437227405313
     ).reference&
     expect_written(.value = value64, .expected = "nan")
     bits64_18442240474082181121: UInt64 = 18442240474082181121
-    value64 = trusted_reinterpret_reference#(.from: UInt64, .to: Float64)(
+    value64 = trusted_reinterpret_reference<.from: UInt64, .to: Float64>(
         .base = &bits64_18442240474082181121
     ).reference&
     expect_written(.value = value64, .expected = "nan")
@@ -851,9 +851,9 @@ main() -> (.status_code: Int32 = 0) := {
     }
     if partial.count != 2 or partial.flush_calls != 0 { abort }
     first ::= RecordingWriter(.expected = "", .fail_at = 0, .flush_failure = true)
-    first_failed ::= WriteValue#(
-        RecordingWriter, Float64
-    ).write_value(.self = $&first, .value = value64)
+    first_failed ::= WriteValue<RecordingWriter, Float64>.write_value(
+        .self = $&first, .value = value64
+    )
     if is(.value = first_failed, .variant = ..error) {
         if first_failed ..error.reason != ..stream_flush_failed { abort }
     } else {
@@ -869,9 +869,9 @@ main() -> (.status_code: Int32 = 0) := {
     if suffix.count != 6 or suffix.flush_calls != 0 { abort }
 }
 
-implement Writer#(RecordingWriter) (
+implement Writer<RecordingWriter> (
     .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
     ) {
         if self&.count == self&.fail_at {
             if self&.flush_failure {
@@ -893,7 +893,7 @@ implement Writer#(RecordingWriter) (
     }
 
     .flush = (.self: $&RecordingWriter) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
     ) {
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()

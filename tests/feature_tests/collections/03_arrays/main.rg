@@ -1,9 +1,9 @@
 -- Arrays constructed from list literals allocate storage and copy elements.
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     arr :: [3]Int32 = (10, 20, 30)
-     -- arr is now an array of three Int32 values: 10, 20, and 30.
+    -- arr is now an array of three Int32 values: 10, 20, and 30.
 
-    if length(.value=arr) != 3 {
+    if length(.value = arr) != 3 {
         status_code = 1
         return
     }

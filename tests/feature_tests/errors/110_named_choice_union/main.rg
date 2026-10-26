@@ -2,9 +2,9 @@ Base: Type = (..beta, ..shared)
 
 Extra: Type = (..alpha, ..shared)
 
-Combined: Type = choice_union#(.a: Base, .b: Extra)
+Combined: Type = choice_union<.a: Base, .b: Extra>
 
-source := (.shared: Bool) -> (.result: Errable#(Void, Base)) {
+source := (.shared: Bool) -> (.result: Errable<Void, Base>) {
     if shared {
         result = ..error(.reason = ..shared)
     } else {
@@ -12,11 +12,11 @@ source := (.shared: Bool) -> (.result: Errable#(Void, Base)) {
     }
 }
 
-extra := () -> (.result: Errable#(Void, Extra)) {
+extra := () -> (.result: Errable<Void, Extra>) {
     result = ..error(.reason = ..alpha)
 }
 
-combined := (.which: UInt8) -> (.result: Errable#(Void, Combined)) {
+combined := (.which: UInt8) -> (.result: Errable<Void, Combined>) {
     if which == 0 {
         source(.shared = false)!
     } else if which == 1 {

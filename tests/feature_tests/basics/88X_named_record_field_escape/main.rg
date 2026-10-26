@@ -1,4 +1,4 @@
-Borrow: Type = (.first: &Int32, .second: &Int32)
+Borrow := (.first: &Int32, .second: &Int32)
 
 bad := (.stable: &Int32) -> (.result: &Int32) {
     local: Int32 = 41

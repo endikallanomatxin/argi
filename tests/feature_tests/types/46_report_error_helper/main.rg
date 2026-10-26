@@ -1,28 +1,30 @@
 ..test_error
 
-fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+fail := () -> (.result: Errable<.t: Int32, .reasons: (..test_error)>) {
     result = ..error(.reason = ..test_error)
 }
 
-middle() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+middle := () -> (.result: Errable<.t: Int32, .reasons: (..test_error)>) {
     value := fail()!
     result = ..ok value
 }
 
-top() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
-    value := middle() !! "loading project config"
+top := () -> (.result: Errable<.t: Int32, .reasons: (..test_error)>) {
+    value := middle()!! "loading project config"
     result = ..ok value
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume writer ::= $&system.terminal&.stderr
-    assume error_tracer ::= FixedSizeErrorTracer(
-        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-    ) | to_virtual#(ErrorTracer)($&_) | $&_
+    assume error_tracer ::= [
+        FixedSizeErrorTracer(.buffer = view($&zeroed<.t: [4096]UInt8>()))
+        | to_virtual<ErrorTracer>($&_)
+        | $&_
+    ]
     result := top()
 
     if is(.value = result, .variant = ..error) {
-        err ::= &result..error
+        err ::= &result ..error
         report_error_message(.message = "project build failed", .err = err)
         status_code = 0
     } else {

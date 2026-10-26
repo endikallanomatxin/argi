@@ -1,12 +1,12 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.counter&.count = self&.counter&.count + 1 }
 )
 
-count_array_drops() -> (.result: Int32) := {
+count_array_drops := () -> (.result: Int32) {
     counter :: Counter = Counter()
     {
         resources :: [2]Resource = (
@@ -17,9 +17,9 @@ count_array_drops() -> (.result: Int32) := {
     result = counter.count
 }
 
-drop_pair(.resources: [2]Resource) -> () := { owned ::= ~resources }
+drop_pair := (.resources: [2]Resource) -> () { owned ::= ~resources }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         resources :: [2]Resource = (

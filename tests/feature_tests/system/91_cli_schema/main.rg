@@ -1,4 +1,5 @@
-run_main(.system: System) -> (.result: Errable#(.t: Void, .reasons: CliReasons) = ..ok Void()) := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     specs :: [3]CliSpec = (
         CliSpec(
@@ -15,9 +16,9 @@ run_main(.system: System) -> (.result: Errable#(.t: Void, .reasons: CliReasons) 
     )
     args :: [4]StringView = ("-vv", "-o=result", "input", "--")
     source ::= CliArgumentViews(.values = view(.self = &args))
-    parsed ::= parse_cli#(.t: CliArgumentViews)(
+    parsed ::= parse_cli<.t: CliArgumentViews>(
         .source = &source, .specs = view(.self = &specs), .allocator = allocator
-    )!
+    )!!!
     if length(.self = &parsed.options).count != 4 { abort }
     if length(.self = &parsed.positionals).count != 1 { abort }
     output ::= unwrap_or_abort(.value = get(.self = &parsed.options, .index = 2))
@@ -26,26 +27,20 @@ run_main(.system: System) -> (.result: Errable#(.t: Void, .reasons: CliReasons) 
     }
     empty :: [0]StringView = ()
     empty_source ::= CliArgumentViews(.values = view(.self = &empty))
-    match parse_cli#(.t: CliArgumentViews)(
+    match parse_cli<.t: CliArgumentViews>(
         .source = &empty_source, .specs = view(.self = &specs), .allocator = allocator
     ) { ..ok ~_ { abort } ..error&err { if [err&.reason != ..required_option] { abort } } }
     bad :: [1]StringView = ("--unknown")
     bad_source ::= CliArgumentViews(.values = view(.self = &bad))
-    match parse_cli#(.t: CliArgumentViews)(
+    match parse_cli<.t: CliArgumentViews>(
         .source = &bad_source, .specs = view(.self = &specs), .allocator = allocator
     ) {
         ..ok ~_ { abort } ..error&err { if [err&.reason != ..unknown_option] { abort } }
     }
     duplicate :: [2]StringView = ("--output=a", "--output=b")
     duplicate_source ::= CliArgumentViews(.values = view(.self = &duplicate))
-    match parse_cli#(.t: CliArgumentViews)(
+    match parse_cli<.t: CliArgumentViews>(
         .source = &duplicate_source, .specs = view(.self = &specs), .allocator = allocator
     ) { ..ok ~_ { abort } ..error&err { if [err&.reason != ..duplicate_option] { abort } } }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

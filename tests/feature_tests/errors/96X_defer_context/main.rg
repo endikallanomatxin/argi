@@ -1,2 +1,3 @@
-fail() -> !Void = ..ok Void() := {}
-main() -> () := { defer fail()!! "cleanup" }
+fail := () -> !Void = ..ok Void() {}
+
+main := () -> () { defer fail()!! "cleanup" }

@@ -1,10 +1,7 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
-    owner ::= TemporaryDirectory(.self = system.file_system, .parent = ".")!
+    owner ::= TemporaryDirectory(.self = system.file_system, .parent = ".")!!!
     _ ::= owner._handle
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

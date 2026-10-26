@@ -1,50 +1,53 @@
-Backend#(.Participant: Type): Contract = (
-    .perform: (.self: &Participant) -> (.value: Int32)
+Backend<.Participant: Type>: Contract = (
+    .perform : (.self: &Participant) -> (.value: Int32)
 )
 
-BackendA : Type = (.value: Int32)
-BackendB : Type = (.value: Int32, .extra: Int32)
+BackendA := (.value: Int32)
 
-implement ImplicitlyCopyable#(BackendA) ()
-implement ImplicitlyCopyable#(BackendB) ()
+BackendB := (.value: Int32, .extra: Int32)
 
-_impl_perform_BackendA := (.self: &BackendA) -> (.value: Int32)  {
+implement ImplicitlyCopyable<BackendA> ()
+
+implement ImplicitlyCopyable<BackendB> ()
+
+_impl_perform_BackendA := (.self: &BackendA) -> (.value: Int32) {
     value = self&.value + 10
 }
 
-_impl_perform_BackendB := (.self: &BackendB) -> (.value: Int32)  {
+_impl_perform_BackendB := (.self: &BackendB) -> (.value: Int32) {
     value = self&.value + self&.extra + 20
 }
 
-implement Backend#(BackendA) (.perform = _impl_perform_BackendA)
-implement Backend#(BackendB) (.perform = _impl_perform_BackendB)
+implement Backend<BackendA> (.perform = _impl_perform_BackendA)
 
-Wrapper #(.backend_type: Type: Backend) : Type = (
-    .backend: $&backend_type
+implement Backend<BackendB> (.perform = _impl_perform_BackendB)
+
+Wrapper := <.backend_type: Type: Backend> (
+    .backend : $&backend_type
 )
 
-InlineHolder #(.backend_type: Type: Backend) : Type = (
-    .backend: backend_type
+InlineHolder := <.backend_type: Type: Backend> (
+    .backend : backend_type
 )
 
-Outer #(.t: Type) : Type = (
-    .value: t
+Outer := <.t: Type> (
+    .value : t
 )
 
-call#(.backend_type: Type: Backend)(
-    .wrapper: &Wrapper#(.backend_type: backend_type)
-) -> (.value: Int32) := {
+call := <.backend_type: Type: Backend> (.wrapper: &Wrapper<.backend_type: backend_type>) -> (
+    .value : Int32
+) {
     value = perform(.self = wrapper&.backend).value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     a :: BackendA = (.value = 1)
     b :: BackendB = (.value = 2, .extra = 3)
-    a_wrapper : Wrapper#(.backend_type: BackendA) = (.backend = $&a)
-    b_wrapper : Wrapper#(.backend_type: BackendB) = (.backend = $&b)
-    nested : Outer#(.t: Wrapper#(.backend_type: BackendA)) = (.value = a_wrapper)
-    inline_a : InlineHolder#(.backend_type: BackendA) = (.backend = a)
-    inline_b : InlineHolder#(.backend_type: BackendB) = (.backend = b)
+    a_wrapper: Wrapper<.backend_type: BackendA> = (.backend = $&a)
+    b_wrapper: Wrapper<.backend_type: BackendB> = (.backend = $&b)
+    nested: Outer<.t: Wrapper<.backend_type: BackendA>> = (.value = a_wrapper)
+    inline_a: InlineHolder<.backend_type: BackendA> = (.backend = a)
+    inline_b: InlineHolder<.backend_type: BackendB> = (.backend = b)
 
     if call(.wrapper = &a_wrapper).value != 11 {
         status_code = 1
@@ -58,7 +61,10 @@ main() -> (.status_code: Int32) := {
         status_code = 3
         return
     }
-    if size_of(.type = type_of(.value = inline_a)) >= size_of(.type = type_of(.value = inline_b)) {
+    if [
+        size_of(.type = type_of(.value = inline_a))
+        >= size_of(.type = type_of(.value = inline_b))
+    ] {
         status_code = 4
         return
     }

@@ -1,12 +1,12 @@
-borrow#(.Source: Type: Viewable#(Source)) := (.array: Source) -> (
-    .result : Viewable#(Source).Result
+borrow := <.Source: Type: Viewable<Source>> (.array: Source) -> (
+    .result : Viewable<Source>.Result
 ) {
     result = view(.self = array)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= system.page_allocator
-    values ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
+    values ::= unwrap_or_abort(.value = DynamicArray<.t: Int32>(.capacity = 2))
     empty ::= borrow(.array = &values)
     unwrap_or_abort(.value = push(.self = $&values, .value = 7))
     if length(&empty) != 0 { status_code = 1 }

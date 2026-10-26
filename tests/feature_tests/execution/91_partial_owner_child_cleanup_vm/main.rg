@@ -1,23 +1,23 @@
-Counter: Type = (.count: Int32)
+Counter := (.count: Int32)
 
-Child: Type = (.counter: $&Counter)
+Child := (.counter: $&Counter)
 
-Parent: Type = (.child: Child, .missing: Int32)
+Parent := (.child: Child, .missing: Int32)
 
-implement Deinit#(Child) (
+implement Deinit<Child> (
     .deinit = (.self: $&Child) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-implement Deinit#(Parent) (
+implement Deinit<Parent> (
     .deinit = (.self: $&Parent) -> () {
         self&.child.counter&.count = self&.child.counter&.count + 10
         deinit(.self = $&self&.child)
     }
 )
 
-implement Init#(Child, (.counter: $&Counter)) (
+implement Init<Child, (.counter: $&Counter)> (
     .Result : Type = Child
     .init   = (.args: (.counter: $&Counter)) -> (.result: Child) {
         result = (.counter = args.counter)

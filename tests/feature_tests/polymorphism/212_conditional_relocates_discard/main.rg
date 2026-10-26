@@ -1,8 +1,8 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Bundle: Type = (.source: Resource, .destination: Resource, .other: Resource)
+Bundle := (.source: Resource, .destination: Resource, .other: Resource)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         drops = drops + 1
     }
@@ -10,7 +10,7 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-transfer_if(.source: $&Resource, .destination: $&Resource, .move: Bool) -> (.result: ?Int32) := {
+transfer_if := (.source: $&Resource, .destination: $&Resource, .move: Bool) -> (.result: ?Int32) {
     if move {
         relocate(source, destination)
         result = ..some(.value = 1)
@@ -20,7 +20,7 @@ transfer_if(.source: $&Resource, .destination: $&Resource, .move: Bool) -> (.res
     result = ..none
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if true {
         source ::= Resource(42)
         destination ::= Resource(0)

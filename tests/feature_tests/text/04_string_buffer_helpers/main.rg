@@ -1,10 +1,10 @@
-DummyWriter: Type = (
+DummyWriter := (
     .bytes : String
 )
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(
+implement<.AllocatorProvider: Type: Allocator> Init<
     DummyWriter, (.allocator: $&AllocatorProvider)
-) (
+> (
     .Result : Type = DummyWriter
     .init   = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
         allocator ::= ~args.allocator
@@ -17,15 +17,15 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(
     }
 )
 
-implement Deinit#(DummyWriter) (
+implement Deinit<DummyWriter> (
     .deinit = (.self: $&DummyWriter) -> () {
         deinit(.self = $&self&.bytes)
     }
 )
 
-append_test_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
+append_test_byte := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .self: $&DummyWriter, .byte: UInt8, .allocator: $&AllocatorType
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>) {
     assume allocator
 
     pushed ::= push_ascii(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
@@ -36,7 +36,7 @@ append_test_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok(.value = Void())
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

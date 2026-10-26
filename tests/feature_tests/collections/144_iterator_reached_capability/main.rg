@@ -1,12 +1,12 @@
-Probe: Type = (.calls: UIntNative = 0)
+Probe := (.calls: UIntNative = 0)
 
-Sequence: Type = (.remaining: Int32)
+Sequence := (.remaining: Int32)
 
-tick(.probe: $&Probe = reach probe) -> () := {
+tick := (.probe: $&Probe = reach probe) -> () {
     probe&.calls = probe&.calls + 1
 }
 
-implement Iterable#(Sequence) (
+implement Iterable<Sequence> (
     .Item         : Type = Int32
     .IteratorType : Type = Sequence
     .to_iterator  = (.value: &Sequence) -> (.iterator: Sequence) {
@@ -15,7 +15,7 @@ implement Iterable#(Sequence) (
     }
 )
 
-implement Iterator#(Sequence) (
+implement Iterator<Sequence> (
     .Item     : Type = Int32
     .has_next = (.self: &Sequence) -> (.ok: Bool) {
         tick()
@@ -28,17 +28,19 @@ implement Iterator#(Sequence) (
     }
 )
 
-concrete_walk(.sequence: &Sequence, .probe: $&Probe) -> (.sum: Int32 = 0) := {
+concrete_walk := (.sequence: &Sequence, .probe: $&Probe) -> (.sum: Int32 = 0) {
     assume probe
     for item in sequence { sum = sum + item }
 }
 
-generic_walk#(.Collection: Type)(.sequence: &Collection, .probe: $&Probe) -> (.sum: Int32 = 0) := {
+generic_walk := <.Collection: Type> (.sequence: &Collection, .probe: $&Probe) -> (
+    .sum : Int32 = 0
+) {
     assume probe
     for item in sequence { sum = sum + item }
 }
 
-main() -> () := {
+main := () -> () {
     sequence :: Sequence = (.remaining = 2)
     concrete_probe :: Probe = (.calls = 0)
     if concrete_walk(.sequence = &sequence, .probe = $&concrete_probe).sum != 3 { abort }

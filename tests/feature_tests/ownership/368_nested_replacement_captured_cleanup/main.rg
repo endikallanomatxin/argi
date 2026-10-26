@@ -1,19 +1,19 @@
 ..missing
 order :: Int32 = 0
 
-Resource: Type = (.id: Int32)
+Resource := (.id: Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         order = order * 10 + self&.id
     }
 )
 
-make() -> (.result: Errable#(.t: Resource, .reasons: (..missing))) := {
+make := () -> (.result: Errable<.t: Resource, .reasons: (..missing)>) {
     result = ..error(.reason = ..missing)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     {
         outer :: Resource = Resource(.id = 1)
         inner :: Resource = Resource(.id = 2)

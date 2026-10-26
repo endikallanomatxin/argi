@@ -1,22 +1,21 @@
-Mover#(.Participant: Type): Contract = (
-    .transfer: (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
-        .count  : Int32,
-        .result : ?Large
+Mover<.Participant: Type>: Contract = (
+    .transfer : (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
+        .count: Int32, .result: ?Large
     ) where {
         on result ..some { relocates(destination, source) }
         on result ..none {}
     }
 )
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
-implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
+implement Mover<Manager> (.transfer = _impl_transfer_Manager)
 
-Large: Type = (.values: [128]Int32)
+Large := (.values: [128]Int32)
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         drops = drops + 1
     }
@@ -25,39 +24,28 @@ implement Deinit#(Resource) (
 drops :: Int32 = 0
 
 _impl_transfer_Manager := (
-        .self        : &Manager,
-        .source      : $&Resource,
-        .destination : $&Resource,
-        .move        : Bool
-    ) -> (
-        .count  : Int32,
-        .result : ?Large
-    )  {
+    .self: &Manager, .source: $&Resource, .destination: $&Resource, .move: Bool
+) -> (.count: Int32, .result: ?Large) {
     count = 42
     if move {
         relocate(source, destination)
-        result = ..some(.value = Large(zeroed#([128]Int32)()))
+        result = ..some(.value = Large(zeroed<[128]Int32>()))
         return
     }
 
     result = ..none
 }
 
-forward(
-        .mover       : &Virtual#(Mover),
-        .source      : $&Resource,
-        .destination : $&Resource,
-        .move        : Bool
-    ) -> (
-        .result : ?Large
-    ) := {
+forward := (.mover: &Virtual<Mover>, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
+    .result : ?Large
+) {
     returned ::= transfer(mover, source, destination, move)
     result = returned.result
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
-    mover ::= to_virtual#(Mover)(&manager)
+    mover ::= to_virtual<Mover>(&manager)
 
     if true {
         source ::= Resource(42)

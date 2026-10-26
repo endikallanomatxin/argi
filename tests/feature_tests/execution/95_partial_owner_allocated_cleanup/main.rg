@@ -1,12 +1,12 @@
-CountingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .alloc_count   : Int32 = 0
-    .dealloc_count : Int32 = 0
+CountingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .alloc_count   : Int32                      = 0
+    .dealloc_count : Int32                      = 0
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage :: CountingAllocator = (
-        .ffi = system.ffi
+        .ffi           = system.ffi
         .alloc_count   = 0
         .dealloc_count = 0
     )
@@ -25,14 +25,14 @@ main(.system: System) -> (.status_code: Int32) := {
     status_code = 42
 }
 
-implement Allocator#(CountingAllocator) (
+implement Allocator<CountingAllocator> (
     .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable<.t: Allocation, .reasons: (..out_of_memory)>
     ) {
         storage ::= malloc(.size = size, .ffi = self&.ffi)
-        raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)
+        raw_addr :: UIntNative = storage | convert<.to: UIntNative>(_)
         self&.alloc_count = self&.alloc_count + 1
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual<.contract: Deallocator> = to_virtual<.contract: Deallocator>(
             .value = self
         )
         allocation ::= trusted_establish_allocation(
@@ -42,10 +42,10 @@ implement Allocator#(CountingAllocator) (
     }
 )
 
-implement Deallocator#(CountingAllocator) (
+implement Deallocator<CountingAllocator> (
     .deallocate = (
         .self      : $&CountingAllocator,
-        .data      : RawPointer#(.t: UInt8),
+        .data      : RawPointer<.t: UInt8>,
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {

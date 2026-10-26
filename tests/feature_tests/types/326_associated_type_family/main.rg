@@ -2,12 +2,12 @@ Owner := (.flag: Bool)
 
 Arguments := <.Item: Type> (.value: Item)
 
-Factory#(.Participant: Type): Contract = (
+Factory<.Participant: Type>: Contract = (
     .Args : <.Item: Type> Type
     .make : <.Item: Type> Args<Item> -> (.result: Item)
 )
 
-implement Factory#(Owner) (
+implement Factory<Owner> (
     .Args : <.Item: Type> Type = Arguments
     .make = <.Value: Type> (.value: Value) -> (.result: Value) {
         result = value
@@ -54,12 +54,12 @@ main := () -> () {
     if projected_flag<Owner>(.args = projected).result {} else { abort }
 }
 
-InlineFactory#(.Participant: Type): Contract = (
+InlineFactory<.Participant: Type>: Contract = (
     .Args     : <.Item: Type> Type
     .get_flag : <.Item: Type> Args<Item> -> (.result: Bool)
 )
 
-implement#(.Participant: Type) InlineFactory#(Participant) (
+implement<.Participant: Type> InlineFactory<Participant> (
     .Args     : <.Item: Type> Type = <.Item: Type> (.owner: &Participant, .value: Item)
     .get_flag = <.Value: Type> (.owner: &Participant, .value: Value) -> (.result: Bool) {
         result = owner&.flag

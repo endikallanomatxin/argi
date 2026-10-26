@@ -1,29 +1,29 @@
 ..partial_construction_failed
 
-Counter: Type = (.count: Int32)
+Counter := (.count: Int32)
 
-Child: Type = (.counter: $&Counter)
+Child := (.counter: $&Counter)
 
-Parent: Type = (.child: Child, .missing: Int32)
+Parent := (.child: Child, .missing: Int32)
 
-implement Deinit#(Child) (
+implement Deinit<Child> (
     .deinit = (.self: $&Child) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-implement Deinit#(Parent) (
+implement Deinit<Parent> (
     .deinit = (.self: $&Parent) -> () { abort }
 )
 
-fail := (.tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result : Errable#(Int32, (..partial_construction_failed))
+fail := (.tracer: $&Virtual<.contract: ErrorTracer>) -> (
+    .result: Errable<Int32, (..partial_construction_failed)>
 ) {
     result = ..error(.reason = ..partial_construction_failed, .tracer = tracer)
 }
 
-build_partial := (.counter: $&Counter, .tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result : Errable#(Int32, (..partial_construction_failed))
+build_partial := (.counter: $&Counter, .tracer: $&Virtual<.contract: ErrorTracer>) -> (
+    .result: Errable<Int32, (..partial_construction_failed)>
 ) {
     parent :: Parent
     parent.child = Child(.counter = counter)
@@ -35,7 +35,7 @@ build_partial := (.counter: $&Counter, .tracer: $&Virtual#(.contract: ErrorTrace
 probe := () -> (.result: Int32) {
     counter :: Counter = (.count = 0)
     tracer :: NoopErrorTracer = (.marker = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= to_virtual<.contract: ErrorTracer>(.value = $&tracer)
     build_partial(.counter = $&counter, .tracer = $&erased) handle error {
         match error.reason { ..partial_construction_failed {} }
     }

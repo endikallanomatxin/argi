@@ -1,8 +1,8 @@
 VertexId := (.value: UIntNative)
 
-accept(.value: VertexId) -> () := {}
+accept := (.value: VertexId) -> () {}
 
-main() -> () := {
+main := () -> () {
     raw: UIntNative = 1
     accept(.value = raw)
 }

@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     text :: [8]UInt8 = (10, 97, 13, 10, 98, 99, 10, 100)
     reader ::= ByteReader(.bytes = view(.self = &text))
     storage :: [2]UInt8 = (0, 0)

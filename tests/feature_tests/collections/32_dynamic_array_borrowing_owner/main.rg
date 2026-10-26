@@ -1,14 +1,15 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-BorrowingOwner : Type = (
-    .id: Int32
-    .allocation: Allocation
-    .borrowed: $&UInt8
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+BorrowingOwner := (
+    .id         : Int32
+    .allocation : Allocation
+    .borrowed   : $&UInt8
 )
 
 first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 
-implement Deinit#(BorrowingOwner) (
+implement Deinit<BorrowingOwner> (
     .deinit = (.self: $&BorrowingOwner) -> () {
         if self&.id == 1 { first_drops = first_drops + 1 }
         if self&.id == 2 { second_drops = second_drops + 1 }
@@ -16,7 +17,7 @@ implement Deinit#(BorrowingOwner) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -25,20 +26,37 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     second_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match external_result {
         ..error _ { status_code = 1 }
-        ..ok ~ external_payload {
+        ..ok ~external_payload {
             external ::= ~external_payload
             match first_result {
                 ..error _ { status_code = 2 }
-                ..ok ~ first_payload {
+                ..ok ~first_payload {
                     match second_result {
                         ..error _ { status_code = 3 }
-                        ..ok ~ second_payload {
-                            array ::= unwrap_or_abort(.value = DynamicArray#(.t: BorrowingOwner)(.capacity = 1))
-                            first ::= BorrowingOwner(.id = 1, .allocation = ~first_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
-                            second ::= BorrowingOwner(.id = 2, .allocation = ~second_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
+                        ..ok ~second_payload {
+                            array ::= unwrap_or_abort(
+                                .value = DynamicArray<.t: BorrowingOwner>(.capacity = 1)
+                            )
+                            first ::= BorrowingOwner(
+                                .id         = 1
+                                .allocation = ~first_payload
+                                .borrowed   = unsafe_allocation.trusted_allocation_byte_rw(
+                                    .allocation = $&external, .offset = 0
+                                ).reference
+                            )
+                            second ::= BorrowingOwner(
+                                .id         = 2
+                                .allocation = ~second_payload
+                                .borrowed   = unsafe_allocation.trusted_allocation_byte_rw(
+                                    .allocation = $&external, .offset = 0
+                                ).reference
+                            )
                             first_push ::= push(.self = $&array, .value = ~first)
                             second_push ::= push(.self = $&array, .value = ~second)
-                            if is(.value = first_push, .variant = ..error) or is(.value = second_push, .variant = ..error) {
+                            if [
+                                is(.value = first_push, .variant = ..error)
+                                or is(.value = second_push, .variant = ..error)
+                            ] {
                                 status_code = 4
                                 return
                             }
@@ -48,7 +66,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                 status_code = 5
                                 return
                             }
-                            popped ::= ~popped_result..ok
+                            popped ::= ~popped_result ..ok
                             observed ::= popped.borrowed&
                             if observed == 255 { status_code = 5 }
                             deinit(.self = $&array)

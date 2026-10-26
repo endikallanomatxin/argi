@@ -1,31 +1,31 @@
 BytePolicy: Type = ()
 
-implement ImplicitlyCopyable#(BytePolicy) ()
+implement ImplicitlyCopyable<BytePolicy> ()
 
-implement HashPolicy#(BytePolicy, UInt8) (
+implement HashPolicy<BytePolicy, UInt8> (
     .Query : Type = &UInt8
     .query = (.self: &BytePolicy, .key: &UInt8) -> (.query: Query) { query = key }
 
     .hash = (.self: &BytePolicy, .key: &UInt8) -> (.hash: UIntNative) {
-        hash = [key&| convert#(.to: UIntNative)(_)]
+        hash = [key&| convert<.to: UIntNative>(_)]
     }
     .equal = (.self: &BytePolicy, .left: &UInt8, .right: &UInt8) -> (.ok: Bool) {
         ok = left&== right&
     }
 )
 
-lookup_byte#(.Map: Type: MapLookupValue#(.Map: Map, .Query: &UInt8, .Value: UInt8)) := (
+lookup_byte := <.Map: Type: MapLookupValue<.Map: Map, .Query: &UInt8, .Value: UInt8>> (
     .self : &Map
 ) -> (.result: ?UInt8) {
     query: UInt8 = 250
-    result = ~MapLookupValue#(Map).get(.self = self, .key = &query)
+    result = ~MapLookupValue<Map>.get(.self = self, .key = &query)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     query: UInt8 = 250
     assume allocator := system.page_allocator
     map ::= unwrap_or_abort(
-        .value = HashMap#(.key: UInt8, .value: UInt8, .policy: BytePolicy)(
+        .value = HashMap<.key: UInt8, .value: UInt8, .policy: BytePolicy>(
             .policy = BytePolicy(), .capacity = 1
         )
     )
@@ -43,7 +43,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     if contains(.self = &map, .key = &query).ok { status_code = 7 }
 
     string_map ::= unwrap_or_abort(
-        .value = HashMap#(.key: StringView, .value: UInt8)(.capacity = 1)
+        .value = HashMap<.key: StringView, .value: UInt8>(.capacity = 1)
     )
     unwrap_or_abort(.value = put(.self = $&string_map, .key = "key", .value = 250))
     key: StringView = "key"

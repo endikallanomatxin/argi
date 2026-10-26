@@ -3,4 +3,4 @@ answer ::= #run (.system: System) -> (.value: Int32) {
     value = 42
 }
 
-main() -> (.status_code: Int32) := { status_code = answer }
+main := () -> (.status_code: Int32) { status_code = answer }

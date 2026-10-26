@@ -1,5 +1,5 @@
-main () -> (.status_code: Int32) := {
-    value : Nullable#(.t: Int32) = ..some(.value = 5)
+main := () -> (.status_code: Int32)  {
+    value : Nullable<.t: Int32> = ..some(.value = 5)
 
     match value {
         ..none {

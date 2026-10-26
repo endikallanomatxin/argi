@@ -344,7 +344,7 @@ test "REPL presents persistent string literals as escaped text" {
     defer sources.deinit();
     var diagnostics = diag.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "StringView: Type = (._data: &UInt8, ._length: UIntNative)");
+    const loaded = try sources.loadModule(&diagnostics, "StringView := (._data: &UInt8, ._length: UIntNative)");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: interactive.Interactive = undefined;
@@ -398,7 +398,7 @@ test "REPL standard prelude supplies output and persistent allocation across res
     try std.testing.expectEqual(@as(usize, 0), session.runtime.context.storage.acquisitions.entries.items.len);
     try session.submitStatements("after_reset ::= unwrap_or_abort(.value = String(.length = 4))");
     try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
-    session.submitStatements("numbers ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)") catch |err| {
+    session.submitStatements("numbers ::= unwrap_or_abort(.value = DynamicArray<.t: Int32>(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)") catch |err| {
         try session.diagnostics.dump();
         return err;
     };
@@ -458,7 +458,7 @@ test "REPL checked core allocations use virtual regions and explicit release" {
     const raw = (try session.submitInput("address")).?.value.runtime.integer;
     try std.testing.expect(raw != 0);
     const range = try session.runtime.context.storage.acquisitions.resolveAddress(&session.runtime.context.storage, @intCast(raw), 16, 8);
-    session.submitStatements("anchor :: UInt8 = 0\nraw ::= raw_pointer#(.t: Int32)(.address = address).raw\nreference ::= trusted_establish_inherited_reference#(.t: Int32)(.raw = raw, .root = erase_reference#(.t: UInt8)(.base = &anchor).reference).reference\nreference&= 42") catch |err| {
+    session.submitStatements("anchor :: UInt8 = 0\nraw ::= raw_pointer<.t: Int32>(.address = address).raw\nreference ::= trusted_establish_inherited_reference<.t: Int32>(.raw = raw, .root = erase_reference<.t: UInt8>(.base = &anchor).reference).reference\nreference&= 42") catch |err| {
         try session.diagnostics.dump();
         return err;
     };

@@ -1,15 +1,11 @@
-run_main() -> (
-    .result : Errable#(
-        .t       : Void,
-        .reasons : (..invalid_option, ..missing_option_value, ..invalid_utf8, ..out_of_bounds)
-    ) = ..ok Void()
-) := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     args :: [7]StringView = ("-ab", "--size=12", "--offset", "-3", "file", "--", "--literal")
     source ::= CliArgumentViews(.values = view(.self = &args))
-    parser ::= CliParser#(.t: CliArgumentViews)(.source = &source)
+    parser ::= CliParser<.t: CliArgumentViews>(.source = &source)
     index :: Int32 = 0
     while true {
-        match next(.self = $&parser)! {
+        match next(.self = $&parser)!!! {
             ..none { break }
             ..some item {
                 match item.value {
@@ -17,12 +13,12 @@ run_main() -> (
                         if index == 0 and option.name != "a" { abort }
                         if index == 1 and option.name != "b" { abort }
                         if index == 2 {
-                            if take_value(.self = $&parser, .option = option)! != "12" {
+                            if take_value(.self = $&parser, .option = option)!!! != "12" {
                                 abort
                             }
                         }
                         if index == 3 {
-                            if take_value(.self = $&parser, .option = option)! != "-3" {
+                            if take_value(.self = $&parser, .option = option)!!! != "-3" {
                                 abort
                             }
                         }
@@ -39,15 +35,9 @@ run_main() -> (
     if index != 6 { abort }
     bad :: [1]StringView = ("--=bad")
     bad_view ::= CliArgumentViews(.values = view(.self = &bad))
-    invalid ::= CliParser#(.t: CliArgumentViews)(.source = &bad_view)
+    invalid ::= CliParser<.t: CliArgumentViews>(.source = &bad_view)
     match next(.self = $&invalid) {
         ..ok _ { abort } ..error&err { if [err&.reason != ..invalid_option] { abort } }
     }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (
-    .status_code : Int32 = 1
-) := {
-    run_main()!!!
     status_code = 0
 }

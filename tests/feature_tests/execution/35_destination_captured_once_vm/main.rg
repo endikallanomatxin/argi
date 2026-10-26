@@ -1,19 +1,19 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-index(.counter: $&Counter) -> (.result: UIntNative = 0) := {
+index := (.counter: $&Counter) -> (.result: UIntNative = 0) {
     counter&.count = counter&.count + 1
 }
 
-value(.counter: $&Counter) -> (.result: Int32 = 42) := {
+value := (.counter: $&Counter) -> (.result: Int32 = 42) {
     if counter&.count != 2 { abort }
     counter&.count = counter&.count + 1
 }
 
-retarget(.target: $&$&Int32, .next: $&Int32) -> (.result: Int32 = 42) := {
+retarget := (.target: $&$&Int32, .next: $&Int32) -> (.result: Int32 = 42) {
     target&= next
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     rows :: [2][2]Int32 = (
         (1, 2),

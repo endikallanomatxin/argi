@@ -1,30 +1,31 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Mutator#(.Participant: Type): Contract = (
-    .mutate: (.self: $&Participant) -> () where {}
+Mutator<.Participant: Type>: Contract = (
+    .mutate : (.self: $&Participant) -> () where {}
 )
 
-Stateful: Type = (
+Stateful := (
     .reference : $&UInt8
     .counter   : Int32
 )
 
-Noop: Type = (.marker: UInt8)
+Noop := (.marker: UInt8)
 
-implement Mutator#(Stateful) (.mutate = _impl_mutate_Stateful)
-implement Mutator#(Noop) (.mutate = _impl_mutate_Noop)
+implement Mutator<Stateful> (.mutate = _impl_mutate_Stateful)
 
-_impl_mutate_Stateful := (.self: $&Stateful) -> ()  {
+implement Mutator<Noop> (.mutate = _impl_mutate_Noop)
+
+_impl_mutate_Stateful := (.self: $&Stateful) -> () {
     self&.counter = self&.counter + 1
 }
 
-_impl_mutate_Noop := (.self: $&Noop) -> ()  {}
+_impl_mutate_Noop := (.self: $&Noop) -> () {}
 
-register_noop(.value: $&Noop) -> () := {
-    _ ::= to_virtual#(.contract: Mutator)(.value = value)
+register_noop := (.value: $&Noop) -> () {
+    _ ::= to_virtual<.contract: Mutator>(.value = value)
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match target_result {
@@ -35,13 +36,12 @@ main(.system: System) -> (.status_code: Int32) := {
             register_noop(.value = $&noop)
             state ::= Stateful(
                 .reference = unsafe_allocation.trusted_allocation_byte_rw(
-                    .allocation = $&target
-                    .offset     = 0
+                    .allocation = $&target, .offset = 0
                 ).reference
                 .counter = 0
             )
             if 1 == 1 {
-                virtual ::= to_virtual#(.contract: Mutator)(.value = $&state)
+                virtual ::= to_virtual<.contract: Mutator>(.value = $&state)
                 mutate(.self = $&virtual)
             }
             if state.reference&== 0 {

@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -32,7 +32,9 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    created_file_result ::= File(.file_system = system.file_system, .path = src_path, .mode = ..write)
+    created_file_result ::= File(
+        .file_system = system.file_system, .path = src_path, .mode = ..write
+    )
     if is(.value = created_file_result, .variant = ..ok) {
     } else {
         status_code = 4

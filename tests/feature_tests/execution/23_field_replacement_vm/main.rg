@@ -1,43 +1,43 @@
-Counter: Type = (.count: Int32 = 0, .order: Int32 = 0)
+Counter := (.count: Int32 = 0, .order: Int32 = 0)
 
-Tracked: Type = (.counter: $&Counter, .id: Int32)
+Tracked := (.counter: $&Counter, .id: Int32)
 
 Result: Type = (..some Tracked, ..none)
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         self&.counter&.count = self&.counter&.count + 1
         self&.counter&.order = self&.counter&.order * 10 + self&.id
     }
 )
 
-make(.counter: $&Counter, .id: Int32) -> (.result: Tracked) := {
+make := (.counter: $&Counter, .id: Int32) -> (.result: Tracked) {
     index :: Int32 = 0
     while index < 1 { index = index + 1 }
     counter&.order = counter&.order * 10 + id
     result = Tracked(.counter = counter, .id = id)
 }
 
-Pair: Type = (.first: Tracked, .second: Tracked)
+Pair := (.first: Tracked, .second: Tracked)
 
-Nested: Type = (.pair: Pair)
+Nested := (.pair: Pair)
 
-Envelope: Type = (.result: Result, .sibling: Tracked)
+Envelope := (.result: Result, .sibling: Tracked)
 
-replace_first(.pair: $&Pair, .counter: $&Counter) -> () := {
+replace_first := (.pair: $&Pair, .counter: $&Counter) -> () {
     pair&.first = Tracked(.counter = counter, .id = 4)
 }
 
-replace_nested(.owner: $&Nested, .counter: $&Counter) -> () := {
+replace_nested := (.owner: $&Nested, .counter: $&Counter) -> () {
     owner&.pair.first = Tracked(.counter = counter, .id = 7)
 }
 
-reinitialize_first(.pair: $&Pair, .counter: $&Counter) -> () := {
+reinitialize_first := (.pair: $&Pair, .counter: $&Counter) -> () {
     deinit(.self = $&pair&.first)
     pair&.first = Tracked(.counter = counter, .id = 8)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         owner :: Nested = Nested(

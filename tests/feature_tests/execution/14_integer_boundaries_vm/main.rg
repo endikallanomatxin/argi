@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     maximum :: UInt64 = 18446744073709551615
     if maximum + 1 != 0 { abort }
     if maximum * maximum != 1 { abort }

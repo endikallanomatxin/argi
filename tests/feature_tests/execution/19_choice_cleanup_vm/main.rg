@@ -1,16 +1,16 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Tracked: Type = (.counter: $&Counter)
+Tracked := (.counter: $&Counter)
 
 Result: Type = (..some(.owner: Tracked), ..none)
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         value :: Result = ..none

@@ -1,7 +1,7 @@
-once setup() -> () := {
+once setup := () -> () {
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     if 1 == 1 {
         setup()
     } else {

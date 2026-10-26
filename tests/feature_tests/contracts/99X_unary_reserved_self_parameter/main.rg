@@ -1,4 +1,5 @@
 Broken: Contract = (
-    .Self: Type
+    .Self : Type
 )
-main() -> () := {}
+
+main := () -> () {}

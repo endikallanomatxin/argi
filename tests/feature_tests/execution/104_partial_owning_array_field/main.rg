@@ -1,6 +1,6 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {}
 )
 

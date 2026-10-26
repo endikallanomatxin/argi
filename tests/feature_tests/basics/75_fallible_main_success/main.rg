@@ -1,9 +1,7 @@
-work() -> !Void = ..ok Void() := {}
-run_main() -> !Void = ..ok Void() := {
-    work()!
-}
+work := () -> !Void = ..ok Void() {}
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main()!!!
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
+    work()!!!
     status_code = 0
 }

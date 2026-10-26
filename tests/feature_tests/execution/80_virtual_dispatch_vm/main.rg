@@ -1,12 +1,12 @@
-Counter: Type = (.value: Int32)
+Counter := (.value: Int32)
 
-Counting#(.State: Type): Contract = (
-    .bump : (.self: $&State, .amount: Int32) -> () where {}
-    .read : (.self: &State) -> (.result: Int32) where {}
+Counting<.State: Type>: Contract = (
+    .bump           : (.self: $&State, .amount: Int32) -> () where {}
+    .read           : (.self: &State) -> (.result: Int32) where {}
     .read_reference : (.self: &State) -> (.result: &Int32) where depends_on(result, self)
 )
 
-implement Counting#(Counter) (
+implement Counting<Counter> (
     .bump = (.self: $&Counter, .amount: Int32) -> () {
         self&.value = self&.value + amount
     }
@@ -20,11 +20,11 @@ implement Counting#(Counter) (
 
 counted := () -> (.result: Int32) {
     counter :: Counter = (.value = 7)
-    erased ::= to_virtual#(.contract: Counting)(.value = $&counter)
-    Counting#().bump($&erased, 35)
-    reference ::= Counting#().read_reference(&erased).result
+    erased ::= to_virtual<.contract: Counting>(.value = $&counter)
+    Counting<>.bump($&erased, 35)
+    reference ::= Counting<>.read_reference(&erased).result
     if reference&!= 42 { abort }
-    result = Counting#().read(&erased).result
+    result = Counting<>.read(&erased).result
 }
 
 main := () -> (.status_code: Int32 = 0) {

@@ -1,6 +1,6 @@
-CountingTracer: Type = (.count: Int32, .location: UInt32)
+CountingTracer := (.count: Int32, .location: UInt32)
 
-implement ErrorTracer#(CountingTracer) (
+implement ErrorTracer<CountingTracer> (
     .add_context = (
         .self: $&CountingTracer, .location: SourceLocationId, .context: StringView
     ) -> () {
@@ -9,8 +9,8 @@ implement ErrorTracer#(CountingTracer) (
         self&.location = location.value
     }
     .reset_context = (.self: $&CountingTracer) -> () {}
-    .report        = (.self: $&CountingTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .report        = (.self: $&CountingTracer, .writer: $&Virtual<.contract: Writer>) -> (
+        .result: Errable<Void, (..stream_write_failed, ..stream_flush_failed)>
     ) {
         result = ..ok Void()
     }
@@ -18,9 +18,9 @@ implement ErrorTracer#(CountingTracer) (
 
 main := () -> (.status_code: Int32 = 0) {
     tracer :: CountingTracer = (.count = 0, .location = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= to_virtual<.contract: ErrorTracer>(.value = $&tracer)
     captured ::= capture_error_tracer(.location = (.value = 17), .error_tracer = $&erased)
-    ErrorTracer#().reset_context(captured)
+    ErrorTracer<>.reset_context(captured)
     if tracer.count != 1 { abort }
     if tracer.location != 17 { abort }
     status_code = 42

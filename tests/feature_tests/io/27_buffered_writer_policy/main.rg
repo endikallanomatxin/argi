@@ -1,4 +1,4 @@
-RecordingWriter: Type = (
+RecordingWriter := (
     .byte_calls  : UIntNative = 0
     .flush_calls : UIntNative = 0
     .received    : UIntNative = 0
@@ -7,21 +7,21 @@ RecordingWriter: Type = (
     .fail_flush  : Bool       = false
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     base ::= RecordingWriter()
-    bytes ::= zeroed#(.t: [4]UInt8)()
-    buffered ::= BufferedWriter#(.base_type: RecordingWriter)(
+    bytes ::= zeroed<.t: [4]UInt8>()
+    buffered ::= BufferedWriter<.base_type: RecordingWriter>(
         .base = $&base, .buffer = view(.self = $&bytes)
     )
     assume writer ::= $&buffered
-    unwrap_or_abort(.value = Writer#().write_byte(.self = writer, .byte = 65))
-    unwrap_or_abort(.value = Writer#().write_byte(.self = writer, .byte = 66))
+    unwrap_or_abort(.value = Writer<>.write_byte(.self = writer, .byte = 65))
+    unwrap_or_abort(.value = Writer<>.write_byte(.self = writer, .byte = 66))
     if base.byte_calls != 0 {
         status_code = 1
         return
     }
-    unwrap_or_abort(.value = Writer#().write_byte(.self = writer, .byte = 67))
-    unwrap_or_abort(.value = Writer#().write_byte(.self = writer, .byte = 68))
+    unwrap_or_abort(.value = Writer<>.write_byte(.self = writer, .byte = 67))
+    unwrap_or_abort(.value = Writer<>.write_byte(.self = writer, .byte = 68))
     if base.byte_calls != 4 or base.received != 4 or base.last_byte != 68 {
         status_code = 2
         return
@@ -35,7 +35,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 13
         return
     }
-    unwrap_or_abort(.value = Writer#().flush(.self = writer))
+    unwrap_or_abort(.value = Writer<>.flush(.self = writer))
     if [
         base.byte_calls != 5
         or base.received != 5
@@ -46,8 +46,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
     base.fail_write = true
-    unwrap_or_abort(.value = Writer#().write_byte(.self = writer, .byte = 70))
-    stalled ::= Writer#().flush(.self = writer)
+    unwrap_or_abort(.value = Writer<>.write_byte(.self = writer, .byte = 70))
+    stalled ::= Writer<>.flush(.self = writer)
     if is(.value = stalled, .variant = ..error) {
         if stalled ..error.reason != ..stream_write_failed {
             status_code = 5
@@ -63,7 +63,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     base.fail_write = false
     base.fail_flush = true
-    failed ::= Writer#().flush(.self = writer)
+    failed ::= Writer<>.flush(.self = writer)
     if is(.value = failed, .variant = ..error) {
         if failed ..error.reason != ..stream_flush_failed {
             status_code = 8
@@ -76,7 +76,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     base.fail_flush = false
     deinit(.self = $&buffered)
     -- The wrapper borrows its base and leaves it usable after cleanup.
-    unwrap_or_abort(.value = Writer#().write_byte(.self = $&base, .byte = 71))
+    unwrap_or_abort(.value = Writer<>.write_byte(.self = $&base, .byte = 71))
     if base.received != 6 or base.last_byte != 71 {
         status_code = 10
         return
@@ -87,19 +87,19 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
     bytes[0] = 0
-    unbuffered ::= BufferedWriter#(.base_type: RecordingWriter)(
-        .base = $&base, .buffer = view(.self = $&zeroed#(.t: [0]UInt8)())
+    unbuffered ::= BufferedWriter<.base_type: RecordingWriter>(
+        .base = $&base, .buffer = view(.self = $&zeroed<.t: [0]UInt8>())
     )
-    unwrap_or_abort(.value = Writer#().write_byte(.self = $&unbuffered, .byte = 72))
+    unwrap_or_abort(.value = Writer<>.write_byte(.self = $&unbuffered, .byte = 72))
     if base.received != 7 or base.last_byte != 72 or unbuffered.length != 0 {
         status_code = 12
     }
 
 }
 
-implement Writer#(RecordingWriter) (
+implement Writer<RecordingWriter> (
     .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
     ) {
         if self&.fail_write {
             result = ..error(.reason = ..stream_write_failed)
@@ -113,7 +113,7 @@ implement Writer#(RecordingWriter) (
     }
 
     .flush = (.self: $&RecordingWriter) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
     ) {
         self&.flush_calls = self&.flush_calls + 1
         if self&.fail_flush {

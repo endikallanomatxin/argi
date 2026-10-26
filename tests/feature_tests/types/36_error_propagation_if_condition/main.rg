@@ -1,8 +1,8 @@
-flag() -> (.result: Errable#(.t: Bool, .reasons: (..test_error))) := {
+flag := () -> (.result: Errable<.t: Bool, .reasons: (..test_error)>) {
     result = ..ok true
 }
 
-run() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+run := () -> (.result: Errable<.t: Int32, .reasons: (..test_error)>) {
     if flag()! {
         result = ..ok 1
     } else {
@@ -10,7 +10,7 @@ run() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     }
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     result ::= run()
     match result {
         ..ok payload {

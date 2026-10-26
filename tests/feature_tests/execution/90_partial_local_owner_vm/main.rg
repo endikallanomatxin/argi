@@ -1,8 +1,8 @@
-Counter: Type = (.count: Int32)
+Counter := (.count: Int32)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }

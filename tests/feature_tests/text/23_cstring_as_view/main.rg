@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
     c_text ::= from_literal(.data = "hello")
     assume allocator ::= system.page_allocator

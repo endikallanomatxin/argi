@@ -2,11 +2,11 @@ Owner := (.flag: Bool)
 
 Arguments := (.value: Bool)
 
-Factory#(.Participant: Type): Contract = (
+Factory<.Participant: Type>: Contract = (
     .Args : Type
 )
 
-implement Factory#(Owner) (
+implement Factory<Owner> (
     .Args : Type = Arguments
 )
 

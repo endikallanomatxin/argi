@@ -1,13 +1,13 @@
-RecordingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .allocations   : UIntNative = 0
-    .deallocations : UIntNative = 0
+RecordingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .allocations   : UIntNative                 = 0
+    .deallocations : UIntNative                 = 0
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     ring ::= unwrap_or_abort(
-        .value = RingBuffer#(.t: Int32)(.capacity = 1, .allocator = $&allocator)
+        .value = RingBuffer<.t: Int32>(.capacity = 1, .allocator = $&allocator)
     )
     index :: Int32 = 0
     while index < 20 {
@@ -27,7 +27,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&ring)
     if allocator.deallocations != 1 { abort }
     strings ::= unwrap_or_abort(
-        .value = RingBuffer#(.t: String)(.capacity = 1, .allocator = $&allocator)
+        .value = RingBuffer<.t: String>(.capacity = 1, .allocator = $&allocator)
     )
     first ::= unwrap_or_abort(.value = String(.allocator = $&allocator, .length = 1))
     rejected ::= unwrap_or_abort(.value = String(.allocator = $&allocator, .length = 1))
@@ -49,17 +49,17 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if allocator.deallocations != 4 { abort }
 }
 
-implement Allocator#(RecordingAllocator) (
+implement Allocator<RecordingAllocator> (
     .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable<.t: Allocation, .reasons: (..out_of_memory)>
     ) {
         self&.allocations = self&.allocations + 1
         storage ::= malloc(.size = size, .ffi = self&.ffi)
-        if storage | convert#(.to: UIntNative)(_) == 0 {
+        if storage | convert<.to: UIntNative>(_) == 0 {
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual<.contract: Deallocator> = to_virtual<.contract: Deallocator>(
             .value = self
         )
         allocation ::= trusted_establish_allocation(
@@ -69,10 +69,10 @@ implement Allocator#(RecordingAllocator) (
     }
 )
 
-implement Deallocator#(RecordingAllocator) (
+implement Deallocator<RecordingAllocator> (
     .deallocate = (
         .self      : $&RecordingAllocator,
-        .data      : RawPointer#(.t: UInt8),
+        .data      : RawPointer<.t: UInt8>,
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {

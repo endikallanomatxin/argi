@@ -2,13 +2,13 @@ Input := (.source: &Bool)
 
 Output := (.value: &Bool, .ready: Bool)
 
-Observe#(.Participant: Type): Contract = (
+Observe<.Participant: Type>: Contract = (
     .observe : Input -> Output where { depends_on(value, source) }
 )
 
 Owner := (.unused: Bool)
 
-implement Observe#(Owner) (
+implement Observe<Owner> (
     .observe = Input -> Output {
         value = source
         ready = true
@@ -17,11 +17,11 @@ implement Observe#(Owner) (
 
 Args := <.T: Type> (.owner: &T, .flag: Bool)
 
-Read#(.Participant: Type): Contract = (
+Read<.Participant: Type>: Contract = (
     .read_flag : Args<Participant> -> (.result: Bool) where { depends_on(result, flag) }
 )
 
-implement Read#(Owner) (
+implement Read<Owner> (
     .read_flag = Args<Owner> -> (.result: Bool) { result = flag }
 )
 

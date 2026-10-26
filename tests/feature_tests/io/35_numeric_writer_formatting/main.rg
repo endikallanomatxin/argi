@@ -1,4 +1,4 @@
-RecordingWriter: Type = (
+RecordingWriter := (
     .expected      : StringView
     .count         : UIntNative = 0
     .flush_calls   : UIntNative = 0
@@ -6,15 +6,15 @@ RecordingWriter: Type = (
     .flush_failure : Bool       = false
 )
 
-expect_written#(.t: Type: Int)(.value: t, .expected: StringView) -> () := {
+expect_written := <.t: Type: Int> (.value: t, .expected: StringView) -> () {
     base ::= RecordingWriter(.expected = expected)
     unwrap_or_abort(
-        .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
+        .value = WriteValue<RecordingWriter, t>.write_value(.self = $&base, .value = value)
     )
     if base.count != byte_length(&expected).count { abort }
     base.count = 0
     unwrap_or_abort(
-        .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
+        .value = WriteValue<RecordingWriter, t>.write_value(.self = $&base, .value = value)
     )
     if base.count != byte_length(&expected).count { abort }
     base.count = 0
@@ -22,7 +22,7 @@ expect_written#(.t: Type: Int)(.value: t, .expected: StringView) -> () := {
     if base.count != byte_length(&expected).count or base.flush_calls != 0 { abort }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     int80: Int8 = -128
     expect_written(.value = int80, .expected = "-128")
     int81: Int8 = 0
@@ -84,9 +84,9 @@ main() -> (.status_code: Int32 = 0) := {
     }
     if partial.count != 2 or partial.flush_calls != 0 { abort }
     first ::= RecordingWriter(.expected = "", .fail_at = 0, .flush_failure = true)
-    first_failed ::= WriteValue#(
-        RecordingWriter, Int32
-    ).write_value(.self = $&first, .value = -1)
+    first_failed ::= WriteValue<RecordingWriter, Int32>.write_value(
+        .self = $&first, .value = -1
+    )
     if is(.value = first_failed, .variant = ..error) {
         if first_failed ..error.reason != ..stream_flush_failed { abort }
     } else {
@@ -103,9 +103,9 @@ main() -> (.status_code: Int32 = 0) := {
     if suffix.count != 5 or suffix.flush_calls != 0 { abort }
 }
 
-implement Writer#(RecordingWriter) (
+implement Writer<RecordingWriter> (
     .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
     ) {
         if self&.count == self&.fail_at {
             if self&.flush_failure {
@@ -127,7 +127,7 @@ implement Writer#(RecordingWriter) (
     }
 
     .flush = (.self: $&RecordingWriter) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
     ) {
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()

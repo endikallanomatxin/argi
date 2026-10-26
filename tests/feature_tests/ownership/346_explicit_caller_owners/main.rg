@@ -1,30 +1,30 @@
-Counter: Type = (.external: $&Int32, .alive: Bool)
+Counter := (.external: $&Int32, .alive: Bool)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
-implement Deinit#(Counter) (
+implement Deinit<Counter> (
     .deinit = (.self: $&Counter) -> () {
         self&.alive = false
         self&.external&= self&.external&+ 100
     }
 )
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         if self&.counter&.alive == false { abort }
         self&.counter&.external&= self&.counter&.external&+ 1
     }
 )
 
-make(.counter: $&Counter, .value: Int32) -> (.result: Resource) := {
+make := (.counter: $&Counter, .value: Int32) -> (.result: Resource) {
     result = Resource(counter, value)
 }
 
-relay(.resource: &Resource) -> (.result: &Resource) := {
+relay := (.resource: &Resource) -> (.result: &Resource) {
     result = resource
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     external :: Int32 = 0
 
     {

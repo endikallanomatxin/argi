@@ -1,14 +1,14 @@
-Value : Type = (
-    .number: UInt8
+Value := (
+    .number : UInt8
 )
 
-implement Deinit#(Value) (
+implement Deinit<Value> (
     .deinit = (.self: $&Value) -> () {
 
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     source :: Value = (.number = 7)
     stale ::= &source
     deinit(.self = $&source)

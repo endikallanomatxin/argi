@@ -1,34 +1,36 @@
-Buffer : Type = (.allocation: Allocation)
+Buffer := (.allocation: Allocation)
 
-release#(.AllocatorType: Type: Allocator#(AllocatorType))(.self: $&Buffer, .allocator: $&AllocatorType) -> () := {
+release := <.AllocatorType: Type: Allocator<AllocatorType>> (
+    .self: $&Buffer, .allocator: $&AllocatorType
+) -> () {
     assume allocator
 
     deinit(.self = $&self&.allocation)
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match first_result {
-    ..error _ { status_code = 2 }
-    ..ok ~ first_payload {
-    first ::= ~first_payload
-    buffer :: Buffer = (.allocation = ~first)
-    release(.self = $&buffer, .allocator = $&allocator_storage)
+        ..error _ { status_code = 2 }
+        ..ok ~first_payload {
+            first ::= ~first_payload
+            buffer :: Buffer = (.allocation = ~first)
+            release(.self = $&buffer, .allocator = $&allocator_storage)
 
-    second_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
-    match second_result {
-    ..error _ { status_code = 3 }
-    ..ok ~ second_payload {
-    second ::= ~second_payload
-    buffer = (.allocation = ~second)
-    status_code = 0
-    if buffer.allocation.size != 1 {
-        status_code = 1
-    }
-    deinit(.self = $&buffer.allocation)
-    }
-    }
-    }
+            second_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+            match second_result {
+                ..error _ { status_code = 3 }
+                ..ok ~second_payload {
+                    second ::= ~second_payload
+                    buffer = (.allocation = ~second)
+                    status_code = 0
+                    if buffer.allocation.size != 1 {
+                        status_code = 1
+                    }
+                    deinit(.self = $&buffer.allocation)
+                }
+            }
+        }
     }
 }

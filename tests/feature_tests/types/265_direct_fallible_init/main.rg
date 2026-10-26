@@ -1,7 +1,7 @@
-Widget : Type = (.value: Int32)
+Widget := (.value: Int32)
 
-implement Init#(Widget, (.fail: Bool)) (
-    .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))
+implement Init<Widget, (.fail: Bool)> (
+    .Result: Type = Errable<.t: Widget, .reasons: (..rejected)>
     .init = (.args: (.fail: Bool)) -> (.result: Result) {
         fail ::= ~args.fail
 
@@ -16,7 +16,7 @@ implement Init#(Widget, (.fail: Bool)) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     widget :: Widget
     outcome ::= Widget(.fail = false)
     match outcome {

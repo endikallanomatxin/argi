@@ -1,18 +1,18 @@
 drops :: Int32 = 0
 
-Tracked: Type = (.id: Int32)
+Tracked := (.id: Int32)
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         drops = drops + 1
     }
 )
 
-Pair: Type = (.a: Tracked, .b: Tracked)
+Pair := (.a: Tracked, .b: Tracked)
 
 PairOrder: Type = ()
 
-implement OrderPolicy#(PairOrder, Pair) (
+implement OrderPolicy<PairOrder, Pair> (
     .less = (.self: &PairOrder, .left: &Pair, .right: &Pair) -> (.ok: Bool) {
         ok = [left&.a.id < right&.a.id]
     }
@@ -20,10 +20,11 @@ implement OrderPolicy#(PairOrder, Pair) (
 
 RefusingAllocator: Type = ()
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     order ::= PairOrder()
-    items ::= DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 3)!
+    items ::= DynamicArray<.t: Pair>(.allocator = allocator, .capacity = 3)!!!
     push_assume_capacity(
         .self = $&items, .value = Pair(.a = Tracked(.id = 3), .b = Tracked(.id = 30))
     )
@@ -40,24 +41,24 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if drops != 0 { abort }
     for ~item in items { if item.b.id != item.a.id * 10 { abort } }
     if drops != 6 { abort }
-    queue ::= PriorityQueue#(.t: Pair, .order: PairOrder)(
+    queue ::= PriorityQueue<.t: Pair, .order: PairOrder>(
         .order = &order, .allocator = allocator, .capacity = 1
-    )!
+    )!!!
     push(
         .self      = $&queue
         .value     = Pair(.a = Tracked(.id = 3), .b = Tracked(.id = 30))
         .allocator = allocator
-    )!
+    )!!!
     push(
         .self      = $&queue
         .value     = Pair(.a = Tracked(.id = 1), .b = Tracked(.id = 10))
         .allocator = allocator
-    )!
+    )!!!
     push(
         .self      = $&queue
         .value     = Pair(.a = Tracked(.id = 2), .b = Tracked(.id = 20))
         .allocator = allocator
-    )!
+    )!!!
     match peek_reference(.self = &queue).value {
         ..none { abort } ..some entry { if entry.value&.a.id != 1 { abort } }
     }
@@ -68,14 +69,14 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     deinit(.self = $&queue)
     if drops != 12 { abort }
     refusal ::= RefusingAllocator()
-    bounded ::= PriorityQueue#(.t: Pair, .order: PairOrder)(
+    bounded ::= PriorityQueue<.t: Pair, .order: PairOrder>(
         .order = &order, .allocator = allocator, .capacity = 1
-    )!
+    )!!!
     push(
         .self      = $&bounded
         .value     = Pair(.a = Tracked(.id = 4), .b = Tracked(.id = 40))
         .allocator = allocator
-    )!
+    )!!!
     match push(
         .self      = $&bounded
         .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
@@ -90,18 +91,12 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
     deinit(.self = $&bounded)
     if drops != 16 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }
 
-implement Allocator#(RefusingAllocator) (
+implement Allocator<RefusingAllocator> (
     .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable<.t: Allocation, .reasons: (..out_of_memory)>
     ) {
         result = ..error(.reason = ..out_of_memory)
     }

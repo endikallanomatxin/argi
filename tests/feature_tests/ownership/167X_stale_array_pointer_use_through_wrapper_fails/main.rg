@@ -1,18 +1,18 @@
-Value : Type = (
-    .items: [2]Int32
+Value := (
+    .items : [2]Int32
 )
 
-implement Deinit#(Value) (
+implement Deinit<Value> (
     .deinit = (.self: $&Value) -> () {
 
     }
 )
 
-read_first(.p: $&[2]Int32) -> (.result: Int32) := {
+read_first := (.p: $&[2]Int32) -> (.result: Int32) {
     result = p&[0]
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     source :: Value = (.items = (7, 8))
     pointer ::= $&source.items
     deinit(.self = $&source)

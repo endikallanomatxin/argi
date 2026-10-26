@@ -1,1 +1,1 @@
-main() -> () := { 7 handle error {} }
+main := () -> () { 7 handle error {} }

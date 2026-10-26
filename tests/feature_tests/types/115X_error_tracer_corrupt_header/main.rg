@@ -1,9 +1,9 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume ffi := system.ffi
-    bytes ::= zeroed#(.t: [288]UInt8)()
+    bytes ::= zeroed<.t: [288]UInt8>()
     tracer ::= FixedSizeErrorTracer(.buffer = view($&bytes))
     context: StringView = "context"
-    ErrorTracer#().add_context(
+    ErrorTracer<>.add_context(
         .self     = $&tracer
         .location = error_location_id()
         .context  = context
@@ -15,6 +15,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         bytes[i] = 255
         i = i + 1
     }
-    writer ::= to_virtual#(Writer)($&system.terminal&.stderr)
-    ErrorTracer#().report(.self = $&tracer, .writer = $&writer)
+    writer ::= to_virtual<Writer>($&system.terminal&.stderr)
+    ErrorTracer<>.report(.self = $&tracer, .writer = $&writer)
 }

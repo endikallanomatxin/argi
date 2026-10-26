@@ -1,13 +1,13 @@
-change(.values: [2]Int32) -> (.result: [2]Int32) := {
+change := (.values: [2]Int32) -> (.result: [2]Int32) {
     result = values
     result[0] = 20
 }
 
-forward_references(.values: [2]&Int32) -> (.result: [2]&Int32) := {
+forward_references := (.values: [2]&Int32) -> (.result: [2]&Int32) {
     result = values
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     original :: [2]Int32 = (1, 22)
     changed ::= change(.values = original)
     original[1] = 99
@@ -29,7 +29,7 @@ main() -> (.status_code: Int32 = 0) := {
     references[0] = &second
     if copied[0]&!= 40 or references[0]&!= 2 { abort }
     if forward_references(.values = copied)[1]&!= 2 { abort }
-    wide :: [300]Int32 = zeroed#(.t: [300]Int32)()
+    wide :: [300]Int32 = zeroed<.t: [300]Int32>()
     narrow :: UInt8 = 1
     wide[narrow] = 42
     if wide[1] != 42 { abort }

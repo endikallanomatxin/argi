@@ -1,10 +1,10 @@
 drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { drops = drops + 1 })
+implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () { drops = drops + 1 })
 
-maybe(.targets: [2] $&Resource, .enabled: Bool) -> (.result: (..initialized, ..vacant)) := {
+maybe := (.targets: [2] $&Resource, .enabled: Bool) -> (.result: (..initialized, ..vacant)) {
     copied ::= targets
     deinit(.self = copied[0])
     if enabled {
@@ -15,7 +15,7 @@ maybe(.targets: [2] $&Resource, .enabled: Bool) -> (.result: (..initialized, ..v
     result = ..vacant
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         owners :: [2]Resource
         owners[0] = Resource(.value = 1)

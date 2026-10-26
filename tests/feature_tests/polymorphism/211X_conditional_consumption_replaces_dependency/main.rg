@@ -1,6 +1,6 @@
-Resource: Type = (.value: &Int32)
+Resource := (.value: &Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
 
     }
@@ -8,7 +8,7 @@ implement Deinit#(Resource) (
 
 global :: Int32 = 42
 
-release_if(.resource: $&Resource, .replacement: &Int32, .consume: Bool) -> (.result: ?Int32) := {
+release_if := (.resource: $&Resource, .replacement: &Int32, .consume: Bool) -> (.result: ?Int32) {
     if consume {
         deinit(resource)
         result = ..some(.value = 42)
@@ -19,7 +19,7 @@ release_if(.resource: $&Resource, .replacement: &Int32, .consume: Bool) -> (.res
     result = ..none
 }
 
-make() -> (.result: Resource) := {
+make := () -> (.result: Resource) {
     resource ::= Resource(&global)
     local :: Int32 = 43
     selected ::= release_if($&resource, &local, false)
@@ -30,6 +30,6 @@ make() -> (.result: Resource) := {
     }
 }
 
-main() -> () := {
+main := () -> () {
     result ::= make()
 }

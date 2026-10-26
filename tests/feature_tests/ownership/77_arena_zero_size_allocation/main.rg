@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     assume backing_allocator ::= $&allocator_storage
@@ -8,9 +8,9 @@ main(.system: System) -> (.status_code: Int32) := {
     match initialized {
         ..ok ~constructed_value { arena = ~constructed_value }
         ..error _ {
-        status_code = 1
-        return
-    }
+            status_code = 1
+            return
+        }
     }
 
     result ::= allocate_bytes(.self = $&arena, .size = 0)
@@ -19,7 +19,7 @@ main(.system: System) -> (.status_code: Int32) := {
             deinit(.self = $&arena)
             status_code = 2
         }
-        ..ok ~ payload {
+        ..ok ~payload {
             child ::= ~payload
             if child.size != 0 {
                 status_code = 3

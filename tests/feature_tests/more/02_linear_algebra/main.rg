@@ -1,8 +1,8 @@
 math := import ("math/linear_algebra")
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    a: math.Vector#(.n = 3, .t: Float64) = (.values = (1.0, 2.0, 3.0))
-    b: math.Vector#(.n = 3, .t: Float64) = (.values = (4.0, 5.0, 6.0))
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    a: math.Vector<.n = 3, .t: Float64> = (.values = (1.0, 2.0, 3.0))
+    b: math.Vector<.n = 3, .t: Float64> = (.values = (4.0, 5.0, 6.0))
     expected_dot: Float64 = 32.0
     expected_sum: Float64 = 9.0
     factor: Float64 = 2.0
@@ -12,13 +12,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if added.values[2] != expected_sum { abort }
     scaled ::= math.scale(.self = &a, .factor = 2.0)
     if scaled.values[0] != factor { abort }
-    left: math.Matrix#(.rows = 2, .cols = 3, .t: Int32) = (
+    left: math.Matrix<.rows = 2, .cols = 3, .t: Int32> = (
         .values = (
             (1, 2, 3),
             (4, 5, 6)
         )
     )
-    right: math.Matrix#(.rows = 3, .cols = 2, .t: Int32) = (
+    right: math.Matrix<.rows = 3, .cols = 2, .t: Int32> = (
         .values = (
             (7, 8),
             (9, 10),
@@ -117,7 +117,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     match [&dynamic + &other] {
         ..error item { if item.reason != ..dimension_mismatch { abort } } ..ok _ { abort }
     }
-    empty_fixed: math.Vector#(.n = 0, .t: Int32) = (.values = ())
+    empty_fixed: math.Vector<.n = 0, .t: Int32> = (.values = ())
     if math.dot(.left = &empty_fixed, .right = &empty_fixed) != 0 { abort }
 
     refusing :: RefusingAllocator = (.attempts = 0)

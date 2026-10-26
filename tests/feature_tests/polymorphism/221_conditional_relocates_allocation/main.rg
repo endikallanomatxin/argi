@@ -1,6 +1,6 @@
-transfer_if(.source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32), .move: Bool) -> (
-    .result : ?Int32
-) := {
+transfer_if := (
+    .source: $&DynamicArray<Int32>, .destination: $&DynamicArray<Int32>, .move: Bool
+) -> (.result: ?Int32) {
     if move {
         relocate(source, destination)
         result = ..some(.value = 1)
@@ -10,12 +10,12 @@ transfer_if(.source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32
     result = ..none
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
 
-    source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
+    source ::= unwrap_or_abort(DynamicArray<Int32>(.capacity = 2))
     unwrap_or_abort(push(.self = $&source, .value = 42))
-    destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
+    destination ::= unwrap_or_abort(DynamicArray<Int32>(.capacity = 1))
     deinit(.self = $&destination)
     result ::= transfer_if($&source, $&destination, true)
 
@@ -33,17 +33,17 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
 
     if true {
-        next_source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
+        next_source ::= unwrap_or_abort(DynamicArray<Int32>(.capacity = 2))
         unwrap_or_abort(push(.self = $&next_source, .value = 43))
-        next_destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
+        next_destination ::= unwrap_or_abort(DynamicArray<Int32>(.capacity = 1))
         deinit(.self = $&next_destination)
         transfer_if($&next_source, $&next_destination, true)
     }
 
     if true {
-        next_source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
+        next_source ::= unwrap_or_abort(DynamicArray<Int32>(.capacity = 2))
         unwrap_or_abort(push(.self = $&next_source, .value = 44))
-        next_destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
+        next_destination ::= unwrap_or_abort(DynamicArray<Int32>(.capacity = 1))
         deinit(.self = $&next_destination)
         transfer_if($&next_source, $&next_destination, false)
     }

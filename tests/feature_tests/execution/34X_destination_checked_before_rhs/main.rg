@@ -1,6 +1,6 @@
-fail() -> (.result: Int32 = 0) := { abort }
+fail := () -> (.result: Int32 = 0) { abort }
 
-main() -> () := {
+main := () -> () {
     values :: [2]Int32 = (1, 2)
     index :: UIntNative = 2
     values[index] = fail()

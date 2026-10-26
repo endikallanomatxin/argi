@@ -1,8 +1,8 @@
 ..failed
 
-Releaser#(.Participant: Type): Contract = (
-    .release: (.self: &Participant, .resource: $&Resource, .mode: Int32) -> (
-        .result : Errable#(?Int32, (..failed))
+Releaser<.Participant: Type>: Contract = (
+    .release : (.self: &Participant, .resource: $&Resource, .mode: Int32) -> (
+        .result: Errable<?Int32, (..failed)>
     ) where {
         on result ..ok {
             on result ..some { consumes(resource) }
@@ -12,13 +12,13 @@ Releaser#(.Participant: Type): Contract = (
     }
 )
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
-implement Releaser#(Manager) (.release = _impl_release_Manager)
+implement Releaser<Manager> (.release = _impl_release_Manager)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         drops = drops + 1
     }
@@ -26,13 +26,9 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-_impl_release_Manager := (
-        .self     : &Manager,
-        .resource : $&Resource,
-        .mode     : Int32
-    ) -> (
-        .result : Errable#(?Int32, (..failed))
-    )  {
+_impl_release_Manager := (.self: &Manager, .resource: $&Resource, .mode: Int32) -> (
+    .result: Errable<?Int32, (..failed)>
+) {
     if mode == 2 {
         result = ..error(.reason = ..failed)
         return
@@ -46,19 +42,15 @@ _impl_release_Manager := (
     result = ..ok ..none
 }
 
-release_again(
-        .releaser : &Virtual#(Releaser),
-        .resource : $&Resource,
-        .mode     : Int32
-    ) -> (
-        .result : Errable#(?Int32, (..failed))
-    ) := {
+release_again := (.releaser: &Virtual<Releaser>, .resource: $&Resource, .mode: Int32) -> (
+    .result: Errable<?Int32, (..failed)>
+) {
     result = release(releaser, resource, mode)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
-    releaser ::= to_virtual#(Releaser)(&manager)
+    releaser ::= to_virtual<Releaser>(&manager)
 
     if true {
         resource ::= Resource(42)

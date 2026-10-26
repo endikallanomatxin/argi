@@ -1,21 +1,17 @@
-DummyOutput: Type = (
+DummyOutput := (
     .flush_count : Int32 = 0
 )
 
-flush_stdout#(.WriterType: Type: Writer#(WriterType))(
-        .writer : $&WriterType = reach writer,
-        terminal.writer,
-        system.terminal.writer,
-    ) -> (
-        .value : Int32
-    ) := {
+flush_stdout := <.WriterType: Type: Writer<WriterType>> (
+    .writer : $&WriterType = reach writer, terminal.writer, system.terminal.writer
+) -> (.value: Int32) {
     assume writer
 
-    Writer#().flush(.self = writer)
+    Writer<>.flush(.self = writer)
     value = 0
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     system: (
         .terminal : (
             .writer : DummyOutput
@@ -38,22 +34,17 @@ main() -> (.status_code: Int32) := {
     status_code = stdout_storage.flush_count * 10 + system.terminal.writer.flush_count
 }
 
-implement Writer#(DummyOutput)(
-    .flush = (
-            .self : $&DummyOutput
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+implement Writer<DummyOutput> (
+    .flush = (.self: $&DummyOutput) -> (
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
+    ) {
         self&.flush_count = self&.flush_count + 1
         result = ..ok(.value = Void())
     }
 
-    .write_byte = (
-            .self : $&DummyOutput,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .write_byte = (.self: $&DummyOutput, .byte: UInt8) -> (
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
+    ) {
         _ ::= byte
         result = ..ok(.value = Void())
     }

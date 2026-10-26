@@ -1,10 +1,10 @@
-DummyInput: Type = (
+DummyInput := (
     .index : Int32 = 0
 )
 
-implement Reader#(DummyInput) (
+implement Reader<DummyInput> (
     .read_byte = (.self: $&DummyInput) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        .result: Errable<.t: ReadByte, .reasons: (..stream_read_failed)>
     ) {
         if self&.index == 0 {
             self&.index = 1
@@ -22,8 +22,8 @@ implement Reader#(DummyInput) (
     }
 )
 
-main() -> (.status_code: Int32) := {
-    bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+main := () -> (.status_code: Int32) {
+    bytes: Array<.n = 4, .t: UInt8> = (0, 0, 0, 0)
     buffer ::= view(.self = $&bytes)
     stdin_storage :: DummyInput = DummyInput()
     assume reader ::= $&stdin_storage

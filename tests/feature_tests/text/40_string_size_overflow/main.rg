@@ -1,6 +1,6 @@
-FailingAllocator: Type = (.attempts: UIntNative = 0)
+FailingAllocator := (.attempts: UIntNative = 0)
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     maximum :: UIntNative = 0
     index :: UIntNative = 0
     while index < size_of(.type = UIntNative) {
@@ -63,19 +63,19 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&text)
 }
 
-implement Allocator#(FailingAllocator) (
+implement Allocator<FailingAllocator> (
     .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable<.t: Allocation, .reasons: (..out_of_memory)>
     ) {
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-implement Deallocator#(FailingAllocator) (
+implement Deallocator<FailingAllocator> (
     .deallocate = (
         .self      : $&FailingAllocator,
-        .data      : RawPointer#(.t: UInt8),
+        .data      : RawPointer<.t: UInt8>,
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () { abort }

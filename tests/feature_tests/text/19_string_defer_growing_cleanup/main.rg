@@ -1,6 +1,6 @@
-helper#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (
+helper := <.AllocatorType: Type: Allocator<AllocatorType>> (.allocator: $&AllocatorType) -> (
     .ok : Bool
-) := {
+) {
     assume allocator
 
     text ::= unwrap_or_abort(
@@ -25,7 +25,7 @@ helper#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocator
     ok = true
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     if helper(.allocator = $&allocator_storage).ok {
         status_code = 0

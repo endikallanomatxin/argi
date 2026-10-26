@@ -1,8 +1,8 @@
-Source: Type = (.bytes: ArrayView#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
+Source := (.bytes: ArrayView<.t: UInt8>, .position: UIntNative, .calls: UIntNative)
 
-implement Reader#(Source) (
+implement Reader<Source> (
     .read_byte = (.self: $&Source) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        .result: Errable<.t: ReadByte, .reasons: (..stream_read_failed)>
     ) {
         if self&.position == length(.self = &self&.bytes).count {
             result = ..ok ..end
@@ -16,16 +16,16 @@ implement Reader#(Source) (
     }
 )
 
-implement BlockReader#(Source) (
-    .read_block = (.self: $&Source, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+implement BlockReader<Source> (
+    .read_block = (.self: $&Source, .buffer: MutableArrayView<.t: UInt8>) -> (
+        .result: Errable<.t: UIntNative, .reasons: (..stream_read_failed)>
     ) {
         self&.calls = self&.calls + 1
         if length(.self = &buffer).count == 0 {
             result = ..ok 0
             return
         }
-        match Reader#().read_byte(.self = self)! {
+        match Reader<>.read_byte(.self = self)! {
             ..end { result = ..ok 0 }
             ..ok byte {
                 pointer ::= unwrap_or_abort(
@@ -38,13 +38,13 @@ implement BlockReader#(Source) (
     }
 )
 
-Sink: Type = (.bytes: MutableArrayView#(.t: UInt8), .position: UIntNative, .stalled: Bool)
+Sink := (.bytes: MutableArrayView<.t: UInt8>, .position: UIntNative, .stalled: Bool)
 
-implement BlockWriter#(Sink) (
-    .write_block = (.self: $&Sink, .buffer: ArrayView#(.t: UInt8)) -> (
-        .result : Errable#(
+implement BlockWriter<Sink> (
+    .write_block = (.self: $&Sink, .buffer: ArrayView<.t: UInt8>) -> (
+        .result : Errable<
             .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
-        )
+        >
     ) {
         if self&.stalled or length(.self = &buffer).count == 0 {
             result = ..ok 0
@@ -60,7 +60,8 @@ implement BlockWriter#(Sink) (
     }
 )
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     input :: [4]UInt8 = (65, 0, 66, 10)
     output :: [4]UInt8 = (9, 9, 9, 9)
@@ -69,7 +70,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     sink :: Sink = (.bytes = view(.self = $&output), .position = 0, .stalled = false)
     first ::= copy_stream_limited(
         .reader = $&source, .writer = $&sink, .buffer = view(.self = $&scratch), .limit = 2
-    )!
+    )!!!
     if [
         first.count != 2
         or first.termination != ..limit
@@ -79,30 +80,30 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if output[0] != 65 or output[1] != 0 or output[2] != 9 { abort }
     last ::= copy_stream_limited(
         .reader = $&source, .writer = $&sink, .buffer = view(.self = $&scratch), .limit = 9
-    )!
+    )!!!
     if last.count != 2 or last.termination != ..end { abort }
     source.position = 0
     sink.position = 0
-    source_virtual ::= to_virtual#(.contract: BlockReader)(.value = $&source)
-    sink_virtual ::= to_virtual#(.contract: BlockWriter)(.value = $&sink)
+    source_virtual ::= to_virtual<.contract: BlockReader>(.value = $&source)
+    sink_virtual ::= to_virtual<.contract: BlockWriter>(.value = $&sink)
     copied ::= copy_stream_limited(
         .reader = $&source_virtual
         .writer = $&sink_virtual
         .buffer = view(.self = $&scratch)
         .limit  = 4
-    )!
+    )!!!
     if copied.count != 4 or copied.termination != ..limit or source.calls != 9 { abort }
     vacant :: [0]UInt8 = ()
     empty ::= view(.self = $&vacant)
     calls ::= source.calls
     zero ::= copy_stream_limited(
         .reader = $&source, .writer = $&sink, .buffer = empty, .limit = 0
-    )!
+    )!!!
     if zero.count != 0 or zero.termination != ..limit or source.calls != calls { abort }
     source.position = 0
     owned ::= read_all_limited(
         .self = $&source, .buffer = view(.self = $&scratch), .limit = 4, .allocator = allocator
-    )!
+    )!!!
     if length(&owned).count != 4 or capacity(.self = &owned).count > 4 { abort }
     if [
         unwrap_or_abort(.value = get(&owned, .index = 1)) != 0
@@ -114,7 +115,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .buffer    = view(.self = $&scratch)
         .limit     = 8
         .allocator = allocator
-    )!
+    )!!!
     if length(&other).count != 4 or capacity(.self = &other).count > 8 { abort }
     source.position = 0
     match read_all_limited(
@@ -141,7 +142,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     source.position = 4
     nothing ::= read_all_limited(
         .self = $&source, .buffer = view(.self = $&scratch), .limit = 0, .allocator = allocator
-    )!
+    )!!!
     if length(&nothing).count != 0 { abort }
     calls = source.calls
     match read_all_limited(
@@ -153,11 +154,5 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         } ..error error { if error.reason != ..invalid_stream_buffer { abort } }
     }
     if source.calls != calls { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

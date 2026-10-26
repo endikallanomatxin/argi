@@ -1,42 +1,38 @@
 ..tracer_test_failure
 
-CountingTracer: Type = (.count: UIntNative = 0)
+CountingTracer := (.count: UIntNative = 0)
 
-fail() -> (.result: Errable#(.t: Int32, .reasons: (..tracer_test_failure))) := {
+fail := () -> (.result: Errable<.t: Int32, .reasons: (..tracer_test_failure)>) {
     result = ..error(.reason = ..tracer_test_failure)
 }
 
-propagate() -> (.result: Errable#(.t: Int32, .reasons: (..tracer_test_failure))) := {
+propagate := () -> (.result: Errable<.t: Int32, .reasons: (..tracer_test_failure)>) {
     value := fail()!! "custom context"
     result = ..ok value
 }
 
-ok() -> !Int32 := { result = ..ok 7 }
+ok := () -> !Int32 { result = ..ok 7 }
 
-context_text(.counter: $&UIntNative) -> (.view: StringView) := {
+context_text := (.counter: $&UIntNative) -> (.view: StringView) {
     counter&= counter&+ 1
     view = "lazy context"
 }
 
-success(.counter: $&UIntNative) -> !Int32 := {
+success := (.counter: $&UIntNative) -> !Int32 {
     value := ok()!! context_text(.counter = counter)
     result = ..ok value
 }
 
-forward#(
-        .t : Type
-    )(
-        .value : Errable#(.t: t, .reasons: (..tracer_test_failure))
-    ) -> (
-        .result : Errable#(.t: t, .reasons: (..tracer_test_failure))
-    ) := {
+forward := <.t: Type> (.value: Errable<.t: t, .reasons: (..tracer_test_failure)>) -> (
+    .result: Errable<.t: t, .reasons: (..tracer_test_failure)>
+) {
     unwrapped := value!! "original tracer"
     result = ..ok unwrapped
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     tracer ::= CountingTracer()
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= to_virtual<.contract: ErrorTracer>(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= propagate()
     if tracer.count != 2 {
@@ -59,9 +55,9 @@ main() -> (.status_code: Int32) := {
         return
     }
     other ::= CountingTracer()
-    other_virtual ::= to_virtual#(.contract: ErrorTracer)(.value = $&other)
+    other_virtual ::= to_virtual<.contract: ErrorTracer>(.value = $&other)
     assume error_tracer ::= $&other_virtual
-    forwarded ::= forward#(.t: Int32)(.value = ~failed)
+    forwarded ::= forward<.t: Int32>(.value = ~failed)
     if tracer.count != 4 {
         status_code = 5
         return
@@ -70,12 +66,12 @@ main() -> (.status_code: Int32) := {
         status_code = 6
         return
     }
-    ErrorTracer#().reset_context(.self = $&virtual_tracer)
+    ErrorTracer<>.reset_context(.self = $&virtual_tracer)
     if tracer.count != 0 {
         status_code = 7
         return
     }
-    forwarded_again ::= forward#(.t: Int32)(.value = ~forwarded)
+    forwarded_again ::= forward<.t: Int32>(.value = ~forwarded)
     if tracer.count != 1 {
         status_code = 8
         return
@@ -83,24 +79,27 @@ main() -> (.status_code: Int32) := {
     match forwarded_again {
         ..ok _ { status_code = 9 }
         ..error&err {
-            if err&.reason == ..tracer_test_failure { status_code = 0 } else { status_code = 10 }
+            if err&.reason == ..tracer_test_failure {
+                status_code = 0
+            } else {
+                status_code = 10
+            }
         }
     }
 }
 
-implement ErrorTracer#(CountingTracer)(
-    .add_context = (.self: $&CountingTracer, .location: SourceLocationId, .context: StringView) -> () {
+implement ErrorTracer<CountingTracer> (
+    .add_context = (
+        .self: $&CountingTracer, .location: SourceLocationId, .context: StringView
+    ) -> () {
         self&.count = self&.count + 1
     }
 
     .reset_context = (.self: $&CountingTracer) -> () { self&.count = 0 }
 
-    .report = (
-            .self   : $&CountingTracer,
-            .writer : $&Virtual#(.contract: Writer)
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .report = (.self: $&CountingTracer, .writer: $&Virtual<.contract: Writer>) -> (
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
+    ) {
         result = ..ok Void()
     }
 )

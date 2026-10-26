@@ -1,6 +1,6 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
     puts(.string = "Hello world!")
 
@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
         ..ok ~payload {
             allocation ::= ~payload
-            p ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: CChar)(
+            p ::= trusted_mutable_reinterpret_reference<.from: UInt8, .to: CChar>(
                 .base = unsafe_allocation.trusted_allocation_byte_rw(
                     .allocation = $&allocation, .offset = 0
                 ).reference

@@ -1,34 +1,41 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-AddressSensitive : Type = (
-    .reference: Nullable#(.t: &UInt8)
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+AddressSensitive := (
+    .reference : Nullable<.t: &UInt8>
 )
 
 external :: UInt8 = 9
 
-implement Deinit#(AddressSensitive) (
+implement Deinit<AddressSensitive> (
     .deinit = (.self: $&AddressSensitive) -> () {
 
     }
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = AddressSensitive))
+    slots_result ::= allocate_bytes(
+        .self = $&allocator_storage, .size = size_of(.type = AddressSensitive)
+    )
     unrelated_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match slots_result {
         ..error _ { status_code = 1 }
-        ..ok ~ slots_payload {
+        ..ok ~slots_payload {
             slots ::= ~slots_payload
             match unrelated_result {
                 ..error _ { status_code = 2 }
-                ..ok ~ unrelated_payload {
+                ..ok ~unrelated_payload {
                     unrelated ::= ~unrelated_payload
-                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: AddressSensitive)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+                    slot ::= trusted_mutable_reinterpret_reference<
+                        .from: UInt8, .to: AddressSensitive
+                    >(
+                        .base = unsafe_allocation.trusted_allocation_byte_rw(
+                            .allocation = $&slots, .offset = 0
+                        ).reference
+                    ).reference
                     value :: AddressSensitive = (.reference = ..none)
-                    trusted_opaque_move_in#(.t: AddressSensitive, .storage_type: Allocation)(
-                        .storage = $&slots,
-                        .destination = slot,
-                        .source = ~value,
+                    trusted_opaque_move_in<.t: AddressSensitive, .storage_type: Allocation> (
+                        .storage = $&slots, .destination = slot, .source = ~value
                     )
 
                     slot&.reference = ..some(.value = &external)

@@ -1,19 +1,19 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.value: Int32, .counter: $&Counter)
+Resource := (.value: Int32, .counter: $&Counter)
 
-Holder: Type = (.item: Resource, .sibling: Resource)
+Holder := (.item: Resource, .sibling: Resource)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.counter&.count = self&.counter&.count + 1 }
 )
 
-observe(.self: $&Holder, .other: &Resource) -> (.result: Int32) := {
+observe := (.self: $&Holder, .other: &Resource) -> (.result: Int32) {
     deinit(.self = $&self&.item)
     result = other&.value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         holder :: Holder = Holder(

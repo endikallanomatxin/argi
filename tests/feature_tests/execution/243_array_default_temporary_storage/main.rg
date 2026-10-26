@@ -1,6 +1,6 @@
-make_array() -> (.result: [2]Int32) := { result = (20, 22) }
+make_array := () -> (.result: [2]Int32) { result = (20, 22) }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     values :: [2](.data: $&[2]Int32 = $&make_array()) = (
         (),
         ()

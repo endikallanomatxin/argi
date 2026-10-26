@@ -172,17 +172,17 @@ fn skipWhitespaceAndComments(source: []const u8, index: *usize) void {
 }
 
 test "primitive signature comparison preserves operand order and modes" {
-    const expected = "#(.t: Type)(.value: t, .on: &Any) -> (.result: t)";
+    const expected = "<.t: Type>(.value: t, .on: &Any) -> (.result: t)";
     try std.testing.expect(sameSignature(
-        "#(.t: Type)(.value: t, .on: &Any,) -> (.result: t)",
+        "<.t: Type>(.value: t, .on: &Any,) -> (.result: t)",
         expected,
     ));
     try std.testing.expect(!sameSignature(
-        "#(.t: Type)(.on: &Any, .value: t) -> (.result: t)",
+        "<.t: Type>(.on: &Any, .value: t) -> (.result: t)",
         expected,
     ));
     try std.testing.expect(!sameSignature(
-        "#(.t: Type)(.value: t, .on: $&Any) -> (.result: t)",
+        "<.t: Type>(.value: t, .on: $&Any) -> (.result: t)",
         expected,
     ));
 }

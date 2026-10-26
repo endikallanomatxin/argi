@@ -1,10 +1,10 @@
-Pair#(.Owner: Type): Contract = (
+Pair<.Owner: Type>: Contract = (
     .pair : <.Value: Type> (.left: Value, .right: Value) -> (.result: Bool)
 )
 
 Owner := (.unused: Bool)
 
-implement Pair#(Owner) (
+implement Pair<Owner> (
     .pair = <.Item: Type> (.left: Item, .right: Item) -> (.result: Bool) { result = true }
 )
 

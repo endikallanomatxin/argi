@@ -1,4 +1,4 @@
-escape := () -> (.result: ArrayView#(.t: Int32)) {
+escape := () -> (.result: ArrayView<.t: Int32>) {
     values :: [2]Int32 = (1, 2)
     result = view(.self = &values)
 }

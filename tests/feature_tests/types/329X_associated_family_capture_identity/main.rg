@@ -2,11 +2,11 @@ First := (.flag: Bool)
 
 Second := (.flag: Bool)
 
-Factory#(.Participant: Type): Contract = (
+Factory<.Participant: Type>: Contract = (
     .Args : <.Item: Type> Type
 )
 
-implement#(.Participant: Type) Factory#(Participant) (
+implement<.Participant: Type> Factory<Participant> (
     .Args : <.Item: Type> Type = <.Item: Type> (.value: Item)
 )
 

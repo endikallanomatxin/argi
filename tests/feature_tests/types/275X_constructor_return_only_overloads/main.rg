@@ -1,7 +1,7 @@
-Box#(.t: Type): Type = (.tag: Int32)
+Box := <.t: Type> (.tag: Int32)
 
-implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), (.value: sample)) (
-    .Result : Type = Box#(.t: Int32)
+implement<.sample: Type, .t: Type> Init<Box<.t: t>, (.value: sample)> (
+    .Result : Type = Box<.t: Int32>
     .init   = (.args: (.value: sample)) -> (.result: Result) {
         value ::= ~args.value
 
@@ -10,8 +10,8 @@ implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), (.value: sample)) (
     }
 )
 
-implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), (.value: sample)) (
-    .Result : Type = Box#(.t: UnicodeScalar)
+implement<.sample: Type, .t: Type> Init<Box<.t: t>, (.value: sample)> (
+    .Result : Type = Box<.t: UnicodeScalar>
     .init   = (.args: (.value: sample)) -> (.result: Result) {
         value ::= ~args.value
 
@@ -20,7 +20,7 @@ implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), (.value: sample)) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
-    value ::= Box#(.t: Int32)(.value = 5)
+main := () -> (.status_code: Int32 = 0) {
+    value ::= Box<.t: Int32>(.value = 5)
     status_code = value.tag
 }

@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume proc_man ::= system.proc_man
     match spawn(.executable = "") {
         ..error error {

@@ -1,4 +1,5 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     maximum :: UIntNative = 0
     bytes ::= size_of(.type = UIntNative)
@@ -7,11 +8,11 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         maximum = maximum * 256 + 255
         index = index + 1
     }
-    text ::= format(.value = maximum)!
-    parsed ::= parse_uintnative(.text = view(.self = &text))!
+    text ::= format(.value = maximum)!!!
+    parsed ::= parse_uintnative(.text = view(.self = &text))!!!
     if parsed != maximum { abort }
-    if parse_uintnative(.text = "+00042")! != 42 { abort }
-    if parse_uintnative(.text = "ff", .base = 16)! != 255 { abort }
+    if parse_uintnative(.text = "+00042")!!! != 42 { abort }
+    if parse_uintnative(.text = "ff", .base = 16)!!! != 255 { abort }
     match parse_uintnative(.text = "18446744073709551616") {
         ..ok _ { abort }
         ..error error { if error.reason != ..out_of_range { abort } }
@@ -24,11 +25,5 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort }
         ..error error { if error.reason != ..invalid_base { abort } }
     }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

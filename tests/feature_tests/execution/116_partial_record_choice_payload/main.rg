@@ -1,6 +1,6 @@
 Choice: Type = (..empty, ..some(.value: Int32))
 
-Record: Type = (.choice: Choice, .later: Int32)
+Record := (.choice: Choice, .later: Int32)
 
 exercise := () -> (.result: Int32) {
     record :: Record

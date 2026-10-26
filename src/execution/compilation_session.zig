@@ -602,9 +602,9 @@ test "continuation scopes retain direct owners and clean nested owners" {
     defer arena.deinit();
     const a = arena.allocator();
     const source =
-        "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
+        "Deinit<.T: Type>: Contract = (.deinit: (.self: $&T) -> ())\n" ++
         "Resource: Type = ()\n" ++
-        "implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\n" ++
+        "implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () {})\n" ++
         "command := () -> () { retained: Resource = ()\n { temporary: Resource = () } }\n" ++
         "exit_command := () -> () {}\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
@@ -731,9 +731,9 @@ test "execution session resolves accepted bindings in later command modules" {
 fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
     const a = std.testing.allocator;
     const source =
-        "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
+        "Deinit<.T: Type>: Contract = (.deinit: (.self: $&T) -> ())\n" ++
         "Resource: Type = ()\n" ++
-        "implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\n" ++
+        "implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () {})\n" ++
         "answer := () -> () { resource: Resource = ()\n deinit(.self = $&resource) }\n";
     var diagnostic_arena = std.heap.ArenaAllocator.init(a);
     defer diagnostic_arena.deinit();
@@ -810,9 +810,9 @@ test "unit selection preserves pending binding types for later materialization" 
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
-        \\identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }
+        \\identity := <.T: Type> (.value: T) -> (.result: T) { result = value }
         \\helper := () -> (.result: Int32) {
-        \\    local ::= identity#(.T: Int32)(.value = 7)
+        \\    local ::= identity<.T: Int32>(.value = 7)
         \\    result = local
         \\}
         \\main := () -> (.status_code: Int32) { status_code = 0 }
@@ -874,13 +874,13 @@ test "virtual signature completion is stable across repeated unit preparation" {
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
-        \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
-        \\Box: Type = (.value: Int32)
-        \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
+        \\Readable<.Source: Type>: Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
+        \\Box := (.value: Int32)
+        \\implement Readable<Box> (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 42)
-        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
-        \\    status_code = Readable#().read(&erased).result
+        \\    erased ::= to_virtual<.contract: Readable>(.value = &box)
+        \\    status_code = Readable<>.read(&erased).result
         \\}
     , &diagnostics);
     defer module.deinit(a);
@@ -913,9 +913,9 @@ test "semantic unit completion keeps the same graph open for later roots" {
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
-        \\identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }
+        \\identity := <.T: Type> (.value: T) -> (.result: T) { result = value }
         \\helper := () -> (.result: Int32) {
-        \\    local ::= identity#(.T: Int32)(.value = 7)
+        \\    local ::= identity<.T: Int32>(.value = 7)
         \\    result = local
         \\}
         \\main := () -> (.status_code: Int32 = 0) {}
@@ -989,18 +989,18 @@ test "semantic storage domain metadata is released with its graph owner" {
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
-        \\Readable#(.Source: Type): Contract = (
+        \\Readable<.Source: Type>: Contract = (
         \\    domain contents
         \\    .read: (.source: &Source) -> (.result: Int32) where {}
         \\)
-        \\Box: Type = (.value: Int32)
-        \\implement Readable#(Box) (
+        \\Box := (.value: Int32)
+        \\implement Readable<Box> (
         \\    .read = (.source: &Box) -> (.result: Int32) { result = source&.value }
         \\) where { contents(self.value) }
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 42)
-        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
-        \\    status_code = Readable#().read(&erased).result
+        \\    erased ::= to_virtual<.contract: Readable>(.value = &box)
+        \\    status_code = Readable<>.read(&erased).result
         \\}
     , &diagnostics);
     defer module.deinit(a);

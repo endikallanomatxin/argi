@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     -- Int literals in different formats
     a :: Int32
     a = 12

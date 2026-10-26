@@ -1,21 +1,21 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Tracked: Type = (.counter: $&Counter)
+Tracked := (.counter: $&Counter)
 
-Pair: Type = (.first: Tracked, .second: Tracked)
+Pair := (.first: Tracked, .second: Tracked)
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-leave_early(.counter: $&Counter) -> () := {
+leave_early := (.counter: $&Counter) -> () {
     owner ::= Tracked(.counter = counter)
     return
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     leave_early(.counter = $&counter)
     if counter.count != 1 { abort }

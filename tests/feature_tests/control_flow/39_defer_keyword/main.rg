@@ -1,13 +1,16 @@
-Flag#(.T: Type): Contract = ()
-Marker: Type = ()
-implement Flag#(Marker) ()
-implement#(.T: Type: Flag) Flag#(&T) ()
+Flag<.T: Type>: Contract = ()
 
-append(.state: $&Int32, .digit: Int32) -> () := {
+Marker: Type = ()
+
+implement Flag<Marker> ()
+
+implement<.T: Type: Flag> Flag<&T> ()
+
+append := (.state: $&Int32, .digit: Int32) -> () {
     state&= state&* 10 + digit
 }
 
-finish(.state: $&Int32) -> () := {
+finish := (.state: $&Int32) -> () {
     defer append(.state = state, .digit = 1)
     defer { state&= state&* 10 + 2 }
 }

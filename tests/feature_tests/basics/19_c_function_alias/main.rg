@@ -1,6 +1,6 @@
 atoi(.string: &CChar) -> (.value: Int32): CFunction
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
     parsed ::= atoi(.string = "42").value
 

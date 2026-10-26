@@ -3,15 +3,15 @@
 drops :: Int32 = 0
 whole_drops :: Int32 = 0
 
-Resource: Type = (.id: Int32)
+Resource := (.id: Int32)
 
 Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { drops = drops + self&.id }
 )
 
-implement Deinit#(Choice) (
+implement Deinit<Choice> (
     .deinit = (.self: $&Choice) -> () {
         whole_drops = whole_drops + 1
         match self&{
@@ -26,31 +26,31 @@ implement Deinit#(Choice) (
 
 indices :: Int32 = 0
 
-select_index(.selection: $&UIntNative) -> (.result: UIntNative) := {
+select_index := (.selection: $&UIntNative) -> (.result: UIntNative) {
     indices = indices + 1
     result = selection&
 }
 
-build_choice(.selection: $&UIntNative, .fail: Bool) -> (.result: Errable#(Choice, (..stop))) := {
+build_choice := (.selection: $&UIntNative, .fail: Bool) -> (.result: Errable<Choice, (..stop)>) {
     selection&= 1
     value :: Choice = ..pair(.left = Resource(.id = 7), .right = maybe_resource(.fail = fail)!)
     result = ..ok ~value
 }
 
-maybe_resource(.fail: Bool) -> (.result: Errable#(Resource, (..stop))) := {
+maybe_resource := (.fail: Bool) -> (.result: Errable<Resource, (..stop)>) {
     if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.id = 14) }
 }
 
-replace(.values: $&[2]Choice, .selection: $&UIntNative, .fail: Bool) -> (
-    .result : Errable#(Int32, (..stop))
-) := {
+replace := (.values: $&[2]Choice, .selection: $&UIntNative, .fail: Bool) -> (
+    .result: Errable<Int32, (..stop)>
+) {
     values&[select_index(.selection = selection)] = build_choice(
         .selection = selection, .fail = fail
     )!
     result = ..ok 42
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume error_tracer ::= $&noop_error_tracer
     {
         values :: [2]Choice = (

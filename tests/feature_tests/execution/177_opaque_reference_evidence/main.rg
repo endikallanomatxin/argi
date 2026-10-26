@@ -1,14 +1,14 @@
-Counter: Type = (.drops: Int32 = 0)
+Counter := (.drops: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-ReferenceRecord: Type = (.value: $&Resource)
+ReferenceRecord := (.value: $&Resource)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + 1 }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter)

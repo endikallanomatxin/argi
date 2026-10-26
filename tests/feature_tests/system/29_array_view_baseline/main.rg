@@ -1,11 +1,11 @@
-main() -> (.status_code: Int32) := {
-    data: Array#(.n = 4, .t: Int32) = (0, 0, 0, 0)
+main := () -> (.status_code: Int32) {
+    data: Array<.n = 4, .t: Int32> = (0, 0, 0, 0)
     values ::= view(.self = $&data)
 
-    set0 ::= set#(.t: Int32)(.self = $&values, .index = 0, .value = 3).result
-    set1 ::= set#(.t: Int32)(.self = $&values, .index = 1, .value = 5).result
-    set2 ::= set#(.t: Int32)(.self = $&values, .index = 2, .value = 7).result
-    set3 ::= set#(.t: Int32)(.self = $&values, .index = 3, .value = 11).result
+    set0 ::= set<.t: Int32>(.self = $&values, .index = 0, .value = 3).result
+    set1 ::= set<.t: Int32>(.self = $&values, .index = 1, .value = 5).result
+    set2 ::= set<.t: Int32>(.self = $&values, .index = 2, .value = 7).result
+    set3 ::= set<.t: Int32>(.self = $&values, .index = 3, .value = 11).result
     if [
         is(.value = set0, .variant = ..error)
         or is(.value = set1, .variant = ..error)

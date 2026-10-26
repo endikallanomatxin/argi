@@ -1,12 +1,12 @@
-Counter: Type = (.count: Int32)
+Counter := (.count: Int32)
 
-Child: Type = (.counter: $&Counter)
+Child := (.counter: $&Counter)
 
-implement Deinit#(Counter) (
+implement Deinit<Counter> (
     .deinit = (.self: $&Counter) -> () {}
 )
 
-implement Deinit#(Child) (
+implement Deinit<Child> (
     .deinit = (.self: $&Child) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }

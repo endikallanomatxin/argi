@@ -1,20 +1,20 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Leaf: Type = (.id: Int32)
+Leaf := (.id: Int32)
 
-Pair: Type = (.first: Leaf, .second: Leaf)
+Pair := (.first: Leaf, .second: Leaf)
 
 Choice: Type = (..none, ..some(.pair: Pair))
 
-Outer: Type = (.before: Leaf, .choice: Choice, .after: Leaf)
+Outer := (.before: Leaf, .choice: Choice, .after: Leaf)
 
-implement Deinit#(Leaf) (
+implement Deinit<Leaf> (
     .deinit = (.self: $&Leaf, .counter: $&Counter = reach cleanup_counter) -> () {
         counter&.count = counter&.count + 1
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     assume cleanup_counter ::= $&counter
     {

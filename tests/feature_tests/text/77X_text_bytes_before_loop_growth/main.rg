@@ -1,6 +1,6 @@
-main(.system: System) -> () := {
+main := (.system: System) -> ()  {
     assume allocator := system.page_allocator
-    field ::= unwrap_or_abort(.value = DynamicArray#(UInt8)(.capacity = 1))
+    field ::= unwrap_or_abort(.value = DynamicArray<UInt8>(.capacity = 1))
     unwrap_or_abort(.value = push($&field, .value = 65))
     old ::= view(&field)
     index :: UIntNative = 0

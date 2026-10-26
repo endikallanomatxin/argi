@@ -1,14 +1,20 @@
-Pair : CStruct = (.left: CDouble, .right: CDouble)
-implement ImplicitlyCopyable#(Pair) ()
-Transformer(.value: Pair) -> (.result: Pair) : CFunctionPointer
-_make() -> (.result: Pair) : CFunction(.symbol = "argi_cross_make")
-_apply(.value: Pair, .callback: Transformer) -> (.result: Pair) : CFunction(.symbol = "argi_cross_apply")
+Pair: CStruct = (.left: CDouble, .right: CDouble)
 
-swap(.value: Pair) -> (.result: Pair) : CFunction := {
+implement ImplicitlyCopyable<Pair> ()
+
+Transformer(.value: Pair) -> (.result: Pair): CFunctionPointer
+
+_make() -> (.result: Pair): CFunction(.symbol = "argi_cross_make")
+
+_apply(.value: Pair, .callback: Transformer) -> (.result: Pair): CFunction(
+    .symbol = "argi_cross_apply"
+)
+
+swap(.value: Pair) -> (.result: Pair): CFunction := {
     result = (.left = value.right, .right = value.left)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     original := _make()
     callback := Transformer(.function = swap)

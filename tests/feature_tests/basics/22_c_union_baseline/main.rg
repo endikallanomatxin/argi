@@ -1,9 +1,9 @@
-NumberValue : CUnion = (
-    .small: Int16,
-    .large: Int64,
+NumberValue: CUnion = (
+    .small : Int16,
+    .large : Int64,
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value :: NumberValue = (.small = 7)
     if value.small != 7 {
         status_code = 1

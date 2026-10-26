@@ -6,7 +6,7 @@ choose := <.T: Type> Args<T> -> Result<T> {
     result = left
 }
 
-main() -> () := {
+main := () -> () {
     left: Int32 = 1
     right: Int64 = 2
     _ = choose(.left = left, .right = right)

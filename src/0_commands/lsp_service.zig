@@ -1293,14 +1293,16 @@ fn expectSemanticToken(data: []const u32, source: []const u8, needle: []const u8
 
 test "LSP semantic tokens distinguish resolved names without synthetic recoloring" {
     const code =
-        \\Point : Type = (.x: Int32)
-        \\implement Init#(Point, (.x: Int32)) (.Result: Type = Point, .init = (.args: (.x: Int32)) -> (.result: Result) { result = (.x = args.x) })
-        \\implement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})
-        \\Box#(.t: Type) : Type = (.value: t)
-        \\implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (.Result: Type = Box#(.t: t), .init = (.args: (.value: t)) -> (.result: Result) { result = (.value = args.value) })
-        \\implement#(.t: Type) Deinit#(Box#(.t: t)) (.deinit = (.self: $&Box#(.t: t)) -> () {})
-        \\identity(.value: Int32) -> (.result: Int32) := { result = value }
-        \\main(.system: System) -> (.status_code: Int32 = 0) := {
+        \\Point := (.x: Int32)
+        \\PointArgs := (.x: Int32)
+        \\implement Init<Point, PointArgs> (.Result: Type = Point, .init = (.args: PointArgs) -> (.result: Result) { result = (.x = args.x) })
+        \\implement Deinit<Point> (.deinit = (.self: $&Point) -> () {})
+        \\Box := <.t: Type> (.value: t)
+        \\BoxArgs := <.t: Type> (.value: t)
+        \\implement<.t: Type> Init<Box<.t: t>, BoxArgs<t>> (.Result: Type = Box<.t: t>, .init = (.args: BoxArgs<t>) -> (.result: Result) { result = (.value = args.value) })
+        \\implement<.t: Type> Deinit<Box<.t: t>> (.deinit = (.self: $&Box<.t: t>) -> () {})
+        \\identity := (.value: Int32) -> (.result: Int32)  { result = value }
+        \\main := (.system: System) -> (.status_code: Int32 = 0)  {
         \\    assume writer := $&system.terminal&.stdout
         \\    point ::= Point(.x = 2)
         \\    defer {}
@@ -1322,13 +1324,13 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     try expectSemanticToken(data.items, code, "Point :", TOKEN_INDEX.type_, 1);
     try expectSemanticToken(data.items, code, "implement", TOKEN_INDEX.keyword, 0);
     try expectSemanticToken(data.items, code, "defer", TOKEN_INDEX.keyword, 0);
-    try expectSemanticToken(data.items, code, "Point, (.x:", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "Point) (.deinit", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "Box#(.t: t),", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "Box#(.t: t)) (.deinit", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Point, PointArgs", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Point> (.deinit", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box<.t: t>,", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box<.t: t>> (.deinit", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "init =", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "deinit =", TOKEN_INDEX.function, 1);
-    try expectSemanticToken(data.items, code, "identity(.value:", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "identity := (.value:", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "value: Int32", TOKEN_INDEX.parameter, 3);
     try expectSemanticToken(data.items, code, "value }", TOKEN_INDEX.parameter, 2);
     try expectSemanticToken(data.items, code, "result =", TOKEN_INDEX.parameter, 0);
@@ -1348,9 +1350,9 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
 
 test "LSP navigation and hovers use written symbols and source declarations" {
     const code =
-        \\Point : Type = (.x: Int32)
-        \\identity(.value: Int32) -> (.result: Int32) := { result = value }
-        \\main(.system: System) -> (.status_code: Int32 = 0) := {
+        \\Point := (.x: Int32)
+        \\identity := (.value: Int32) -> (.result: Int32)  { result = value }
+        \\main := (.system: System) -> (.status_code: Int32 = 0)  {
         \\    assume writer := $&system.terminal&.stdout
         \\    point ::= Point(.x = 2)
         \\    amount := identity(.value = point.x)
@@ -1397,15 +1399,18 @@ test "LSP navigation and hovers use written symbols and source declarations" {
 
 test "LSP constructor navigation finds selected init bodies and default record declarations" {
     const code =
-        \\MyType : Type = (.value: Int32)
-        \\implement Init#(MyType, ()) (.Result: Type = MyType, .init = (.args: ()) -> (.result: Result) { result = (.value = 0) })
-        \\implement Init#(MyType, (.value: Int32)) (.Result: Type = MyType, .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) })
-        \\Box#(.t: Type) : Type = (.value: t)
-        \\implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (.Result: Type = Box#(.t: t), .init = (.args: (.value: t)) -> (.result: Result) { result = (.value = args.value) })
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\MyType := (.value: Int32)
+        \\EmptyArgs: Type = ()
+        \\ValueArgs := (.value: Int32)
+        \\implement Init<MyType, EmptyArgs> (.Result: Type = MyType, .init = (.args: EmptyArgs) -> (.result: Result) { result = (.value = 0) })
+        \\implement Init<MyType, ValueArgs> (.Result: Type = MyType, .init = (.args: ValueArgs) -> (.result: Result) { result = (.value = args.value) })
+        \\Box := <.t: Type> (.value: t)
+        \\BoxArgs := <.t: Type> (.value: t)
+        \\implement<.t: Type> Init<Box<.t: t>, BoxArgs<t>> (.Result: Type = Box<.t: t>, .init = (.args: BoxArgs<t>) -> (.result: Result) { result = (.value = args.value) })
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    first ::= MyType()
         \\    second ::= MyType(2)
-        \\    boxed ::= Box#(.t: Int32)(3)
+        \\    boxed ::= Box<.t: Int32>(3)
         \\    specs ::= (CliSpec("help", "h", "Show help"),)
         \\    imported ::= library.Thing(4)
         \\}
@@ -1416,7 +1421,7 @@ test "LSP constructor navigation finds selected init bodies and default record d
     try tmp.dir.createDir(std.testing.io, "library", .default_dir);
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "library/thing.rg",
-        .data = "Thing : Type = (.value: Int32)\nimplement Init#(Thing, (.value: Int32)) (.Result: Type = Thing, .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) })\n",
+        .data = "Thing := (.value: Int32)\nThingArgs := (.value: Int32)\nimplement Init<Thing, ThingArgs> (.Result: Type = Thing, .init = (.args: ThingArgs) -> (.result: Result) { result = (.value = args.value) })\n",
     });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
     const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
@@ -1428,9 +1433,9 @@ test "LSP constructor navigation finds selected init bodies and default record d
     defer diagnostics.deinit();
     try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
     for ([_]struct { line: u32, character: u32, declaration_line: u32 }{
-        .{ .line = 6, .character = 17, .declaration_line = 1 },
-        .{ .line = 7, .character = 18, .declaration_line = 2 },
-        .{ .line = 8, .character = 15, .declaration_line = 4 },
+        .{ .line = 9, .character = 17, .declaration_line = 3 },
+        .{ .line = 10, .character = 18, .declaration_line = 4 },
+        .{ .line = 11, .character = 15, .declaration_line = 7 },
     }) |case| {
         const position = Position{ .line = case.line, .character = case.character };
         const definition = (try service.definition(uri, position)).?;
@@ -1445,20 +1450,20 @@ test "LSP constructor navigation finds selected init bodies and default record d
         defer edits.deinit();
         try std.testing.expectEqual(@as(usize, 0), edits.items.len);
     }
-    const spec = (try service.definition(uri, .{ .line = 9, .character = 16 })).?;
+    const spec = (try service.definition(uri, .{ .line = 12, .character = 16 })).?;
     defer spec.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, spec.path, if (@import("builtin").os.tag == .windows) "\\system\\command.rg" else "/system/command.rg"));
     try std.testing.expectEqual(@as(u32, 6), spec.range.start.line);
     try std.testing.expectEqual(@as(u32, 7), spec.range.end.character);
-    const imported = (try service.definition(uri, .{ .line = 10, .character = 26 })).?;
+    const imported = (try service.definition(uri, .{ .line = 13, .character = 26 })).?;
     defer imported.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, imported.path, if (@import("builtin").os.tag == .windows) "\\library\\thing.rg" else "/library/thing.rg"));
-    try std.testing.expectEqual(@as(u32, 1), imported.range.start.line);
+    try std.testing.expectEqual(@as(u32, 2), imported.range.start.line);
 }
 
 test "LSP semantic tokens retain syntax roles with unresolved calls and multiline text" {
     const code =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    text := "héllo
         \\world"
         \\    missing(.value = text)
@@ -1475,7 +1480,7 @@ test "LSP semantic tokens retain syntax roles with unresolved calls and multilin
     try service.documents.append(try Document.init(std.testing.allocator, "file:///unfinished.rg", path, 1, code));
     var data = try service.semanticTokensFull("file:///unfinished.rg");
     defer data.deinit();
-    try expectSemanticToken(data.items, code, "main()", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "main :=", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "Int32", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "missing(", TOKEN_INDEX.function, 0);
     try expectSemanticToken(data.items, code, "value =", TOKEN_INDEX.property, 0);
@@ -1526,8 +1531,8 @@ test "LSP completion positions validate UTF-8 bytes and CRLF boundaries" {
 
 test "LSP definitions remain available with unresolved matrix initializers" {
     const code =
-        \\MatrixView : Type = (.data_p: &[2][2]Int32)
-        \\main(.system: System) -> (.status_code: Int32 = 0) := {
+        \\MatrixView := (.data_p: &[2][2]Int32)
+        \\main := (.system: System) -> (.status_code: Int32 = 0)  {
         \\    assume writer := $&system.terminal&.stdout
         \\    data : [2][2]Int32 = ((1,2), (3,4))
         \\    mv : MatrixView = (.data_p = &data)
@@ -1543,7 +1548,7 @@ test "LSP definitions remain available with unresolved matrix initializers" {
     defer service.deinit();
     const uri = "file:///matrix.rg";
     try service.documents.append(try Document.init(std.testing.allocator, uri, path, 1, code));
-    const system = (try service.definition(uri, .{ .line = 1, .character = 14 })).?;
+    const system = (try service.definition(uri, .{ .line = 1, .character = 18 })).?;
     defer system.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, system.path, if (@import("builtin").os.tag == .windows) "\\system\\system.rg" else "/system/system.rg"));
     const print = (try service.definition(uri, .{ .line = 5, .character = 4 })).?;
@@ -1561,11 +1566,11 @@ test "LSP definitions remain available with unresolved matrix initializers" {
 test "LSP module reuse preserves navigation across unsaved imports and file changes" {
     const code =
         \\dep := import("./dep")
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    status_code = dep.answer().result
         \\}
     ;
-    const dependency = "answer() -> (.result: Int32 = 7) := {}\n";
+    const dependency = "answer := () -> (.result: Int32 = 7)  {}\n";
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDir(std.testing.io, "dep", .default_dir);
@@ -1611,7 +1616,7 @@ test "LSP module reuse preserves navigation across unsaved imports and file chan
     try std.testing.expectEqual(@as(u32, 1), moved.range.start.line);
     try std.testing.expectEqual(misses + 1, service.module_cache.misses);
 
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "helper.rg", .data = "helper() -> () := {}\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "helper.rg", .data = "helper := () -> ()  {}\n" });
     const with_file = (try service.definition(uri, position)).?;
     defer with_file.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings(dep_path, with_file.path);
@@ -1647,13 +1652,13 @@ test "LSP module reuse preserves navigation across unsaved imports and file chan
 test "LSP module reuse discovers unsaved transitive imports and cycles" {
     const code =
         \\dep := import("./dep")
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    status_code = dep.answer().result
         \\}
     ;
-    const original = "answer() -> (.result: Int32 = 7) := {}\n";
-    const edited = "next := import(\"../next\")\nanswer() -> (.result: Int32) := { result = next.number().result }\n";
-    const next_code = "number() -> (.result: Int32 = 9) := {}\n";
+    const original = "answer := () -> (.result: Int32 = 7)  {}\n";
+    const edited = "next := import(\"../next\")\nanswer := () -> (.result: Int32)  { result = next.number().result }\n";
+    const next_code = "number := () -> (.result: Int32 = 9)  {}\n";
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDir(std.testing.io, "dep", .default_dir);
@@ -1701,11 +1706,11 @@ test "LSP module reuse discovers unsaved transitive imports and cycles" {
 
 test "LSP document symbols preserve hierarchy and unsaved syntax" {
     const code =
-        \\Point : Type = (
+        \\Point := (
         \\    .x: Int32
         \\    .y: Int32
         \\)
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value ::= missing()
         \\}
     ;
@@ -1733,7 +1738,7 @@ test "LSP document symbols preserve hierarchy and unsaved syntax" {
 }
 
 test "LSP reports assignment without a previous declaration" {
-    const code = "main() -> (.status_code: Int32 = 0) := {\n    value = 1\n}\n";
+    const code = "main := () -> (.status_code: Int32 = 0)  {\n    value = 1\n}\n";
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
@@ -1746,16 +1751,16 @@ test "LSP reports assignment without a previous declaration" {
     try std.testing.expect(diagnostics.items.len > 0);
     try std.testing.expect(std.mem.indexOf(u8, diagnostics.items[0].message, "cannot assign to undeclared binding 'value'") != null);
     try std.testing.expectEqual(@as(u32, 1), diagnostics.items[0].range.start.line);
-    const corrected = try service.changeDocument("file:///assignment.rg", path, 2, "main() -> (.status_code: Int32 = 0) := {\n    value ::= 1\n    value = 2\n    status_code = value\n}\n");
+    const corrected = try service.changeDocument("file:///assignment.rg", path, 2, "main := () -> (.status_code: Int32 = 0)  {\n    value ::= 1\n    value = 2\n    status_code = value\n}\n");
     defer corrected.deinit();
     try std.testing.expectEqual(@as(usize, 0), corrected.items.len);
 }
 
 test "LSP diagnoses array shapes before codegen" {
     const cases = [_]struct { text: []const u8, message: []const u8 }{
-        .{ .text = "main() -> (.status_code: Int32 = 0) := {\n    data : [3][3]Int32 = ((1,2), (3,4))\n}\n", .message = "array initializer has 2 elements; expected 3" },
-        .{ .text = "main() -> (.status_code: Int32 = 0) := {\n    data : [2][3]Int32 = ((1,2), (3,4))\n}\n", .message = "array initializer has 2 elements; expected 3" },
-        .{ .text = "MatrixView : Type = (.data_p: &[2][2]Int32)\nmain() -> (.status_code: Int32 = 0) := {\n    data : [3][3]Int32 = ((1,2,3), (4,5,6), (7,8,9))\n    matrix : MatrixView = (.data_p = &data)\n}\n", .message = "array value has type '&[3][3]Int32'; expected '&[2][2]Int32'" },
+        .{ .text = "main := () -> (.status_code: Int32 = 0)  {\n    data : [3][3]Int32 = ((1,2), (3,4))\n}\n", .message = "array initializer has 2 elements; expected 3" },
+        .{ .text = "main := () -> (.status_code: Int32 = 0)  {\n    data : [2][3]Int32 = ((1,2), (3,4))\n}\n", .message = "array initializer has 2 elements; expected 3" },
+        .{ .text = "MatrixView := (.data_p: &[2][2]Int32)\nmain := () -> (.status_code: Int32 = 0)  {\n    data : [3][3]Int32 = ((1,2,3), (4,5,6), (7,8,9))\n    matrix : MatrixView = (.data_p = &data)\n}\n", .message = "array value has type '&[3][3]Int32'; expected '&[2][2]Int32'" },
     };
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1782,9 +1787,9 @@ test "LSP target selection preserves definition positions and ignores inactive i
         "bad := import(\"./absent\")\n" ++
         "unknown(.value: MissingType) := {}\n" ++
         "} #else {\n" ++
-        "answer() -> (.value: Int32 = 7) := {}\n" ++
+        "answer := () -> (.value: Int32 = 7)  {}\n" ++
         "}\n" ++
-        "main() -> (.status_code: Int32) := { status_code = answer() }\n";
+        "main := () -> (.status_code: Int32)  { status_code = answer() }\n";
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
@@ -1796,7 +1801,7 @@ test "LSP target selection preserves definition positions and ignores inactive i
     const diagnostics = try service.openDocument(uri, path, 1, code);
     defer diagnostics.deinit();
     try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
-    const definition = (try service.definition(uri, .{ .line = 6, .character = 51 })).?;
+    const definition = (try service.definition(uri, .{ .line = 6, .character = 53 })) orelse return error.TestExpectedEqual;
     defer definition.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings(path, definition.path);
     try std.testing.expectEqual(@as(u32, 4), definition.range.start.line);
@@ -1823,7 +1828,7 @@ test "LSP formatting expands unsaved blocks and becomes a no-op after applying e
     const uri = "file:///tmp/argi-format-block/main.rg";
     const path = try std.fs.path.resolve(std.testing.allocator, &.{"tests/feature_tests/basics/67_formatter_layout/main.rg"});
     defer std.testing.allocator.free(path);
-    const source = "-- 😀\r\nPoint:Type=(.x:Int32)\r\nf()->():={value::Int32=0 value=value+1}\r\n";
+    const source = "-- 😀\r\nPoint := (.x:Int32)\r\nf := ()->(){value::Int32=0 value=value+1}\r\n";
     var diagnostics = try svc.openDocument(uri, path, 1, source);
     defer diagnostics.deinit();
     var edits = try svc.formatting(uri);
@@ -1831,7 +1836,7 @@ test "LSP formatting expands unsaved blocks and becomes a no-op after applying e
     try std.testing.expectEqual(@as(usize, 1), edits.items.len);
     try std.testing.expectEqual(@as(u32, 3), edits.items[0].range.end.line);
     try std.testing.expectEqual(@as(u32, 0), edits.items[0].range.end.character);
-    const expected = "-- 😀\nPoint: Type = (.x: Int32)\n\nf() -> () := {\n    value :: Int32 = 0\n    value = value + 1\n}\n";
+    const expected = "-- 😀\nPoint := (.x: Int32)\n\nf := () -> () {\n    value :: Int32 = 0\n    value = value + 1\n}\n";
     try std.testing.expectEqualStrings(expected, edits.items[0].new_text);
     var changed = try svc.changeDocument(uri, path, 2, expected);
     defer changed.deinit();
@@ -1872,7 +1877,7 @@ test "LSP formatting removes multiline struct literal commas" {
 }
 
 test "LSP positional type arguments remain type tokens" {
-    const code = "main() -> (.result: Errable#(Int32, Reasons)) := {}\n";
+    const code = "main := () -> (.result: Errable<Int32, Reasons>)  {}\n";
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
@@ -1896,14 +1901,14 @@ test "LSP positional type arguments remain type tokens" {
 
 test "LSP scoped implementation navigation retains written operation names" {
     const code =
-        \\Reader#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32))
-        \\Cell: Type = (.value: Int32)
-        \\implement Reader#(Cell) (
+        \\Reader<.T: Type>: Contract = (.read: (.value: &T) -> (.result: Int32))
+        \\Cell := (.value: Int32)
+        \\implement Reader<Cell> (
         \\    .read = (.value: &Cell) -> (.result: Int32) { result = value&.value }
         \\)
         \\main := () -> (.status_code: Int32 = 0) {
         \\    cell ::= Cell(42)
-        \\    answer ::= Reader#(Cell).read(&cell).result
+        \\    answer ::= Reader<Cell>.read(&cell).result
         \\}
     ;
     var tmp = std.testing.tmpDir(.{});
@@ -1938,18 +1943,18 @@ test "LSP scoped implementation navigation retains written operation names" {
 
 test "LSP renames scoped operations independently of shared aliases" {
     const code =
-        \\First#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32) where {})
-        \\Second#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32) where {})
-        \\Cell: Type = (.value: Int32)
+        \\First<.T: Type>: Contract = (.read: (.value: &T) -> (.result: Int32) where {})
+        \\Second<.T: Type>: Contract = (.read: (.value: &T) -> (.result: Int32) where {})
+        \\Cell := (.value: Int32)
         \\shared := (.value: &Cell) -> (.result: Int32) { result = value&.value }
-        \\implement First#(Cell) (.read = shared)
-        \\implement Second#(Cell) (.read = shared)
-        \\_read_virtual := (.value: &Virtual#(.contract: First)) -> (.result: Int32) { result = read(value).result }
+        \\implement First<Cell> (.read = shared)
+        \\implement Second<Cell> (.read = shared)
+        \\_read_virtual := (.value: &Virtual<.contract: First>) -> (.result: Int32) { result = read(value).result }
         \\main := () -> (.status_code: Int32 = 0) {
         \\    cell ::= Cell(42)
-        \\    first ::= First#(Cell).read(&cell).result
-        \\    second ::= Second#(Cell).read(&cell).result
-        \\    virtual ::= to_virtual#(.contract: First)(&cell)
+        \\    first ::= First<Cell>.read(&cell).result
+        \\    second ::= Second<Cell>.read(&cell).result
+        \\    virtual ::= to_virtual<.contract: First>(&cell)
         \\    answer ::= _read_virtual(&virtual).result
         \\}
     ;
@@ -1979,13 +1984,13 @@ test "LSP renames scoped operations independently of shared aliases" {
 
 test "LSP proves unused concrete conformance safety promises" {
     const code =
-        \\Releaser#(.Participant: Type): Contract = (
+        \\Releaser<.Participant: Type>: Contract = (
         \\    .release: (.self: &Participant, .resource: $&Resource) -> () where consumes(resource)
         \\)
-        \\Manager: Type = (.unused: Int32)
-        \\Resource: Type = (.value: Int32)
-        \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
-        \\implement Releaser#(Manager) (
+        \\Manager := (.unused: Int32)
+        \\Resource := (.value: Int32)
+        \\implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () {})
+        \\implement Releaser<Manager> (
         \\    .release = (.self: &Manager, .resource: $&Resource) -> () {}
         \\)
         \\main := () -> () {}

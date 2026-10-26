@@ -1,8 +1,8 @@
-main(.system: System) -> () := {
+main := (.system: System) -> ()  {
     assume allocator := system.page_allocator
     j :: UIntNative = 0
     while j < 2 {
-        field ::= unwrap_or_abort(.value = DynamicArray#(UInt8)(.capacity = 16))
+        field ::= unwrap_or_abort(.value = DynamicArray<UInt8>(.capacity = 16))
         i :: UIntNative = 0
         while i < 3 {
             if i == 1 {

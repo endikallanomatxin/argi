@@ -2,11 +2,9 @@ Outcome: Type = (..yes, ..no)
 
 Selection: Type = (..left, ..right)
 
-Splitter#(.Participant: Type): Contract = (
-    .choose: (.self: &Participant, .mode: Selection, .left: &Int32, .right: &Int32) -> (
-        .first  : Outcome,
-        .second : Outcome,
-        .value  : &Int32
+Splitter<.Participant: Type>: Contract = (
+    .choose : (.self: &Participant, .mode: Selection, .left: &Int32, .right: &Int32) -> (
+        .first: Outcome, .second: Outcome, .value: &Int32
     ) where {
         on mode ..left {
             on first ..yes { depends_on(value, left) }
@@ -15,20 +13,13 @@ Splitter#(.Participant: Type): Contract = (
     }
 )
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
-implement Splitter#(Manager) (.choose = _impl_choose_Manager)
+implement Splitter<Manager> (.choose = _impl_choose_Manager)
 
-_impl_choose_Manager := (
-        .self  : &Manager,
-        .mode  : Selection,
-        .left  : &Int32,
-        .right : &Int32
-    ) -> (
-        .first  : Outcome,
-        .second : Outcome,
-        .value  : &Int32
-    )  {
+_impl_choose_Manager := (.self: &Manager, .mode: Selection, .left: &Int32, .right: &Int32) -> (
+    .first: Outcome, .second: Outcome, .value: &Int32
+) {
     match mode {
         ..left {
             first = ..yes
@@ -43,9 +34,9 @@ _impl_choose_Manager := (
     }
 }
 
-main() -> () := {
+main := () -> () {
     manager ::= Manager(0)
-    splitter ::= to_virtual#(Splitter)(&manager)
+    splitter ::= to_virtual<Splitter>(&manager)
     live: Int32 = 42
     values: (.first: Outcome, .second: Outcome, .value: &Int32)
 

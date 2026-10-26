@@ -2,7 +2,7 @@ set_number := (.destination: $&Int32, .value: Int32) -> () {
     destination&= value
 }
 
-Pair: Type = (.first: Int32, .second: (.value: Int32))
+Pair := (.first: Int32, .second: (.value: Int32))
 
 read_first := (.pair: &Pair) -> (.result: Int32) {
     result = pair&.first

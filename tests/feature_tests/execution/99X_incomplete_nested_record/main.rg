@@ -1,4 +1,4 @@
-Pair: Type = (.first: Int32, .second: (.value: Int32, .missing: Int32))
+Pair := (.first: Int32, .second: (.value: Int32, .missing: Int32))
 
 probe := (.complete: Bool) -> (.result: Int32) {
     pair :: Pair

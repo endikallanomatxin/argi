@@ -1,21 +1,21 @@
-Counter: Type = (.drops: Int32 = 0)
+Counter := (.drops: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
-LargeReference: Type = (.reference: $&Resource, .padding: [40]Int32)
+LargeReference := (.reference: $&Resource, .padding: [40]Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + 1 }
 )
 
-forward_large(.source: $&Resource) -> (.result: LargeReference) := {
+forward_large := (.source: $&Resource) -> (.result: LargeReference) {
     result.reference = source
-    result.padding = zeroed#(.t: [40]Int32)()
+    result.padding = zeroed<.t: [40]Int32>()
 }
 
-copy_large(.source: LargeReference) -> (.result: LargeReference) := { result = source }
+copy_large := (.source: LargeReference) -> (.result: LargeReference) { result = source }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter, .value = 1)

@@ -8,9 +8,9 @@ Option: Type = (..empty, ..some Int32)
 
 Choice: Type = Option
 
-GenericId#(.Base: Type): Type = Base
+GenericId: Type = <.Base: Type> Base
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     record: Record = (.value = 42)
     if record.value != 42 { status_code = 1 }
     pair: Pair = (3, 4)
@@ -22,6 +22,6 @@ main() -> (.status_code: Int32 = 0) := {
     } else {
         status_code = 3
     }
-    id: GenericId#(UIntNative) = 12
+    id: GenericId<UIntNative> = 12
     if id + 1 != 13 { status_code = 5 }
 }

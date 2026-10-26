@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     allocator ::= CAllocator(.ffi = ffi)
@@ -6,12 +6,12 @@ main() -> (.status_code: Int32) := {
     match allocation {
         ..error _ { abort }
         ..ok ~memory {
-            handle ::= allocation_slot#(.t: UIntNative)(.allocation = &memory, .index = 1).slot
-            raw ::= raw_pointer#(.t: UIntNative)(
+            handle ::= allocation_slot<.t: UIntNative>(.allocation = &memory, .index = 1).slot
+            raw ::= raw_pointer<.t: UIntNative>(
                 .address = uninit_slot_address(.slot = handle)
             ).raw
             index: ?UIntNative = ..some(.value = 1)
-            reference ::= trusted_establish_allocation_slot#(.t: UIntNative)(
+            reference ::= trusted_establish_allocation_slot<.t: UIntNative>(
                 .allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = index
             ).reference
             reference&= 42

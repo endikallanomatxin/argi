@@ -1,6 +1,6 @@
-FailingAllocator: Type = (.attempts: UIntNative = 0)
+FailingAllocator := (.attempts: UIntNative = 0)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     allocator :: FailingAllocator = (.attempts = 0)
     parts: [2]StringView = ("a", "b")
     match join(.parts = view(.self = &parts), .separator = ",", .allocator = $&allocator) {
@@ -11,19 +11,19 @@ main() -> (.status_code: Int32 = 0) := {
 
 }
 
-implement Allocator#(FailingAllocator) (
+implement Allocator<FailingAllocator> (
     .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable<.t: Allocation, .reasons: (..out_of_memory)>
     ) {
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-implement Deallocator#(FailingAllocator) (
+implement Deallocator<FailingAllocator> (
     .deallocate = (
         .self      : $&FailingAllocator,
-        .data      : RawPointer#(.t: UInt8),
+        .data      : RawPointer<.t: UInt8>,
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {}

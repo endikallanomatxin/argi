@@ -1,42 +1,37 @@
-Tracked: Type = (.id: Int32)
+Tracked := (.id: Int32)
 
 drops :: Int32 = 0
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         drops = drops + 1
     }
 )
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
-    queue ::= Deque#(.t: Tracked)(.capacity = 2)!
-    push_back(.self = $&queue, .value = Tracked(.id = 1))!
-    push_back(.self = $&queue, .value = Tracked(.id = 2))!
-    first ::= pop_front(.self = $&queue)!
-    push_back(.self = $&queue, .value = Tracked(.id = 3))!
-    push_front(.self = $&queue, .value = Tracked(.id = 4))!
+    queue ::= Deque<.t: Tracked>(.capacity = 2)!!!
+    push_back(.self = $&queue, .value = Tracked(.id = 1))!!!
+    push_back(.self = $&queue, .value = Tracked(.id = 2))!!!
+    first ::= pop_front(.self = $&queue)!!!
+    push_back(.self = $&queue, .value = Tracked(.id = 3))!!!
+    push_front(.self = $&queue, .value = Tracked(.id = 4))!!!
     if drops != 0 { abort }
-    last ::= pop_back(.self = $&queue)!
+    last ::= pop_back(.self = $&queue)!!!
     if last.id != 3 or first.id != 1 { abort }
     deinit(.self = $&queue)
     if drops != 2 { abort }
     deinit(.self = $&first)
     deinit(.self = $&last)
     if drops != 4 { abort }
-    strings ::= Deque#(.t: String)(.capacity = 1)!
-    text ::= String(.allocator = allocator, .length = 1)!
+    strings ::= Deque<.t: String>(.capacity = 1)!!!
+    text ::= String(.allocator = allocator, .length = 1)!!!
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
-    push_front(.self = $&strings, .value = ~text)!
-    reserve(.self = $&strings, .capacity = 8)!
-    extracted ::= pop_back(.self = $&strings)!
+    push_front(.self = $&strings, .value = ~text)!!!
+    reserve(.self = $&strings, .capacity = 8)!!!
+    extracted ::= pop_back(.self = $&strings)!!!
     deinit(.self = $&strings)
     if view(.self = &extracted).view != "A" { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

@@ -2,13 +2,13 @@ Tracked: Type = ()
 
 drops :: Int32 = 0
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         drops = drops + 1
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     while true {
         owner ::= Tracked()
         {

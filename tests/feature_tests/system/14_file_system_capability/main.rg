@@ -1,10 +1,10 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     #if target_os("windows") {
         path ::= from_literal(.data = "NUL")
-    }#else {
+    } #else {
         path ::= from_literal(.data = "/dev/null")
     }
 
@@ -26,7 +26,9 @@ main(.system: System) -> (.status_code: Int32) := {
     write_file ::= ~write_file_result ..ok
     close(.self = $&write_file)
 
-    append_file_result ::= File(.file_system = system.file_system, .path = path, .mode = ..append)
+    append_file_result ::= File(
+        .file_system = system.file_system, .path = path, .mode = ..append
+    )
     if is(.value = append_file_result, .variant = ..ok) {
     } else {
         status_code = 3

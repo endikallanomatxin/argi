@@ -1,7 +1,7 @@
-Source: Type = (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_once: Bool = false)
+Source := (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_once: Bool = false)
 
-implement Reader#(Source) (
-    .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+implement Reader<Source> (
+    .read_byte = (.self: $&Source) -> (.result: Errable<ReadByte, (..stream_read_failed)>) {
         self&.calls = self&.calls + 1
         if self&.fail_once and self&.position == 1 {
             self&.fail_once = false
@@ -20,14 +20,14 @@ implement Reader#(Source) (
     }
 )
 
-expect_byte#(.Stream: Type: Reader#(Stream))(.reader: $&Stream, .expected: UInt8 = 65) -> () := {
-    match unwrap_or_abort(.value = Reader#().read_byte(reader)) {
+expect_byte := <.Stream: Type: Reader<Stream>> (.reader: $&Stream, .expected: UInt8 = 65) -> () {
+    match unwrap_or_abort(.value = Reader<>.read_byte(reader)) {
         ..end { abort }
         ..ok byte { if byte != expected { abort } }
     }
 }
 
-main() -> () := {
+main := () -> () {
     -- Empty storage is a deliberate unbuffered adapter, without lookahead.
     -- TODO: Contextual record literals must materialize omitted middle defaults.
     source :: Source = (.position = 0, .calls = 0, .fail_once = false)
@@ -37,7 +37,7 @@ main() -> () := {
     if source.calls != 1 or source.position != 1 { abort }
     expect_byte(.reader = $&direct, .expected = 66)
     expect_byte(.reader = $&direct, .expected = 67)
-    match unwrap_or_abort(.value = Reader#().read_byte($&direct)) {
+    match unwrap_or_abort(.value = Reader<>.read_byte($&direct)) {
         ..end {}
         ..ok _ { abort }
     }
@@ -48,7 +48,7 @@ main() -> () := {
     storage: [2]UInt8 = (99, 99)
     {
         buffered ::= BufferedReader(.base = $&failing, .buffer = view($&storage))
-        match Reader#().read_byte($&buffered) {
+        match Reader<>.read_byte($&buffered) {
             ..ok _ { abort }
             ..error error { match error.reason { ..stream_read_failed {} } }
         }
@@ -57,7 +57,7 @@ main() -> () := {
         if failing.position != 3 or failing.calls != 4 { abort }
         expect_byte(.reader = $&buffered, .expected = 67)
         if failing.calls != 4 { abort }
-        match unwrap_or_abort(.value = Reader#().read_byte($&buffered)) {
+        match unwrap_or_abort(.value = Reader<>.read_byte($&buffered)) {
             ..end {}
             ..ok _ { abort }
         }

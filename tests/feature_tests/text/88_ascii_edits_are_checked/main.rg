@@ -1,22 +1,22 @@
-Refusing: Type = (.attempts: UIntNative = 0)
+Refusing := (.attempts: UIntNative = 0)
 
-implement Allocator#(Refusing) (
+implement Allocator<Refusing> (
     .allocate = (.self: $&Refusing, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
+        .result : Errable<Allocation, (..out_of_memory)>
     ) {
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-main(.system: System) -> () := {
+main := (.system: System) -> ()  {
     assume allocator := system.page_allocator
     text ::= unwrap_or_abort(.value = format(.value = "Aé"))
     before ::= capacity(&text).count
     refusing ::= Refusing()
     byte :: UIntNative = 128
     while byte < 256 {
-        invalid ::= unwrap_or_abort(.value = byte | convert#(.to: UInt8)(_))
+        invalid ::= unwrap_or_abort(.value = byte | convert<.to: UInt8>(_))
         match push_ascii($&text, .byte = invalid, .allocator = $&refusing) {
             ..ok _ { abort }
             ..error error { if error.reason != ..invalid_ascii { abort } }

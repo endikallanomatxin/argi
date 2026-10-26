@@ -1,6 +1,6 @@
-identity#(.T: Type)(.value: T) -> (.result: T) := { result = value }
+identity := <.T: Type> (.value: T) -> (.result: T)  { result = value }
 
-main() -> () := {
+main := () -> ()  {
     ascii :: UnicodeScalar = 'A'
     latin :: UnicodeScalar = 'ñ'
     euro :: UnicodeScalar = '€'

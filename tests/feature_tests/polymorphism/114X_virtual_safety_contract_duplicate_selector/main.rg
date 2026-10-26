@@ -1,5 +1,5 @@
-Source#(.Participant: Type): Contract = (
-    .get: (.self: &Participant) -> (.first: ?Int32, .second: ?Int32) where {
+Source<.Participant: Type>: Contract = (
+    .get : (.self: &Participant) -> (.first: ?Int32, .second: ?Int32) where {
         on first ..some {}
         on second ..some {}
         on second ..some {}
@@ -8,11 +8,11 @@ Source#(.Participant: Type): Contract = (
 
 Cell: Type = ()
 
-implement Source#(Cell) (.get = _impl_get_Cell)
+implement Source<Cell> (.get = _impl_get_Cell)
 
-_impl_get_Cell := (.self: &Cell) -> (.first: ?Int32, .second: ?Int32)  {
+_impl_get_Cell := (.self: &Cell) -> (.first: ?Int32, .second: ?Int32) {
     first = ..none
     second = ..none
 }
 
-main() -> () := {}
+main := () -> () {}

@@ -1,16 +1,16 @@
-Pair: Type = (.value: Int32, .fraction: Float32)
+Pair := (.value: Int32, .fraction: Float32)
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     allocator ::= CAllocator(.ffi = ffi)
-    allocated ::= allocate#(.t: Int32)(.self = $&allocator, .count = 2)
+    allocated ::= allocate<.t: Int32>(.self = $&allocator, .count = 2)
     match allocated {
         ..error _ { abort }
         ..ok ~payload {
             memory ::= ~payload
-            raw ::= raw_pointer#(.t: Int32)(.address = memory.data.address).raw
-            first ::= trusted_establish_allocation_slot#(.t: Int32)(
+            raw ::= raw_pointer<.t: Int32>(.address = memory.data.address).raw
+            first ::= trusted_establish_allocation_slot<.t: Int32>(
                 .allocation = &memory
                 .slot       = raw
                 .anchor     = memory.anchor
@@ -21,13 +21,13 @@ main() -> (.status_code: Int32) := {
             status_code = second&
         }
     }
-    aggregate ::= allocate#(.t: Pair)(.self = $&allocator, .count = 2)
+    aggregate ::= allocate<.t: Pair>(.self = $&allocator, .count = 2)
     match aggregate {
         ..error _ { abort }
         ..ok ~payload {
             memory ::= ~payload
-            raw ::= raw_pointer#(.t: Pair)(.address = memory.data.address).raw
-            first ::= trusted_establish_allocation_slot#(.t: Pair)(
+            raw ::= raw_pointer<.t: Pair>(.address = memory.data.address).raw
+            first ::= trusted_establish_allocation_slot<.t: Pair>(
                 .allocation = &memory
                 .slot       = raw
                 .anchor     = memory.anchor

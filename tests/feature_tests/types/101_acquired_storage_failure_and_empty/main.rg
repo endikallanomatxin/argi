@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
     zero :: UIntNative = 0
@@ -16,13 +16,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ {}
         ..ok ~ storage { status_code = 2 }
     }
-    deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(.value = system.memory)
+    deallocator :: Virtual<.contract: Deallocator> = to_virtual<.contract: Deallocator>(.value = system.memory)
     empty ::= unwrap_or_abort(.value = acquire_page_storage(.memory = system.memory, .size = 0, .alignment = 8))
     if acquired_storage_size(.storage = &empty).size != 0 { status_code = 3 }
     allocation ::= establish_allocation(.storage = ~empty, .size = 0, .alignment = 8, .deallocator = deallocator).allocation
     deinit(.self = $&allocation)
     marker :: UInt8 = 0
     inherited ::= unwrap_or_abort(.value = acquire_heap_storage(.size = 8, .alignment = 8, .ffi = system.ffi))
-    raw ::= establish_inherited_storage(.storage = ~inherited, .root = erase_reference#(.t: UInt8)(.base = &marker).reference).raw
+    raw ::= establish_inherited_storage(.storage = ~inherited, .root = erase_reference<.t: UInt8>(.base = &marker).reference).raw
     free(.address = raw.address, .ffi = system.ffi)
 }

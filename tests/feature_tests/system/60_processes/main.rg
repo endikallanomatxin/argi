@@ -1,16 +1,16 @@
-check_exit(.status: ProcessExitStatus, .expected: UInt32) -> () := {
+check_exit := (.status: ProcessExitStatus, .expected: UInt32) -> () {
     match status {
         ..exited payload { if payload.code != expected { abort } }
         ..signaled _ { abort }
     }
 }
 
-check_bytes#(.ReaderType: Type: Reader#(ReaderType))(
+check_bytes := <.ReaderType: Type: Reader<ReaderType>> (
     .reader: $&ReaderType, .expected: StringView
-) -> () := {
+) -> () {
     i :: UIntNative = 0
     while i < byte_length(&expected).count {
-        next ::= unwrap_or_abort(.value = Reader#().read_byte(.self = reader)).result
+        next ::= unwrap_or_abort(.value = Reader<>.read_byte(.self = reader)).result
         match next {
             ..ok byte {
                 if [byte != unwrap_or_abort(.value = bytes_get(.view = &expected, .index = i))] {
@@ -21,15 +21,15 @@ check_bytes#(.ReaderType: Type: Reader#(ReaderType))(
         }
         i = i + 1
     }
-    match unwrap_or_abort(.value = Reader#().read_byte(.self = reader)).result {
+    match unwrap_or_abort(.value = Reader<>.read_byte(.self = reader)).result {
         ..end {}
         ..ok _ { abort }
     }
 }
 
-child_main(.system: System) -> (.status: Int32 = 7) := {
+child_main := (.system: System) -> (.status: Int32 = 7) {
     if length(.self = system.args).count != 7 { abort }
-    expected: Array#(.n = 4, .t: StringView) = ("a b", "a\"b", "trail\\", "á;$(no)")
+    expected: Array<.n = 4, .t: StringView> = ("a b", "a\"b", "trail\\", "á;$(no)")
     empty ::= unwrap_or_abort(.value = get(.self = system.args, .index = 2)).result
     if byte_length(&empty).count != 0 { abort }
     i :: UIntNative = 0
@@ -40,12 +40,12 @@ child_main(.system: System) -> (.status: Int32 = 7) := {
     }
     check_bytes(.reader = $&system.terminal&.stdin, .expected = "hello\n")
     unwrap_or_abort(.value = write(.self = $&system.terminal&.stdout, .value = "hello\n"))
-    unwrap_or_abort(.value = Writer#().flush(.self = $&system.terminal&.stdout))
+    unwrap_or_abort(.value = Writer<>.flush(.self = $&system.terminal&.stdout))
     unwrap_or_abort(.value = write(.self = $&system.terminal&.stderr, .value = "problem"))
-    unwrap_or_abort(.value = Writer#().flush(.self = $&system.terminal&.stderr))
+    unwrap_or_abort(.value = Writer<>.flush(.self = $&system.terminal&.stderr))
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     if length(.self = system.args).count == 2 {
         status_code = 23
         return
@@ -56,7 +56,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     assume proc_man ::= system.proc_man
     executable ::= unwrap_or_abort(.value = get(.self = system.args, .index = 0)).result
-    args: Array#(.n = 6, .t: StringView) = ("echo", "", "a b", "a\"b", "trail\\", "á;$(no)")
+    args: Array<.n = 6, .t: StringView> = ("echo", "", "a b", "a\"b", "trail\\", "á;$(no)")
     child ::= unwrap_or_abort(
         .value = spawn(
             .executable = executable
@@ -67,7 +67,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     ).result
     unwrap_or_abort(.value = write(.self = $&child.stdin, .value = "hello\n"))
-    unwrap_or_abort(.value = Writer#().flush(.self = $&child.stdin))
+    unwrap_or_abort(.value = Writer<>.flush(.self = $&child.stdin))
     unwrap_or_abort(.value = close(.self = $&child.stdin))
     unwrap_or_abort(.value = close(.self = $&child.stdin))
     check_bytes(.reader = $&child.stdout, .expected = "hello\n")
@@ -83,7 +83,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     ).result
     if is_open(.self = &inherited.stdin).ok or is_open(.self = &inherited.stdout).ok { abort }
-    match Reader#().read_byte(.self = $&inherited.stdout) { ..error _ {} ..ok _ { abort } }
+    match Reader<>.read_byte(.self = $&inherited.stdout) { ..error _ {} ..ok _ { abort } }
     check_exit(
         .status = unwrap_or_abort(.value = wait(.self = $&inherited)).result, .expected = 23
     )

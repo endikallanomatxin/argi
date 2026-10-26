@@ -1,6 +1,6 @@
 python := import ("python")
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     match python.Python(.ffi = system.ffi, .program_name = "") {
         ..error _ {} ..ok _ { abort }
     }
@@ -59,7 +59,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .value = python.import_module(.self = &interpreter, .name = "json")
     ).result
     match success { ..ok ~object {} ..error _ { abort } }
-    Deinit#(python.Python).deinit(.self = $&interpreter)
+    Deinit<python.Python>.deinit(.self = $&interpreter)
     preserved ::= unwrap_or_abort(
         .value = python.exception_message(.self = &copy, .allocator = system.page_allocator)
     ).result

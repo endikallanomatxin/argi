@@ -1,5 +1,5 @@
-Source#(.Participant: Type): Contract = (
-    .get: (.self: &Participant) -> (.count: Int32, .first: ?&Int32, .second: ?&Int32) where {
+Source<.Participant: Type>: Contract = (
+    .get : (.self: &Participant) -> (.count: Int32, .first: ?&Int32, .second: ?&Int32) where {
         on first ..some { depends_on(first, self) }
         on first ..none {}
         on second ..some { depends_on(second, self) }
@@ -7,19 +7,19 @@ Source#(.Participant: Type): Contract = (
     }
 )
 
-Cell: Type = (.value: Int32)
+Cell := (.value: Int32)
 
-implement Source#(Cell) (.get = _impl_get_Cell)
+implement Source<Cell> (.get = _impl_get_Cell)
 
-_impl_get_Cell := (.self: &Cell) -> (.count: Int32, .first: ?&Int32, .second: ?&Int32)  {
+_impl_get_Cell := (.self: &Cell) -> (.count: Int32, .first: ?&Int32, .second: ?&Int32) {
     count = 2
     first = ..some(.value = &self&.value)
     second = ..some(.value = &self&.value)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(42)
-    source ::= to_virtual#(Source)(&cell)
+    source ::= to_virtual<Source>(&cell)
     values ::= get(&source)
 
     if values.count != 2 { status_code = 1 }

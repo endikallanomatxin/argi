@@ -1,3 +1,5 @@
 Cell: Type = ()
-implement Unknown#(Cell) ()
-main() -> () := {}
+
+implement Unknown<Cell> ()
+
+main := () -> () {}

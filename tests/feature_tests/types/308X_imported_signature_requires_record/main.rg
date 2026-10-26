@@ -1,5 +1,5 @@
-schema ::= import("./schema")
+schema ::= import ("./schema")
 
 bad := schema.NotArgs -> () {}
 
-main() -> () := {}
+main := () -> () {}

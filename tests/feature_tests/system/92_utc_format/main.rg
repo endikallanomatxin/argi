@@ -1,8 +1,9 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
-    date ::= parse_utc(.text = "2024-02-29T12:34:56.123Z")!
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
+    date ::= parse_utc(.text = "2024-02-29T12:34:56.123Z")!!!
     if date.nanoseconds != 123000000 { abort }
-    bytes ::= zeroed#(.t: [30]UInt8)()
-    count ::= format_utc_into(.date = date, .buffer = view(.self = $&bytes))!
+    bytes ::= zeroed<.t: [30]UInt8>()
+    count ::= format_utc_into(.date = date, .buffer = view(.self = $&bytes))!!!
     if count != 30 { abort }
     text_storage ::= unwrap_or_abort(
         .value = string_from_bytes(
@@ -21,11 +22,5 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error _ {}
     }
     if small[0] != 99 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

@@ -1,22 +1,22 @@
-Counter: Type = (.drops: Int32 = 0)
+Counter := (.drops: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
-ResourceReference: Type = (.value: $&Resource)
+ResourceReference := (.value: $&Resource)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + 1 }
 )
 
-transfer(.source: Resource) -> (.result: Resource) := {
+transfer := (.source: Resource) -> (.result: Resource) {
     relocate(.source = $&source, .destination = $&result)
 }
 
-transfer_reference(.source: ResourceReference) -> (.result: ResourceReference) := {
+transfer_reference := (.source: ResourceReference) -> (.result: ResourceReference) {
     relocate(.source = $&source, .destination = $&result)
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         first ::= Resource(.counter = $&counter, .value = 42)

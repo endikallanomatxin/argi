@@ -1,5 +1,5 @@
-Pair#(.Left: Type, .Right: Type): Contract = ()
-Wrapper#(.Value: Type): Contract = (Pair#(Value, Int32))
+Pair <.Left: Type, .Right: Type >: Contract = ()
+Wrapper <.Value: Type >: Contract = (Pair < Value, Int32 >)
 Cell: Type = ()
-implement Wrapper#(Cell) ()
+implement Wrapper < Cell > ()
 main := () -> () {}

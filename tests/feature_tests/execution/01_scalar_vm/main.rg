@@ -1,6 +1,6 @@
-identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }
+identity := <.T: Type> (.value: T) -> (.result: T) { result = value }
 
-sum(.count: Int32) -> (.result: Int32 = 0) := {
+sum := (.count: Int32) -> (.result: Int32 = 0) {
     index :: Int32 = 0
     while index < count {
         index = index + 1
@@ -10,9 +10,9 @@ sum(.count: Int32) -> (.result: Int32 = 0) := {
     }
 }
 
-fail() -> (.result: Bool = false) := { abort }
+fail := () -> (.result: Bool = false) { abort }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if false and fail() { abort }
     if true or fail() { status_code = identity(.value = sum(.count = 20)) + 9 }
 }

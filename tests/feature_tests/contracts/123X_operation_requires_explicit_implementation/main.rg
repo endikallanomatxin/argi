@@ -1,5 +1,9 @@
-Cell: Type = (.value: Int32)
-Reader#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32))
+Cell := (.value: Int32)
+
+Reader<.T: Type>: Contract = (.read: (.value: &T) -> (.result: Int32))
+
 read := (.value: &Cell) -> (.result: Int32) { result = value&.value }
-implement Reader#(Cell) ()
+
+implement Reader<Cell> ()
+
 main := () -> () {}

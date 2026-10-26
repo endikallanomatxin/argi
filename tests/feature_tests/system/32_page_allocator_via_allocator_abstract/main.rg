@@ -1,12 +1,12 @@
-alloc_one#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .allocator: $&AllocatorType,
-) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) := {
+alloc_one := <.AllocatorType: Type: Allocator<AllocatorType>> (.allocator: $&AllocatorType) -> (
+    .result: Errable<.t: UIntNative, .reasons: (..out_of_memory)>
+) {
     assume allocator
 
     allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok ~ payload {
+        ..ok ~payload {
             allocation ::= ~payload
             result = ..ok allocation.data.address
             deinit(.self = $&allocation)
@@ -14,7 +14,7 @@ alloc_one#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage :: PageAllocator = PageAllocator(.memory = system.memory)
     assume allocator ::= $&allocator_storage
     allocated ::= alloc_one(.allocator = $&allocator_storage)
@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 2
         return
     }
-    addr ::= allocated..ok
+    addr ::= allocated ..ok
 
     if addr == 0 {
         status_code = 1

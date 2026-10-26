@@ -1,16 +1,16 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-Holder: Type = (.owned: Resource, .target: $&Resource)
+Holder := (.owned: Resource, .target: $&Resource)
 
-main() -> () := {
+main := () -> () {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter)

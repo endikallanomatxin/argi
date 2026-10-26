@@ -1,5 +1,5 @@
 Choice: Type = (..byte(.value: UInt8))
 
-main() -> () := {
+main := () -> ()  {
     value :: Choice = ..byte(.value = 'A')
 }

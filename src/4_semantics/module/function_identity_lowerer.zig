@@ -114,10 +114,10 @@ fn validatePrimitiveDeclaration(
 
 test "source metadata identities require canonical trusted declarations" {
     const source =
-        "SourceLocationId: Type = (.value: UInt32)\n" ++
-        "SourceLocation: Type = (.line: UIntNative)\n" ++
-        "error_location_id() -> (.location: SourceLocationId) := { location = (.value = 0) }\n" ++
-        "source_location(.id: SourceLocationId) -> (.location: SourceLocation) := { location = (.line = 42) }\n";
+        "SourceLocationId := (.value: UInt32)\n" ++
+        "SourceLocation := (.line: UIntNative)\n" ++
+        "error_location_id := () -> (.location: SourceLocationId)  { location = (.value = 0) }\n" ++
+        "source_location := (.id: SourceLocationId) -> (.location: SourceLocation)  { location = (.line = 42) }\n";
     const cases = [_]struct { path: []const u8, trusted: bool, selected: bool }{
         .{ .path = "core/errors/source_location.rg", .trusted = true, .selected = true },
         .{ .path = "core/errors/other.rg", .trusted = true, .selected = false },
@@ -153,11 +153,11 @@ test "source metadata identities require canonical trusted declarations" {
 
 test "trace helper metadata requires the registered core path and keeps ordinary safety" {
     const source =
-        "ErrorTracer#(.T: Type): Contract = ()\n" ++
-        "SourceLocationId: Type = (.value: UInt32)\n" ++
-        "StringView: Type = (.length: UIntNative)\n" ++
-        "_add_error_context(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: StringView) -> () := {}\n" ++
-        "_add_error_context_text(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar) -> () := {}\n";
+        "ErrorTracer<.T: Type>: Contract = ()\n" ++
+        "SourceLocationId := (.value: UInt32)\n" ++
+        "StringView := (.length: UIntNative)\n" ++
+        "_add_error_context := (.tracer: $&Virtual<.contract: ErrorTracer>, .location: SourceLocationId, .context: StringView) -> ()  {}\n" ++
+        "_add_error_context_text := (.tracer: $&Virtual<.contract: ErrorTracer>, .location: SourceLocationId, .context: &CChar) -> ()  {}\n";
     const cases = [_]struct { path: []const u8, trusted: bool, selected: bool }{
         .{ .path = "core/errors/error_tracer.rg", .trusted = true, .selected = true },
         .{ .path = "core/errors/unrelated.rg", .trusted = true, .selected = false },

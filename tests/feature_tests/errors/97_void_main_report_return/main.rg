@@ -1,10 +1,11 @@
 ..missing
 
-attempt() -> (.result: Errable#(Void, (..missing))) := {
+attempt := () -> (.result: Errable<Void, (..missing)>) {
     result = ..error(.reason = ..missing)
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> () := {
+main := (.system: System) -> () {
+    assume writer ::= $&system.terminal&.stderr
     attempt()!!!
     abort
 }

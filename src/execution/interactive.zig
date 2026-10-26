@@ -340,8 +340,8 @@ test "interactive definitions remain visible to subsequent definitions and state
     try session.submitStatements("value ::= forward()");
     try session.submitStatements("other ::= value");
     try session.submitDefinitions("later := () -> (.result: Int32) { result = answer() }\n");
-    try session.submitDefinitions("identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }\n");
-    try session.submitStatements("generic_value ::= identity#(Int32)(.value = later())");
+    try session.submitDefinitions("identity := <.T: Type> (.value: T) -> (.result: T) { result = value }\n");
+    try session.submitStatements("generic_value ::= identity<Int32>(.value = later())");
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
     const stored = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(binding).?);
     try std.testing.expectEqual(@as(i128, 42), (try stored.get(0)).integer);
@@ -381,14 +381,14 @@ test "interactive contract definitions select implementations in later submissio
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Echo#(.T: Type): Contract = (.echo: (.value: T) -> (.result: T))\n");
-    session.submitDefinitions("implement Echo#(Int32) (.echo = (.value: Int32) -> (.result: Int32) { result = value })\n") catch |err| {
+    try session.submitDefinitions("Echo<.T: Type>: Contract = (.echo: (.value: T) -> (.result: T))\n");
+    session.submitDefinitions("implement Echo<Int32> (.echo = (.value: Int32) -> (.result: Int32) { result = value })\n") catch |err| {
         try session.diagnostics.dump();
         return err;
     };
     // Identical source offsets in different submissions must not make private
     // implementation-body identities collide in the source namespace.
-    try session.submitDefinitions("implement Echo#(Int64) (.echo = (.value: Int64) -> (.result: Int64) { result = value })\n");
+    try session.submitDefinitions("implement Echo<Int64> (.echo = (.value: Int64) -> (.result: Int64) { result = value })\n");
     try session.submitStatements("value ::= echo(.value = 42)");
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
     const stored = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(binding).?);
@@ -442,7 +442,7 @@ test "interactive expression owners retain cleanup until checked exit" {
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    const loaded = try sources.loadModule(&diagnostics, "Deinit<.T: Type>: Contract = (.deinit: (.self: $&T) -> ())");
     // This isolated fixture supplies the standard lifecycle identity through
     // an initial bundled module, just as the CLI's core loader does.
     var core = loaded.*;
@@ -451,7 +451,7 @@ test "interactive expression owners retain cleanup until checked exit" {
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submit("Resource: Type = ()");
-    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
+    try session.submit("implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () {})");
     try session.submit("make := () -> (.result: Resource) { result = () }");
     const result = (try session.submitInput("make()")).?;
     try std.testing.expectEqualStrings("_0", result.name);
@@ -512,15 +512,15 @@ test "interactive generic compile-time entries retain independent specialization
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submit("copy_value#(.T: Type) := (.value: T) -> (.result: T = value) {}");
-    try session.submit("calculate#(.T: Type, .n: Int32) := () -> (.result: T) { local := copy_value#(.T: T)(.value = n)\nresult = #run () -> (.value: T) { value = #run () -> (.inner: T) { inner = local } } }");
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("calculate#(.T: Int32, .n = 42)()")).?.value.runtime.integer);
-    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("calculate#(.T: Int32, .n = 41)()")).?.value.runtime.integer);
-    try session.submit("invalid#(.T: Type) := (.runtime_value: T) -> (.result: T) { result = #run () -> (.value: T) { value = runtime_value } }");
+    try session.submit("copy_value := <.T: Type> (.value: T) -> (.result: T = value) {}");
+    try session.submit("calculate := <.T: Type, .n: Int32> () -> (.result: T) { local := copy_value<.T: T>(.value = n)\nresult = #run () -> (.value: T) { value = #run () -> (.inner: T) { inner = local } } }");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("calculate<.T: Int32, .n = 42>()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("calculate<.T: Int32, .n = 41>()")).?.value.runtime.integer);
+    try session.submit("invalid := <.T: Type> (.runtime_value: T) -> (.result: T) { result = #run () -> (.value: T) { value = runtime_value } }");
     const revision = session.compiler.revision;
-    try std.testing.expectError(error.Reported, session.submitInput("invalid#(.T: Int32)(.runtime_value = 7)"));
+    try std.testing.expectError(error.Reported, session.submitInput("invalid<.T: Int32>(.runtime_value = 7)"));
     try std.testing.expectEqual(revision, session.compiler.revision);
-    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("calculate#(.T: Int32, .n = 42)()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("calculate<.T: Int32, .n = 42>()")).?.value.runtime.integer);
     try session.close();
 }
 
@@ -694,15 +694,15 @@ test "interactive inherited assumptions supply selected nested cleanup" {
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    const loaded = try sources.loadModule(&diagnostics, "Deinit<.T: Type>: Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submit("Resource: Type = ()");
-    try session.submit("Capability: Type = (.used: Bool)");
-    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .capability: $&Capability = reach capability) -> () { capability&.used = true })");
+    try session.submit("Capability := (.used: Bool)");
+    try session.submit("implement Deinit<Resource> (.deinit = (.self: $&Resource, .capability: $&Capability = reach capability) -> () { capability&.used = true })");
     try session.submitStatements("state :: Capability = (.used = false)\nassume capability ::= $&state");
     try session.submitStatements("if true {\nresource :: Resource = ()\n}");
     try std.testing.expect((try session.submitInput("state.used")).?.value.runtime.boolean);
@@ -713,15 +713,15 @@ test "interactive virtual values retain their creation unit across submissions" 
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submit("Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})");
-    try session.submit("Box: Type = (.value: Int32)");
+    try session.submit("Readable<.Source: Type>: Contract = (.read: (.source: &Source) -> (.result: Int32) where {})");
+    try session.submit("Box := (.value: Int32)");
     try session.submit("read_box := (.source: &Box) -> (.result: Int32) { result = source&.value }");
-    try session.submit("implement Readable#(Box) (.read = read_box)");
-    try session.submitStatements("box :: Box = (.value = 42)\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
-    const first = (try session.submitInput("Readable#().read(&erased).result")).?;
+    try session.submit("implement Readable<Box> (.read = read_box)");
+    try session.submitStatements("box :: Box = (.value = 42)\nerased ::= to_virtual<.contract: Readable>(.value = &box)");
+    const first = (try session.submitInput("Readable<>.read(&erased).result")).?;
     try std.testing.expectEqual(@as(i128, 42), first.value.runtime.integer);
     try session.submitStatements("box.value = 7");
-    const second = (try session.submitInput("Readable#().read(&erased).result")).?;
+    const second = (try session.submitInput("Readable<>.read(&erased).result")).?;
     try std.testing.expectEqual(@as(i128, 7), second.value.runtime.integer);
     try session.close();
 }
@@ -730,15 +730,15 @@ test "interactive virtual calls can enter older and newer code units" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submit("Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})");
-    try session.submit("Relay#(.Source: Type): Contract = (.relay: (.source: &Source, .target: &Virtual#(.contract: Readable)) -> (.result: Int32) where {})");
+    try session.submit("Readable<.Source: Type>: Contract = (.read: (.source: &Source) -> (.result: Int32) where {})");
+    try session.submit("Relay<.Source: Type>: Contract = (.relay: (.source: &Source, .target: &Virtual<.contract: Readable>) -> (.result: Int32) where {})");
     try session.submit("RelayState: Type = ()");
-    try session.submit("implement Relay#(RelayState) (.relay = (.source: &RelayState, .target: &Virtual#(.contract: Readable)) -> (.result: Int32) { result = Readable#().read(target).result })");
-    try session.submitStatements("relay_state :: RelayState = ()\nrelay_handle ::= to_virtual#(.contract: Relay)(.value = &relay_state)");
-    try session.submit("Box: Type = (.value: Int32)");
-    try session.submit("implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })");
-    try session.submitStatements("box :: Box = (.value = 42)\nreader_handle ::= to_virtual#(.contract: Readable)(.value = &box)");
-    const result = (try session.submitInput("Relay#().relay(&relay_handle, &reader_handle).result")).?;
+    try session.submit("implement Relay<RelayState> (.relay = (.source: &RelayState, .target: &Virtual<.contract: Readable>) -> (.result: Int32) { result = Readable<>.read(target).result })");
+    try session.submitStatements("relay_state :: RelayState = ()\nrelay_handle ::= to_virtual<.contract: Relay>(.value = &relay_state)");
+    try session.submit("Box := (.value: Int32)");
+    try session.submit("implement Readable<Box> (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })");
+    try session.submitStatements("box :: Box = (.value = 42)\nreader_handle ::= to_virtual<.contract: Readable>(.value = &box)");
+    const result = (try session.submitInput("Relay<>.relay(&relay_handle, &reader_handle).result")).?;
     try std.testing.expectEqual(@as(i128, 42), result.value.runtime.integer);
     try session.close();
 }
@@ -749,10 +749,10 @@ test "interactive source IDs retain original metadata across commands" {
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "ImplicitlyCopyable#(.T: Type): Contract = ()\n" ++
-        "SourceLocationId: Type = (.value: UInt32)\n" ++
-        "implement ImplicitlyCopyable#(SourceLocationId) ()\n" ++
-        "SourceLocation: Type = (.source_file: &CChar, .source_line: &CChar, .line: UIntNative, .column: UIntNative)\n" ++
+    const loaded = try sources.loadModule(&diagnostics, "ImplicitlyCopyable<.T: Type>: Contract = ()\n" ++
+        "SourceLocationId := (.value: UInt32)\n" ++
+        "implement ImplicitlyCopyable<SourceLocationId> ()\n" ++
+        "SourceLocation := (.source_file: &CChar, .source_line: &CChar, .line: UIntNative, .column: UIntNative)\n" ++
         "source_location := (.id: SourceLocationId) -> (.location: SourceLocation) { abort }\n" ++
         "error_location_id := () -> (.location: SourceLocationId) { location = (.value = 0) }\n" ++
         "core_located := (.location: SourceLocationId = error_location_id()) -> (.value: UInt32) { value = location.value }\n");
@@ -942,7 +942,7 @@ test "interactive once capabilities retain deferred temporary storage" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Token: Type = (.value: Int32)\nonce acquire := () -> (.result: Token) { result = (.value = 42) }\nobserve := (.capability: &Token) -> (.result: Int32) { result = capability&.value }");
+    try session.submitDefinitions("Token := (.value: Int32)\nonce acquire := () -> (.result: Token) { result = (.value = 42) }\nobserve := (.capability: &Token) -> (.result: Int32) { result = capability&.value }");
     try session.submitStatements("assume capability ::= $&acquire()");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
@@ -956,14 +956,14 @@ test "interactive deferred owners retain their checked cleanup" {
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    const loaded = try sources.loadModule(&diagnostics, "Deinit<.T: Type>: Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Resource: Type = (.value: Int32)\nonce acquire := () -> (.result: Resource) { result = (.value = 42) }\nobserve := (.resource: &Resource) -> (.result: Int32) { result = resource&.value }");
-    try session.submitDefinitions("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
+    try session.submitDefinitions("Resource := (.value: Int32)\nonce acquire := () -> (.result: Resource) { result = (.value = 42) }\nobserve := (.resource: &Resource) -> (.result: Int32) { result = resource&.value }");
+    try session.submitDefinitions("implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () {})");
     try session.submitStatements("assume resource ::= $&acquire()");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
@@ -981,7 +981,7 @@ test "interactive deferred condition storage can be initialized repeatedly" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("State: Type = (.used: Bool)\nproduce := (.state: $&State) -> (.result: Bool) { if state&.used { result = false } else { state&.used = true\nresult = true } }\nobserve := (.value: &Bool) -> (.result: Bool) { result = value& }");
+    try session.submitDefinitions("State := (.used: Bool)\nproduce := (.state: $&State) -> (.result: Bool) { if state&.used { result = false } else { state&.used = true\nresult = true } }\nobserve := (.value: &Bool) -> (.result: Bool) { result = value& }");
     try session.submitStatements("state :: State = (.used = false)");
     try session.submitStatements("while observe(.value = &produce(.state = $&state)) {}");
     try std.testing.expect((try session.submitInput("state.used")).?.value.runtime.boolean);
@@ -1006,7 +1006,7 @@ test "interactive generic diagnostics explain omitted reachable capabilities" {
         defer sources.deinit();
         var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
         defer diagnostics.deinit();
-        const definition = "emit#(.Stream: Type) := (.value: Int32, .writer: $&Stream = reach writer) -> (.result: Int32) { result = value }";
+        const definition = "emit := <.Stream: Type> (.value: Int32, .writer: $&Stream = reach writer) -> (.result: Int32) { result = value }";
         const loaded = try sources.loadModule(&diagnostics, definition);
         var core = loaded.*;
         core.is_bundled_core = true;
@@ -1141,14 +1141,14 @@ test "interactive partial records clean initialized owners at exit" {
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    const loaded = try sources.loadModule(&diagnostics, "Deinit<.T: Type>: Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitDefinitions("Resource: Type = ()\nmake := () -> (.result: Resource) { result = () }");
-    try session.submitDefinitions("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
+    try session.submitDefinitions("implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () {})");
     try session.submitStatements("pair :: (.first: Resource, .second: Resource)");
     try session.submitStatements("pair.first = make()");
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
@@ -1169,14 +1169,14 @@ test "interactive owning arrays complete cleanup across submissions" {
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    const loaded = try sources.loadModule(&diagnostics, "Deinit<.T: Type>: Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitDefinitions("Resource: Type = ()\nmake := () -> (.result: Resource) { result = () }");
-    try session.submitDefinitions("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
+    try session.submitDefinitions("implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () {})");
     try session.submitStatements("resources :: [2]Resource");
     try session.submitStatements("resources[0] = make()");
     const revision = session.compiler.revision;
@@ -1298,8 +1298,8 @@ test "interactive generic functions use explicit inputs without capturing retain
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitStatements("retained :: Int32 = 42");
-    try session.submitDefinitions("identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }");
-    try session.submitDefinitions("read#(.T: Type) := (.value: T) -> (.result: Int32) { result = retained }");
+    try session.submitDefinitions("identity := <.T: Type> (.value: T) -> (.result: T) { result = value }");
+    try session.submitDefinitions("read := <.T: Type> (.value: T) -> (.result: Int32) { result = retained }");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("identity(.value = retained)")).?.value.runtime.integer);
     try session.submitStatements("fixed: Int32 = 7");
     try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("#run () -> (.answer: Int32) { answer = identity(.value = fixed) }")).?.value.runtime.integer);
@@ -1323,10 +1323,10 @@ test "interactive computed conditions retain reconstructed type bindings across 
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitDefinitions(
-        "Cell: Type = (.value: Int32)\n" ++
-            "decide#(.T: Type) := () -> (.ok: Bool) { width ::= size_of(.type = T)\n ok = true }\n" ++
-            "choose#(.T: Type) := (.value: T) -> (.result: Int32) { #if decide#(.T: T)() { result = 42 } #else { result = 0 } }\n" ++
-            "outer#(.T: Type) := (.value: T) -> (.result: Int32) { result = choose#(.T: &T)(.value = &value) }",
+        "Cell := (.value: Int32)\n" ++
+            "decide := <.T: Type> () -> (.ok: Bool) { width ::= size_of(.type = T)\n ok = true }\n" ++
+            "choose := <.T: Type> (.value: T) -> (.result: Int32) { #if decide<.T: T>() { result = 42 } #else { result = 0 } }\n" ++
+            "outer := <.T: Type> (.value: T) -> (.result: Int32) { result = choose<.T: &T>(.value = &value) }",
     );
     try session.submitStatements("cell :: Cell = (.value = 1)");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = cell)")).?.value.runtime.integer);
@@ -1334,7 +1334,7 @@ test "interactive computed conditions retain reconstructed type bindings across 
     try std.testing.expectError(error.Reported, session.submitInput("missing_value"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = cell)")).?.value.runtime.integer);
-    try session.submitDefinitions("Other: Type = (.flag: Bool)");
+    try session.submitDefinitions("Other := (.flag: Bool)");
     try session.submitStatements("other :: Other = (.flag = true)");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("outer(.value = other)")).?.value.runtime.integer);
     try session.close();
@@ -1349,9 +1349,9 @@ test "interactive computed conditions retain choice defaults in temporary type b
     };
     try session.submitDefinitions(
         "Choice: Type = (..present(.value: Int32), ..empty)\n" ++
-            "decide#(.T: Type) := () -> (.ok: Bool) { width ::= size_of(.type = T)\n ok = true }\n" ++
-            "choose#(.T: Type) := (.value: T) -> (.result: Int32) { #if decide#(.T: T)() { match value.selection { ..present selected { result = selected.value } ..empty { result = 0 } } } #else { result = 0 } }\n" ++
-            "outer#(.T: Type) := (.value: T) -> (.result: Int32) { result = choose#(.T: (.value: T, .selection: Choice = #run () -> (.result: Choice) { result = ..present(.value = 42) }))(.value = (.value = value)) }",
+            "decide := <.T: Type> () -> (.ok: Bool) { width ::= size_of(.type = T)\n ok = true }\n" ++
+            "choose := <.T: Type> (.value: T) -> (.result: Int32) { #if decide<.T: T>() { match value.selection { ..present selected { result = selected.value } ..empty { result = 0 } } } #else { result = 0 } }\n" ++
+            "outer := <.T: Type> (.value: T) -> (.result: Int32) { result = choose<.T: (.value: T, .selection: Choice = #run () -> (.result: Choice) { result = ..present(.value = 42) })>(.value = (.value = value)) }",
     );
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("outer(.value = 7)")).?.value.runtime.integer);
     const revision = session.compiler.revision;
@@ -1394,9 +1394,9 @@ test "interactive virtual methods link host calls against their retained code un
         .{ .symbol = "host_identity", .inputs = &.{range}, .outputs = &.{range}, .call = State.identity },
     };
     session.runtime.context.host_bindings = &bindings;
-    try session.submitDefinitions("Readable#(.Source: Type): Contract = (.read: (.source: &Source, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) where {})\nBox: Type = ()\nimplement Readable#(Box) (.read = (.source: &Box, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) { first ::= host_increment(.value = 40, .ffi = ffi)\nresult = host_increment(.value = first, .ffi = ffi) })");
-    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability\nbox :: Box = ()\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
-    try session.submitDefinitions("invoke := (.handle: &Virtual#(.contract: Readable), .ffi: $&ForeignFunctionInterface) -> (.result: Int32) { unused ::= host_identity(.value = 7, .ffi = ffi)\nresult = Readable#().read(handle, .ffi = ffi).result }");
+    try session.submitDefinitions("Readable<.Source: Type>: Contract = (.read: (.source: &Source, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) where {})\nBox: Type = ()\nimplement Readable<Box> (.read = (.source: &Box, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) { first ::= host_increment(.value = 40, .ffi = ffi)\nresult = host_increment(.value = first, .ffi = ffi) })");
+    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability\nbox :: Box = ()\nerased ::= to_virtual<.contract: Readable>(.value = &box)");
+    try session.submitDefinitions("invoke := (.handle: &Virtual<.contract: Readable>, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) { unused ::= host_identity(.value = 7, .ffi = ffi)\nresult = Readable<>.read(handle, .ffi = ffi).result }");
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("invoke(.handle = &erased, .ffi = ffi)")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(usize, 2), state.calls);
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("invoke(.handle = &erased, .ffi = ffi)")).?.value.runtime.integer);
@@ -1455,7 +1455,7 @@ test "interactive choice payload writes preserve vacant record siblings and snap
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Choice: Type = (..empty, ..some(.value: Int32))\nRecord: Type = (.choice: Choice, .later: Int32)");
+    try session.submitDefinitions("Choice: Type = (..empty, ..some(.value: Int32))\nRecord := (.choice: Choice, .later: Int32)");
     try session.submitStatements("record :: Record\nrecord.choice = ..some(.value = 41)\nsaved ::= record.choice");
     try session.submitStatements("match record.choice { ..empty { abort } ..some $&payload { payload&.value = 42 } }");
     const revision = session.compiler.revision;
@@ -1498,13 +1498,13 @@ test "interactive exit cleans the live sibling of an incomplete choice payload" 
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
+    const loaded = try sources.loadModule(&diagnostics, "Deinit<.T: Type>: Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Resource: Type = (.right: Bool)\nChoice: Type = (..pair(.left: Resource, .right: Resource), ..empty)\nimplement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\nimplement Deinit#(Choice) (.deinit = (.self: $&Choice) -> () { abort })");
+    try session.submitDefinitions("Resource := (.right: Bool)\nChoice: Type = (..pair(.left: Resource, .right: Resource), ..empty)\nimplement Deinit<Resource> (.deinit = (.self: $&Resource) -> () {})\nimplement Deinit<Choice> (.deinit = (.self: $&Choice) -> () { abort })");
     try session.submitStatements("choice :: Choice = ..pair(.left = (.right = false), .right = (.right = true))");
     try session.submitStatements("match choice { ..pair $&payload { deinit(.self = $&payload&.left) } ..empty {} }");
     const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
@@ -1530,13 +1530,13 @@ test "interactive Init wrappers retain assumed capabilities from earlier command
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Init#(.T: Type, .Args: Type): Contract = (.Result: Type\n.init: (.args: Args) -> (.result: Result))");
+    const loaded = try sources.loadModule(&diagnostics, "Init<.T: Type, .Args: Type>: Contract = (.Result: Type\n.init: (.args: Args) -> (.result: Result))");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Capability: Type = (.value: Int32)\nBox: Type = (.value: Int32)\nread_capability := (.permission: &Capability = reach permission) -> (.value: Int32) { value = permission&.value }\nimplement Init#(Box, ()) (.Result: Type = Box\n.init = (.args: ()) -> (.result: Result) { result = (.value = read_capability()) })");
+    try session.submitDefinitions("Capability := (.value: Int32)\nBox := (.value: Int32)\nread_capability := (.permission: &Capability = reach permission) -> (.value: Int32) { value = permission&.value }\nimplement Init<Box, ()> (.Result: Type = Box\n.init = (.args: ()) -> (.result: Result) { result = (.value = read_capability()) })");
     try session.submitStatements("token :: Capability = (.value = 42)\nassume permission ::= &token");
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Box().value")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("missing_capability_command"));
@@ -1576,22 +1576,22 @@ test "interactive generic specializations retain completed evidence while new ty
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Identify#(.T: Type): Contract = (.identify: (.value: T) -> (.result: Int32))\n" ++
-        "First: Type = (.value: Int32)\nSecond: Type = (.value: Int32)\n" ++
-        "dispatch#(.T: Type) := (.value: T) -> (.result: Int32) { result = Identify#(T).identify(.value = value) }");
+    try session.submitDefinitions("Identify<.T: Type>: Contract = (.identify: (.value: T) -> (.result: Int32))\n" ++
+        "First := (.value: Int32)\nSecond := (.value: Int32)\n" ++
+        "dispatch := <.T: Type> (.value: T) -> (.result: Int32) { result = Identify<T>.identify(.value = value) }");
     // Definition lookup is already fixed, but concrete conformance selection
     // must remain possible after a later implementation becomes available.
-    try session.submitDefinitions("implement#(.T: Type) Identify#(T) (.identify = (.value: T) -> (.result: Int32) { result = 7 })");
-    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("dispatch#(First)(.value = First(.value = 0))")).?.value.runtime.integer);
+    try session.submitDefinitions("implement<.T: Type> Identify<T> (.identify = (.value: T) -> (.result: Int32) { result = 7 })");
+    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("dispatch<First>(.value = First(.value = 0))")).?.value.runtime.integer);
     const graph = &session.compiler.semantic.relocation.graph;
     const first = for (graph.generic_function_instances.items) |instance| {
         if (std.mem.eql(u8, graph.text(graph.declarationSourceName(graph.familyDeclaration(instance.parameterized_definition))), "dispatch")) break instance.function;
     } else return error.MissingDispatchSpecialization;
     const body = graph.function(first).body;
     const proof = session.compiler.body_cache.entries.get(first);
-    try session.submitDefinitions("implement Identify#(Second) (.identify = (.value: Second) -> (.result: Int32) { result = 42 })");
-    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("dispatch#(Second)(.value = Second(.value = 0))")).?.value.runtime.integer);
-    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("dispatch#(First)(.value = First(.value = 0))")).?.value.runtime.integer);
+    try session.submitDefinitions("implement Identify<Second> (.identify = (.value: Second) -> (.result: Int32) { result = 42 })");
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("dispatch<Second>(.value = Second(.value = 0))")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("dispatch<First>(.value = First(.value = 0))")).?.value.runtime.integer);
     try std.testing.expectEqual(body, graph.function(first).body);
     try std.testing.expect(proof == session.compiler.body_cache.entries.get(first));
     try session.close();
@@ -1601,8 +1601,8 @@ test "interactive dormant operation signatures complete at first selected use wi
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Identify#(.T: Type): Contract = (.identify: (.value: T) -> (.result: Int32))\nEcho#(.T: Type): Contract = (.echo: (.value: T) -> (.result: Int32))\nBox: Type = (.value: Int32)\nforward#(.T: Type) := (.value: T) -> (.result: Int32) { result = Identify#(T).identify(.value = value) }");
-    try session.submitDefinitions("implement Echo#(Box) (.echo = forward)");
+    try session.submitDefinitions("Identify<.T: Type>: Contract = (.identify: (.value: T) -> (.result: Int32))\nEcho<.T: Type>: Contract = (.echo: (.value: T) -> (.result: Int32))\nBox := (.value: Int32)\nforward := <.T: Type> (.value: T) -> (.result: Int32) { result = Identify<T>.identify(.value = value) }");
+    try session.submitDefinitions("implement Echo<Box> (.echo = forward)");
     const graph = &session.compiler.semantic.relocation.graph;
     const method = for (graph.generic_function_instances.items) |instance| {
         if (std.mem.eql(u8, graph.text(graph.declarationSourceName(graph.familyDeclaration(instance.parameterized_definition))), "forward")) break instance.function;
@@ -1611,20 +1611,20 @@ test "interactive dormant operation signatures complete at first selected use wi
     try std.testing.expect(!session.compiler.body_cache.entries.contains(method));
     const saved = graph.checkpoint();
     const revision = session.compiler.revision;
-    try std.testing.expectError(error.Reported, session.submitInput("Echo#(Box).echo(.value = Box(.value = 0))"));
+    try std.testing.expectError(error.Reported, session.submitInput("Echo<Box>.echo(.value = Box(.value = 0))"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqualDeep(saved, graph.checkpoint());
     try std.testing.expect(graph.function(method).body == null);
     try std.testing.expect(!session.compiler.body_cache.entries.contains(method));
     // Merely registering a signature has not resolved its body. The selected
     // use can rely on evidence introduced after the generic definition.
-    try session.submitDefinitions("implement Identify#(Box) (.identify = (.value: Box) -> (.result: Int32) { result = 42 })");
+    try session.submitDefinitions("implement Identify<Box> (.identify = (.value: Box) -> (.result: Int32) { result = 42 })");
     try std.testing.expect(graph.function(method).body == null);
-    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Echo#(Box).echo(.value = Box(.value = 0))")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Echo<Box>.echo(.value = Box(.value = 0))")).?.value.runtime.integer);
     const body = graph.function(method).body;
     try std.testing.expect(body != null);
-    try session.submitDefinitions("Unrelated: Type = (.flag: Bool)");
-    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Echo#(Box).echo(.value = Box(.value = 0))")).?.value.runtime.integer);
+    try session.submitDefinitions("Unrelated := (.flag: Bool)");
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Echo<Box>.echo(.value = Box(.value = 0))")).?.value.runtime.integer);
     try std.testing.expectEqual(body, graph.function(method).body);
     try session.close();
 }
@@ -1672,11 +1672,11 @@ test "interactive generic contract operations retain instances across rejected s
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitDefinitions(
-        \\Identity#(.Owner: Type): Contract = (
+        \\Identity<.Owner: Type>: Contract = (
         \\    .apply: <.Value: Type> (.owner: &Owner, .value: Value) -> (.result: Value) where { depends_on(result, value) }
         \\)
         \\Owner := (.flag: Bool)
-        \\implement Identity#(Owner) (
+        \\implement Identity<Owner> (
         \\    .apply = <.Item: Type> (.owner: &Owner, .value: Item) -> (.result: Item) { result = value }
         \\)
     );

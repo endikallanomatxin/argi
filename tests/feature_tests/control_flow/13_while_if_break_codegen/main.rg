@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     i :: Int32 = 0
     while 1 == 1 {
         if i == 0 {

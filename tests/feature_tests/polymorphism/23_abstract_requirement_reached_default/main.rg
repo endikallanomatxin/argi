@@ -1,21 +1,17 @@
-Touched#(.Participant: Type): Contract = (
-    .touch: (
-        .self: $&Participant,
-    ) -> ()
+Touched<.Participant: Type>: Contract = (
+    .touch : (.self: $&Participant) -> ()
 )
 
-Thing : Type = (
-    .marker: Int32 = 0
+Thing := (
+    .marker : Int32 = 0
 )
 
-_impl_touch_Thing := (
-    .self: $&Thing,
-) -> ()  {
+_impl_touch_Thing := (.self: $&Thing) -> () {
 }
 
-implement Touched#(Thing) (.touch = _impl_touch_Thing)
+implement Touched<Thing> (.touch = _impl_touch_Thing)
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     thing :: Thing = (
         .marker = 0
     )

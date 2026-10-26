@@ -25,8 +25,10 @@ read_forwarded := <.T: Type> (.input: &ForwardArgs<T>) -> (.result: T) {
 }
 
 IdentityType := <.T: Type> T
-ReferenceType := <.T: Type> &T
-PairType := <.T: Type> [2]T
+
+ReferenceType := <.T: Type>&T
+
+PairType := <.T: Type>[2]T
 
 read_identity := <.T: Type> (.input: IdentityType<T>) -> (.result: T) {
     result = input
@@ -42,7 +44,10 @@ read_provider := <.P: Type> ReachedArgs<P> -> Result {
 
 computed ::= #run () -> (.result: Bool) {
     outputs: MultipleResults = multiple()
-    result = forward_identity(.value = identity(.value = read().result).result).result and outputs.first
+    result = [
+        forward_identity(.value = identity(.value = read().result).result).result
+        and outputs.first
+    ]
 }
 
 computed_provider ::= #run () -> (.result: Bool) {
@@ -51,7 +56,7 @@ computed_provider ::= #run () -> (.result: Bool) {
     result = read_provider().result
 }
 
-main() -> () := {
+main := () -> () {
     supply ::= Provider(.flag = true)
     assume provider ::= &supply
     original: GenericArgs<Bool> = (.value = true)
@@ -59,7 +64,7 @@ main() -> () := {
     restored: GenericArgs<Bool> = forwarded
     reference: ReferenceType<Bool> = &restored.value
     pair: PairType<Bool> = (true, false)
-    if reference& {} else { abort }
+    if reference&{} else { abort }
     if pair[0] {} else { abort }
     if pair[1] { abort }
     multiple_values: MultipleResults = multiple()
@@ -81,6 +86,7 @@ main() -> () := {
 }
 
 MultipleResults := (.first: Bool, .second: Bool)
+
 multiple := () -> MultipleResults {
     first = true
     second = false

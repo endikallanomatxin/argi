@@ -1,5 +1,5 @@
-recursive() -> (.ok: Bool = false) := {
+recursive := () -> (.ok: Bool = false) {
     #if recursive() { ok = true }
 }
 
-main() -> () := { #if recursive() {} }
+main := () -> () { #if recursive() {} }

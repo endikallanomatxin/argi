@@ -1,5 +1,5 @@
-borrow#(.Source: Type: Viewable#(Source)) := (.array: Source) -> (
-    .result : Viewable#(Source).Result
+borrow := <.Source: Type: Viewable<Source>> (.array: Source) -> (
+    .result : Viewable<Source>.Result
 ) {
     result = view(.self = array)
 }

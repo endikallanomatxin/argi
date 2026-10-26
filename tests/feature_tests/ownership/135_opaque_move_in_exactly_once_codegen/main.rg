@@ -1,34 +1,39 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-Tracked : Type = (
-    .allocation: Allocation
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+Tracked := (
+    .allocation : Allocation
 )
 
 drops :: Int32 = 0
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         drops = drops + 1
         deinit(.self = $&self&.allocation)
     }
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     owned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
-    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Tracked))
+    slots_result ::= allocate_bytes(
+        .self = $&allocator_storage, .size = size_of(.type = Tracked)
+    )
     match owned_result {
         ..error _ { status_code = 1 }
-        ..ok ~ owned_payload {
+        ..ok ~owned_payload {
             match slots_result {
                 ..error _ { status_code = 2 }
-                ..ok ~ slots_payload {
+                ..ok ~slots_payload {
                     slots ::= ~slots_payload
-                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+                    slot ::= trusted_mutable_reinterpret_reference<.from: UInt8, .to: Tracked>(
+                        .base = unsafe_allocation.trusted_allocation_byte_rw(
+                            .allocation = $&slots, .offset = 0
+                        ).reference
+                    ).reference
                     value :: Tracked = (.allocation = ~owned_payload)
-                    trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
-                        .storage = $&slots,
-                        .destination = slot,
-                        .source = ~value,
+                    trusted_opaque_move_in<.t: Tracked, .storage_type: Allocation> (
+                        .storage = $&slots, .destination = slot, .source = ~value
                     )
 
                     if drops != 0 {

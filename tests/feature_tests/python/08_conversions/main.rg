@@ -1,6 +1,6 @@
 python := import ("python")
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     interpreter ::= unwrap_or_abort(.value = python.Python(.ffi = system.ffi)).result
     values: [3]Int32 = (10, 20, 30)
     converted ::= unwrap_or_abort(
@@ -38,7 +38,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     ).result
     if unwrap_or_abort(.value = python.length(.self = &nested_object)).result != 2 { abort }
     dynamic ::= unwrap_or_abort(
-        .value = DynamicArray#(.t: UInt8)(.allocator = system.page_allocator, .capacity = 1)
+        .value = DynamicArray<.t: UInt8>(.allocator = system.page_allocator, .capacity = 1)
     ).result
     byte: UInt8 = 7
     unwrap_or_abort(

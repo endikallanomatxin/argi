@@ -1,8 +1,12 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    allocation ::= unwrap_or_abort(.value = allocate_bytes(.self = system.page_allocator, .size = 32, .alignment = 8))
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    allocation ::= unwrap_or_abort(
+        .value = allocate_bytes(.self = system.page_allocator, .size = 32, .alignment = 8)
+    )
     address ::= allocation.data.address + 1
-    raw ::= raw_pointer#(.t: UIntNative)(.address = address).raw
-    slot ::= trusted_establish_allocation_slot#(.t: UIntNative)(.allocation = &allocation, .slot = raw, .anchor = allocation.anchor).reference
+    raw ::= raw_pointer<.t: UIntNative>(.address = address).raw
+    slot ::= trusted_establish_allocation_slot<.t: UIntNative>(
+        .allocation = &allocation, .slot = raw, .anchor = allocation.anchor
+    ).reference
     -- The guard must reject the slot without reading or writing through it.
     deinit(.self = $&allocation)
 }

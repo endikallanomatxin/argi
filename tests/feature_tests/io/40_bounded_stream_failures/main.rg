@@ -1,12 +1,12 @@
-FaultReader: Type = (
+FaultReader := (
     .position : UIntNative = 0,
     .calls    : UIntNative = 0,
     .fail_at  : UIntNative = 0
 )
 
-implement BlockReader#(FaultReader) (
-    .read_block = (.self: $&FaultReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+implement BlockReader<FaultReader> (
+    .read_block = (.self: $&FaultReader, .buffer: MutableArrayView<.t: UInt8>) -> (
+        .result: Errable<.t: UIntNative, .reasons: (..stream_read_failed)>
     ) {
         self&.calls = self&.calls + 1
         if self&.calls == self&.fail_at {
@@ -24,18 +24,18 @@ implement BlockReader#(FaultReader) (
     }
 )
 
-FaultWriter: Type = (
+FaultWriter := (
     .count   : UIntNative = 0,
     .calls   : UIntNative = 0,
     .fail_at : UIntNative = 0,
     .stalled : Bool       = false
 )
 
-implement BlockWriter#(FaultWriter) (
-    .write_block = (.self: $&FaultWriter, .buffer: ArrayView#(.t: UInt8)) -> (
-        .result : Errable#(
+implement BlockWriter<FaultWriter> (
+    .write_block = (.self: $&FaultWriter, .buffer: ArrayView<.t: UInt8>) -> (
+        .result : Errable<
             .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
-        )
+        >
     ) {
         self&.calls = self&.calls + 1
         if self&.calls == self&.fail_at {
@@ -51,7 +51,8 @@ implement BlockWriter#(FaultWriter) (
     }
 )
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     scratch :: [2]UInt8 = (0, 0)
     source :: FaultReader = FaultReader(.fail_at = 3)
@@ -107,11 +108,5 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..invalid_stream_buffer { abort } }
     }
     if source.calls != calls { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

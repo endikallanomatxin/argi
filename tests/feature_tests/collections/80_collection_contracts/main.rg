@@ -1,23 +1,23 @@
-read#(.Collection: Type: IndexableValue#(.Item: Int32))(.items: &Collection, .index: UIntNative) -> (
-    .value : Int32
-) := {
+read := <.Collection: Type: IndexableValue<.Item: Int32>> (
+    .items: &Collection, .index: UIntNative
+) -> (.value: Int32) {
     value = unwrap_or_abort(.value = get(.self = items, .index = index))
 }
 
-borrow#(.Collection: Type: Indexable#(.Item: Int32))(.items: &Collection) -> (.value: Int32) := {
+borrow := <.Collection: Type: Indexable<.Item: Int32>> (.items: &Collection) -> (.value: Int32) {
     pointer ::= unwrap_or_abort(.value = get_reference(.self = items, .index = 0))
     value = pointer&
 }
 
-write#(.Collection: Type: MutableIndexable#(.Item: Int32))(.items: $&Collection) -> () := {
+write := <.Collection: Type: MutableIndexable<.Item: Int32>> (.items: $&Collection) -> () {
     pointer ::= unwrap_or_abort(.value = get_mutable_reference(.self = items, .index = 0))
     pointer&= 9
 }
 
-resize#(
-    .Provider   : Type: Allocator#(Provider),
-    .Collection : Type: Resizable#(.Collection: Collection, .Provider: Provider, .Item: Int32)
-)(.items: $&Collection, .allocator: $&Provider) -> (.value: Int32) := {
+resize := <
+    .Provider : Type: Allocator<Provider>,
+    .Collection: Type: Resizable<.Collection: Collection, .Provider: Provider, .Item: Int32>
+> (.items: $&Collection, .allocator: $&Provider) -> (.value: Int32) {
     unwrap_or_abort(.value = push(.self = items, .value = 3, .allocator = allocator))
     unwrap_or_abort(
         .value = insert(.self = items, .index = 0, .value = 4, .allocator = allocator)
@@ -27,10 +27,10 @@ resize#(
     value = removed + popped
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&storage
-    dynamic ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
+    dynamic ::= unwrap_or_abort(.value = DynamicArray<.t: Int32>(.capacity = 2))
     if resize(.items = $&dynamic, .allocator = allocator).value != 7 { abort }
     unwrap_or_abort(.value = push(.self = $&dynamic, .value = 2))
     write(.items = $&dynamic)

@@ -1,5 +1,5 @@
 SmallId: Type = UInt8
 
-main() -> () := {
+main := () -> () {
     value: SmallId = 256
 }

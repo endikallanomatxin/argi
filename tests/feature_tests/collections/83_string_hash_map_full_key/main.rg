@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator := system.page_allocator
     keys: [32]StringView = (
         "entry_00000_end",
@@ -36,7 +36,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     bytes: [4]UInt8 = (0, 127, 194, 128)
     text ::= unwrap_or_abort(.value = string_from_bytes(.bytes = view(&bytes)))
-    map ::= unwrap_or_abort(.value = HashMap#(.key: StringView, .value: Int32)(.capacity = 1))
+    map ::= unwrap_or_abort(.value = HashMap<.key: StringView, .value: Int32>(.capacity = 1))
     index :: UIntNative = 0
     while index < 32 {
         unwrap_or_abort(.value = put($&map, .key = keys[index], .value = 7))

@@ -6,7 +6,7 @@ Results := (
     .value  : &Int32
 )
 
-Splitter#(.Participant: Type): Contract = (
+Splitter<.Participant: Type>: Contract = (
     .choose : (.self: &Participant, .flag: Bool, .left: &Int32, .right: &Int32) -> Results where {
         on first ..yes {
             on second ..yes { depends_on(value, left) }
@@ -16,9 +16,9 @@ Splitter#(.Participant: Type): Contract = (
     }
 )
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
-implement Splitter#(Manager) (.choose = _impl_choose_Manager)
+implement Splitter<Manager> (.choose = _impl_choose_Manager)
 
 _impl_choose_Manager := (.self: &Manager, .flag: Bool, .left: &Int32, .right: &Int32) -> Results {
     if flag {
@@ -32,9 +32,9 @@ _impl_choose_Manager := (.self: &Manager, .flag: Bool, .left: &Int32, .right: &I
     }
 }
 
-main() -> () := {
+main := () -> () {
     manager ::= Manager(0)
-    splitter ::= to_virtual#(Splitter)(&manager)
+    splitter ::= to_virtual<Splitter>(&manager)
     live: Int32 = 42
     values: Results
 

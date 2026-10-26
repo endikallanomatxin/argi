@@ -3,24 +3,24 @@
 
 Failures: Type = (..first_failure, ..second_failure)
 
-Probe: Type = (.count: UIntNative = 0, .sum: UIntNative = 0)
+Probe := (.count: UIntNative = 0, .sum: UIntNative = 0)
 
-fail(.second: Bool) -> (.result: Errable#(.t: Void, .reasons: Failures)) := {
-    if second { result = ..error(.reason = ..second_failure) } else {
+fail := (.second: Bool) -> (.result: Errable<.t: Void, .reasons: Failures>) {
+    if second {
+        result = ..error(.reason = ..second_failure)
+    } else {
         result = ..error(.reason = ..first_failure)
     }
 }
 
-forward(
-        .value : Errable#(.t: Void, .reasons: Failures)
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: Failures)
-    ) := {
+forward := (.value: Errable<.t: Void, .reasons: Failures>) -> (
+    .result: Errable<.t: Void, .reasons: Failures>
+) {
     value!! "after reset"
     result = ..ok Void()
 }
 
-report_value(.value: &Errable#(.t: Void, .reasons: Failures), .writer: $&Probe) -> () := {
+report_value := (.value: &Errable<.t: Void, .reasons: Failures>, .writer: $&Probe) -> () {
     writer&.count = 0
     writer&.sum = 0
     match value&{
@@ -31,9 +31,9 @@ report_value(.value: &Errable#(.t: Void, .reasons: Failures), .writer: $&Probe) 
     }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
-    virtual ::= to_virtual#(ErrorTracer)($&tracer)
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed<.t: [288]UInt8>()))
+    virtual ::= to_virtual<ErrorTracer>($&tracer)
     assume error_tracer ::= $&virtual
     first ::= fail(.second = false)
     second ::= fail(.second = true)
@@ -52,7 +52,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 2
         return
     }
-    ErrorTracer#().reset_context(.self = $&virtual)
+    ErrorTracer<>.reset_context(.self = $&virtual)
     report_value(.value = &first, .writer = $&writer)
     if writer.count != 43 {
         status_code = 3
@@ -63,8 +63,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 4
         return
     }
-    other ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
-    other_virtual ::= to_virtual#(ErrorTracer)($&other)
+    other ::= FixedSizeErrorTracer(.buffer = view($&zeroed<.t: [288]UInt8>()))
+    other_virtual ::= to_virtual<ErrorTracer>($&other)
     assume error_tracer ::= $&other_virtual
     propagated ::= forward(.value = ~first)
     report_value(.value = &propagated, .writer = $&writer)
@@ -91,20 +91,17 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         }
     }
     writer.count = 0
-    writer_virtual ::= to_virtual#(Writer)($&writer)
+    writer_virtual ::= to_virtual<Writer>($&writer)
     unwrap_or_abort(
-        .value = ErrorTracer#().report(.self = $&other_virtual, .writer = $&writer_virtual)
+        .value = ErrorTracer<>.report(.self = $&other_virtual, .writer = $&writer_virtual)
     )
     if writer.count != 43 { status_code = 11 }
 }
 
-implement Writer#(Probe)(
-    .write_byte = (
-            .self : $&Probe,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+implement Writer<Probe> (
+    .write_byte = (.self: $&Probe, .byte: UInt8) -> (
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
+    ) {
         self&.count = self&.count + 1
         remaining :: UInt8 = byte
         while remaining != 0 {
@@ -114,9 +111,7 @@ implement Writer#(Probe)(
         result = ..ok Void()
     }
 
-    .flush = (
-            .self : $&Probe
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) { result = ..ok Void() }
+    .flush = (.self: $&Probe) -> (
+        .result: Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
+    ) { result = ..ok Void() }
 )

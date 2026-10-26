@@ -1,10 +1,10 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Tracked: Type = (.drops: $&Int32)
+Tracked := (.drops: $&Int32)
 
-Pair: Type = (.first: Tracked, .second: Tracked)
+Pair := (.first: Tracked, .second: Tracked)
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         self&.drops&= self&.drops&+ 1
     }
@@ -12,8 +12,8 @@ implement Deinit#(Tracked) (
 
 Slots: Type = ()
 
-SlotProtocol#(.Participant: Type): Contract = (
-    .take_pair: (
+SlotProtocol<.Participant: Type>: Contract = (
+    .take_pair : (
         .self        : &Participant,
         .first       : $&Allocation,
         .first_slot  : $&Tracked,
@@ -27,42 +27,40 @@ SlotProtocol#(.Participant: Type): Contract = (
     }
 )
 
-implement SlotProtocol#(Slots) (.take_pair = _impl_take_pair_Slots)
+implement SlotProtocol<Slots> (.take_pair = _impl_take_pair_Slots)
 
 _impl_take_pair_Slots := (
-        .self        : &Slots,
-        .first       : $&Allocation,
-        .first_slot  : $&Tracked,
-        .second      : $&Allocation,
-        .second_slot : $&Tracked
-    ) -> (
-        .value : Pair
-    )  {
-    first_value ::= trusted_opaque_move_out#(Tracked, Allocation)(first, first_slot)
-    second_value ::= trusted_opaque_move_out#(Tracked, Allocation)(second, second_slot)
+    .self        : &Slots,
+    .first       : $&Allocation,
+    .first_slot  : $&Tracked,
+    .second      : $&Allocation,
+    .second_slot : $&Tracked
+) -> (.value: Pair) {
+    first_value ::= trusted_opaque_move_out<Tracked, Allocation>(first, first_slot)
+    second_value ::= trusted_opaque_move_out<Tracked, Allocation>(second, second_slot)
     trusted_opaque_mark_empty(first)
     trusted_opaque_mark_empty(second)
 
     value = Pair(~first_value, ~second_value)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     drops :: Int32 = 0
 
     {
-        first ::= unwrap_or_abort(allocate#(Tracked)(allocator))
-        second ::= unwrap_or_abort(allocate#(Tracked)(allocator))
-        first_slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
+        first ::= unwrap_or_abort(allocate<Tracked>(allocator))
+        second ::= unwrap_or_abort(allocate<Tracked>(allocator))
+        first_slot ::= trusted_mutable_reinterpret_reference<UInt8, Tracked>(
             unsafe_allocation.trusted_allocation_byte_rw($&first, 0).reference
         ).reference
-        second_slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
+        second_slot ::= trusted_mutable_reinterpret_reference<UInt8, Tracked>(
             unsafe_allocation.trusted_allocation_byte_rw($&second, 0).reference
         ).reference
-        trusted_opaque_move_in#(Tracked, Allocation)($&first, first_slot, Tracked($&drops))
-        trusted_opaque_move_in#(Tracked, Allocation)($&second, second_slot, Tracked($&drops))
+        trusted_opaque_move_in<Tracked, Allocation>($&first, first_slot, Tracked($&drops))
+        trusted_opaque_move_in<Tracked, Allocation>($&second, second_slot, Tracked($&drops))
         implementation ::= Slots()
-        slots ::= to_virtual#(SlotProtocol)(&implementation)
+        slots ::= to_virtual<SlotProtocol>(&implementation)
 
         pair ::= take_pair(&slots, $&first, first_slot, $&second, second_slot)
         deinit($&first)

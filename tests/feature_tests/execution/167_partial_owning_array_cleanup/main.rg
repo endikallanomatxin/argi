@@ -1,24 +1,24 @@
-Counter: Type = (.drops: Int32 = 0)
+Counter := (.drops: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
-Pair: Type = (.first: Resource, .second: Resource)
+Pair := (.first: Resource, .second: Resource)
 
-Container: Type = (.counter: $&Counter, .values: [2]Int32)
+Container := (.counter: $&Counter, .values: [2]Int32)
 
-implement Deinit#(Container) (
+implement Deinit<Container> (
     .deinit = (.self: $&Container) -> () {
         self&.counter&.drops = self&.counter&.drops + 1
     }
 )
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.drops = self&.counter&.drops + 1
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         resources :: [2]Resource

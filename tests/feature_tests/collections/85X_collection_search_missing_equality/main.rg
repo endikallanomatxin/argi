@@ -1,8 +1,8 @@
-Record: Type = (.value: Int32)
+Record := (.value: Int32)
 
-implement ImplicitlyCopyable#(Record) ()
+implement ImplicitlyCopyable<Record> ()
 
-main() -> () := {
+main := () -> () {
     values: [1]Record = ((.value = 1))
     borrowed_view ::= view(.self = &values)
     target :: Record = (.value = 1)

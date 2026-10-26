@@ -1,30 +1,30 @@
-Counter: Type = (.count: Int32 = 0, .order: Int32 = 0)
+Counter := (.count: Int32 = 0, .order: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .id: Int32)
+Resource := (.counter: $&Counter, .id: Int32)
 
-Pair: Type = (.first: Resource, .second: Resource)
+Pair := (.first: Resource, .second: Resource)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.count = self&.counter&.count + 1
         self&.counter&.order = self&.counter&.order * 10 + self&.id
     }
 )
 
-make(.counter: $&Counter, .id: Int32) -> (.result: Resource) := {
+make := (.counter: $&Counter, .id: Int32) -> (.result: Resource) {
     counter&.order = counter&.order * 10 + id
     result = Resource(.counter = counter, .id = id)
 }
 
-forward(.value: $&Resource) -> (.result: $&Resource) := {
+forward := (.value: $&Resource) -> (.result: $&Resource) {
     result = value
 }
 
-forward_large(.value: &Counter) -> (.result: (.padding: [40]Int32, .target: &Counter)) := {
-    result = (.padding = zeroed#(.t: [40]Int32)(), .target = value)
+forward_large := (.value: &Counter) -> (.result: (.padding: [40]Int32, .target: &Counter)) {
+    result = (.padding = zeroed<.t: [40]Int32>(), .target = value)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter, .id = 1)

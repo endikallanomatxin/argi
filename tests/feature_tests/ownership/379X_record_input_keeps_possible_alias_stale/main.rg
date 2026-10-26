@@ -1,12 +1,12 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Access: Type = (.target: $&Resource, .other: $&Resource)
+Access := (.target: $&Resource, .other: $&Resource)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.value = -1 }
 )
 
-cycle(.args: Access) -> () := {
+cycle := (.args: Access) -> () {
     deinit(.self = args.target)
     args.target&= Resource(.value = 42)
     if args.other&.value == 42 { abort }
@@ -14,7 +14,7 @@ cycle(.args: Access) -> () := {
 
 }
 
-main() -> () := {
+main := () -> () {
     owner :: Resource = Resource(.value = 1)
     cycle(.args = (.target = $&owner, .other = $&owner))
 }

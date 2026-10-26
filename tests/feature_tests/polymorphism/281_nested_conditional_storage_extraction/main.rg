@@ -1,20 +1,20 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Tracked: Type = (.drops: $&Int32)
+Tracked := (.drops: $&Int32)
 
 NestedResult: Type = (..some ?Tracked, ..none)
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         self&.drops&= self&.drops&+ 1
     }
 )
 
-SlotProtocol#(.Participant: Type): Contract = (
+SlotProtocol<.Participant: Type>: Contract = (
     domain contents
 
-    .put: (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
-    .take: (.self: $&Participant, .present: Bool) -> (.value: NestedResult) where {
+    .put  : (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
+    .take : (.self: $&Participant, .present: Bool) -> (.value: NestedResult) where {
         empties(self.contents)
         on value ..some {
             on value ..some {
@@ -27,24 +27,26 @@ SlotProtocol#(.Participant: Type): Contract = (
     }
 )
 
-Slot: Type = (.storage: Allocation)
+Slot := (.storage: Allocation)
 
-implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where { contents(self.storage) }
-
-_impl_put_Slot := (.self: $&Slot, .value: Tracked) -> ()  {
-    slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
-        unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
-    ).reference
-    trusted_opaque_move_in#(Tracked, Allocation)($&self&.storage, slot, ~value)
+implement SlotProtocol<Slot> (.put = _impl_put_Slot, .take = _impl_take_Slot) where {
+    contents(self.storage)
 }
 
-_impl_take_Slot := (.self: $&Slot, .present: Bool) -> (.value: NestedResult)  {
+_impl_put_Slot := (.self: $&Slot, .value: Tracked) -> () {
+    slot ::= trusted_mutable_reinterpret_reference<UInt8, Tracked>(
+        unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
+    ).reference
+    trusted_opaque_move_in<Tracked, Allocation>($&self&.storage, slot, ~value)
+}
+
+_impl_take_Slot := (.self: $&Slot, .present: Bool) -> (.value: NestedResult) {
     if present {
-        slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
+        slot ::= trusted_mutable_reinterpret_reference<UInt8, Tracked>(
             unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
         ).reference
         value = ..some ..some(
-            .value = trusted_opaque_move_out#(Tracked, Allocation)($&self&.storage, slot)
+            .value = trusted_opaque_move_out<Tracked, Allocation>($&self&.storage, slot)
         )
     } else {
         value = ..none
@@ -53,21 +55,23 @@ _impl_take_Slot := (.self: $&Slot, .present: Bool) -> (.value: NestedResult)  {
     trusted_opaque_mark_empty($&self&.storage)
 }
 
-forward_take(.slot: $&Virtual#(SlotProtocol), .present: Bool) -> (.value: NestedResult) := {
+forward_take := (.slot: $&Virtual<SlotProtocol>, .present: Bool) -> (.value: NestedResult) {
     value = take(slot, present)
 }
 
-static_take#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType, .present: Bool) -> (.value: NestedResult) := {
+static_take := <.SlotType: Type: SlotProtocol<SlotType>> (.slot: $&SlotType, .present: Bool) -> (
+    .value : NestedResult
+) {
     value = take(slot, present)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     drops :: Int32 = 0
 
     {
-        implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
-        slot ::= to_virtual#(SlotProtocol)($&implementation)
+        implementation ::= Slot(unwrap_or_abort(allocate<Tracked>(allocator)))
+        slot ::= to_virtual<SlotProtocol>($&implementation)
         put($&slot, Tracked($&drops))
         extracted ::= forward_take($&slot, true)
         deinit($&implementation.storage)

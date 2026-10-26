@@ -1,11 +1,12 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
-    queue ::= Deque#(.t: Int32)(.capacity = 3)!
-    push_back(.self = $&queue, .value = 1)!
-    push_back(.self = $&queue, .value = 2)!
-    if pop_front(.self = $&queue)! != 1 { abort }
-    push_back(.self = $&queue, .value = 3)!
-    push_back(.self = $&queue, .value = 4)!
+    queue ::= Deque<.t: Int32>(.capacity = 3)!!!
+    push_back(.self = $&queue, .value = 1)!!!
+    push_back(.self = $&queue, .value = 2)!!!
+    if pop_front(.self = $&queue)!!! != 1 { abort }
+    push_back(.self = $&queue, .value = 3)!!!
+    push_back(.self = $&queue, .value = 4)!!!
     sum :: Int32 = 0
     for item in queue { sum = sum + item }
     if sum != 9 { abort }
@@ -18,13 +19,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     sum = 0
     while has_next(.self = &readonly).ok { sum = sum + next(.self = $&readonly).value&}
     if sum != 39 { abort }
-    empty ::= Deque#(.t: Int32)(.capacity = 8)!
+    empty ::= Deque<.t: Int32>(.capacity = 8)!!!
     for item in empty { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

@@ -1,12 +1,12 @@
-value(.number: Int32 = 3) -> (.result: Int32) := {
+value := (.number: Int32 = 3) -> (.result: Int32) {
     result = number
 }
 
-nested(.number: Int32) -> (.result: Int32) := {
+nested := (.number: Int32) -> (.result: Int32) {
     result = value().result
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     number :: Int32 = 42
     assume number
     if value().result != 42 { status_code = 1 }
@@ -40,16 +40,16 @@ main() -> (.status_code: Int32 = 0) := {
     }
 }
 
-generic #(.t: Type) (.number: t) -> (.result: t) := {
+generic := <.t: Type> (.number: t) -> (.result: t) {
     result = number
 }
 
-forward #(.t: Type) (.number: t) -> (.result: t) := {
+forward := <.t: Type> (.number: t) -> (.result: t) {
     assume number
     result = generic().result
 }
 
-compact_generic #(.t: Type) (.number: t) -> (.result: t) := {
+compact_generic := <.t: Type> (.number: t) -> (.result: t) {
     assume number ::= number + 1
     result = generic().result
 }

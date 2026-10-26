@@ -1,32 +1,32 @@
-Counter: Type = (.drops: Int32 = 0, .indices: Int32 = 0)
+Counter := (.drops: Int32 = 0, .indices: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
 Empty: Type = ()
 
 empty_drops :: Int32 = 0
 
-implement Deinit#(Empty) (
+implement Deinit<Empty> (
     .deinit = (.self: $&Empty) -> () { empty_drops = empty_drops + 1 }
 )
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.drops = self&.counter&.drops + 1
     }
 )
 
-index(.counter: $&Counter) -> (.result: UIntNative) := {
+index := (.counter: $&Counter) -> (.result: UIntNative) {
     counter&.indices = counter&.indices + 1
     result = 0
 }
 
-replacement(.selection: $&UIntNative, .counter: $&Counter) -> (.result: Resource) := {
+replacement := (.selection: $&UIntNative, .counter: $&Counter) -> (.result: Resource) {
     selection&= 1
     result = Resource(.counter = counter, .value = 42)
 }
 
-replacement_drops() -> (.result: Int32) := {
+replacement_drops := () -> (.result: Int32) {
     counter :: Counter = Counter()
     {
         resources :: [1]Resource = (Resource(.counter = $&counter, .value = 1))
@@ -35,7 +35,7 @@ replacement_drops() -> (.result: Int32) := {
     result = counter.drops
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         resources :: [2]Resource = (

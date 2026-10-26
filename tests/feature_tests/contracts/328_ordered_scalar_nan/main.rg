@@ -1,4 +1,4 @@
-less#(.T: Type)(.a: T, .b: T) -> (.ok: Bool) := { ok = a < b }
+less := <.T: Type> (.a: T, .b: T) -> (.ok: Bool) { ok = a < b }
 
 main := () -> (.status_code: Int32 = 0) {
     narrow: UInt8 = 7
@@ -11,10 +11,10 @@ main := () -> (.status_code: Int32 = 0) {
     if nan < zero or nan <= zero or nan > zero or nan >= zero { status_code = 3 }
     if zero < nan or zero <= nan or zero > nan or zero >= nan { status_code = 4 }
     if less(nan, zero).ok or nan == nan or [nan != nan] == false { status_code = 5 }
-    if CompareRelations#(Float32, Float32).less_than_or_equal(.left = nan, .right = zero).ok {
+    if CompareRelations<Float32, Float32>.less_than_or_equal(.left = nan, .right = zero).ok {
         status_code = 6
     }
-    if Compare#(Float32, Float32).compare(.left = nan, .right = zero).order != ..unordered {
+    if Compare<Float32, Float32>.compare(.left = nan, .right = zero).order != ..unordered {
         status_code = 7
     }
     if [
@@ -27,4 +27,4 @@ main := () -> (.status_code: Int32 = 0) {
 
 }
 
-requires_total#(.T: Type: TotalOrder#(T, T)) := (.value: T) -> () {}
+requires_total := <.T: Type: TotalOrder<T, T>> (.value: T) -> () {}

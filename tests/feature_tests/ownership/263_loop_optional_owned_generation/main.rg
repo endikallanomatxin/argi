@@ -1,8 +1,8 @@
-Holder: Type = (
+Holder := (
     .buffer : String
 )
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(Holder, (.allocator: $&AllocatorProvider)) (
+implement<.AllocatorProvider: Type: Allocator> Init<Holder, (.allocator: $&AllocatorProvider)> (
     .Result : Type = Holder
     .init   = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
         allocator ::= ~args.allocator
@@ -15,21 +15,21 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(Holder, (.allocator: $&All
     }
 )
 
-implement Deinit#(Holder) (
+implement Deinit<Holder> (
     .deinit = (.self: $&Holder) -> () {
         deinit(.self = $&self&.buffer)
     }
 )
 
-append#(.AllocatorType: Type: Allocator#(AllocatorType))(
+append := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .self: $&Holder, .allocator: $&AllocatorType
-) -> () := {
+) -> () {
     assume allocator
 
     _ ::= push_ascii(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

@@ -1,9 +1,9 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     bytes :: [6]UInt8 = (0, 255, 1, 0, 255, 1)
     pattern :: [3]UInt8 = (0, 255, 1)
     a ::= view(.self = &bytes)
     b ::= view(.self = &pattern)
-    empty ::= empty_array_view#(.t: UInt8)()
+    empty ::= empty_array_view<.t: UInt8>()
     if compare(.left = a, .right = b).order != 1 { abort }
     if compare(.left = b, .right = a).order != -1 { abort }
     if equals(.left = a, .right = a).ok == false { abort }

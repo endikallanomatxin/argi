@@ -1,6 +1,6 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         drops = drops + 1
     }
@@ -8,7 +8,7 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-release_if(.resource: $&Resource, .consume: Bool) -> (.result: ?Int32) := {
+release_if := (.resource: $&Resource, .consume: Bool) -> (.result: ?Int32) {
     if consume {
         deinit(resource)
         result = ..some(.value = 1)
@@ -18,7 +18,7 @@ release_if(.resource: $&Resource, .consume: Bool) -> (.result: ?Int32) := {
     result = ..none
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if true {
         resource ::= Resource(42)
         release_if($&resource, true)

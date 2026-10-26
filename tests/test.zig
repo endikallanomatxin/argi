@@ -603,7 +603,7 @@ test "installed argi resolves core from its installation prefix outside repo" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\}
         \\
         ,
@@ -796,11 +796,11 @@ test "argi init creates executable package" {
             "    assume ffi ::= system.ffi\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
             "    assume error_tracer ::= FixedSizeErrorTracer(\n" ++
-            "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
-            "    ) | to_virtual#(ErrorTracer)($&_) | $&_\n" ++
-            "    assume writer ::= $&BufferedWriter#(.base_type: File)(\n" ++
+            "        .buffer = view($&zeroed<.t: [4096]UInt8>()),\n" ++
+            "    ) | to_virtual<ErrorTracer>($&_) | $&_\n" ++
+            "    assume writer ::= $&BufferedWriter<.base_type: File>(\n" ++
             "        .base = $&system.terminal&.stdout,\n" ++
-            "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
+            "        .buffer = view($&zeroed<.t: [4096]UInt8>()),\n" ++
             "    )\n" ++
             "    assume reader ::= $&system.terminal&.stdin\n" ++
             "}\n",
@@ -1018,7 +1018,7 @@ test "argi build package builds all executables" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/cli/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\}
         \\
         ,
@@ -1026,7 +1026,7 @@ test "argi build package builds all executables" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/server/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\}
         \\
         ,
@@ -1080,7 +1080,7 @@ test "argi run package uses configured default and selected executable" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/cli/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 7) := {
+        \\main := () -> (.status_code: Int32 = 7)  {
         \\}
         \\
         ,
@@ -1088,7 +1088,7 @@ test "argi run package uses configured default and selected executable" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/server/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 11) := {
+        \\main := () -> (.status_code: Int32 = 11)  {
         \\}
         \\
         ,
@@ -1133,7 +1133,7 @@ test "argi run package uses single executable without run default" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/cli/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 9) := {
+        \\main := () -> (.status_code: Int32 = 9)  {
         \\}
         \\
         ,
@@ -1286,15 +1286,15 @@ test "build persists module snapshots across processes and dependency edits" {
     try tmp.dir.createDirPath(io, "dep");
     try tmp.dir.writeFile(io, .{
         .sub_path = "app/main.rg",
-        .data = "dep := import(\"../dep\")\nmain() -> (.status_code: Int32) := { status_code = dep.answer().result }\n",
+        .data = "dep := import(\"../dep\")\nmain := () -> (.status_code: Int32)  { status_code = dep.answer().result }\n",
     });
-    const source = "answer() -> (.result: Int32) := { result = 7 }\n";
+    const source = "answer := () -> (.result: Int32)  { result = 7 }\n";
     try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = source });
     for (0..4) |revision| {
         if (revision == 1) {
-            try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = "answer() -> (.result: Int32) := { result = 9 }\n" });
+            try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = "answer := () -> (.result: Int32)  { result = 9 }\n" });
         } else if (revision == 2) {
-            try tmp.dir.writeFile(io, .{ .sub_path = "dep/extra.rg", .data = "extra() -> (.result: Int32) := { result = 11 }\n" });
+            try tmp.dir.writeFile(io, .{ .sub_path = "dep/extra.rg", .data = "extra := () -> (.result: Int32)  { result = 11 }\n" });
         } else if (revision == 3) {
             try tmp.dir.deleteFile(io, "dep/extra.rg");
             try tmp.dir.rename("dep/answer.rg", tmp.dir, "dep/renamed.rg", io);
@@ -2613,7 +2613,7 @@ test "feature_tests/control_flow/14_for_mut_borrowed_dynamic_array" {
 
 test "feature_tests/types/14X_errable_match_unknown_variant" {
     try buildExpectFailExact("tests/feature_tests/types/14X_errable_match_unknown_variant",
-        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable#(.t: Int32, .reasons: (..test_error))' has no variant '..none'
+        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable<.t: Int32, .reasons: (..test_error)>' has no variant '..none'
         \\          ..none {
         \\            ^
         \\
@@ -3223,9 +3223,9 @@ test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
 
 test "feature_tests/polymorphism/21X_generic_bound_requires_type_keyword" {
     try buildExpectFailExact("tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword",
-        \\tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword/main.rg:3:15: error: generic parameter bounds use '.t: Type: Constraint'
-        \\  foo#(.t: Int32: ExampleAbstract)(.value: Int32) -> (.result: Int32) := {
-        \\                ^
+        \\tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword/main.rg:3:18: error: generic parameter bounds use '.t: Type: Constraint'
+        \\  foo := <.t: Int32: ExampleAbstract > (.value: Int32) -> (.result: Int32) {
+        \\                   ^
         \\
     );
 }
@@ -3341,7 +3341,7 @@ test "feature_tests/ownership/57X_return_reference_to_local" {
 test "feature_tests/ownership/58X_null_safe_reference" {
     try buildExpectFailExact("tests/feature_tests/ownership/58X_null_safe_reference",
         \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:3:23: error: no function named 'cast' exists
-        \\      reference ::= cast#(.to: $&Int32)(.value = zero)
+        \\      reference ::= cast<.to: $&Int32>(.value = zero)
         \\                        ^
         \\
     );
@@ -3367,7 +3367,7 @@ test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
     try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
         \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:5:24: error: no function named 'cast' exists
-        \\      fabricated ::= cast#(.to: &CChar)(.value = address)
+        \\      fabricated ::= cast<.to: &CChar>(.value = address)
         \\                         ^
         \\
     );
@@ -3376,7 +3376,7 @@ test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
 test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
     try buildExpectFailExact("tests/feature_tests/ownership/63X_malloc_direct_safe_cast",
         \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:4:24: error: no function named 'cast' exists
-        \\      fabricated ::= cast#(.to: $&UInt8)(.value = address)
+        \\      fabricated ::= cast<.to: $&UInt8>(.value = address)
         \\                         ^
         \\
     );
@@ -4415,7 +4415,7 @@ test "feature_tests/ownership/46_deinitialized_place_can_be_replaced" {
 test "feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance" {
     try buildExpectFailExact("tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance",
         \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:4:23: error: no function named 'cast' exists
-        \\      reference ::= cast#(.to: $&Int32)(.value = address)
+        \\      reference ::= cast<.to: $&Int32>(.value = address)
         \\                        ^
         \\
     );
@@ -5136,7 +5136,7 @@ test "feature_tests/polymorphism/33X_static_abstract_generic_field_requires_impl
 test "feature_tests/polymorphism/34X_static_abstract_generic_field_identity" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/34X_static_abstract_generic_field_identity",
-        "no function named 'accept_b' accepts arguments (.value: Wrapper#(.backend_type: BackendA))",
+        "no function named 'accept_b' accepts arguments (.value: Wrapper<.backend_type: BackendA>)",
     );
 }
 
@@ -5375,9 +5375,9 @@ test "feature_tests/modules/06X_private_module_value" {
 
 test "feature_tests/modules/07X_private_module_type" {
     try buildExpectFailExact("tests/feature_tests/modules/07X_private_module_type",
-        \\tests/feature_tests/modules/07X_private_module_type/main.rg:3:14: error: type '_HiddenStatus' is private to its module
-        \\      hidden : dep._HiddenStatus = (.code = 0)
-        \\               ^
+        \\tests/feature_tests/modules/07X_private_module_type/main.rg:3:13: error: type '_HiddenStatus' is private to its module
+        \\      hidden: dep._HiddenStatus = (.code = 0)
+        \\              ^
         \\
     );
 }
@@ -5420,7 +5420,7 @@ test "feature_tests/modules/11X_import_cycle" {
 test "feature_tests/modules/12X_import_requires_binding" {
     try buildExpectFailExact("tests/feature_tests/modules/12X_import_requires_binding",
         \\tests/feature_tests/modules/12X_import_requires_binding/main.rg:1:1: error: import must be assigned to a name
-        \\  import("./dep")
+        \\  import ("./dep")
         \\  ^
         \\
     );
@@ -5429,7 +5429,7 @@ test "feature_tests/modules/12X_import_requires_binding" {
 test "feature_tests/modules/13X_import_requires_binding_nested" {
     try buildExpectFailExact("tests/feature_tests/modules/13X_import_requires_binding_nested",
         \\tests/feature_tests/modules/13X_import_requires_binding_nested/main.rg:3:9: error: import must be assigned to a name
-        \\          import("./dep")
+        \\          import ("./dep")
         \\          ^
         \\
     );
@@ -5515,9 +5515,9 @@ test "feature_tests/modules/27_imported_abstract_qualified_signature" {
 
 test "feature_tests/modules/25X_private_choice_option_imported" {
     try buildExpectFailExact("tests/feature_tests/modules/25X_private_choice_option_imported",
-        \\tests/feature_tests/modules/25X_private_choice_option_imported/main.rg:4:10: error: choice option '_hidden_reason' is private to its module
-        \\      dep.._hidden_reason
-        \\           ^
+        \\tests/feature_tests/modules/25X_private_choice_option_imported/main.rg:4:11: error: choice option '_hidden_reason' is private to its module
+        \\      dep .._hidden_reason
+        \\            ^
         \\
     );
 }
@@ -5540,7 +5540,7 @@ test "feature_tests/modules/29X_imported_abstract_ambiguous_overload" {
 test "feature_tests/modules/30X_nonconstant_module_binding_initialization" {
     try buildExpectFailExact("tests/feature_tests/modules/30X_nonconstant_module_binding_initialization",
         \\tests/feature_tests/modules/30X_nonconstant_module_binding_initialization/main.rg:5:1: error: module-level binding 'computed' must use a constant initializer for now
-        \\  computed : Int32 = make_value().value
+        \\  computed: Int32 = make_value().value
         \\  ^
         \\
     );
@@ -6227,16 +6227,16 @@ test "dormant match payload copy diagnostics respect reachability" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\Token : Type = (.value: Int32)
+        \\Token := (.value: Int32)
         \\
-        \\implement Deinit#(Token) (.deinit = (.self: $&Token) -> () {})
+        \\implement Deinit<Token> (.deinit = (.self: $&Token) -> () {})
         \\
         \\Result : Type = (
         \\    ..ok(.token: Token)
         \\    ..error
         \\)
         \\
-        \\dormant() -> () := {
+        \\dormant := () -> ()  {
         \\    value : Result = ..ok(.token = Token(.value = 7))
         \\    match value {
         \\        ..ok payload {
@@ -6246,7 +6246,7 @@ test "dormant match payload copy diagnostics respect reachability" {
         \\    }
         \\}
         \\
-        \\main() -> (.status_code: Int32 = 0) := {}
+        \\main := () -> (.status_code: Int32 = 0)  {}
         \\
         ,
     });
@@ -6272,13 +6272,13 @@ test "dormant pointer diagnostics respect reachability" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\dormant() -> () := {
+        \\dormant := () -> ()  {
         \\    value :: Int32 = 0
         \\    reader : &Int32 = &value
         \\    reader& = 1
         \\}
         \\
-        \\main() -> (.status_code: Int32 = 0) := {}
+        \\main := () -> (.status_code: Int32 = 0)  {}
         \\
         ,
     });
@@ -6304,13 +6304,13 @@ test "argi check validates dormant function bodies" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\dormant() -> () := {
+        \\dormant := () -> ()  {
         \\    value :: Int32 = 0
         \\    reader : &Int32 = &value
         \\    reader& = 1
         \\}
         \\
-        \\main() -> (.status_code: Int32 = 0) := {}
+        \\main := () -> (.status_code: Int32 = 0)  {}
         \\
         ,
     });
@@ -6703,7 +6703,7 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     defer allocator.free(source_path);
     const source = try std.Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(1024 * 1024));
     defer allocator.free(source);
-    const entry = std.mem.indexOf(u8, source, "main(") orelse return error.MissingParityEntry;
+    const entry = std.mem.indexOf(u8, source, "main :=") orelse return error.MissingParityEntry;
     const renamed = try std.fmt.allocPrint(allocator, "{s}parity_body{s}", .{ source[0..entry], source[entry + 4 ..] });
     defer allocator.free(renamed);
     const relocated = try std.mem.replaceOwned(u8, allocator, renamed, "../../_support/unsafe_allocation", "./support");
@@ -6716,17 +6716,17 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     defer allocator.free(opaque_calls);
     const constructor_calls = try std.mem.replaceOwned(u8, allocator, opaque_calls, "Owned(.allocator =", "parity_owned(.allocator =");
     defer allocator.free(constructor_calls);
-    const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned : Type") != null)
+    const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned :=") != null)
         if (std.mem.indexOf(u8, relocated, ".fail: Bool") != null)
-            "parity_owned#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator, .fail = fail) }\n"
+            "parity_owned := <.AllocatorType: Type: Allocator<AllocatorType>> (.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable<.t: Owned, .reasons: (..out_of_memory)>) { result = Owned(.allocator = allocator, .fail = fail) }\n"
         else
-            "parity_owned#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator) }\n"
+            "parity_owned := <.AllocatorType: Type: Allocator<AllocatorType>> (.allocator: $&AllocatorType) -> (.result: Errable<.t: Owned, .reasons: (..out_of_memory)>) { result = Owned(.allocator = allocator) }\n"
     else
         "";
-    const arguments = if (std.mem.startsWith(u8, source[entry..], "main(.system: System")) ".system = system" else "";
+    const arguments = if (std.mem.startsWith(u8, source[entry..], "main := (.system: System")) ".system = system" else "";
     const wrapped = try std.fmt.allocPrint(
         allocator,
-        "{s}\nmain(.system: System) -> (.status_code: Int32) := {{\n    status_code = parity_body({s})\n}}\n",
+        "{s}\nmain := (.system: System) -> (.status_code: Int32) {{\n    status_code = parity_body({s})\n}}\n",
         .{ constructor_calls, arguments },
     );
     defer allocator.free(wrapped);
@@ -6736,8 +6736,8 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     try tmp.dir.writeFile(io, .{ .sub_path = "module/main.rg", .data = wrapped });
     const transfers = try std.fmt.allocPrint(
         allocator,
-        "parity_deinit#(.t: Type)(.self: $&t) -> () := {{ deinit(.self = self) }}\n" ++
-            "parity_drop#(.t: Type)(.slot: $&t) -> () := {{ trusted_opaque_drop(.slot = slot) }}\n{s}",
+        "parity_deinit := <.t: Type> (.self: $&t) -> () {{ deinit(.self = self) }}\n" ++
+            "parity_drop := <.t: Type> (.slot: $&t) -> () {{ trusted_opaque_drop(.slot = slot) }}\n{s}",
         .{constructor_wrapper},
     );
     defer allocator.free(transfers);
@@ -7269,9 +7269,9 @@ test "tests/feature_tests/basics/32X_int64_negative_literal_overflow" {
 
 test "tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow",
-        \\tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow/main.rg:1:52: error: integer literal magnitude exceeds the supported 64-bit range
-        \\  maximum#(.t: Type)() -> (.result: t) := { result = 18446744073709551616 }
-        \\                                                     ^
+        \\tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow/main.rg:1:53: error: integer literal magnitude exceeds the supported 64-bit range
+        \\  maximum := <.t: Type> () -> (.result: t) { result = 18446744073709551616 }
+        \\                                                      ^
         \\
     );
 }
@@ -7736,8 +7736,8 @@ test "argi run inherits stdin stdout and stderr" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\main(.system: System) -> (.status_code: Int32 = 7) := {
-        \\    input ::= unwrap_or_abort(.value = Reader#().read_byte(.self = $&system.terminal&.stdin))
+        \\main := (.system: System) -> (.status_code: Int32 = 7)  {
+        \\    input ::= unwrap_or_abort(.value = Reader<>.read_byte(.self = $&system.terminal&.stdin))
         \\    match input {
         \\        ..ok byte {
         \\            if byte != 65 { status_code = 8 return }
@@ -8822,8 +8822,8 @@ test "formatter CLI checks prints and atomically updates source" {
     defer std.testing.allocator.free(root);
     const path = try std.fs.path.join(std.testing.allocator, &.{ root, "main.rg" });
     defer std.testing.allocator.free(path);
-    const source = "main()->(.status_code:Int32=0):={ status_code=0 }\n";
-    const expected = "main() -> (.status_code: Int32 = 0) := { status_code = 0 }\n";
+    const source = "main := ()->(.status_code:Int32=0){ status_code=0 }\n";
+    const expected = "main := () -> (.status_code: Int32 = 0) { status_code = 0 }\n";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = source });
     const printed = try runArgiCommand(&.{ "format", path, "--stdout" });
     defer std.testing.allocator.free(printed.stdout);
@@ -8864,7 +8864,7 @@ test "formatter prepares all files before changing any source" {
     defer tmp.cleanup();
     const root = try tmpDirRootPath(&tmp);
     defer std.testing.allocator.free(root);
-    const source = "main()->(.status_code:Int32=0):={}\n";
+    const source = "main := ()->(.status_code:Int32=0){}\n";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.rg", .data = source });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "b.rg", .data = "main(]" });
     const result = try runArgiCommand(&.{ "format", root });
@@ -9312,7 +9312,7 @@ test "feature_tests/basics/76_fallible_main_trace" {
     try expect(std.mem.indexOf(u8, result.stderr, "error trace") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
-    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:3:" else "76_fallible_main_trace/main.rg:3:";
+    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:4:" else "76_fallible_main_trace/main.rg:4:";
     try expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }
 
@@ -9409,7 +9409,7 @@ test "feature_tests/basics/83_fallible_main_local_tracer" {
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("", result.stdout);
     try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
-    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:4:" else "83_fallible_main_local_tracer/main.rg:4:";
+    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:5:" else "83_fallible_main_local_tracer/main.rg:5:";
     try expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }
 
@@ -14369,7 +14369,7 @@ test "feature_tests/execution/138_comptime_transient_expression_defaults" {
 test "argi repl distinguishes transient expression default specializations" {
     try expectReplFixture(
         "tests/feature_tests/execution/138_comptime_transient_expression_defaults/main.rg",
-        "with_default#(.T: Int32, .n = 40)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Int32, .n = 39)(.value = 9) }\nwith_default#(.T: Bool, .n = 40)(.value = true)\n",
+        "with_default<.T: Int32, .n = 40>(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default<.T: Int32, .n = 39>(.value = 9) }\nwith_default<.T: Bool, .n = 40>(.value = true)\n",
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );
 }
@@ -14397,7 +14397,7 @@ fn expectReplFixtureWithDiagnostic(fixture_path: ?[]const u8, commands: []const 
     if (fixture_path) |path| {
         const fixture = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(64 * 1024));
         defer std.testing.allocator.free(fixture);
-        const definitions_end = std.mem.indexOf(u8, fixture, "main()") orelse return error.MissingFixtureEntrypoint;
+        const definitions_end = std.mem.indexOf(u8, fixture, "main :=") orelse return error.MissingFixtureEntrypoint;
         try child.stdin.?.writeStreamingAll(std.testing.io, ":begin\n");
         try child.stdin.?.writeStreamingAll(std.testing.io, fixture[0..definitions_end]);
         try child.stdin.?.writeStreamingAll(std.testing.io, ":end\n");
@@ -14432,7 +14432,7 @@ fn expectReplFixtureWithDiagnostic(fixture_path: ?[]const u8, commands: []const 
 test "argi repl preserves record defaults across specializations" {
     try expectReplFixture(
         "tests/feature_tests/execution/149_comptime_record_defaults/main.rg",
-        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 16)(.value = true) }\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
+        "with_default<.T: Int32, .n = 17>(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default<.T: Bool, .n = 16>(.value = true) }\nwith_default<.T: Int32, .n = 17>(.value = 9)\n",
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );
 }
@@ -14440,7 +14440,7 @@ test "argi repl preserves record defaults across specializations" {
 test "argi repl preserves array defaults across specializations" {
     try expectReplFixture(
         "tests/feature_tests/execution/150_comptime_array_defaults/main.rg",
-        "with_default#(.T: Int32, .n = 17)(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 16)(.value = true) }\nwith_default#(.T: Int32, .n = 17)(.value = 9)\n",
+        "with_default<.T: Int32, .n = 17>(.value = 7)\n#run () -> (.answer: Int32) { answer = with_default<.T: Bool, .n = 16>(.value = true) }\nwith_default<.T: Int32, .n = 17>(.value = 9)\n",
         "_0 = 42\n_1 = 41\n_2 = 42\n",
     );
 }
@@ -14478,7 +14478,7 @@ test "feature_tests/execution/160_comptime_choice_defaults" {
 test "argi repl preserves choice defaults across specializations" {
     try expectReplFixture(
         "tests/feature_tests/execution/160_comptime_choice_defaults/main.rg",
-        "with_default#(.T: Int32, .n = 42)(.value = 7)\nwith_default#(.T: Bool, .n = 41)(.value = true)\nwith_default#(.T: Int32, .n = 0)(.value = 9)\n#run () -> (.answer: Int32) { answer = with_default#(.T: Bool, .n = 42)(.value = true) }\n",
+        "with_default<.T: Int32, .n = 42>(.value = 7)\nwith_default<.T: Bool, .n = 41>(.value = true)\nwith_default<.T: Int32, .n = 0>(.value = 9)\n#run () -> (.answer: Int32) { answer = with_default<.T: Bool, .n = 42>(.value = true) }\n",
         "_0 = 42\n_1 = 41\n_2 = 0\n_3 = 42\n",
     );
 }
@@ -14492,7 +14492,7 @@ test "feature_tests/execution/161_partial_choice_cleanup" {
 test "argi repl supplies persistent allocator capabilities across reset" {
     try expectReplFixture(
         null,
-        "text ::= unwrap_or_abort(.value = String(.length = 3))\nbyte_length(.self = &text)\nnumbers ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)\nunwrap_or_abort(.value = get(.self = &numbers, .index = 0))\n:reset\ntext ::= unwrap_or_abort(.value = String(.length = 4))\nbyte_length(.self = &text)\n",
+        "text ::= unwrap_or_abort(.value = String(.length = 3))\nbyte_length(.self = &text)\nnumbers ::= unwrap_or_abort(.value = DynamicArray<.t: Int32>(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)\nunwrap_or_abort(.value = get(.self = &numbers, .index = 0))\n:reset\ntext ::= unwrap_or_abort(.value = String(.length = 4))\nbyte_length(.self = &text)\n",
         "_0 = 3\n_1 = ()\n_2 = 42\n_0 = 4\n",
     );
 }
@@ -15017,14 +15017,14 @@ test "feature_tests/execution/251_prepared_zero_sized_resources" {
 
 test "argi repl retains prepared generic resource slots across submissions" {
     const commands =
-        \\Box#(.T: Type): Type = (.value: T)
-        \\implement#(.T: Type) Deinit#(Box#(T)) (
-        \\    .deinit = (.self: $&Box#(T)) -> () {}
+        \\Box := <.T: Type> (.value: T)
+        \\implement<.T: Type> Deinit<Box<T>> (
+        \\    .deinit = (.self: $&Box<T>) -> () {}
         \\)
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Box#(Int32))(.self = allocator, .count = 1))
-        \\raw ::= raw_pointer#(.t: Box#(Int32))(.address = memory.data.address).raw
-        \\first ::= trusted_establish_allocation_slot#(.t: Box#(Int32))(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
-        \\trusted_opaque_move_in(.storage = $&memory, .destination = first, .source = Box#(Int32)(.value = 42))
+        \\memory ::= unwrap_or_abort(.value = allocate<.t: Box<Int32>>(.self = allocator, .count = 1))
+        \\raw ::= raw_pointer<.t: Box<Int32>>(.address = memory.data.address).raw
+        \\first ::= trusted_establish_allocation_slot<.t: Box<Int32>>(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = first, .source = Box<Int32>(.value = 42))
         \\first&.value
         \\trusted_opaque_drop(.slot = first)
         \\trusted_opaque_mark_empty(.storage = $&memory)
@@ -15059,11 +15059,11 @@ test "feature_tests/execution/255_acquired_borrowed_records" {
 
 test "argi repl retains acquired reference companions across submissions" {
     const commands =
-        \\Pair: Type = (.source: &Int32)
+        \\Pair := (.source: &Int32)
         \\value :: Int32 = 42
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Pair)(.self = allocator))
-        \\raw ::= raw_pointer#(.t: Pair)(.address = memory.data.address).raw
-        \\reference ::= trusted_establish_allocation_slot#(.t: Pair)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\memory ::= unwrap_or_abort(.value = allocate<.t: Pair>(.self = allocator))
+        \\raw ::= raw_pointer<.t: Pair>(.address = memory.data.address).raw
+        \\reference ::= trusted_establish_allocation_slot<.t: Pair>(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
         \\trusted_opaque_move_in(.storage = $&memory, .destination = reference, .source = Pair(.source = &value))
         \\borrowed ::= reference&.source
         \\borrowed&
@@ -15080,23 +15080,23 @@ test "feature_tests/execution/256_acquired_virtual_records" {
 
 test "argi repl retains acquired virtual witnesses across submissions" {
     const commands =
-        \\Counter: Type = (.value: Int32)
-        \\Counting#(.State: Type): Contract = (
+        \\Counter := (.value: Int32)
+        \\Counting<.State: Type>: Contract = (
         \\    .bump: (.self: $&State, .amount: Int32) -> () where {}
         \\    .read: (.self: &State) -> (.result: Int32) where {}
         \\)
-        \\implement Counting#(Counter) (
+        \\implement Counting<Counter> (
         \\    .bump = (.self: $&Counter, .amount: Int32) -> () { self&.value = self&.value + amount }
         \\    .read = (.self: &Counter) -> (.result: Int32) { result = self&.value }
         \\)
-        \\Holder: Type = (.counter: Virtual#(.contract: Counting))
+        \\Holder := (.counter: Virtual<.contract: Counting>)
         \\counter :: Counter = (.value = 7)
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = allocator))
-        \\raw ::= raw_pointer#(.t: Holder)(.address = memory.data.address).raw
-        \\slot ::= trusted_establish_allocation_slot#(.t: Holder)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
-        \\trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = Holder(.counter = to_virtual#(.contract: Counting)(.value = $&counter)))
-        \\Counting#().bump(.self = $&slot&.counter, .amount = 35)
-        \\Counting#().read(.self = &slot&.counter).result
+        \\memory ::= unwrap_or_abort(.value = allocate<.t: Holder>(.self = allocator))
+        \\raw ::= raw_pointer<.t: Holder>(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot<.t: Holder>(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = Holder(.counter = to_virtual<.contract: Counting>(.value = $&counter)))
+        \\Counting<>.bump(.self = $&slot&.counter, .amount = 35)
+        \\Counting<>.read(.self = &slot&.counter).result
         \\
     ;
     try expectReplFixture(null, commands, "_0 = ()\n_1 = ()\n_2 = 42\n");
@@ -15122,16 +15122,16 @@ test "feature_tests/execution/259_acquired_choice_resources" {
 
 test "argi repl retains acquired choice cleanup identities across submissions" {
     const commands =
-        \\Counter: Type = (.drops: Int32 = 0)
-        \\Resource: Type = (.counter: $&Counter, .id: Int32)
+        \\Counter := (.drops: Int32 = 0)
+        \\Resource := (.counter: $&Counter, .id: Int32)
         \\Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
-        \\implement Deinit#(Resource) (
+        \\implement Deinit<Resource> (
         \\    .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + self&.id }
         \\)
         \\counter :: Counter = Counter()
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = allocator))
-        \\raw ::= raw_pointer#(.t: Choice)(.address = memory.data.address).raw
-        \\slot ::= trusted_establish_allocation_slot#(.t: Choice)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\memory ::= unwrap_or_abort(.value = allocate<.t: Choice>(.self = allocator))
+        \\raw ::= raw_pointer<.t: Choice>(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot<.t: Choice>(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
         \\value :: Choice = ..pair(.left = (.counter = $&counter, .id = 11), .right = (.counter = $&counter, .id = 31))
         \\filled ::= trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = ~value)
         \\dropped ::= trusted_opaque_drop(.slot = slot)
@@ -15257,9 +15257,9 @@ test "feature_tests/execution/271_acquired_partial_array_cleanup" {
 test "argi repl retains partial acquired array cleanup across submissions" {
     const commands =
         \\counter :: Counter = Counter()
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: [3]Resource)(.self = allocator))
-        \\raw ::= raw_pointer#(.t: [3]Resource)(.address = memory.data.address).raw
-        \\slot ::= trusted_establish_allocation_slot#(.t: [3]Resource)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
+        \\memory ::= unwrap_or_abort(.value = allocate<.t: [3]Resource>(.self = allocator))
+        \\raw ::= raw_pointer<.t: [3]Resource>(.address = memory.data.address).raw
+        \\slot ::= trusted_establish_allocation_slot<.t: [3]Resource>(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
         \\index :: UIntNative = 0
         \\slot&[index] = Resource(.counter = $&counter, .value = 10)
         \\slot&[0].value
@@ -15283,15 +15283,15 @@ test "feature_tests/execution/272_acquired_partial_extraction_cleanup" {
 test "argi repl preserves indexed replacement destinations across submissions" {
     const commands =
         \\:begin
-        \\select_array_index(.selection: $&UIntNative, .counter: $&Counter) -> (.result: UIntNative) := {
+        \\select_array_index := (.selection: $&UIntNative, .counter: $&Counter) -> (.result: UIntNative)  {
         \\    counter&.selections = counter&.selections + 1
         \\    result = selection&
         \\}
-        \\make_array_resource(.selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Resource, (..stop))) := {
+        \\make_array_resource := (.selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable<Resource, (..stop)>)  {
         \\    selection&= 1
         \\    if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.counter = counter, .value = 9) }
         \\}
-        \\replace_array(.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Int32, (..stop))) := {
+        \\replace_array := (.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable<Int32, (..stop)>)  {
         \\    values&[select_array_index(.selection = selection, .counter = counter)] = make_array_resource(.selection = selection, .counter = counter, .fail = fail)!
         \\    result = ..ok 42
         \\}
@@ -15397,13 +15397,13 @@ test "feature_tests/execution/280X_generic_system_runtime_capture" {
 
 test "argi repl preserves generic System specializations after rejected captures" {
     const commands =
-        \\calculate#(.T: Int8, .n = 41)()
-        \\captured_local#(.n = 42)()
-        \\selected_capture#(.n = 42)(.runtime_value = 7)
-        \\bad ::= selected_capture#(.n = 41)(.runtime_value = 7)
-        \\default_host#(.n = 42)()
-        \\tuple_host#(.n = 41)()
-        \\allocate_host#(.n = 42)()
+        \\calculate<.T: Int8, .n = 41>()
+        \\captured_local<.n = 42>()
+        \\selected_capture<.n = 42>(.runtime_value = 7)
+        \\bad ::= selected_capture<.n = 41>(.runtime_value = 7)
+        \\default_host<.n = 42>()
+        \\tuple_host<.n = 41>()
+        \\allocate_host<.n = 42>()
         \\
     ;
     try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n_3 = 42\n_4 = 42\n_5 = 42\n", "#run arguments must be compile-time constants");
@@ -15411,10 +15411,10 @@ test "argi repl preserves generic System specializations after rejected captures
 
 test "argi repl recovers from aborted allocated System evaluations" {
     const commands =
-        \\allocate_host#(.n = 41)()
-        \\failed ::= abort_host#(.n = 42)()
-        \\allocate_host#(.n = 42)()
-        \\captured_local#(.n = 42)()
+        \\allocate_host<.n = 41>()
+        \\failed ::= abort_host<.n = 42>()
+        \\allocate_host<.n = 42>()
+        \\captured_local<.n = 42>()
         \\
     ;
     try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n", "#run evaluation aborted");
@@ -15585,7 +15585,7 @@ test "argi repl discovers public submodules from retained import aliases" {
     const commands =
         \\root := import("./tests/feature_tests/modules/32_public_submodules/tree")
         \\root.branch.leaf.answer()
-        \\root.branch.leaf.identity#(.T: Int32)(42)
+        \\root.branch.leaf.identity<.T: Int32>(42)
         \\:begin
         \\answer := () -> (.value: Int32) { value = root.branch.leaf.answer() }
         \\:end

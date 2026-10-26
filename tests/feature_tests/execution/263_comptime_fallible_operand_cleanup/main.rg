@@ -1,20 +1,20 @@
 ..stop
 
-Counter: Type = (.drops: Int32 = 0)
+Counter := (.drops: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .id: Int32)
+Resource := (.counter: $&Counter, .id: Int32)
 
 Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.drops = self&.counter&.drops + self&.id
     }
 )
 
-maybe_resource(.counter: $&Counter, .fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result : Errable#(Resource, (..stop))
-) := {
+maybe_resource := (.counter: $&Counter, .fail: Bool, .tracer: $&Virtual<.contract: ErrorTracer>) -> (
+    .result: Errable<Resource, (..stop)>
+) {
     if fail {
         result = ..error(.reason = ..stop, .tracer = tracer)
     } else {
@@ -22,9 +22,9 @@ maybe_resource(.counter: $&Counter, .fail: Bool, .tracer: $&Virtual#(.contract: 
     }
 }
 
-build_owned(.counter: $&Counter, .fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result : Errable#(Choice, (..stop))
-) := {
+build_owned := (.counter: $&Counter, .fail: Bool, .tracer: $&Virtual<.contract: ErrorTracer>) -> (
+    .result: Errable<Choice, (..stop)>
+) {
     value :: Choice = ..pair(
         .left  = Resource(.counter = counter, .id = 7)
         .right = maybe_resource(.counter = counter, .fail = fail, .tracer = tracer)!
@@ -32,26 +32,26 @@ build_owned(.counter: $&Counter, .fail: Bool, .tracer: $&Virtual#(.contract: Err
     result = ..ok ~value
 }
 
-discard_result(.value: Errable#(Choice, (..stop))) -> () := { owner ::= ~value }
+discard_result := (.value: Errable<Choice, (..stop)>) -> () { owner ::= ~value }
 
-consume_pair(.left: Resource, .right: Resource) -> (.result: Int32) := {
+consume_pair := (.left: Resource, .right: Resource) -> (.result: Int32) {
     first ::= ~left
     second ::= ~right
     result = 42
 }
 
-build_call(.counter: $&Counter, .fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result : Errable#(Int32, (..stop))
-) := {
+build_call := (.counter: $&Counter, .fail: Bool, .tracer: $&Virtual<.contract: ErrorTracer>) -> (
+    .result: Errable<Int32, (..stop)>
+) {
     result = ..ok consume_pair(
         .left  = Resource(.counter = counter, .id = 7)
         .right = maybe_resource(.counter = counter, .fail = fail, .tracer = tracer)!
     )
 }
 
-build_array(.counter: $&Counter, .fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result : Errable#(Int32, (..stop))
-) := {
+build_array := (.counter: $&Counter, .fail: Bool, .tracer: $&Virtual<.contract: ErrorTracer>) -> (
+    .result: Errable<Int32, (..stop)>
+) {
     values :: [2]Resource = (
         Resource(.counter = counter, .id = 7),
         maybe_resource(.counter = counter, .fail = fail, .tracer = tracer)!
@@ -61,11 +61,11 @@ build_array(.counter: $&Counter, .fail: Bool, .tracer: $&Virtual#(.contract: Err
 
 State: Type = ()
 
-Consumer#(.StateType: Type): Contract = (
+Consumer<.StateType: Type>: Contract = (
     .consume : (.self: $&StateType, .left: Resource, .right: Resource) -> (.result: Int32) where {}
 )
 
-implement Consumer#(State) (
+implement Consumer<State> (
     .consume = (.self: $&State, .left: Resource, .right: Resource) -> (.result: Int32) {
         first ::= ~left
         second ::= ~right
@@ -73,24 +73,23 @@ implement Consumer#(State) (
     }
 )
 
-build_virtual(
-    .handle  : $&Virtual#(.contract: Consumer),
+build_virtual := (
+    .handle  : $&Virtual<.contract: Consumer>,
     .counter : $&Counter,
     .fail    : Bool,
-    .tracer  : $&Virtual#(.contract: ErrorTracer)
-) -> (.result: Errable#(Int32, (..stop))) := {
-    result = ..ok Consumer#(
-    ).consume(
+    .tracer  : $&Virtual<.contract: ErrorTracer>
+) -> (.result: Errable<Int32, (..stop)>) {
+    result = ..ok Consumer<>.consume(
         .self  = handle
         .left  = Resource(.counter = counter, .id = 7)
         .right = maybe_resource(.counter = counter, .fail = fail, .tracer = tracer)!
     )
 }
 
-probe() -> (.result: Int32) := {
+probe := () -> (.result: Int32) {
     counter :: Counter = Counter()
     tracer :: NoopErrorTracer = (.marker = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= to_virtual<.contract: ErrorTracer>(.value = $&tracer)
     failed ::= build_owned(.counter = $&counter, .fail = true, .tracer = $&erased)
     if counter.drops != 7 { abort }
     succeeded ::= build_owned(.counter = $&counter, .fail = false, .tracer = $&erased)
@@ -105,7 +104,7 @@ probe() -> (.result: Int32) := {
     succeeded_call ::= build_call(.counter = $&counter, .fail = false, .tracer = $&erased)
     if counter.drops != 84 { abort }
     state :: State = ()
-    handle ::= to_virtual#(.contract: Consumer)(.value = $&state)
+    handle ::= to_virtual<.contract: Consumer>(.value = $&state)
     failed_virtual ::= build_virtual(
         .handle = $&handle, .counter = $&counter, .fail = true, .tracer = $&erased
     )
@@ -116,7 +115,7 @@ probe() -> (.result: Int32) := {
     result = counter.drops
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     if #run () -> (.value: Int32) { value = probe() } != 112 { abort }
     if probe() != 112 { abort }
     status_code = 42

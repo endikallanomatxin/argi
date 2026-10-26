@@ -1,16 +1,16 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Owner: Type = (.counter: $&Counter, .value: Int32, .saved: &Int32)
+Owner := (.counter: $&Counter, .value: Int32, .saved: &Int32)
 
-implement Deinit#(Owner) (
+implement Deinit<Owner> (
     .deinit = (.self: $&Owner) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-Container: Type = (.owner: Owner)
+Container := (.owner: Owner)
 
-main() -> () := {
+main := () -> () {
     counter :: Counter = Counter()
     external ::= 0
     container :: Container = Container(

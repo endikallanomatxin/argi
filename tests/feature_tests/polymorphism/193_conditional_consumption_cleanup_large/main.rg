@@ -1,8 +1,8 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Large: Type = (.values: [128]Int32)
+Large := (.values: [128]Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         drops = drops + 1
     }
@@ -10,17 +10,17 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-release_if(.resource: $&Resource, .consume: Bool) -> (.result: ?Large) := {
+release_if := (.resource: $&Resource, .consume: Bool) -> (.result: ?Large) {
     if consume {
         deinit(resource)
-        result = ..some(.value = Large(zeroed#([128]Int32)()))
+        result = ..some(.value = Large(zeroed<[128]Int32>()))
         return
     }
 
     result = ..none
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if true {
         resource ::= Resource(42)
         result ::= release_if($&resource, true)

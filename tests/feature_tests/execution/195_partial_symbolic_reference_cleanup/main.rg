@@ -1,20 +1,20 @@
 tokens :: Int32 = 0
 
-Token: Type = (.value: Int32)
+Token := (.value: Int32)
 
-implement Deinit#(Token) (.deinit = (.self: $&Token) -> () { tokens = tokens + 1 })
+implement Deinit<Token> (.deinit = (.self: $&Token) -> () { tokens = tokens + 1 })
 
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.counter&.count = self&.counter&.count + 1 }
 )
 
-Wrapper: Type = (.item: Resource, .sibling: Resource, .whole: $&Counter)
+Wrapper := (.item: Resource, .sibling: Resource, .whole: $&Counter)
 
-implement Deinit#(Wrapper) (
+implement Deinit<Wrapper> (
     .deinit = (.self: $&Wrapper) -> () {
         self&.whole&.count = self&.whole&.count + 1
         deinit(.self = $&self&.item)
@@ -22,12 +22,12 @@ implement Deinit#(Wrapper) (
     }
 )
 
-select_owner(.owner: $&Wrapper, .token: Token) -> (.result: $&Wrapper) := {
+select_owner := (.owner: $&Wrapper, .token: Token) -> (.result: $&Wrapper) {
     held ::= ~token
     result = owner
 }
 
-replace_incomplete(.owner: $&Wrapper, .counter: $&Counter, .whole: $&Counter) -> () := {
+replace_incomplete := (.owner: $&Wrapper, .counter: $&Counter, .whole: $&Counter) -> () {
     deinit(.self = $&owner&.item)
     token :: Token = Token(.value = 0)
     [select_owner(.owner = owner, .token = ~token)]&= Wrapper(
@@ -37,7 +37,7 @@ replace_incomplete(.owner: $&Wrapper, .counter: $&Counter, .whole: $&Counter) ->
     )
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     whole :: Counter = Counter()
     {

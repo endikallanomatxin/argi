@@ -1,19 +1,19 @@
-Value : Type = (
-    .number: Int32
+Value := (
+    .number : Int32
 )
 
-implement Deinit#(Value) (
+implement Deinit<Value> (
     .deinit = (.self: $&Value) -> () {
 
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     source :: Value = (.number = 7)
     pointer ::= $&source
     deinit(.self = pointer)
 
-    pointer& = (.number = 9)
+    pointer&= (.number = 9)
     if source.number != 9 {
         status_code = 1
         return

@@ -1,5 +1,5 @@
-Extractor#(.Participant: Type): Contract = (
-    .take: (.self: &Participant, .storage: &Allocation, .input: ?Int32) -> (.result: ?Int32) where {
+Extractor<.Participant: Type>: Contract = (
+    .take : (.self: &Participant, .storage: &Allocation, .input: ?Int32) -> (.result: ?Int32) where {
         transfers(result, input)
         on result ..some { from_storage(result, storage) }
     }
@@ -7,13 +7,13 @@ Extractor#(.Participant: Type): Contract = (
 
 Implementation: Type = ()
 
-implement Extractor#(Implementation) (.take = _take)
+implement Extractor<Implementation> (.take = _take)
 
-_take(.self: &Implementation, .storage: &Allocation, .input: ?Int32) -> (.result: ?Int32) := {
+_take := (.self: &Implementation, .storage: &Allocation, .input: ?Int32) -> (.result: ?Int32) {
     result = input
 }
 
-main() -> () := {
+main := () -> () {
     implementation ::= Implementation()
-    _ ::= to_virtual#(Extractor)(&implementation)
+    _ ::= to_virtual<Extractor>(&implementation)
 }

@@ -1,13 +1,11 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
-    array ::= DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 1)!
+    array ::= DynamicArray<.t: UIntNative>(.allocator = allocator, .capacity = 1)!!!
     index :: UIntNative = 0
     while index < 65 {
-        push(.self = $&array, .value = index, .allocator = allocator)!
-        index = [
-            index
-            + 1
-        ]
+        push(.self = $&array, .value = index, .allocator = allocator)!!!
+        index = [index + 1]
     }
     if capacity(.self = &array).count != 128 { abort }
     index = 0
@@ -15,7 +13,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         if item != index { abort }
         index = index + 1
     }
-    ensure_capacity(.self = $&array, .capacity = 129, .allocator = allocator)!
+    ensure_capacity(.self = $&array, .capacity = 129, .allocator = allocator)!!!
     if capacity(.self = &array).count != 256 { abort }
     oversized ::= integer_limits(.value = index).maximum
     match ensure_capacity(.self = $&array, .capacity = oversized, .allocator = allocator) {
@@ -23,9 +21,5 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if length(.self = &array).count != 65 or capacity(.self = &array).count != 256 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

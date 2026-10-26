@@ -1,15 +1,15 @@
-Readable#(.T: Type): Contract = (
-    .read: (.source: &T) -> (.value: Int32)
+Readable <.T: Type >: Contract = (
+    .read : (.source: &T) -> (.value: Int32)
 )
-Writable#(.T: Type): Contract = (
-    Readable#(T)
-    .write: (.target: $&T, .value: Int32) -> ()
+Writable <.T: Type >: Contract = (
+    Readable < T >
+    .write : (.target: $&T, .value: Int32) -> ()
 )
-Cell: Type = (.value: Int32)
-implement Readable#(Cell) (
+Cell := (.value: Int32)
+implement Readable < Cell > (
     .read = (.source: &Cell) -> (.value: Int32) { value = source&.value }
 )
-implement Writable#(Cell) (
+implement Writable < Cell > (
     .write = (.target: $&Cell, .value: Int32) -> () { target&.value = value }
 )
 main := () -> (.status_code: Int32 = 0) {

@@ -1,6 +1,6 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= system.page_allocator
-    array ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 5))
+    array ::= unwrap_or_abort(.value = DynamicArray<.t: Int32>(.capacity = 5))
     reverse(.self = $&array)
     push_assume_capacity(.self = $&array, .value = 1)
     reverse(.self = $&array)

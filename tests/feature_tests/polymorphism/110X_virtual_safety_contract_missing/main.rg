@@ -1,14 +1,14 @@
-Source#(.Participant: Type): Contract = (
-    .get: (.self: &Participant) -> (.value: Int32)
+Source<.Participant: Type>: Contract = (
+    .get : (.self: &Participant) -> (.value: Int32)
 )
 
-Cell: Type = (.value: Int32)
+Cell := (.value: Int32)
 
-implement Source#(Cell) (.get = _impl_get_Cell)
+implement Source<Cell> (.get = _impl_get_Cell)
 
-_impl_get_Cell := (.self: &Cell) -> (.value: Int32)  { value = self&.value }
+_impl_get_Cell := (.self: &Cell) -> (.value: Int32) { value = self&.value }
 
-main() -> () := {
+main := () -> () {
     cell ::= Cell(42)
-    source ::= to_virtual#(Source)(&cell)
+    source ::= to_virtual<Source>(&cell)
 }

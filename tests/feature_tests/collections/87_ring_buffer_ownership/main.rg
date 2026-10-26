@@ -1,17 +1,17 @@
-Tracked: Type = (.id: Int32)
+Tracked := (.id: Int32)
 
 drops :: Int32 = 0
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         drops = drops + 1
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= system.page_allocator
     ring ::= unwrap_or_abort(
-        .value = RingBuffer#(.t: Tracked)(.capacity = 2, .allocator = allocator)
+        .value = RingBuffer<.t: Tracked>(.capacity = 2, .allocator = allocator)
     )
     a ::= Tracked(.id = 1)
     b ::= Tracked(.id = 2)
@@ -35,7 +35,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&extracted)
     if drops != 4 { abort }
     strings ::= unwrap_or_abort(
-        .value = RingBuffer#(.t: String)(.capacity = 2, .allocator = allocator)
+        .value = RingBuffer<.t: String>(.capacity = 2, .allocator = allocator)
     )
     first ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 1))
     second ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 1))

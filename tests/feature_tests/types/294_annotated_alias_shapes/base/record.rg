@@ -1,1 +1,1 @@
-Record: Type = (.value: Int32)
+Record := (.value: Int32)

@@ -1,29 +1,29 @@
-Counter: Type = (.count: Int32 = 0, .order: Int32 = 0)
+Counter := (.count: Int32 = 0, .order: Int32 = 0)
 
-Tracked: Type = (.counter: $&Counter, .id: Int32)
+Tracked := (.counter: $&Counter, .id: Int32)
 
 Result: Type = (..some Tracked, ..none)
 
-implement Deinit#(Tracked) (
+implement Deinit<Tracked> (
     .deinit = (.self: $&Tracked) -> () {
         self&.counter&.count = self&.counter&.count + 1
         self&.counter&.order = self&.counter&.order * 10 + self&.id
     }
 )
 
-make(.counter: $&Counter, .id: Int32) -> (.result: Tracked) := {
+make := (.counter: $&Counter, .id: Int32) -> (.result: Tracked) {
     index :: Int32 = 0
     while index < 1 { index = index + 1 }
     counter&.order = counter&.order * 10 + id
     result = Tracked(.counter = counter, .id = id)
 }
 
-make_twice(.counter: $&Counter) -> (.result: Tracked) := {
+make_twice := (.counter: $&Counter) -> (.result: Tracked) {
     result = Tracked(.counter = counter, .id = 4)
     result = Tracked(.counter = counter, .id = 5)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         owner :: Tracked = Tracked(.counter = $&counter, .id = 1)

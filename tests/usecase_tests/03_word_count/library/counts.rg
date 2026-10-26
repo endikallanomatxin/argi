@@ -1,8 +1,8 @@
-count_text(
-    .self      : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
+count_text := (
+    .self      : $&HashMap<.key: String, .value: UIntNative, .policy: StandardHashPolicy>,
     .text      : StringView,
     .allocator : $&PageAllocator
-) -> !Void = ..ok Void() := {
+) -> !Void = ..ok Void() {
     assume allocator
 
     for token in split_whitespace(text) {
@@ -18,14 +18,14 @@ count_text(
     }
 }
 
-count_directory(
-    .self        : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
+count_directory := (
+    .self        : $&HashMap<.key: String, .value: UIntNative, .policy: StandardHashPolicy>,
     .path        : StringView,
     .limit       : UIntNative,
-    .buffer      : MutableArrayView#(.t: UInt8),
+    .buffer      : MutableArrayView<.t: UInt8>,
     .file_system : $&FileSystem,
     .allocator   : $&PageAllocator
-) -> !Void = ..ok Void() := {
+) -> !Void = ..ok Void() {
     assume allocator
     assume file_system
 

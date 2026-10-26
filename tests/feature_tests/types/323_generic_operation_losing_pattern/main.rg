@@ -1,25 +1,27 @@
-Same#(.Participant: Type): Contract = (
+Same<.Participant: Type>: Contract = (
     .combine : <.Value: Type> (.owner: &Participant, .left: Value, .right: Value) -> (
         .result : Bool
     )
 )
 
-Different#(.Participant: Type): Contract = (
-    .combine : <.Left: Type,
-    .Right   : Type> (.owner: &Participant, .left: Left, .right: Right) -> (.result: Bool)
+Different<.Participant: Type>: Contract = (
+    .combine: <.Left: Type, .Right: Type> (.owner: &Participant, .left: Left, .right: Right) -> (
+        .result : Bool
+    )
 )
 
 Owner := (.unused: Bool)
 
-implement Same#(Owner) (
+implement Same<Owner> (
     .combine = <.Item: Type> (.owner: &Owner, .left: Item, .right: Item) -> (.result: Bool) {
         result = false
     }
 )
 
-implement Different#(Owner) (
-    .combine = <.A: Type,
-    .B       : Type> (.owner: &Owner, .left: A, .right: B) -> (.result: Bool) { result = true }
+implement Different<Owner> (
+    .combine = <.A: Type, .B: Type> (.owner: &Owner, .left: A, .right: B) -> (.result: Bool) {
+        result = true
+    }
 )
 
 computed ::= #run () -> (.result: Bool) {

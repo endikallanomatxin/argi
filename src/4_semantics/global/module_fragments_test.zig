@@ -33,7 +33,7 @@ fn buildCondition(allocator: std.mem.Allocator, path: []const u8, source: []cons
 
 test "module fragments retain declaration identities and share lexical and qualified lookup" {
     const a = std.testing.allocator;
-    const base_source = "Secret: Type = (._value: Int32)\n_hidden := () -> (.result: Int32) { result = 42 }";
+    const base_source = "Secret := (._value: Int32)\n_hidden := () -> (.result: Int32) { result = 42 }";
     const fragment_source = "answer := () -> (.result: Int32) { value :: Secret = (._value = _hidden())\nresult = value._value }";
     const client_source = "pkg := import(\"../pkg\")\nuse := () -> (.result: Int32) { result = pkg.answer() }";
     const sources = [_]@import("../../1_base/source_files.zig").SourceFile{
@@ -89,7 +89,7 @@ test "module fragments reject cross-fragment ordinary overloads" {
     const a = std.testing.allocator;
     var base = try build(a, "/project/pkg/base.rg", "work := () -> () {}");
     defer base.deinit(a);
-    var fragment = try build(a, "/project/pkg/selected.rg", "work#(.T: Type) := (.value: T) -> () {}");
+    var fragment = try build(a, "/project/pkg/selected.rg", "work := <.T: Type> (.value: T) -> () {}");
     defer fragment.deinit(a);
     const modules = [_]module.ModuleSemanticGraph{ base, fragment };
     var session: sema.Session = undefined;
@@ -141,9 +141,9 @@ test "module fragments keep path coincidence separate from explicit namespace ow
 
 test "module fragments select contract implementations in the shared namespace" {
     const a = std.testing.allocator;
-    var base = try build(a, "/project/pkg/base.rg", "Echo#(.T: Type): Contract = (.echo: (.value: T) -> (.result: T))");
+    var base = try build(a, "/project/pkg/base.rg", "Echo<.T: Type>: Contract = (.echo: (.value: T) -> (.result: T))");
     defer base.deinit(a);
-    var fragment = try build(a, "/project/pkg/selected.rg", "implement Echo#(Int32) (.echo = (.value: Int32) -> (.result: Int32) { result = value })\nanswer := () -> (.result: Int32) { result = echo(.value = 42) }");
+    var fragment = try build(a, "/project/pkg/selected.rg", "implement Echo<Int32> (.echo = (.value: Int32) -> (.result: Int32) { result = value })\nanswer := () -> (.result: Int32) { result = echo(.value = 42) }");
     defer fragment.deinit(a);
     const modules = [_]module.ModuleSemanticGraph{ base, fragment };
     var session: sema.Session = undefined;

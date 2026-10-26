@@ -1,10 +1,10 @@
 ..failed
 
-Cell: Type = (.unused: Int32)
+Cell := (.unused: Int32)
 
-Owned: Type = (.value: Int32)
+Owned := (.value: Int32)
 
-implement Deinit#(Owned) (
+implement Deinit<Owned> (
     .deinit = (.self: $&Owned) -> () {
         drops = drops + 1
     }
@@ -12,7 +12,7 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-make(.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) := {
+make := (.self: &Cell, .mode: Int32) -> (.result: Errable<?Owned, (..failed)>) {
     if mode == 0 {
         result = ..ok ..none
         return
@@ -25,14 +25,14 @@ make(.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) := {
     result = ..error(.reason = ..failed)
 }
 
-Envelope: Type = (.result: Errable#(?Owned, (..failed)))
+Envelope := (.result: Errable<?Owned, (..failed)>)
 
-leave_early(.cell: &Cell) -> () := {
+leave_early := (.cell: &Cell) -> () {
     result ::= make(cell, 1)
     return
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
 
     if true {

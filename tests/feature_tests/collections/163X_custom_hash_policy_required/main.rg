@@ -1,6 +1,6 @@
 Policy: Type = ()
 
-implement HashPolicy#(Policy, Int32) (
+implement HashPolicy<Policy, Int32> (
     .Query : Type = &Int32
     .query = (.self: &Policy, .key: &Int32) -> (.query: Query) { query = key }
 
@@ -10,7 +10,7 @@ implement HashPolicy#(Policy, Int32) (
     }
 )
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume allocator := system.page_allocator
-    map ::= unwrap_or_abort(.value = HashMap#(.key: Int32, .value: Int32, .policy: Policy)())
+    map ::= unwrap_or_abort(.value = HashMap<.key: Int32, .value: Int32, .policy: Policy>())
 }

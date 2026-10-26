@@ -2,9 +2,9 @@ library ::= import ("./library")
 
 Reasons: Type = (..unavailable)
 
-Pair#(.left: Type, .right: Type): Type = (.left: left, .right: right)
+Pair := <.left: Type, .right: Type> (.left: left, .right: right)
 
-checked(.value: Int32) -> (.result: Errable#(Int32, Reasons)) := {
+checked := (.value: Int32) -> (.result: Errable<Int32, Reasons>) {
     if value < 0 {
         result = ..error(.reason = ..unavailable)
         return
@@ -13,31 +13,31 @@ checked(.value: Int32) -> (.result: Errable#(Int32, Reasons)) := {
     result = ..ok value
 }
 
-echo#(.t: Type)(.value: t) -> (.result: Errable#(t, Reasons)) := {
+echo := <.t: Type> (.value: t) -> (.result: Errable<t, Reasons>) {
     result = ..ok value
 }
 
-open_echo#(.t: Type)(.value: t) -> (.result: Errable#(t)) := {
+open_echo := <.t: Type> (.value: t) -> (.result: Errable<t>) {
     result = ..ok value
 }
 
-ReadValue#(.Participant: Type): Contract = (
-    .t: Type
+ReadValue<.Participant: Type>: Contract = (
+    .t : Type
 
-    .read: (.self: &Participant) -> (.value: t)
+    .read : (.self: &Participant) -> (.value: t)
 )
 
-IntegerValue: Type = (.value: Int32)
+IntegerValue := (.value: Int32)
 
-implement ReadValue#(IntegerValue) (.t: Type = Int32, .read = _impl_read_IntegerValue)
+implement ReadValue<IntegerValue> (.t: Type = Int32, .read = _impl_read_IntegerValue)
 
-_impl_read_IntegerValue := (.self: &IntegerValue) -> (.value: Int32)  { value = self&.value }
+_impl_read_IntegerValue := (.self: &IntegerValue) -> (.value: Int32) { value = self&.value }
 
-read_value#(.t: Type, .source: Type: ReadValue#(.t: t))(.self: &source) -> (.value: t) := {
+read_value := <.t: Type, .source: Type: ReadValue<.t: t>> (.self: &source) -> (.value: t) {
     value = read(.self = self).value
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     value ::= unwrap_or_abort(.value = checked(42)).result
     if value != 42 { abort }
 
@@ -50,22 +50,22 @@ main() -> (.status_code: Int32 = 0) := {
     }
 
     borrowed ::= IntegerValue(5)
-    if read_value#(Int32, IntegerValue)(.self = &borrowed).value != 5 { abort }
+    if read_value<Int32, IntegerValue>(.self = &borrowed).value != 5 { abort }
 
-    imported: library.Box#(Int32) = (.value = 13)
+    imported: library.Box<Int32> = (.value = 13)
     if library.read_box(&imported).value != 13 { abort }
 
-    pair: Pair#(Int32, Bool) = (.left = 3, .right = true)
-    mixed: Pair#(Int32, .right: Bool) = (.left = 4, .right = false)
+    pair: Pair<Int32, Bool> = (.left = 3, .right = true)
+    mixed: Pair<Int32, .right: Bool> = (.left = 4, .right = false)
     if pair.left != 3 or mixed.right { abort }
 
-    array: Array#(2, Int32) = (11, 12)
+    array: Array<2, Int32> = (11, 12)
     if array[1] != 12 { abort }
 
-    mixed_result: Errable#(Int32, .reasons: Reasons) = ..ok 8
+    mixed_result: Errable<Int32, .reasons: Reasons> = ..ok 8
     if unwrap_or_abort(.value = mixed_result).result != 8 { abort }
 
-    nested: Pair#(Errable#(Int32, Reasons), Bool) = (.left = ..ok 9, .right = true)
+    nested: Pair<Errable<Int32, Reasons>, Bool> = (.left = ..ok 9, .right = true)
     if unwrap_or_abort(.value = nested.left).result != 9 { abort }
 
     match checked(-1) {

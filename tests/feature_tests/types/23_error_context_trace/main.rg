@@ -1,17 +1,17 @@
 ..test_error
 
-fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+fail := () -> (.result: Errable<.t: Int32, .reasons: (..test_error)>)  {
     result = ..error(.reason = ..test_error)
 }
 
-propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+propagate := () -> (.result: Errable<.t: Int32, .reasons: (..test_error)>)  {
     value := fail()!! "while reading foo"
     result = ..ok value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     tracer ::= ProbeTracer()
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= to_virtual<.contract: ErrorTracer>(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= propagate()
     if tracer.count != 2 {
@@ -36,14 +36,14 @@ main() -> (.status_code: Int32) := {
     }
 }
 
-ProbeTracer: Type = (
+ProbeTracer := (
     .count           : UIntNative = 0
     .line            : UIntNative = 0
     .column          : UIntNative = 0
     .context_matches : Bool       = false
 )
 
-implement ErrorTracer#(ProbeTracer)(
+implement ErrorTracer<ProbeTracer>(
     .add_context = (.self: $&ProbeTracer, .location: SourceLocationId, .context: StringView) -> () {
         reader ::= source_location(.id = location).location
         self&.count = self&.count + 1
@@ -56,8 +56,8 @@ implement ErrorTracer#(ProbeTracer)(
 
     .report = (
             .self   : $&ProbeTracer,
-            .writer : $&Virtual#(.contract: Writer)
+            .writer : $&Virtual<.contract: Writer>
         ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+            .result : Errable<.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)>
         ) { result = ..ok Void() }
 )

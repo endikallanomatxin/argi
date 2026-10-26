@@ -1,11 +1,11 @@
-expect_position(.text: StringView, .pattern: StringView, .expected: UIntNative) -> () := {
+expect_position := (.text: StringView, .pattern: StringView, .expected: UIntNative) -> () {
     match find(.self = text, .pattern = pattern).index {
         ..none { abort }
         ..some payload { if payload.value != expected { abort } }
     }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     expect_position(.text = "", .pattern = "", .expected = 0)
     expect_position(.text = "abc", .pattern = "", .expected = 0)
     expect_position(.text = "abc", .pattern = "abc", .expected = 0)

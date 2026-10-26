@@ -1,10 +1,16 @@
-Shape#(.Input: Type): Contract = (
-    .Count: Int
+Shape<.Input: Type>: Contract = (
+    .Count : Int
 )
+
 Cell: Type = ()
-implement Shape#(Cell) (.Count: Int = 9223372036854775807)
-sum(.values: &Array#(.n = Shape#(Cell).Count + 1, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
-main() -> () := {
+
+implement Shape<Cell> (.Count: Int = 9223372036854775807)
+
+sum := (.values: &Array<.n = Shape<Cell>.Count + 1, .t: Int32>) -> (.value: Int32) {
+    value = [values&[0] + values&[1]]
+}
+
+main := () -> () {
     values ::= (20, 22)
     if sum(&values).value != 42 { abort }
 }

@@ -1,6 +1,6 @@
-Point : Type = (
-    .x: Int32
-    .y: Int32
+Point := (
+    .x : Int32
+    .y : Int32
 )
 
-implement ImplicitlyCopyable#(Point) ()
+implement ImplicitlyCopyable<Point> ()

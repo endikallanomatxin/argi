@@ -1,6 +1,9 @@
-integer_identity#(.T: Type: Int) := (.value: T) -> (.result: T) { result = value }
-unsigned_identity#(.T: Type: UInt) := (.value: T) -> (.result: T) { result = value }
-float_identity#(.T: Type: Float) := (.value: T) -> (.result: T) { result = value }
+integer_identity := <.T: Type: Int> (.value: T) -> (.result: T) { result = value }
+
+unsigned_identity := <.T: Type: UInt> (.value: T) -> (.result: T) { result = value }
+
+float_identity := <.T: Type: Float> (.value: T) -> (.result: T) { result = value }
+
 main := () -> (.status_code: Int32 = 0) {
     value_0 :: Int8 = 7
     if integer_identity(value_0) != value_0 { abort }

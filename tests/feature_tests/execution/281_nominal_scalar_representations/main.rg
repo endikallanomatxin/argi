@@ -12,17 +12,17 @@ Signed: Type = Int64
 
 Enabled: Type = Bool
 
-identity#(.T: Type) := (.value: T) -> (.result: T) {
+identity := <.T: Type> (.value: T) -> (.result: T) {
     result = value
 }
 
-accept_id(.value: VertexId) -> (.result: VertexId) := {
+accept_id := (.value: VertexId) -> (.result: VertexId) {
     result = value
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if accept_id(.value = 3) != 3 { status_code = 10 }
-    if identity#(VertexId)(.value = 4) != 4 { status_code = 11 }
+    if identity<VertexId>(.value = 4) != 4 { status_code = 11 }
     enabled: Enabled = true
     other: Enabled = false
     if enabled == other { status_code = 9 }

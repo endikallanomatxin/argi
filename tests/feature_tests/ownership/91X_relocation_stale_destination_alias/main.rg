@@ -1,12 +1,12 @@
-Marker : Type = (.value: Int32)
+Marker := (.value: Int32)
 
-implement Deinit#(Marker) (
+implement Deinit<Marker> (
     .deinit = (.self: $&Marker) -> () {
 
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     source :: Marker = (.value = 1)
     destination :: Marker = (.value = 2)
     old ::= &destination

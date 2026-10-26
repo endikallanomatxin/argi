@@ -1,32 +1,36 @@
-Value : Type = (
-    .number: UInt8
+Value := (
+    .number : UInt8
 )
 
-Holder : Type = (
-    .reference: &UInt8
+Holder := (
+    .reference : &UInt8
 )
 
-implement Deinit#(Value) (
+implement Deinit<Value> (
     .deinit = (.self: $&Value) -> () {
 
     }
 )
 
-implement Deinit#(Holder) (
+implement Deinit<Holder> (
     .deinit = (.self: $&Holder) -> () {
 
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     source :: Value = (.number = 0)
     lifetime :: Value = (.number = 1)
-    held :: Holder = (.reference = restrict_reference#(.t: &UInt8)(.input = &source.number, .on = &lifetime).reference)
+    held :: Holder = (
+        .reference = restrict_reference<.t: &UInt8>(
+            .input = &source.number, .on = &lifetime
+        ).reference
+    )
     destination :: Holder = (.reference = &source.number)
     deinit(.self = $&destination)
     relocate(.source = $&held, .destination = $&destination)
     deinit(.self = $&lifetime)
-    if destination.reference& == 0 {
+    if destination.reference&== 0 {
         status_code = 0
     } else {
         status_code = 1

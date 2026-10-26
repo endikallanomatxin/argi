@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
     file ::= File(.stream_address = 0, .should_close = 0 == 1)
     path ::= from_literal(.data = "tests/feature_tests/io/13_file_open_error/build/missing.txt")
@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if is(.value = open_result..error.reason, .variant = ..file_open_failed) {
+    if is(.value = open_result ..error.reason, .variant = ..file_open_failed) {
     } else {
         status_code = 2
         return

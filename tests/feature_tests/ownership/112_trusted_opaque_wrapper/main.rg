@@ -1,16 +1,16 @@
-store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    trusted_opaque_move#(.t: t)(.destination = slot, .source = ~value)
+store_wrapper := <.t: Type> (.slot: $&t, .value: t) -> () {
+    trusted_opaque_move<.t: t> (.destination = slot, .source = ~value)
 }
 
-inner#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    trusted_opaque_move#(.t: t)(.destination = slot, .source = ~value)
+inner := <.t: Type> (.slot: $&t, .value: t) -> () {
+    trusted_opaque_move<.t: t> (.destination = slot, .source = ~value)
 }
 
-outer#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    inner#(.t: t)(.slot = slot, .value = ~value)
+outer := <.t: Type> (.slot: $&t, .value: t) -> () {
+    inner<.t: t> (.slot = slot, .value = ~value)
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value :: Int32 = 42
     slot :: Int32 = 0
     store_wrapper(.slot = $&slot, .value = ~value)

@@ -1,14 +1,14 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-ReferenceRecord: Type = (.value: &Resource)
+ReferenceRecord := (.value: &Resource)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {}
 )
 
-choose(.left: ReferenceRecord, .right: ReferenceRecord, .use_right: Bool) -> (
+choose := (.left: ReferenceRecord, .right: ReferenceRecord, .use_right: Bool) -> (
     .result : ReferenceRecord
-) := {
+) {
     result = left
     while use_right {
         result = right
@@ -16,7 +16,7 @@ choose(.left: ReferenceRecord, .right: ReferenceRecord, .use_right: Bool) -> (
     }
 }
 
-main() -> () := {
+main := () -> () {
     first :: Resource = Resource(41)
     second :: Resource = Resource(42)
     reference ::= choose(

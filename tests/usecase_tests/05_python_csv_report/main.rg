@@ -3,12 +3,12 @@ p := import ("python")
 ..invalid_arguments
 ..invalid_duration
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
-    output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([4096]UInt8)()))
+    output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed<[4096]UInt8>()))
     defer {
-        Writer#().flush(output) handle error {
+        Writer<>.flush(output) handle error {
             status_code = 1
             report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 1
         return
     }
-    text ::= read_all_limited($&file_reader, view($&zeroed#([8192]UInt8)()), 1048576) handle error, value {
+    text ::= read_all_limited($&file_reader, view($&zeroed<[8192]UInt8>()), 1048576) handle error, value {
         add_context(.context = path, .error_tracer = error.tracer)
         report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         status_code = 1
@@ -115,8 +115,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     print(view(&median_result), .writer = output)!!! { status_code = 1 }
 }
 
-print_python_error(.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
-) := {
+print_python_error := (.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
+) {
     assume allocator
     assume writer
 
@@ -125,10 +125,10 @@ print_python_error(.interpreter: &p.Python, .writer: $&File, .allocator: $&PageA
     if message_view != "" { print(message_view)! }
 }
 
-invalid_arguments() -> (.result: Errable#(Void, (..invalid_arguments))) := {
+invalid_arguments := () -> (.result: Errable<Void, (..invalid_arguments)>)  {
     result = ..error(.reason = ..invalid_arguments)
 }
 
-invalid_duration() -> (.result: Errable#(Void, (..invalid_duration))) := {
+invalid_duration := () -> (.result: Errable<Void, (..invalid_duration)>)  {
     result = ..error(.reason = ..invalid_duration)
 }

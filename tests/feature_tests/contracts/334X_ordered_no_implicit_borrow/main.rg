@@ -1,8 +1,8 @@
-Rank: Type = (.value: Int32)
+Rank := (.value: Int32)
 
-implement Compare#(&Rank, &Rank) (
+implement Compare<&Rank, &Rank> (
     .compare = (.left: &Rank, .right: &Rank) -> (.order: Ordering) {
-        order = Compare#(Int32, Int32).compare(.left = left&.value, .right = right&.value).order
+        order = Compare<Int32, Int32>.compare(.left = left&.value, .right = right&.value).order
     }
 )
 

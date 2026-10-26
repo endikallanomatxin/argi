@@ -1,19 +1,19 @@
 drops :: Int32 = 0
 
-Resource: Type = (.id: Int32)
+Resource := (.id: Int32)
 
 Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
 
-implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { drops = drops + self&.id })
+implement Deinit<Resource> (.deinit = (.self: $&Resource) -> () { drops = drops + self&.id })
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     allocator ::= CAllocator(.ffi = ffi)
     {
-        memory ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = $&allocator))
-        raw ::= raw_pointer#(.t: Choice)(.address = memory.data.address).raw
-        slot ::= trusted_establish_allocation_slot#(.t: Choice)(
+        memory ::= unwrap_or_abort(.value = allocate<.t: Choice>(.self = $&allocator))
+        raw ::= raw_pointer<.t: Choice>(.address = memory.data.address).raw
+        slot ::= trusted_establish_allocation_slot<.t: Choice>(
             .allocation = &memory
             .slot       = raw
             .anchor     = memory.anchor
@@ -36,9 +36,9 @@ main() -> (.status_code: Int32) := {
     }
     if drops != 18 { abort }
     {
-        memory ::= unwrap_or_abort(.value = allocate#(.t: [2]Resource)(.self = $&allocator))
-        raw ::= raw_pointer#(.t: [2]Resource)(.address = memory.data.address).raw
-        slot ::= trusted_establish_allocation_slot#(.t: [2]Resource)(
+        memory ::= unwrap_or_abort(.value = allocate<.t: [2]Resource>(.self = $&allocator))
+        raw ::= raw_pointer<.t: [2]Resource>(.address = memory.data.address).raw
+        slot ::= trusted_establish_allocation_slot<.t: [2]Resource>(
             .allocation = &memory
             .slot       = raw
             .anchor     = memory.anchor

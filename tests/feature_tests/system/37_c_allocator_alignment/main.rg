@@ -1,9 +1,9 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator :: CAllocator = CAllocator(.ffi = system.ffi)
     allocated ::= allocate_bytes(.self = $&allocator, .size = 1, .alignment = 64)
     match allocated {
         ..error _ { status_code = 1 }
-        ..ok ~ payload {
+        ..ok ~payload {
             allocation ::= ~payload
             aligned ::= allocation.data.address % 64 == 0
             layout_preserved ::= allocation.size == 1 and allocation.alignment == 64

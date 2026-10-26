@@ -1,10 +1,10 @@
-identity#(.t: Type)(.value: t) -> (.result: t) := {
+identity := <.t: Type> (.value: t) -> (.result: t) {
     result = [value]
 }
 
-Point: Type = (.x: Int32)
+Point := (.x: Int32)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     a :: Int32 = 2
     b :: Int32 = 3
     c :: Int32 = 4
@@ -25,9 +25,9 @@ main() -> (.status_code: Int32 = 0) := {
     point :: Point = Point(.x = 1)
     [point.x] = 7
     if a != 2 or array[index] != 40 or [point].x != 7 { status_code = 8 }
-    copied ::= [identity]#(.t: Int32)(.value = [a + b])
+    copied ::= [identity]<.t: Int32>(.value = [a + b])
     if copied != 5 { status_code = 9 }
-    extent: Array#(.n = [2 + 3] * 2, .t: UInt8) = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    extent: Array<.n = [2 + 3] * 2, .t: UInt8> = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     borrowed_view ::= view(.self = &extent)
     if length(.self = &borrowed_view).count != 10 { status_code = 10 }
 }

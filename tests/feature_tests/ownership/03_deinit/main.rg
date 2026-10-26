@@ -1,4 +1,4 @@
-Resource : Type = ()
+Resource: Type = ()
 
 dummy_counter :: Int32 = 0
 dummy_status :: Int32 = 0
@@ -6,44 +6,44 @@ dummy_status :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 global_status_ptr :: $&Int32 = $&dummy_status
 
-implement Init#(Resource, (.counter: $&Int32, .status: $&Int32)) (
-    .Result: Type = Resource
-    .init = (.args: (.counter: $&Int32, .status: $&Int32)) -> (.result: Result) {
+implement Init<Resource, (.counter: $&Int32, .status: $&Int32)> (
+    .Result : Type = Resource
+    .init   = (.args: (.counter: $&Int32, .status: $&Int32)) -> (.result: Result) {
         counter ::= ~args.counter
         status ::= ~args.status
 
         result = ()
 
-        puts(.string="Initializing resource\n")
+        puts(.string = "Initializing resource\n")
         global_counter_ptr = counter
         global_status_ptr = status
     }
 )
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
-        puts(.string="Deinitializing resource\n")
-        global_counter_ptr& = global_counter_ptr& + 1
-        global_status_ptr& = 0
+        puts(.string = "Deinitializing resource\n")
+        global_counter_ptr&= global_counter_ptr&+ 1
+        global_status_ptr&= 0
     }
 )
 
-verify(.counter: $&Int32, .status: $&Int32) -> () := {
-    puts(.string="Verifying resource\n")
-    if counter& != 1 {
-        status& = 7
+verify := (.counter: $&Int32, .status: $&Int32) -> () {
+    puts(.string = "Verifying resource\n")
+    if counter&!= 1 {
+        status&= 7
         return
     }
 }
 
-main (.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
     allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage
     counter :: Int32 = 0
     status_code = 9
-    defer verify(.counter=$&counter, .status=$&status_code)
-    handle := Resource(.counter=$&counter, .status=$&status_code)
+    defer verify(.counter = $&counter, .status = $&status_code)
+    handle := Resource(.counter = $&counter, .status = $&status_code)
     if counter != 0 {
         status_code = 6
         return

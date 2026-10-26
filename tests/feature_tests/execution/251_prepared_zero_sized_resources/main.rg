@@ -2,23 +2,23 @@ drops :: Int32 = 0
 
 Resource: Type = ()
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         drops = drops + 14
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     allocator ::= CAllocator(.ffi = ffi)
-    allocated ::= allocate#(.t: Resource)(.self = $&allocator, .count = 2)
+    allocated ::= allocate<.t: Resource>(.self = $&allocator, .count = 2)
     match allocated {
         ..error _ { abort }
         ..ok ~payload {
             memory ::= ~payload
-            raw ::= raw_pointer#(.t: Resource)(.address = memory.data.address).raw
-            first ::= trusted_establish_allocation_slot#(.t: Resource)(
+            raw ::= raw_pointer<.t: Resource>(.address = memory.data.address).raw
+            first ::= trusted_establish_allocation_slot<.t: Resource>(
                 .allocation = &memory
                 .slot       = raw
                 .anchor     = memory.anchor
@@ -32,7 +32,7 @@ main() -> (.status_code: Int32) := {
                 .storage = $&memory, .destination = second, .source = Resource()
             )
             trusted_opaque_drop(.slot = first)
-            again ::= trusted_establish_allocation_slot#(.t: Resource)(
+            again ::= trusted_establish_allocation_slot<.t: Resource>(
                 .allocation = &memory
                 .slot       = raw
                 .anchor     = memory.anchor

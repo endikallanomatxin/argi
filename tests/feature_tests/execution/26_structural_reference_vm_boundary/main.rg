@@ -1,20 +1,20 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-Envelope: Type = (.resource: Resource)
+Envelope := (.resource: Resource)
 
-replace(.target: $&Envelope, .counter: $&Counter) -> () := {
+replace := (.target: $&Envelope, .counter: $&Counter) -> () {
     target&= Envelope(.resource = Resource(.counter = counter))
 }
 
-main() -> () := {
+main := () -> () {
     counter :: Counter = Counter()
     {
         owner :: Envelope = Envelope(.resource = Resource(.counter = $&counter))

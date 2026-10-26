@@ -1,3 +1,3 @@
-main() -> () := {
+main := () -> ()  {
     value :: UInt8 = 'A'
 }

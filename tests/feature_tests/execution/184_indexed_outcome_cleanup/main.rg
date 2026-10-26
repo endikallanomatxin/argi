@@ -1,12 +1,14 @@
 drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { drops = drops + 1 }
 )
 
-maybe_initialize(.target: $&Resource, .enabled: Bool) -> (.result: (..initialized, ..preserved)) := {
+maybe_initialize := (.target: $&Resource, .enabled: Bool) -> (
+    .result : (..initialized, ..preserved)
+) {
     if enabled {
         target&= Resource(.value = 9)
         result = ..initialized
@@ -18,12 +20,14 @@ maybe_initialize(.target: $&Resource, .enabled: Bool) -> (.result: (..initialize
 position :: UIntNative = 0
 index_calls :: Int32 = 0
 
-select_index() -> (.result: UIntNative) := {
+select_index := () -> (.result: UIntNative) {
     index_calls = index_calls + 1
     result = position
 }
 
-maybe_retarget(.target: $&Resource, .enabled: Bool) -> (.result: (..initialized, ..preserved)) := {
+maybe_retarget := (.target: $&Resource, .enabled: Bool) -> (
+    .result : (..initialized, ..preserved)
+) {
     position = 1
     result = maybe_initialize(.target = target, .enabled = enabled)
 }
@@ -32,11 +36,13 @@ zero_drops :: Int32 = 0
 
 ZeroResource: Type = ()
 
-implement Deinit#(ZeroResource) (
+implement Deinit<ZeroResource> (
     .deinit = (.self: $&ZeroResource) -> () { zero_drops = zero_drops + 1 }
 )
 
-maybe_zero(.target: $&ZeroResource, .enabled: Bool) -> (.result: (..initialized, ..preserved)) := {
+maybe_zero := (.target: $&ZeroResource, .enabled: Bool) -> (
+    .result : (..initialized, ..preserved)
+) {
     if enabled {
         target&= ZeroResource()
         result = ..initialized
@@ -45,7 +51,7 @@ maybe_zero(.target: $&ZeroResource, .enabled: Bool) -> (.result: (..initialized,
     result = ..preserved
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         values :: [1]Resource
         values[0] = Resource(.value = 1)

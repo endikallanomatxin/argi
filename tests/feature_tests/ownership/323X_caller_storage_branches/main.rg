@@ -1,23 +1,23 @@
-Resource: Type = (.counter: $&Int32, .value: Int32)
+Resource := (.counter: $&Int32, .value: Int32)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&= self&.counter&+ 1
     }
 )
 
-make(.counter: $&Int32, .value: Int32) -> (.result: &Resource) := {
+make := (.counter: $&Int32, .value: Int32) -> (.result: &Resource) {
     resource :: Resource = (.counter = counter, .value = value)
     result = &resource
 }
 
-choose(.counter: $&Int32, .left: Bool) -> (.result: &Resource) := {
+choose := (.counter: $&Int32, .left: Bool) -> (.result: &Resource) {
     first :: Resource = (.counter = counter, .value = 3)
     second :: Resource = (.counter = counter, .value = 5)
     if left { result = &first } else { result = &second }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Int32 = 0
     {
         left ::= choose(.counter = $&counter, .left = true)

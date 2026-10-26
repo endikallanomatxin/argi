@@ -1,13 +1,14 @@
-count_computed#(.t: Type)(.text: t) -> (.count: UIntNative = 0) := {
+count_computed := <.t: Type> (.text: t) -> (.count: UIntNative = 0) {
     for segment in unwrap_or_abort(.value = split(text, .separator = ",")) {
         count = count + 1
     }
 }
 
-run_main() -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     if count_computed(",a,").count != 3 { abort }
 
-    parts ::= split(",a,,b,", .separator = ",")!
+    parts ::= split(",a,,b,", .separator = ",")!!!
     index :: UIntNative = 0
     for part in parts {
         if index == 1 and part != "a" { abort }
@@ -28,14 +29,10 @@ run_main() -> !Void = ..ok Void() := {
     if next($&parts).value != "a" { abort }
 
     count :: UIntNative = 0
-    for part in split("", .separator = ",")! {
+    for part in split("", .separator = ",")!!! {
         if part != "" { abort }
         count = count + 1
     }
     if count != 1 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main()!!!
     status_code = 0
 }

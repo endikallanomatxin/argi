@@ -5,7 +5,7 @@ optional_byte := (.value: ?UInt8) -> (.byte: UInt8) {
     }
 }
 
-bad_payload#(.Marker: Type) := (.marker: Marker) -> (.byte: UInt8) {
+bad_payload := <.Marker: Type> (.marker: Marker) -> (.byte: UInt8) {
     byte = optional_byte(.value = ..some(.value = 256))
 }
 

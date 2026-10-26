@@ -1,6 +1,6 @@
-main () -> (.status_code: Int32) := {
-    values : Array#(.n = 3, .t: Int32) = (2, 4, 6)
-    it :: ArrayIterator#(.n = 3, .t: Int32) = to_iterator(.value = &values)
+main := () -> (.status_code: Int32) {
+    values: Array<.n = 3, .t: Int32> = (2, 4, 6)
+    it :: ArrayIterator<.n = 3, .t: Int32> = to_iterator(.value = &values)
     sum :: Int32 = 0
 
     while has_next(.self = &it) {

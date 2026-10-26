@@ -1,4 +1,4 @@
-Numbers: Type = (.half: Float16, .single: Float32, .double: Float64, .values: [2]Float32)
+Numbers := (.half: Float16, .single: Float32, .double: Float64, .values: [2]Float32)
 
 exercise := () -> (.result: Int32) {
     original :: Numbers = (
@@ -8,18 +8,18 @@ exercise := () -> (.result: Int32) {
         .values = (17.0, 25.0)
     )
     restored :: Numbers = (.half = 0.0, .single = 0.0, .double = 0.0, .values = (0.0, 0.0))
-    source ::= trusted_reinterpret_reference#(.from: Numbers, .to: UInt8)(
+    source ::= trusted_reinterpret_reference<.from: Numbers, .to: UInt8>(
         .base = &original
     ).reference
-    destination ::= trusted_mutable_reinterpret_reference#(.from: Numbers, .to: UInt8)(
+    destination ::= trusted_mutable_reinterpret_reference<.from: Numbers, .to: UInt8>(
         .base = $&restored
     ).reference
     index :: UIntNative = 0
     while index < size_of(.type = Numbers) {
-        input ::= trusted_reference_offset#(.t: UInt8)(
+        input ::= trusted_reference_offset<.t: UInt8>(
             .base = source, .elements = index
         ).reference
-        output ::= trusted_mutable_reference_offset#(.t: UInt8)(
+        output ::= trusted_mutable_reference_offset<.t: UInt8>(
             .base = destination, .elements = index
         ).reference
         output&= input&
@@ -41,9 +41,9 @@ main := () -> (.status_code: Int32) {
     address ::= aligned_alloc(.alignment = 8, .size = size_of(.type = Numbers)).address
     if address == 0 { abort }
     anchor :: UInt8 = 0
-    raw ::= raw_pointer#(.t: Numbers)(.address = address).raw
-    reference ::= trusted_establish_inherited_reference#(.t: Numbers)(
-        .raw = raw, .root = erase_reference#(.t: UInt8)(.base = &anchor).reference
+    raw ::= raw_pointer<.t: Numbers>(.address = address).raw
+    reference ::= trusted_establish_inherited_reference<.t: Numbers>(
+        .raw = raw, .root = erase_reference<.t: UInt8>(.base = &anchor).reference
     ).reference
     reference&.half = 1.5
     reference&.single = 16777216.0

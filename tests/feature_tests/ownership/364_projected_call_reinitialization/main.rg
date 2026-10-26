@@ -1,30 +1,30 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-Args: Type = (.target: $&Resource, .counter: $&Counter)
+Args := (.target: $&Resource, .counter: $&Counter)
 
-NestedArgs: Type = (.inner: Args)
+NestedArgs := (.inner: Args)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () {
         self&.counter&.count = self&.counter&.count + 1
     }
 )
 
-initialize(.args: Args) -> () := {
+initialize := (.args: Args) -> () {
     args.target&= Resource(.counter = args.counter)
 }
 
-initialize_nested(.args: NestedArgs) -> () := {
+initialize_nested := (.args: NestedArgs) -> () {
     initialize(.args = args.inner)
 }
 
-initialize_borrowed(.args: &Args) -> () := {
+initialize_borrowed := (.args: &Args) -> () {
     initialize(.args = args&)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter)

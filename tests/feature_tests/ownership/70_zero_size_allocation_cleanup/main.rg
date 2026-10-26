@@ -1,9 +1,9 @@
-CountingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
+CountingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
     .deallocations : Int32
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage :: CountingAllocator = (.ffi = system.ffi, .deallocations = 0)
     assume allocator ::= $&allocator_storage
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 0)
@@ -20,12 +20,12 @@ main(.system: System) -> (.status_code: Int32) := {
     status_code = allocator_storage.deallocations - 1
 }
 
-implement Allocator#(CountingAllocator) (
+implement Allocator<CountingAllocator> (
     .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable<.t: Allocation, .reasons: (..out_of_memory)>
     ) {
         storage ::= malloc(.size = 1, .ffi = self&.ffi)
-        deallocator ::= to_virtual#(.contract: Deallocator)(.value = self)
+        deallocator ::= to_virtual<.contract: Deallocator>(.value = self)
         allocation ::= trusted_establish_allocation(
             .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
         )
@@ -33,10 +33,10 @@ implement Allocator#(CountingAllocator) (
     }
 )
 
-implement Deallocator#(CountingAllocator) (
+implement Deallocator<CountingAllocator> (
     .deallocate = (
         .self      : $&CountingAllocator,
-        .data      : RawPointer#(.t: UInt8),
+        .data      : RawPointer<.t: UInt8>,
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {

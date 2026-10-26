@@ -2,20 +2,20 @@
 calls :: Int32 = 0
 drops :: Int32 = 0
 
-Marker: Type = (.id: Int32)
+Marker := (.id: Int32)
 
-implement Deinit#(Marker) (
+implement Deinit<Marker> (
     .deinit = (.self: $&Marker) -> () {
         drops = drops + 1
     }
 )
 
-attempt(.fail: Bool) -> !Int32 := {
+attempt := (.fail: Bool) -> !Int32 {
     calls = calls + 1
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 5 }
 }
 
-recover(.fail: Bool) -> (.result: Int32) := {
+recover := (.fail: Bool) -> (.result: Int32) {
     result = attempt(.fail = fail) handle error, value {
         marker ::= Marker(.id = 1)
         result = 12
@@ -23,7 +23,7 @@ recover(.fail: Bool) -> (.result: Int32) := {
     }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if recover(.fail = false).result != 5 or calls != 1 or drops != 0 { abort }
     if recover(.fail = true).result != 12 or calls != 2 or drops != 1 { abort }
     handled ::= attempt(.fail = true) handle error, value {

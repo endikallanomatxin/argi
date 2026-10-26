@@ -1,8 +1,8 @@
-Widget : Type = (.value: Int32)
-Wrapper : Type = (.widget: Widget)
+Widget := (.value: Int32)
+Wrapper := (.widget: Widget)
 
-implement Init#(Widget, (.fail: Bool)) (
-    .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))
+implement Init<Widget, (.fail: Bool)> (
+    .Result: Type = Errable<.t: Widget, .reasons: (..rejected)>
     .init = (.args: (.fail: Bool)) -> (.result: Result) {
         fail ::= ~args.fail
 
@@ -17,8 +17,8 @@ implement Init#(Widget, (.fail: Bool)) (
     }
 )
 
-implement Init#(Wrapper, (.fail: Bool)) (
-    .Result: Type = Errable#(.t: Wrapper, .reasons: (..rejected))
+implement Init<Wrapper, (.fail: Bool)> (
+    .Result: Type = Errable<.t: Wrapper, .reasons: (..rejected)>
     .init = (.args: (.fail: Bool)) -> (.result: Result) {
         fail ::= ~args.fail
 
@@ -29,7 +29,7 @@ implement Init#(Wrapper, (.fail: Bool)) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     failed ::= Wrapper(.fail = true)
     match failed {
         ..error _ { }

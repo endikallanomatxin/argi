@@ -1,6 +1,6 @@
 answer ::= #run (.system: System) -> (.value: Int32) {
     tracer :: NoopErrorTracer = (.marker = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= to_virtual<.contract: ErrorTracer>(.value = $&tracer)
     assume error_tracer ::= $&erased
     assume writer ::= $&system.terminal&.stdout
     assume ffi ::= system.ffi
@@ -26,7 +26,7 @@ nested ::= #run () -> (.value: Int32) {
     value = first + second
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     if defaulted != 42 or pair.left + pair.right != 42 or selected != 42 { abort }
     if nested != 42 { abort }
     status_code = answer

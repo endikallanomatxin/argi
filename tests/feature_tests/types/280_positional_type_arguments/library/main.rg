@@ -1,5 +1,5 @@
-Box#(.t: Type): Type = (.value: t)
+Box := <.t: Type> (.value: t)
 
-read_box(.self: &Box#(.t: Int32)) -> (.value: Int32) := {
+read_box := (.self: &Box<.t: Int32>) -> (.value: Int32) {
     value = self&.value
 }

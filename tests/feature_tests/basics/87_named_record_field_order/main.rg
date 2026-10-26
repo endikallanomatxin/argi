@@ -1,16 +1,16 @@
-Pair: Type = (.number: UIntNative, .flag: Bool)
+Pair := (.number: UIntNative, .flag: Bool)
 
-Record: Type = (.number: UIntNative, .flag: Bool, .tail: Int32)
+Record := (.number: UIntNative, .flag: Bool, .tail: Int32)
 
-Box#(.T: Type): Type = (.value: T, .present: Bool)
+Box := <.T: Type> (.value: T, .present: Bool)
 
-Borrow: Type = (.first: &Int32, .second: &Int32)
+Borrow := (.first: &Int32, .second: &Int32)
 
 read := (.input: Record) -> (.ok: Bool) {
     ok = input.number == 7 and input.flag and input.tail == -9
 }
 
-make#(.T: Type) := (.value: T) -> (.result: Box#(T)) {
+make := <.T: Type> (.value: T) -> (.result: Box<T>) {
     result = (.present = true, .value = value)
 }
 

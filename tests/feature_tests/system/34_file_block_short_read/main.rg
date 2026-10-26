@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -23,10 +23,10 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     file ::= ~create_result ..ok
 
-    write_bytes: Array#(.n = 2, .t: UInt8) = (0, 0)
+    write_bytes: Array<.n = 2, .t: UInt8> = (0, 0)
     write_buffer ::= view(.self = $&write_bytes)
-    first_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 0, .value = 41).result
-    second_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 1, .value = 42).result
+    first_set ::= set<.t: UInt8>(.self = $&write_buffer, .index = 0, .value = 41).result
+    second_set ::= set<.t: UInt8>(.self = $&write_buffer, .index = 1, .value = 42).result
     if is(.value = first_set, .variant = ..error) or is(.value = second_set, .variant = ..error) {
         close(.self = $&file)
         status_code = 4
@@ -58,7 +58,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     file = ~open_result ..ok
 
-    read_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    read_bytes: Array<.n = 4, .t: UInt8> = (0, 0, 0, 0)
     read_buffer ::= view(.self = $&read_bytes)
 
     read_result ::= read(.self = $&file, .buffer = read_buffer)

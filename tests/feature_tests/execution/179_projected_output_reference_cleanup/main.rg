@@ -1,23 +1,23 @@
-Counter: Type = (.drops: Int32 = 0)
+Counter := (.drops: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
-ReferenceRecord: Type = (.value: $&Resource)
+ReferenceRecord := (.value: $&Resource)
 
-implement Deinit#(Resource) (
+implement Deinit<Resource> (
     .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + 1 }
 )
 
-forward(.source: $&Resource) -> (.result: ReferenceRecord) := {
+forward := (.source: $&Resource) -> (.result: ReferenceRecord) {
     result.value = source
 }
 
-forward_alias(.source: $&Resource) -> (.result: ReferenceRecord) := {
+forward_alias := (.source: $&Resource) -> (.result: ReferenceRecord) {
     destination ::= $&result.value
     destination&= source
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter, .value = 42)
