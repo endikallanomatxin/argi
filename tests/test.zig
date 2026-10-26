@@ -12931,6 +12931,7 @@ test "feature_tests/contracts/275X_scalar_arithmetic_external_override" {
 test "feature_tests/contracts/276_matrix_shape_product_specialization" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/276_matrix_shape_product_specialization");
     try runExpect("tests/feature_tests/contracts/276_matrix_shape_product_specialization", 0);
+    try vmExpect("tests/feature_tests/contracts/276_matrix_shape_product_specialization", 0, null);
 }
 
 test "feature_tests/contracts/277X_matrix_product_element_mismatch" {

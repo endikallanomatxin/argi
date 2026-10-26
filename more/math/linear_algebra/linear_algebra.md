@@ -67,9 +67,12 @@ Dynamic owners are not implicitly copyable and are cleaned up automatically.
 
 `MatrixShape<Value>` associates Element, Rows and Columns and a readonly `at`
 operation. Dense matrices and `Diagonal<.n, .t>` implement it. Element reads
-validate indices. `MatrixProduct<Left, Right, Args>` infers dimensions and the
+validate indices. `MatrixProduct<Left, Right>` infers dimensions and the
 scalar type from selected shape evidence; its shared inner-dimension binding
-rejects incompatible products. Associated Result never supplies those bindings.
+rejects incompatible products. Args is associated with the selected operand pair;
+its nominal record is shared by the protocol and operator adapters. Neither Args
+nor Result introduces another conformance participant. Associated Result never
+supplies dimension or element bindings.
 
 The general product reads each representation through its shape operation and
 returns a dense matrix. A more specific diagonal/diagonal implementation returns
@@ -85,8 +88,8 @@ following the same implementation ownership rules as other contracts.
 ```rg
 math := import("math/linear_algebra")
 product := <.A: Type, .B: Type> (.left: &A, .right: &B)
-    -> (.result: math.MatrixProduct<A, B, (.left: &A, .right: &B)>.Result) {
-    result = ~math.MatrixProduct<A, B, (.left: &A, .right: &B)>.multiply(
+    -> (.result: math.MatrixProduct<A, B>.Result) {
+    result = ~math.MatrixProduct<A, B>.multiply(
         .args = (.left = left, .right = right)
     )
 }

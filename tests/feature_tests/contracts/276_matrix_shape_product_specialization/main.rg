@@ -12,11 +12,9 @@ implement math.MatrixShape<Rows> (
 )
 
 product := <.A: Type, .B: Type> (.left: &A, .right: &B) -> (
-    .result: math.MatrixProduct<A, B, (.left: &A, .right: &B)>.Result
+    .result: math.MatrixProduct<A, B>.Result
 ) {
-    result = ~math.MatrixProduct<A, B, (.left: &A, .right: &B)>.multiply(
-        .args = (.left = left, .right = right)
-    )
+    result = ~math.MatrixProduct<A, B>.multiply(.args = (.left = left, .right = right))
 }
 
 main := () -> (.status_code: Int32 = 0) {
