@@ -38,7 +38,6 @@ pub const Layout = struct {
             inline .structural_choice, .inferred_choice => |s| .{ .variants = s.variants },
             .nominal => |id| blk: {
                 const declaration = graph.typeDefinition(id);
-                if (declaration.underlying_type) |target| break :blk .{ .alias = target };
                 if (declaration.struct_layout == .c_function_pointer) break :blk .leaf;
                 if (declaration.struct_fields) |fields| break :blk .{ .fields = fields };
                 if (declaration.choice_variants) |variants| break :blk .{ .variants = variants };

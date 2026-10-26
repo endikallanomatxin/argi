@@ -293,7 +293,6 @@ pub fn TypeDefinition(comptime Ids: type) type {
         /// Checked C callback prototype; it provides representation and ABI,
         /// independently of the optional source-name association above.
         function_id: ?Ids.FunctionId = null,
-        underlying_type: ?Ids.TypeId = null,
         struct_fields: ?Range(Ids.FieldId) = null,
         choice_variants: ?Range(Ids.VariantId) = null,
         struct_layout: StructLayout = .regular,

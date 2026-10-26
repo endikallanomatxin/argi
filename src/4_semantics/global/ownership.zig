@@ -1451,7 +1451,6 @@ pub const Resolver = struct {
                 break :blk true;
             },
             .nominal => |id| blk: {
-                if (self.graph.typeDefinition(id).underlying_type) |underlying| break :blk self.triviallyCopyable(underlying);
                 if (self.graph.typeDefinition(id).struct_layout == .c_function_pointer) break :blk true;
                 if (global_types.fields(self.graph, ty)) |fields|
                     break :blk self.fieldsTriviallyCopyable(fields);

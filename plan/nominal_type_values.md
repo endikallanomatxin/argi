@@ -217,6 +217,12 @@ before adding implementation exceptions.
   their family name. Native/VM coverage includes round-trip assignments, alias
   parameters and an identity type family.
 
+- Closed `Name: Type = value` declarations use ordinary constant bindings, just
+  like inferred type-valued declarations. Explicit annotations do not nominalize
+  an existing type. The nominal `underlying_type` representation and its separate
+  lowering, validation and backend paths are removed; scalar wrappers require a
+  record definition.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove

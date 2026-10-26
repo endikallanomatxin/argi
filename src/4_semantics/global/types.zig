@@ -35,7 +35,6 @@ pub fn representationType(graph: *const graph_mod.GlobalSemanticGraph, ty: graph
     for (0..graph.types.items.len + 1) |_| {
         const semantic = graph.resolvedSemanticType(current) orelse return null;
         const next: ?graph_mod.GlobalTypeId = switch (semantic) {
-            .nominal => |id| graph.typeDefinition(id).underlying_type,
             .generic => if (genericInstance(graph, current)) |instance| switch (instance.shape) {
                 .alias => |target| target,
                 else => null,
@@ -778,23 +777,21 @@ test "nominal definitions retain identity without declarations and share only re
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
     try graph.types.appendSlice(allocator, &.{
         .{ .builtin = .UInt8 },
         .{ .nominal = @enumFromInt(0) },
         .{ .nominal = @enumFromInt(1) },
     });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "value"), .source = source, .ty = @enumFromInt(0) });
     for (0..2) |index| try graph.type_definitions.append(allocator, .{
         .source = .{ .file_index = 0, .offset = @intCast(index) },
-        .underlying_type = @enumFromInt(index),
+        .struct_fields = .{ .start = 0, .len = 1 },
     });
     try std.testing.expect(!equal(&graph, @enumFromInt(0), @enumFromInt(1)));
     try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));
-    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(0)), representationType(&graph, @enumFromInt(2)));
+    try std.testing.expectEqual(Layout{ .size = 1, .alignment = 1 }, try layoutOf(&graph, @enumFromInt(1)));
     try std.testing.expectEqual(Layout{ .size = 1, .alignment = 1 }, try layoutOf(&graph, @enumFromInt(2)));
-    graph.type_definitions.items[0].underlying_type = @enumFromInt(2);
-    try std.testing.expectEqual(null, representationType(&graph, @enumFromInt(1)));
-    try std.testing.expectEqual(null, fields(&graph, @enumFromInt(1)));
-    try std.testing.expectError(error.UnmaterializedGlobalType, layoutOf(&graph, @enumFromInt(1)));
 }
 
 test "static type values preserve long alias chains and reject cycles or mutable bindings" {
@@ -850,13 +847,14 @@ test "nominal identity survives binding aliases pool growth and rejected definit
     defer graph.deinit(a);
     const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
     try graph.types.append(a, .{ .builtin = .Int32 });
-    try graph.type_definitions.append(a, .{ .source = source, .underlying_type = @enumFromInt(0) });
+    try graph.fields.append(a, .{ .source = source, .name = try graph.addString(a, "value"), .ty = @enumFromInt(0) });
+    try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
     try graph.types.append(a, .{ .nominal = @enumFromInt(0) });
     const retained = graph.checkpoint();
     const name = try graph.addString(a, "Alias");
     for (0..128) |_| {
         try graph.declarations.append(a, .{ .kind = .type, .name = name, .source = source, .type_id = @enumFromInt(1) });
-        try graph.type_definitions.append(a, .{ .source = source, .underlying_type = @enumFromInt(0) });
+        try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
     }
     try graph.types.append(a, .{ .nominal = @enumFromInt(128) });
     try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));

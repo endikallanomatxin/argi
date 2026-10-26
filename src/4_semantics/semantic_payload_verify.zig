@@ -64,11 +64,9 @@ pub fn typeDefinition(comptime Ids: type, value: primitives.TypeDefinition(Ids),
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.declaration, bounds.declarations));
     try require(verify.optionalIdFits(value.function_id, bounds.functions));
-    try require(verify.optionalIdFits(value.underlying_type, bounds.types));
     if (value.struct_fields) |range| try require(verify.rangeFits(range, bounds.fields));
     if (value.choice_variants) |range| try require(verify.rangeFits(range, bounds.variants));
     try require(value.struct_fields == null or value.choice_variants == null);
-    if (value.underlying_type != null) try require(value.struct_fields == null and value.choice_variants == null);
     if (value.struct_layout == .c_function_pointer) {
         try require(value.function_id != null);
         try require(value.struct_fields == null and value.choice_variants == null);

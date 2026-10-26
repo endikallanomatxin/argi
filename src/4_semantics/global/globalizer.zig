@@ -239,7 +239,6 @@ fn appendTypeDefinitions(allocator: std.mem.Allocator, result: *global_sg.Global
         .source = globalSource(o, value.source),
         .declaration = if (value.declaration) |id| globalDecl(o, id) else null,
         .function_id = if (value.function_id) |id| globalFunction(o, id) else null,
-        .underlying_type = if (value.underlying_type) |id| globalType(o, id) else null,
         .struct_fields = if (value.struct_fields) |range| relocateEntityRange(global_sg.GlobalFieldId, o.field_base, range) else null,
         .choice_variants = if (value.choice_variants) |range| relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, range) else null,
         .struct_layout = value.struct_layout,

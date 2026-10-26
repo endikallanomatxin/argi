@@ -967,7 +967,7 @@ test "type recipes retain anonymous nominal definitions across speculative type 
     var graph: g.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
     try graph.types.append(a, .{ .builtin = .Int32 });
-    try graph.type_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 17 }, .underlying_type = @enumFromInt(0) });
+    try graph.type_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 17 }, .struct_fields = .{ .start = 0, .len = 0 } });
     const checkpoint = graph.checkpoint();
     try graph.types.append(a, .{ .nominal = @enumFromInt(0) });
     const input = [_]?g.GlobalTypeId{@enumFromInt(1)};

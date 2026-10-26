@@ -600,7 +600,6 @@ pub const Session = struct {
         var setup_start = profileTimestamp(options.profile_io);
         try core.resolveExternalTypes();
         try generics.resolveExternalTypes();
-        try validateUnderlyingTypes(&relocation.graph, options.diagnostics);
         profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
         setup_start = profileTimestamp(options.profile_io);
         // Generic record fields can contain associated projections. Publish tuple
@@ -767,7 +766,6 @@ pub const Session = struct {
         if (try resolveQualifiedChoiceOptions(core, self.options.diagnostics)) return error.Reported;
         try core.resolveExternalTypesFrom(previous);
         try generics.resolveExternalTypesFrom(previous);
-        try validateUnderlyingTypes(&self.relocation.graph, self.options.diagnostics);
         try contracts.prepareParticipantConformances();
         try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
         try contracts.resolveAssociatedTypes();
@@ -1910,7 +1908,6 @@ fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: glob
 
 fn hasUnderlyingType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
     return switch (graph.resolvedSemanticType(ty) orelse return false) {
-        .nominal => |id| graph.typeDefinition(id).underlying_type != null,
         .generic => if (global_types.genericInstance(graph, ty)) |instance| instance.shape == .alias else false,
         else => false,
     };
@@ -4139,23 +4136,6 @@ fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, 
             try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}: {s}", .{ failure.reason, @errorName(err) });
         } else try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
         return error.Reported;
-    }
-}
-
-fn validateUnderlyingTypes(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
-    for (graph.type_definitions.items, 0..) |definition, raw| {
-        var current = definition.underlying_type orelse continue;
-        for (0..graph.types.items.len + 1) |_| {
-            const semantic = graph.resolvedSemanticType(current) orelse break;
-            if (semantic != .nominal) break;
-            current = graph.typeDefinition(semantic.nominal).underlying_type orelse break;
-        } else {
-            if (diagnostics) |sink| {
-                try sink.add(diagnosticLocation(graph, sink, definition.source), .semantic, "cyclic underlying type for '{s}'", .{graph.typeDefinitionName(@enumFromInt(@as(u32, @intCast(raw))))});
-                return error.Reported;
-            }
-            return error.CyclicUnderlyingType;
-        }
     }
 }
 

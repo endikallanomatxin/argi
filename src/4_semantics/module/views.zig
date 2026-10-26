@@ -64,21 +64,13 @@ pub fn genericArgumentView(graph: *const graph_mod.ModuleSemanticGraph, id: enti
 }
 
 pub fn recordFields(graph: *const graph_mod.ModuleSemanticGraph, ty: entities.ModuleTypeId) ?entities.FieldRange {
-    var current = ty;
-    for (0..graph.semantic.types.items.len) |_| {
-        const value = typeView(graph, current) catch return null;
-        if (value != .resolved) return null;
-        switch (value.resolved) {
-            .structural => |shape| return shape.fields,
-            .nominal => |id| {
-                const definition = graph.semantic.type_definitions.items[@intFromEnum(id)];
-                if (definition.struct_fields) |fields| return fields;
-                current = definition.underlying_type orelse return null;
-            },
-            else => return null,
-        }
-    }
-    return null;
+    const value = typeView(graph, ty) catch return null;
+    if (value != .resolved) return null;
+    return switch (value.resolved) {
+        .structural => |shape| shape.fields,
+        .nominal => |id| graph.semantic.type_definitions.items[@intFromEnum(id)].struct_fields,
+        else => null,
+    };
 }
 
 pub fn functionSignatureDeferred(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFunctionId) bool {
