@@ -45,9 +45,9 @@ An error carries its reason and a small handle to its trace. Trace entries are
 held by the configured tracer, not embedded in each error value.
 
 ```rg
-Error#(.reasons: Choice) : Type = (
+Error := <.reasons: Choice> (
     .reason: reasons
-    .tracer: $&Virtual#(.contract: ErrorTracer)
+    .tracer: $&Virtual<.contract: ErrorTracer>
 )
 ```
 
@@ -63,9 +63,9 @@ the lifetime of the error or change its reason.
 `Errable` is defined over a set of reasons:
 
 ```rg
-Errable#(.t: Type, .reasons: Choice) : Type = (
+Errable<.t: Type, .reasons: Choice> : Type = (
     ..ok t
-    ..error Error#(.reasons = reasons)
+    ..error Error<.reasons = reasons>
 )
 ```
 
@@ -80,11 +80,11 @@ Example:
 ..file_not_found
 ..permission_denied
 
-read_file() -> (.result: Errable#(Int32, (..file_not_found))) := {
+read_file := () -> (.result: Errable<Int32, (..file_not_found)>)  {
     result = ..error(.reason = ..file_not_found)
 }
 
-load_file() -> (.result: Errable#(Int32, (..file_not_found, ..permission_denied))) := {
+load_file := () -> (.result: Errable<Int32, (..file_not_found, ..permission_denied)>)  {
     value := read_file()!
     result = ..ok value
 }
@@ -123,10 +123,10 @@ functions. `-> !Void` alone does not declare a success default.
 > output initializers. Success defaults such as `..ok Void()` need no tracer.
 
 The same inference path is also available when the output is written
-explicitly as `Errable#(T)` and omits `.reasons`:
+explicitly as `Errable<T>` and omits `.reasons`:
 
 ```rg
-load_file() -> (.result: Errable#(Int32)) := {
+load_file := () -> (.result: Errable<Int32>)  {
     value := read_file()!
     result = ..ok value
 }
@@ -157,19 +157,19 @@ stream failures:
 ..out_of_memory
 
 open(.p: $&File, .path: &CChar, .mode: FileOpenMode)
-    -> (.result: Errable#(Bool, (..file_open_failed)))
+    -> (.result: Errable<Bool, (..file_open_failed)>)
 
 read_file(.self: &FileSystem, .path: StringView)
-    -> (.result: Errable#(
+    -> (.result: Errable<
         String,
         (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory)
-    ))
+    >)
 
 read_byte(.self: $&Reader)
-    -> (.result: Errable#(ReadByte, (..stream_read_failed)))
+    -> (.result: Errable<ReadByte, (..stream_read_failed)>)
 
 write_byte(.self: $&Writer, .byte: UInt8)
-    -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)))
+    -> (.result: Errable<Void, (..stream_write_failed, ..stream_flush_failed)>)
 ```
 
 `read_line()` and `read_file()` explicitly propagate `..out_of_memory`.
@@ -181,9 +181,9 @@ longer:
 - a `Bool` indicating whether allocation succeeded
 
 Instead, use:
-- `allocate(...) -> Errable#(Allocation, (..out_of_memory))`
+- `allocate(...) -> Errable<Allocation, (..out_of_memory)>`
 - helpers such as `string_with_capacity(...)`
-- growth operations returning `Errable#(Void, (..out_of_memory))`
+- growth operations returning `Errable<Void, (..out_of_memory)>`
 
 This is already used in `String` and the fallible paths of `DynamicArray`
 (`push_growing`, `insert_growing`, `dynamic_array_grow_growing`).
@@ -225,7 +225,7 @@ call.
 
 ### Reporting and returning
 
-`expr!!!` accepts an `Errable#(T, Reasons)`. It evaluates the operand once and
+`expr!!!` accepts an `Errable<T, Reasons>`. It evaluates the operand once and
 moves the success payload out as `T`. On error it reports the stored trace
 through the ordinary reachable writer and returns from the containing function.
 It is shorthand for recovery whose error branch reports and executes a bare
@@ -268,10 +268,10 @@ returning an Errable has no special entry-wrapper support.
 
 ## Error tracing
 
-`ErrorTracer#(Tracer)` is a contract for the tracing policy:
+`ErrorTracer<Tracer>` is a contract for the tracing policy:
 
 ```rg
-ErrorTracer#(.Tracer: Type): Contract = (
+ErrorTracer<.Tracer: Type>: Contract = (
     .add_context: (.self: $&Tracer, .location: SourceLocationId, .context: StringView) -> ()
     .reset_context: (...) -- infallible: clear retained context and reuse storage
     .report: (...)  -- write a trace; may return an I/O error
@@ -284,7 +284,7 @@ the location and context. `add_context` cannot return an error: propagation must
 still succeed when tracing cannot retain or emit an entry. A policy may
 allocate or write during `add_context`, but must handle those failures internally.
 `report` resolves locations and writes the trace; it may return an I/O error.
-The capability has type `$&Virtual#(.contract: ErrorTracer)`. A tracer may
+The capability has type `$&Virtual<.contract: ErrorTracer>`. A tracer may
 be supplied through `reach error_tracer`, so intermediate
 functions need not list it manually. This capability selects the tracer when
 an error is created. Later propagation and reporting use the reference in
@@ -292,14 +292,14 @@ that error, even under a different `assume error_tracer`:
 
 ```rg
 assume error_tracer ::= FixedSizeErrorTracer(
-    .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-) | to_virtual#(ErrorTracer)($&_) | $&_
+    .buffer = view($&zeroed<.t: [4096]UInt8>()),
+) | to_virtual<ErrorTracer>($&_) | $&_
 
 run()
 ```
 
-The positional comptime argument of `to_virtual#(ErrorTracer)` selects the
-contract. Alternatively, a declared `$&Virtual#(.contract: ErrorTracer)`
+The positional comptime argument of `to_virtual<ErrorTracer>` selects the
+contract. Alternatively, a declared `$&Virtual<.contract: ErrorTracer>`
 capability type permits `to_virtual($&_)` through contextual inference. The
 concrete tracer and virtual wrapper temporaries remain alive for the enclosing
 `assume` scope. The capability is still a pointer to the virtual wrapper.
@@ -377,7 +377,7 @@ Current direction for reason inference:
 - The signature still spells out the complete declared set.
 - `-> !T` already allows `.reasons` to be omitted in the special case of a
   single `result` output.
-- `Errable#(T)` without `.reasons` is also accepted in explicit function
+- `Errable<T>` without `.reasons` is also accepted in explicit function
   outputs.
 - Semantizing infers a subset from `return`, output assignments, and `!` / `!!`
   propagation.
@@ -412,11 +412,11 @@ my_thing := fallible() handle error, value {
 }
 ```
 
-The recovery form converts `Errable#(T, Reasons)` into `T`.
+The recovery form converts `Errable<T, Reasons>` into `T`.
 
 Semantics:
 - `handle` is syntactic sugar specific to `Errable`.
-- The expression on the left must have type `Errable#(T, ...)`.
+- The expression on the left must have type `Errable<T, ...>`.
 - `value` is the shared result slot.
 - If the `Errable` is `..ok x`, then `value = x`.
 - If it is `..error(...)`, the block runs with `error` bound to the complete
@@ -468,5 +468,5 @@ normal continuation and on control transfers.
 
 The ordinary `add_context` helper accepts a `StringView`; `add_context_text`
 accepts zero-terminated text. Both reach the tracer capability and call its
-scoped operation. Direct operations use `ErrorTracer#(T).add_context(...)`,
-`reset_context` and `report`; virtual calls use `ErrorTracer#()` instead.
+scoped operation. Direct operations use `ErrorTracer<T>.add_context(...)`,
+`reset_context` and `report`; virtual calls use `ErrorTracer<>` instead.

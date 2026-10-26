@@ -29,9 +29,9 @@ I think this is the best way to do templating.
 
 ```
 WebComponent : Type = (
-	.html : List#(.t: HTML)
-	.css  : List#(.t: CSS)
-	.js   : List#(.t: JS)
+	.html : List<.t: HTML>
+	.css  : List<.t: CSS>
+	.js   : List<.t: JS>
 )
 
 HTML :: Type = String

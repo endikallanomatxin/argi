@@ -27,13 +27,13 @@ ParallelProcessingUnit : Type = (
 
 ParallelGroup : Type = (
     .name: String
-    .groups: Nullable#(.t: &ParallelGroup)
+    .groups: Nullable<.t: &ParallelGroup>
     .number: UIntNative
 )
 
 ParallelMemory : Type = (
     .name: String
-    .shared_across: Nullable#(.t: &ParallelGroup)
+    .shared_across: Nullable<.t: &ParallelGroup>
     .size: UIntNative
     .latency: UIntNative
     .access_mode: String
@@ -41,7 +41,7 @@ ParallelMemory : Type = (
 
 ParallelOperation : Type = (
     .name: String
-    .supported_by: Nullable#(.t: &ParallelGroup)
+    .supported_by: Nullable<.t: &ParallelGroup>
     .supported_data_types
     .latency: UIntNative
     .throughput: UIntNative

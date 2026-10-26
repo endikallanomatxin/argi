@@ -26,15 +26,15 @@ that layout. Signature fields use eight spaces and closing delimiters use
 four spaces, while the function body uses ordinary four-space indentation:
 
 ```rg
-add#(
+add := <
         .n : UIntNative
         .t : Type: Scalar
-    )(
-        .left  : &Vector#(.n = n, .t: t)
-        .right : &Vector#(.n = n, .t: t)
+    > (
+        .left  : &Vector<.n = n, .t: t>
+        .right : &Vector<.n = n, .t: t>
     ) -> (
-        .result : Vector#(.n = n, .t: t)
-    ) := {
+        .result : Vector<.n = n, .t: t>
+    )  {
     result = left&
 }
 ```

@@ -1,13 +1,14 @@
 # Types
 
 Type names conventionally use `PascalCase`; value names use `snake_case`.
-Types are checked during compilation. A named type has its own identity:
-two independently declared types do not become interchangeable merely
-because their fields match. Unnamed structural types may be compared by
-their field structure. See [Structs](11_structs.md) and [Choice](12_choice.md).
+Types are compile-time values. A struct or choice definition literal creates its
+own nominal identity, including when it is unnamed. A declaration binds a name to
+that value; it does not create another identity. Independent definitions remain
+distinct even when their fields match, while aliases preserve identity. See
+[Structs](11_structs.md) and [Choice](12_choice.md).
 
 Types are values that can be passed as compile-time parameters. For example,
-`Array#(4, Int32)` selects an array type using a length and an
+`Array<4, Int32>` selects an array type using a length and an
 element type. See [Compile-time parameters](132_generics.md).
 
 ## Type queries
@@ -54,24 +55,24 @@ from known participant types, including an explicitly requested destination. An
 expected associated result cannot infer missing participants or rank implementations.
 Arithmetic does not silently convert values between unrelated types.
 
-Conversion selects `Convert#(Source, Target)` with an explicit destination. For example,
-`reference | convert#(.to: UIntNative)(_)` observes a reference's numeric address.
+Conversion selects `Convert<Source, Target>` with an explicit destination. For example,
+`reference | convert<.to: UIntNative>(_)` observes a reference's numeric address.
 `UIntNative` is the pointer-sized integer type used for addresses. The
 integer carries no validity dependency on the referenced storage.
 
-Integer conversions use `convert#(.to: Destination)(.value = source)`. Their return type
+Integer conversions use `convert<.to: Destination>(.value = source)`. Their return type
 depends on the complete ranges of the two types, never on the particular
 value or the expected result type. If the destination contains the source's
 entire range, the conversion returns the destination type directly. Otherwise
-it returns `Errable#(Destination, (..out_of_range))`, including
+it returns `Errable<Destination, (..out_of_range)>`, including
 when the supplied value happens to fit. A checked conversion returns an error
 outside the destination's range; it never wraps, saturates, or truncates a
 value outside that range.
 
 ```rg
 byte : UInt8 = 255
-wide : Int16 = byte | convert#(.to: Int16)(_)
-checked ::= wide | convert#(.to: Int8)(_)  -- The Int16 range requires Errable.
+wide : Int16 = byte | convert<.to: Int16>(_)
+checked ::= wide | convert<.to: Int8>(_)  -- The Int16 range requires Errable.
 ```
 
 The same rules apply to signedness changes, `UIntNative`, and C integer aliases.
@@ -91,7 +92,7 @@ A type conversion alone cannot establish a live reference.
 > assignment such as `x = 1` when `x` is `Float32`? This would be contextual
 > literal typing, not an implicit conversion of an integer variable.
 
-User-defined conversions implement `Convert#(Source, Target)`. Its `Result` must
+User-defined conversions implement `Convert<Source, Target>`. Its `Result` must
 be `Target` or an `Errable` containing it. Construction uses `Init` separately;
 conversion never selects an implementation from the expected result type.
 

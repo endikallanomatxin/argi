@@ -5,8 +5,8 @@ contains a value, and raw allocated bytes do not yet contain a `T`. A value
 becomes live only after it has been fully initialized. Reading it beforehand
 is an error.
 
-Canonical construction uses `Init#(T, Args)`. The target and argument record
-are participants; their selected conformance determines `T` or `Errable#(T, R)`
+Canonical construction uses `Init<T, Args>`. The target and argument record
+are participants; their selected conformance determines `T` or `Errable<T, R>`
 as its associated Result.
 Calling `T(...)` completes that record and invokes the selected `init` operation.
 No uninitialized destination is passed into it: the successful value is returned
@@ -14,8 +14,8 @@ directly or transferred into `..ok`. Ordinary ownership and automatic cleanup
 apply to intermediate values on every exit.
 
 ```rg
-Point: Type = (.x: Int32, .y: Int32)
-implement Init#(Point, (.x: Int32, .y: Int32 = 0)) (
+Point := (.x: Int32, .y: Int32)
+implement Init<Point, (.x: Int32, .y: Int32 = 0)> (
     .Result: Type = Point
     .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
         result = (.x = args.x, .y = args.y)
@@ -28,14 +28,14 @@ point ::= Point(.x = 10)
 Generic implementations declare their compile-time parameters after `implement`:
 
 ```rg
-Box#(.T: Type): Type = (.value: T)
-implement#(.T: Type) Init#(Box#(T), (.value: T)) (
-    .Result: Type = Box#(T)
+Box := <.T: Type> (.value: T)
+implement<.T: Type> Init<Box<T>, (.value: T)> (
+    .Result: Type = Box<T>
     .init = (.args: (.value: T)) -> (.result: Result) { result = (.value = args.value) }
 )
 ```
 
-The requested type, such as `Box#(Int32)`, and input argument types select the
+The requested type, such as `Box<Int32>`, and input argument types select the
 conformance together. Generic argument fields can retain a concrete allocator
 without adding it to the target type. Constructor syntax contextualizes literals
 and completes defaults against applicable argument patterns, then uses contract
@@ -51,7 +51,7 @@ updates overwrite caller slots. Repeated consumption and aliasing between
 consumed reference fields are checked across that boundary.
 
 When Args determines every parameter of a nominal family, its application can
-be omitted: `Box(.value = byte)` infers the same target as `Box#(UInt8)` for a
+be omitted: `Box(.value = byte)` infers the same target as `Box<UInt8>` for a
 UInt8 input. This inference also applies inside generic bodies. If several
 conformances infer different targets and none dominates, specify the target
 explicitly; Result is never used to choose its missing parameters.
@@ -72,16 +72,16 @@ Custom destruction uses the standard `Deinit` contract. Its consuming operation
 receives a mutable reference and returns no values:
 
 ```rg
-implement Deinit#(Point) (
+implement Deinit<Point> (
     .deinit = (.self: $&Point) -> () {}
 )
 
-implement#(.t: Type) Deinit#(Box#(.t: t)) (
-    .deinit = (.self: $&Box#(.t: t)) -> () {}
+implement<.t: Type> Deinit<Box<.t: t>> (
+    .deinit = (.self: $&Box<.t: t>) -> () {}
 )
 ```
 
-Explicit calls use `Deinit#(Point).deinit(.self = $&point)` or the unqualified
+Explicit calls use `Deinit<Point>.deinit(.self = $&point)` or the unqualified
 `deinit(.self = $&point)` when its operation identity is unambiguous. Automatic
 cleanup selects the same conformance and operation, including generic
 specializations. The implementation must prove definite consumption of its
@@ -93,7 +93,7 @@ whose concrete effects are checked at its call site.
 
 Bundled owners retain their deallocation evidence, so their destructors do not
 require a separate allocator argument. Cleanup declarations use only
-`implement Deinit#(T)`; the retired `T deinit(...)` syntax receives a migration
+`implement Deinit<T>`; the retired `T deinit(...)` syntax receives a migration
 diagnostic. Ordinary functions named `deinit` have ordinary call effects and
 create no automatic cleanup obligations.
 

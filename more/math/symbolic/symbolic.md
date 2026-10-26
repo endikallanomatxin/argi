@@ -7,7 +7,7 @@ Expr : Type = (
     ast: Tree
 )
 
-expr(.s: String) -> (.out: Expr) := {
+expr := (.s: String) -> (.out: Expr)  {
     ast ::= create_ast_from_sym_s(s)
     out = Expr(s, ast)
 }

@@ -26,7 +26,7 @@ because it is not only about input/output.
 `Runtime` should probably be a `Contract` capability:
 
 ```rg
-Runtime#(.Participant: Type): Contract = (
+Runtime<.Participant: Type>: Contract = (
     .lazy: (.self: $&Participant, .task: Task) -> (.task: Task)
     .async: (.self: $&Participant, .task: Task) -> (.future: Future)
     concurrent(.self: $&Participant, .task: Task) -> !(.future: Future)
@@ -389,9 +389,9 @@ running task result or task handle.
 Possible operations:
 
 ```rg
-Future#(.t: Type) : Type
+Future<.t: Type> : Type
 
-.await: (.runtime: $&Runtime, .future: $&Future#(.t: t)) -> !(.value: t)
+.await: (.runtime: $&Runtime, .future: $&Future<.t: t>) -> !(.value: t)
 cancel(.runtime: $&Runtime, .future: $&Future) -> ()
 ```
 
@@ -579,7 +579,7 @@ task := Task({
 Better:
 
 ```rg
-state : Mutex#(.t: Int32)
+state : Mutex<.t: Int32>
 
 task := Task({
     state | with_lock($&_, {
@@ -619,7 +619,7 @@ channel := runtime | channel($&_, .t = Int32)
 Possible channel families:
 
 ```rg
-Channel#(.t: Type) : Abstract = (
+Channel<.t: Type> : Abstract = (
     put(.self: $&Participant, .value: t) -> !()
     get(.self: $&Participant) -> !(.value: t)
 )
@@ -628,9 +628,9 @@ Channel#(.t: Type) : Abstract = (
 Concrete implementations:
 
 ```rg
-Spot#(.t: Type)
-Queue#(.t: Type)
-Stack#(.t: Type)
+Spot<.t: Type>
+Queue<.t: Type>
+Stack<.t: Type>
 ```
 
 Meaning:
@@ -666,12 +666,12 @@ Channel operations are side-effects and may suspend the current task.
 Examples / Old code:
 
 ```
-funcion_enviadora (c:Channel) -> () := {
+funcion_enviadora := (c:Channel) -> ()  {
 	time | sleep (&_, 1000)
 	c | send (_, 42)
 }
 
-canal : Channel#(.t: Int)
+canal : Channel<.t: Int>
 
 for i in Range(.start = 1, .end = 10) {
 	lcr | spawn_thread ($&_, funcion_enviadora, (canal))
@@ -684,7 +684,7 @@ loop {
 
 
 ```
-Channel#(.t: Type) : Abstract = (
+Channel<.t: Type> : Abstract = (
     put(.self: $&Participant, .value: t) -> ()
     get(.self: $&Participant) -> (.value: t)
 )
@@ -694,20 +694,20 @@ Stack implements Channel
 Channel defaults Spot
 
 
-Queue#(.t: Type) : Abstract = (
+Queue<.t: Type> : Abstract = (
 	put(.self: $&Participant, .value: t) -> ()
 	get(.self: $&Participant) -> (.value: t)
 )
-DynamicQueue#(.t: Type) implements Queue#(.t: t)
-StaticQueue#(.n: UIntNative, .t: Type) implements Queue#(.t: t)
+DynamicQueue<.t: Type> implements Queue<.t: t>
+StaticQueue<.n: UIntNative, .t: Type> implements Queue<.t: t>
 Queue defaults DynamicQueue
 
-Stack#(.t: Type) : Abstract = (
+Stack<.t: Type> : Abstract = (
 	put(.self: $&Participant, .value: t) -> ()
 	get(.self: $&Participant) -> (.value: t)
 )
-DynamicStack#(.t: Type) implements Stack#(.t: t)
-StaticStack#(.n: UIntNative, .t: Type) implements Stack#(.t: t)
+DynamicStack<.t: Type> implements Stack<.t: t>
+StaticStack<.n: UIntNative, .t: Type> implements Stack<.t: t>
 Stack defaults DynamicStack
 
 ```
@@ -742,7 +742,7 @@ Mutexes should also be runtime-aware.
 The old idea was:
 
 ```rg
-estado : Mutex#(.t: Int32)
+estado : Mutex<.t: Int32>
 
 incrementar($&estado) := {
     estado | lock($&_)
@@ -756,9 +756,9 @@ But manual lock/unlock is error-prone.
 Prefer scoped locking:
 
 ```rg
-estado : Mutex#(.t: Int32)
+estado : Mutex<.t: Int32>
 
-incrementar(.estado: $&Mutex#(.t: Int32)) -> !() := {
+incrementar(.estado: $&Mutex<.t: Int32>) -> !() := {
     estado | with_lock($&_, {
         estado.value += 1
     })!

@@ -24,7 +24,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
 ## Launch
 
-`spawn(.executable: StringView, .arguments: ArrayView#(.t: StringView),
+`spawn(.executable: StringView, .arguments: ArrayView<.t: StringView>,
 .stdin: ProcessStreamMode, .stdout: ProcessStreamMode,
 .stderr: ProcessStreamMode, .self: &ProcessManager)` returns
 `Errable<Process>` with `invalid_process_argument`, `out_of_memory`, or

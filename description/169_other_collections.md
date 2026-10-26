@@ -6,7 +6,7 @@ below; exploratory collections are marked as ideas.
 
 ## Hash and equality policies
 
-`HashPolicy#(P, K)` associates one implicitly copyable `Query` type with a
+`HashPolicy<P, K>` associates one implicitly copyable `Query` type with a
 policy and stored key. Its operations are:
 
 - `query(.self, .key: &K) -> Query` projects a stored key without consuming it.
@@ -18,7 +18,7 @@ relation; equal queries must hash equally. Projection, hashing, and equality
 must remain stable while keys are stored. Hash collisions are supported, but
 unstable equality or key mutation cannot be repaired by the container.
 
-`Hasher#(State)` consumes bytes and finishes a digest. `Hashable#(Key, State)`
+`Hasher<State>` consumes bytes and finishes a digest. `Hashable<Key, State>`
 feeds a key's canonical representation to that state. Hashing alone does not
 require equality. Equal keys must feed identical byte streams; composite keys
 must delimit variable-length fields. Integers feed their own width in canonical
@@ -45,12 +45,12 @@ keys need not be implicitly copyable; projection preserves their contents.
 
 ## Maps
 
-`HashMap#(.key: K, .value: V)()` uses StandardHashPolicy without a policy argument.
+`HashMap<.key: K, .value: V>()` uses StandardHashPolicy without a policy argument.
 A custom `.policy` argument infers the omitted static policy type. Only the
 standard-policy Init permits omitting the policy value; custom policies are
 required inputs. Both conformances delegate storage initialization to one helper. Explicit
 `.policy: P` remains available for annotations and fully specified construction.
-The map stores keys and values using `HashPolicy#(P, K)`.
+The map stores keys and values using `HashPolicy<P, K>`.
 Neither element type must be implicitly copyable. Construction takes `.policy`,
 `.allocator` (explicitly or through `assume allocator`), and optional `.capacity` (at least eight slots). The map owns its
 entries, policy, and storage. Borrowed state inside elements retains its original
@@ -62,7 +62,7 @@ lifetime obligations; stored key contents must remain unchanged.
   Failed growth destroys the supplied inputs and preserves existing entries.
 - `contains(.self, .key: Query)` queries membership. `get_reference` returns `?&V`.
   `get` returns `?V` only when V is implicitly copyable.
-- `extract(.self, .key: Query)` returns `?HashMapEntry#(K, V)`, transferring the
+- `extract(.self, .key: Query)` returns `?HashMapEntry<K, V>`, transferring the
   removed entry. `remove(.self, .key: Query, .allocator)` destroys it instead.
 - `reserve` grows slot capacity. All allocations complete before relocation;
   allocation failure preserves entries and capacity. Relocation neither copies
@@ -87,7 +87,7 @@ Metadata and entries use separate allocations. Only occupied entry slots hold
 initialized values; cleanup visits them exactly once. This common representation
 supports both copyable and noncopyable elements without a second map family.
 
-`MapQuery#(Map)` supplies the common `Query` for membership, lookup, removal,
+`MapQuery<Map>` supplies the common `Query` for membership, lookup, removal,
 and extraction. `MapLookup` returns readonly references; `MutableMapLookup`
 adds mutable references. `MapLookupValue` adds copied reads and requires both
 `MapLookup` and an implicitly copyable value type, following the same access
@@ -95,10 +95,10 @@ split as `Indexable`, `MutableIndexable`, and `IndexableValue`.
 None needs a separate text variant.
 Map insertion keeps the stored `Key` type and reports allocation failures.
 
-For `HashMap#(String, V, StandardHashPolicy)`, every query operation receives
+For `HashMap<String, V, StandardHashPolicy>`, every query operation receives
 `StringView`. Looking up a literal or an explicit view neither allocates nor
 retains the query. Returned references depend on the table, not the query, and
-never expose mutable keys. Borrowed text keys use `HashMap#(.key: StringView, .value: V)` with the same
+never expose mutable keys. Borrowed text keys use `HashMap<.key: StringView, .value: V>` with the same
 algorithms and allocation-error handling as other keys.
 
 > [!IDEA]
@@ -107,8 +107,8 @@ algorithms and allocation-error handling as other keys.
 
 ## Sets
 
-`HashSet#(K, P)` owns keys using the common `HashMap` table, including keys
-that cannot be copied. `HashSet#(.key: K)()` uses `StandardHashPolicy` and an
+`HashSet<K, P>` owns keys using the common `HashMap` table, including keys
+that cannot be copied. `HashSet<.key: K>()` uses `StandardHashPolicy` and an
 assumed allocator. A supplied `.policy` can infer a custom policy type, just as
 for maps. Capacity and allocation errors follow map construction.
 
@@ -133,7 +133,7 @@ contents must remain live and unchanged while stored.
 
 ## Queues
 
-`RingBuffer#(T)` is an owning FIFO queue with a fixed positive capacity. Its
+`RingBuffer<T>` is an owning FIFO queue with a fixed positive capacity. Its
 constructor accepts `.capacity` and an explicit `.allocator`, reserves storage
 once, and initializes no elements. Zero capacity reports `invalid_capacity`;
 unrepresentable allocation sizes and allocation failures report `out_of_memory`.
@@ -147,7 +147,7 @@ Zero-sized elements remain distinct logical occupied slots.
   owning value is independent of the buffer storage and can outlive it.
 - `length` and `capacity` report logical occupancy and fixed capacity.
 - `get_reference(.self, .index)` borrows an occupied element in FIFO order,
-  or reports `out_of_bounds`. The buffer implements `Indexable#(RingBuffer#(T))` and
+  or reports `out_of_bounds`. The buffer implements `Indexable<RingBuffer<T>>` and
   supports equality search when its elements satisfy that algorithm's contract.
 - `deinit(.self)` destroys the remaining occupied elements once
   and releases the backing allocation. Vacant slots are never read or dropped.
@@ -158,7 +158,7 @@ borrows; obtain a new borrow after mutation. Cleanup also invalidates borrows.
 Returned indices carry no storage lifetime and can become stale after popping.
 The allocation receipt, head, occupancy, and invalidation marker are private.
 
-`Deque#(.t: T)` provides a growable owning queue with double-ended insertion
+`Deque<.t: T>` provides a growable owning queue with double-ended insertion
 and removal. Growth relocates occupied elements in logical order and preserves
 the old queue if allocation fails. See [growable deque](161_lists.md#growable-deque)
 for its operations, borrowing rules, and consumed-argument behavior.
@@ -191,7 +191,7 @@ view allocates nothing and retains the backing storage's lifetime.
 
 ## Priority queues
 
-`PriorityQueue#(.t: T)(.order = &policy, .capacity = 8)` owns a minimum heap
+`PriorityQueue<.t: T>(.order = &policy, .capacity = 8)` owns a minimum heap
 and infers the policy type. Its allocator can come from `assume`. The same heap
 supports copyable and noncopyable elements; all `OrderPolicy` comparisons borrow
 operands and must form a stable strict weak order. The policy is borrowed and

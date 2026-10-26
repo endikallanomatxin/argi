@@ -7,7 +7,7 @@ scalar semantics. No BLAS, NumPy, or other native dependency is required.
 
 ## Fixed dimensions
 
-`Vector#(.n, .t)` owns an array in `.values`. `Matrix#(.rows, .cols, .t)` owns a
+`Vector<.n, .t>` owns an array in `.values`. `Matrix<.rows, .cols, .t>` owns a
 nested array in `.values`, indexed by row then column. Both are implicitly
 copyable; constructors accept matching arrays. Dimensions belong to the type.
 
@@ -24,15 +24,15 @@ product; multiplication across an empty inner dimension produces zeros.
 
 ```rg
 math := import("math/linear_algebra")
-main() -> (.status_code: Int32 = 0) := {
-    left: math.Vector#(.n = 3, .t: Float64) = (.values = (1.0, 2.0, 3.0))
-    right: math.Vector#(.n = 3, .t: Float64) = (.values = (4.0, 5.0, 6.0))
+main := () -> (.status_code: Int32 = 0)  {
+    left: math.Vector<.n = 3, .t: Float64> = (.values = (1.0, 2.0, 3.0))
+    right: math.Vector<.n = 3, .t: Float64> = (.values = (4.0, 5.0, 6.0))
     product ::= math.dot(.left = &left, .right = &right)
     if product != 32.0 { abort }
 }
 ```
 
-`DotProduct#(Left, Right)` determines its associated Result from selected
+`DotProduct<Left, Right>` determines its associated Result from selected
 conformance: fixed vectors return their scalar directly, while dynamic vectors
 return an Errable scalar. Module qualification such as `math.dot(...)` restricts
 operation identities to that module; use the explicit contract operation when
@@ -44,7 +44,7 @@ these operations retains an ordinary overload family.
 
 ## Dynamic dimensions
 
-`DynamicVector#(.t)` and `DynamicMatrix#(.t)` own private DynamicArray storage.
+`DynamicVector<.t>` and `DynamicMatrix<.t>` own private DynamicArray storage.
 Their constructors copy an initialized readonly view with an explicit allocator.
 A matrix additionally takes `.rows` and `.cols`; the checked product must equal
 the source view's length. Overflow or incompatible dimensions return
@@ -65,9 +65,9 @@ Dynamic owners are not implicitly copyable and are cleaned up automatically.
 
 ## Representation-independent products
 
-`MatrixShape#(Value)` associates Element, Rows and Columns and a readonly `at`
-operation. Dense matrices and `Diagonal#(.n, .t)` implement it. Element reads
-validate indices. `MatrixProduct#(Left, Right, Args)` infers dimensions and the
+`MatrixShape<Value>` associates Element, Rows and Columns and a readonly `at`
+operation. Dense matrices and `Diagonal<.n, .t>` implement it. Element reads
+validate indices. `MatrixProduct<Left, Right, Args>` infers dimensions and the
 scalar type from selected shape evidence; its shared inner-dimension binding
 rejects incompatible products. Associated Result never supplies those bindings.
 
@@ -84,9 +84,9 @@ following the same implementation ownership rules as other contracts.
 
 ```rg
 math := import("math/linear_algebra")
-product#(.A: Type, .B: Type) := (.left: &A, .right: &B)
-    -> (.result: math.MatrixProduct#(A, B, (.left: &A, .right: &B)).Result) {
-    result = ~math.MatrixProduct#(A, B, (.left: &A, .right: &B)).multiply(
+product := <.A: Type, .B: Type> (.left: &A, .right: &B)
+    -> (.result: math.MatrixProduct<A, B, (.left: &A, .right: &B)>.Result) {
+    result = ~math.MatrixProduct<A, B, (.left: &A, .right: &B)>.multiply(
         .args = (.left = left, .right = right)
     )
 }

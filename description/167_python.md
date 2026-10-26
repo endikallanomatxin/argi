@@ -50,7 +50,7 @@ Object-producing operations return `Errable<Object, python_error>`:
   a Python dictionary. Each argument remains borrowed during the call.
 - `none`, `boolean(.value: Bool)`, `integer(.value: Int64 or UInt64)`,
   `floating(.value: Float64)`, `string(.value: StringView)`, and
-  `bytes(.value: ArrayView#(UInt8))`, all with `.self: &Python`.
+  `bytes(.value: ArrayView<UInt8>)`, all with `.self: &Python`.
 - `list(.self: &Python)`, `dictionary(.self: &Python)`,
   `get_item(.self: &Object, .key: &Object)`, `repr`, and `clone`.
 
@@ -70,7 +70,7 @@ first, such as NumPy's `tolist` or `item`.
 
 `to_string(.self: &Object, .allocator: $&Allocator)` requires Python `str` and
 copies UTF-8 into an owning Argi `String`. `to_bytes` requires Python `bytes`
-and copies arbitrary bytes into a `DynamicArray#(UInt8)` without decoding.
+and copies arbitrary bytes into a `DynamicArray<UInt8>` without decoding.
 Both operations report `python_error` or `out_of_memory`. Embedded NUL bytes are
 preserved in values; module names, attribute names, and interpreter paths reject
 them. `string` decodes its input as strict UTF-8. No result borrows Python buffers.

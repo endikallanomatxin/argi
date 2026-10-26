@@ -15,15 +15,15 @@ creates a library. Existing files are preserved. The generated entrypoint
 sets up allocator, error tracing, and I/O capabilities:
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume ffi ::= system.ffi
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     assume error_tracer ::= FixedSizeErrorTracer(
-        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-    ) | to_virtual#(ErrorTracer)($&_) | $&_
-    assume writer ::= $&BufferedWriter#(.base_type: File)(
+        .buffer = view($&zeroed<.t: [4096]UInt8>()),
+    ) | to_virtual<ErrorTracer>($&_) | $&_
+    assume writer ::= $&BufferedWriter<.base_type: File>(
         .base = $&system.terminal&.stdout,
-        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
+        .buffer = view($&zeroed<.t: [4096]UInt8>()),
     )
     assume reader ::= $&system.terminal&.stdin
 }

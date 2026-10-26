@@ -10,27 +10,34 @@
 
 ### Declaration
 
-Use `#( … )` to **declare** generic parameters. The binder can appear in:
-
-* declarations of **types**, **contracts**, and **functions**,
-* **implement** declarations, with the binder immediately after `implement`.
+Type and function parameters belong to their definition expression, after `:=`.
+Specializing a definition binds compile-time arguments; it does not execute an
+ordinary function. An alias retains the same definition identity.
 
 ```argi
--- Generic type
-Vec#(.t: Type, .n: UIntNative) : Type = ( ... )
+Vec := <.Element: Type, .count: UIntNative> (.values: [count]Element)
 
--- Generic function
-max#(.t: Type) (.a: t, .b: t) -> (.result: t) := {
+max := <.t: Type> (.a: t, .b: t) -> (.result: t) {
     if a > b { result = a } else { result = b }
 }
+
+Vector := Vec
+```
+
+Contract participants remain on the contract declaration. An implementation's
+parameters appear immediately after `implement`:
+
+```argi
+Copyable<.Value: Type>: Contract = (.copy: (.value: &Value) -> (.result: Value))
+implement<.T: Type> Copyable<Box<T>> (.copy = copy_box)
 ```
 
 ### Usage
 
 ```argi
-let v : Vec#(.t: Float32, .n = 3) = (1.0, 2.0, 3.0)
+v: Vec<.Element: Float32, .count = 3> = (.values = (1.0, 2.0, 3.0))
 
-let r := max#(.t: Int)(.a = x, .b = y)
+r := max<.t: Int32>(.a = x, .b = y)
 ```
 
 Type applications accept positional arguments in declaration order. Positional
@@ -41,23 +48,23 @@ Each parameter can be supplied only once. Unknown names, excess arguments,
 missing required arguments, and mismatched argument kinds are errors.
 
 ```argi
-value: Errable#(Int32, (..unavailable)) = ..ok 42
-pair: Pair#(Int32, .right: Bool) = (.left = 1, .right = true)
-bytes: Array#(4, UInt8) = (0, 0, 0, 0)
+value: Errable<Int32, (..unavailable)> = ..ok 42
+pair: Pair<Int32, .right: Bool> = (.left = 1, .right = true)
+bytes: Array<4, UInt8> = (0, 0, 0, 0)
 ```
 
 A positional type argument is written directly; a named type argument uses
 `.name: Type`. In type applications, positional integer expressions begin with a literal or
 a sign; use the
 named `.name = expression` form for a value identified by a comptime binding.
-`Errable#(Value)` omits the reasons just like `Errable#(.t: Value)` and therefore
+`Errable<Value>` omits the reasons just like `Errable<.t: Value>` and therefore
 has an inferred error set. Supplying a reasons type retains an explicit set.
 
 
 ### Bounds
 
 ```argi
-sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
+sum := <.t: Type: Number<t>> (.xs: []t) -> (.result: t)
 -- t must satisfy the Number contract
 ```
 
@@ -76,8 +83,8 @@ The intended order is:
 This is the compact system:
 
 ```argi
-sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
-BufferedReader#(.base_type: Type: Reader#(base_type)) : Type = ...
+sum := <.t: Type: Number<t>> (.xs: []t) -> (.result: t)
+BufferedReader := <.base_type: Type: Reader<base_type>> (...)
 ```
 
 Meaning:
@@ -89,8 +96,8 @@ Meaning:
 
 This option is attractive because it keeps everything in one place:
 
-- `#(...)` declares the comptime parameters
-- the `: Contract#(participants)` suffix checks selected conformance
+- `<...>` declares the comptime parameters
+- the `: Contract<participants>` suffix checks selected conformance
 
 This is enough for many useful cases:
 
@@ -103,16 +110,16 @@ constraint syntax at all. They can already be expressed by reusing the same
 comptime parameters directly in the signature:
 
 ```argi
-multiply#(
+multiply := <
     .t: Type,
     .left_rows: UIntNative,
     .shared: UIntNative,
     .right_cols: UIntNative,
-)(
-    .left: Matrix#(.t: t, .rows = left_rows, .cols = shared),
-    .right: Matrix#(.t: t, .rows = shared, .cols = right_cols),
+>(
+    .left: Matrix<.t: t, .rows = left_rows, .cols = shared>,
+    .right: Matrix<.t: t, .rows = shared, .cols = right_cols>,
 ) -> (
-    .result: Matrix#(.t: t, .rows = left_rows, .cols = right_cols)
+    .result: Matrix<.t: t, .rows = left_rows, .cols = right_cols>
 )
 ```
 
@@ -131,16 +138,16 @@ checking layer.
 
 The core idea would be:
 
-- `#(...)` introduces comptime variables
+- `<...>` introduces comptime variables
 - `where(...)` checks relations between those variables afterwards
 
 For example:
 
 ```argi
-copy#(.r: Type, .w: Type)
+copy<.r: Type, .w: Type>
 where(
-    Reader#(r),
-    Writer#(w),
+    Reader<r>,
+    Writer<w>,
 )(
     .reader: $&r,
     .writer: $&w,
@@ -172,7 +179,7 @@ needed.
 
 In short:
 
-- implement `#(.t: Type: Capability#(t))` well
+- implement `<.t: Type: Capability<t>>` well
 - keep pushing signature-based composition first
 - only add `where(...)` if the simple bounded model is no longer enough
 
@@ -188,7 +195,7 @@ most specific implementation. See [Contract dispatch](131_multiple_dispatch.md).
 
 ## Constructor parameters
 
-`implement#(.t: Type) Init#(Box#(.t: t), (.value: t))` declares t in the
+`implement<.t: Type> Init<Box<.t: t>, (.value: t)>` declares t in the
 implementation scope. The target pattern and Args record select its bindings;
 the requested target supplies known parameters and inputs infer remaining ones.
 Implementation constraints validate those bindings. A bare `Box(.value = value)`
@@ -198,7 +205,7 @@ parameters or selects an implementation.
 ## Omitted compile-time parameters
 
 Compile-time type and integer parameters may declare defaults, including references
-to earlier parameters: `Pair#(.Left: Type, .Right: Type = Left)`.
+to earlier parameters: `Pair<.Left: Type, .Right: Type = Left>`.
 Explicit arguments take precedence. In calls, input types infer omitted bindings
 before defaults fill the remaining parameters; associated results never infer them.
 Partial constructor arguments use the same Init evidence selection as complete

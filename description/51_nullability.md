@@ -1,9 +1,9 @@
 ## Nullability. Optional types
 
-Nullability is modeled with `Nullable#(.t: T)`:
+Nullability is modeled with `Nullable<.t: T>`:
 
 ```rg
-Nullable#(.t: Type) : Type = (
+Nullable := <.t: Type> (
     =..none
     ..some(.value: t)
 )
@@ -15,7 +15,7 @@ There is syntactic sugar for the common form:
 value : ?Int32 = ..some(.value = 5)
 ```
 
-`?T` desugars to `Nullable#(.t: T)`.
+`?T` desugars to `Nullable<.t: T>`.
 
 Quick presence check:
 

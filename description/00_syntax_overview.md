@@ -120,7 +120,7 @@ x := point_ref&.x
 `&Point` is a read-only reference type; `$&Point` is its mutable counterpart.
 References cannot be null. An optional reference uses `?&Point`. Reference
 arithmetic is not allowed. Low-level address calculations use
-`reference | convert#(.to: UIntNative)(_)`. A calculated address becomes a reference
+`reference | convert<.to: UIntNative>(_)`. A calculated address becomes a reference
 only through a core operation that establishes its validity root.
 
 References are checked when used and do not keep their referent alive. See
@@ -147,7 +147,7 @@ Functions declare named input and output fields. The body assigns the output
 bindings; `return` exits without a separate result expression:
 
 ```rg
-add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
+add := (.left: Int32, .right: Int32) -> (.sum: Int32)  {
     sum = left + right
 }
 
@@ -167,10 +167,10 @@ and [Multiple Dispatch](131_multiple_dispatch.md).
 
 ## Construction and cleanup
 
-A type may provide `implement Init#(T, Args)` to construct a value and
-`implement Deinit#(T)` to clean up a live value. Both contracts are optional.
+A type may provide `implement Init<T, Args>` to construct a value and
+`implement Deinit<T>` to clean up a live value. Both contracts are optional.
 `T(...)` selects Init evidence from its target and argument record; its
-associated Result is T or `Errable#(T, R)` when construction can fail.
+associated Result is T or `Errable<T, R>` when construction can fail.
 Local values that need cleanup are cleaned at scope exit.
 
 See [Initialization and deinitialization](30_initialization_and_deinitialization.md),
@@ -179,11 +179,11 @@ See [Initialization and deinitialization](30_initialization_and_deinitialization
 
 ## Compile-time parameters
 
-`#(...)` declares compile-time parameters, and a call supplies concrete
+`<...>` declares compile-time parameters, and a call supplies concrete
 arguments with the same notation:
 
 ```rg
-Array#(.n = 4, .t = Int32)
+Array<.n = 4, .t = Int32>
 ```
 
 See [Compile-time parameters](132_generics.md).

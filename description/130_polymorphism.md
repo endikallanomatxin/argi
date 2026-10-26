@@ -32,7 +32,7 @@ heterogeneous values behind one interface, at the cost of indirect calls.
 > Contracts support concrete and generic participant tuples, specialization,
 > associated types/constants, checked operations and static safety proofs.
 > Construction, destruction, conversions and arithmetic/equality operators use
-> selected contract evidence. Associated projections use `Contract#(A, B).Result`.
+> selected contract evidence. Associated projections use `Contract<A, B>.Result`.
 > Dependency composition preserves operation identities. Ordinary functions have
 > one identity per module; legacy abstract syntax and global overload families
 > have been removed. Joint virtual evidence remains pending.

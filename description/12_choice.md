@@ -6,15 +6,18 @@ There are two related layers:
 
 ## Choice with payload
 
-The payload of a variant can be any `Type`, not just a struct.
+The payload of a variant can be any `Type`, not just a struct. A choice
+definition creates its own nominal identity; an alias preserves that identity.
+Value literals select a variant of their expected type rather than defining a
+new choice type.
 
 ```rg
-MaybeInt : Type = (
+MaybeInt := (
     ..none
     ..some Int32
 )
 
-SpanOrEnd : Type = (
+SpanOrEnd := (
     ..end
     ..span (.start: UIntNative, .end: UIntNative)
 )
@@ -23,9 +26,9 @@ SpanOrEnd : Type = (
 The canonical construction syntax is prefix notation:
 
 ```rg
-a ::= ..none
-b ::= ..some 123
-c ::= ..span (.start = 3, .end = 8)
+a: MaybeInt = ..none
+b: MaybeInt = ..some 123
+c: SpanOrEnd = ..span (.start = 3, .end = 8)
 ```
 
 `..variant expr` consumes the complete payload expression. For example,

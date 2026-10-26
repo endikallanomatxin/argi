@@ -1,9 +1,9 @@
 # Byte streams
 
-`Reader#(Stream)` and `Writer#(Stream)` provide byte operations through scoped
+`Reader<Stream>` and `Writer<Stream>` provide byte operations through scoped
 `read_byte`, `write_byte` and `flush` identities. Implementations bind each stream
 type explicitly. Qualified unary calls may omit the participant as
-`Reader#().read_byte(stream)` or `Writer#().write_byte(stream, .byte = value)`,
+`Reader<>.read_byte(stream)` or `Writer<>.write_byte(stream, .byte = value)`,
 inferring it from the borrowed input; a virtual
 handle supplies its hidden participant. `BlockReader` and `BlockWriter`
 provide `read_block` and `write_block` with byte views and a returned count.
@@ -89,7 +89,7 @@ are retried. Read/write errors may follow consumed or written prefixes; the
 helper neither closes nor flushes endpoints.
 
 `read_all_limited(.self, .buffer, .limit, .allocator)` reads a complete stream
-into an owning `DynamicArray#(UInt8)`, preserving arbitrary bytes, including embedded NULs.
+into an owning `DynamicArray<UInt8>`, preserving arbitrary bytes, including embedded NULs.
 It imposes no UTF-8 validation. Scratch must be initialized and nonempty,
 including at limit zero. A source ending within the limit returns the owner.
 After accumulating exactly the limit, it reads one byte into scratch to check
@@ -116,7 +116,7 @@ empty block succeeds with zero. Failed byte writes preserve position and
 storage. `flush` succeeds without side effects. Binary and stream operations
 share the same cursor position and require no allocator or FFI capability.
 
-`LimitedReader#(.t)(.source, .limit)` borrows a `BlockReader` and implements
+`LimitedReader<.t>(.source, .limit)` borrows a `BlockReader` and implements
 `BlockReader`. Its `read_block` clips the destination to the remaining limit
 and decrements that limit only by successfully read bytes. Zero remaining
 limit returns zero without calling the source. Source EOF can occur before

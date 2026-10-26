@@ -29,7 +29,7 @@ operations and are not provided by this module.
 
 ```rg
 uri := import("network/uri")
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     parsed ::= unwrap_or_abort(.value = uri.parse(.text = "https://example.com/a?x=1")).result
     text ::= unwrap_or_abort(.value = uri.build(.value = parsed,
         .allocator = system.page_allocator)).result

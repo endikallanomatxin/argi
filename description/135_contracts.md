@@ -4,14 +4,14 @@
 
 An ordinary function has one identity in its module namespace. It can be generic,
 but its name cannot be overloaded, including by changing compile-time parameter
-count or types. Ordinary declarations use the existing `#(...)` parameter syntax:
+count or types. Ordinary definitions place their `<...>` parameters on the value after `:=`:
 
 ```argi
 square := (.value: Int32) -> (.result: Int32) {
     result = value * value
 }
 
-identity#(.T: Type) := (.value: T) -> (.result: T) {
+identity := <.T: Type> (.value: T) -> (.result: T) {
     result = value
 }
 ```
@@ -23,7 +23,7 @@ Two contracts can declare operations with the same member name without sharing
 an operation identity. No participant is privileged as `Self`.
 
 ```argi
-Product#(.Left: Type, .Right: Type): Contract = (
+Product<.Left: Type, .Right: Type>: Contract = (
     .Result: Type
     .multiply: (.left: &Left, .right: &Right) -> (.result: Result)
 )
@@ -41,7 +41,7 @@ elements for a tuple
 of participants. It does not use an assignment after the contract application:
 
 ```argi
-implement Product#(Row, Column) (
+implement Product<Row, Column> (
     .Result: Type = Int32
     .multiply = (.left: &Row, .right: &Column) -> (.result: Int32) {
         result = left&.value * right&.value
@@ -52,14 +52,14 @@ implement Product#(Row, Column) (
 Members can reuse a uniquely identified ordinary function:
 
 ```argi
-implement Product#(Row, Column) (
+implement Product<Row, Column> (
     .Result: Type = Int32
     .multiply = multiply_row_column
 )
 ```
 
 Generic binders belong after `implement`, for example
-`implement#(.T: Type) Copyable#(Box#(T)) (...)`. Applicable conformances are ranked
+`implement<.T: Type> Copyable<Box<T>> (...)`. Applicable conformances are ranked
 by structural pattern specificity. Select one uniquely most specific conformance;
 reject equivalent patterns and incomparable maximal candidates. Return types
 never select conformance. The selected conformance uniquely fixes associated
@@ -85,7 +85,7 @@ neither body proofs nor executable units.
 Qualified calls identify the operation explicitly:
 
 ```argi
-result ::= Product#(Row, Column).multiply(&row, &column).result
+result ::= Product<Row, Column>.multiply(&row, &column).result
 ```
 
 Unqualified calls consider visible ordinary functions and contract operations.
@@ -100,25 +100,25 @@ After identifying the operation, select its conformance, resolve associated
 elements, and check the call against the selected signature and safety promises.
 
 Generic code retains symbolic associated projections, such as
-`Product#(Left, Right).Result`, until participant bindings are available. Contracts
+`Product<Left, Right>.Result`, until participant bindings are available. Contracts
 provide compile-time guarantees; specialization and monomorphization produce
 ordinary concrete calls. Constraints are checks on known or inferred parameters,
 not a general constraint-solving mechanism.
 
 ## Standard operations
 
-Construction uses `Init#(T, Args)`, with an associated `Result` and an `init`
+Construction uses `Init<T, Args>`, with an associated `Result` and an `init`
 operation. `T(...)` supplies fields of `Args`, including their defaults. `Result`
 is `T` or an `Errable` containing `T`; eligible types without a custom Init retain
 structural construction. Alternative construction uses explicitly named functions
 or conversions instead of constructor overloads.
 
-Conversion uses `Convert#(Source, Target)` and its associated `Result`. The result
+Conversion uses `Convert<Source, Target>` and its associated `Result`. The result
 must be `Target` or an `Errable` containing it. Explicit conversion syntax is
-`convert#(.to: Target)(.value = source)`, usually written as
-`source | convert#(.to: Target)(_)`. No separate TryConvert is needed.
+`convert<.to: Target>(.value = source)`, usually written as
+`source | convert<.to: Target>(_)`. No separate TryConvert is needed.
 
-`Deinit#(T)` provides an infallible mutable-reference operation and can use
+`Deinit<T>` provides an infallible mutable-reference operation and can use
 available assumed capabilities. Automatic cleanup retains compiler checks for
 initializedness, ownership transfer, reference invalidation and double destruction.
 Structural destruction remains available where no custom Deinit is required.
@@ -130,7 +130,7 @@ reference rules.
 Binary arithmetic contracts include an argument-record participant:
 
 ```argi
-Add#(.Left: Type, .Right: Type, .Args: Type): Contract = (
+Add<.Left: Type, .Right: Type, .Args: Type>: Contract = (
     .Result: Type
     .add: (.args: Args) -> (.result: Result)
 )
@@ -146,7 +146,7 @@ The selected Args record completes defaults and reached capabilities before
 invoking the scoped operation, following the same selection rules as Init.
 Addition now uses this lowering for concrete and specialized generic expressions.
 Bundled string concatenation implementations retain a statically selected allocator.
-Equality uses `Equal#(Left, Right, Args)` with an `equal` operation returning
+Equality uses `Equal<Left, Right, Args>` with an `equal` operation returning
 Bool. The `!=` symbol negates the same selected operation and evaluates it once.
 Bundled StringView, time values, Path and semver comparisons use Equal; auxiliary
 capabilities can be fields with reach defaults, including in generic bodies.
@@ -161,9 +161,9 @@ IEEE NaN behavior and evaluating != once.
 
 Ordered comparisons use two contracts with ordinary Left and Right participants:
 
-- `Compare#(Left, Right)` requires `compare(.left: Left, .right: Right)` returning
+- `Compare<Left, Right>` requires `compare(.left: Left, .right: Right)` returning
   `(.order: Ordering)`. Ordering has less, equal, greater and unordered variants.
-- `CompareRelations#(Left, Right)` requires Compare and the four Bool operations
+- `CompareRelations<Left, Right>` requires Compare and the four Bool operations
   less_than, less_than_or_equal, greater_than and greater_than_or_equal.
 
 A generic implementation of CompareRelations consumes Compare evidence and
@@ -178,7 +178,7 @@ predicates return false for unordered; they never derive inclusive comparisons b
 negating strict comparisons. Compare is infallible; fallible algorithms use explicit
 operations outside these standard contracts.
 
-`TotalOrder#(Left, Right)` requires Compare and promises a total ordering, including
+`TotalOrder<Left, Right>` requires Compare and promises a total ordering, including
 that compare never returns unordered. Mathematical consistency, transitivity and
 coherence with any corresponding Equal implementation remain implementer obligations.
 Integers, Bool and UnicodeScalar provide this evidence; floating-point types do not.
@@ -236,7 +236,7 @@ ownership are checked at registration. Selected operations have their declared
 safety guarantees proved; exhaustive checking also validates unused operations.
 Frontend snapshots preserve these declarations and operation identities.
 
-The frontend preserves `implement#(...)` binders in participant patterns,
+The frontend preserves `implement<...>` binders in participant patterns,
 associated definitions and inline body templates. Unique applicable generic patterns can be selected from concrete participants,
 with associated elements and inline bodies instantiated from those bindings.
 Repeated parameter occurrences enforce equality. Generic selection compares participant tuples by symbolic substitution for
@@ -256,7 +256,7 @@ operators select standard contract evidence. Composition preserves dependency
 operation identities; joint virtual evidence remains pending.
 Unary contracts with explicit participants can construct virtual handles using
 selected implementation evidence when their associated elements are fully bound. Qualified
-unary calls use `Contract#().operation(...)`; a concrete input infers the
+unary calls use `Contract<>.operation(...)`; a concrete input infers the
 participant and a virtual handle supplies its hidden participant. Their tables reuse the existing representation and declared safety
 checks, including mutable receiver permissions and fallible capability inputs.
 Bundled OrderPolicy uses explicit policy and element participants, scoped inline
@@ -287,7 +287,7 @@ contextual inference.
 
 BufferReading scopes complete input-buffer reads. Its generic Reader fallback
 copies bytes through read_byte, while File and TcpConnection select native block
-algorithms and their associated error result types. A fixed Virtual#(Reader)
+algorithms and their associated error result types. A fixed Virtual<Reader>
 wrapper can participate in a static adapter conformance; the adapter invokes the
 handle's frozen Reader operations. TCP writes reuse the common BlockWriter
 write_all algorithm instead of a competing ordinary specialization.
@@ -307,7 +307,7 @@ names for views and text; the former global operation family is removed.
 Allocator and Deallocator use explicit provider participants and scoped
 implementations, including physical allocation cleanup. Allocation retains
 selected virtual Deallocator evidence and authenticated acquisition bounds.
-Byte requests use the unique allocate_bytes helper; typed allocate#(T) requests
+Byte requests use the unique allocate_bytes helper; typed allocate<T> requests
 use an optional count defaulting to one.
 
 Unqualified scoped operations infer participants from inputs and check the
@@ -429,8 +429,8 @@ remains rejected because consuming an erased receiver needs runtime cleanup
 identities, which the current evidence representation does not provide.
 
 
-Numeric classification uses explicit `Int#(Value)`, `UInt#(Value)` and
-`Float#(Value)` conformances. These marker contracts do not provide arithmetic
+Numeric classification uses explicit `Int<Value>`, `UInt<Value>` and
+`Float<Value>` conformances. These marker contracts do not provide arithmetic
 operations or a default runtime representation. Color records use `Float32`
 explicitly instead of the old `Float defaultsto Float32` mechanism.
 
@@ -440,7 +440,7 @@ when another participant remains generic; foreign nominal participants do not.
 
 ## Numeric writer values
 
-`WriteValue#(Stream, Value)` declares an associated Result and a scoped
+`WriteValue<Stream, Value>` declares an associated Result and a scoped
 `write_value(.self: $&Stream, .value: Value)` operation. The unique ordinary
 `write(.self, .value)` function selects this evidence and returns its Result.
 Text returns Errable containing Void; buffers return counts. Native TCP writes
@@ -533,12 +533,12 @@ Unary contracts can declare storage domains. An implementation supplies their
 concrete paths after its members, for example:
 
 ```rg
-Source#(.Value: Type): Contract = (
+Source<.Value: Type>: Contract = (
     domain storage
     .get: (.self: &Value) -> (.value: &Int32)
         where depends_on(value, self, self.storage)
 )
-implement#(.Tag: Type) Source#(Cell#(Tag)) (
+implement<.Tag: Type> Source<Cell<Tag>> (
     .get = get_cell
 ) where { storage(self.storage) }
 ```

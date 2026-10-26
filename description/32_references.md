@@ -62,9 +62,9 @@ must borrow storage, create the owner in the caller and pass its reference to
 the helper:
 
 ```rg
-NumberBox: Type = (.value: Int32)
+NumberBox := (.value: Int32)
 
-number(.box: &NumberBox) -> (.result: &Int32) := {
+number := (.box: &NumberBox) -> (.result: &Int32)  {
     result = &box&.value
 }
 

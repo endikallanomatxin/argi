@@ -13,7 +13,7 @@ main := () -> (.status_code: Int32 = 0) {
 ```
 
 `parse(.text: StringView)` and `VersionView(.text: StringView)` return
-`Errable#(VersionView, (..invalid_input))`. Parsing consumes the entire input and
+`Errable<VersionView, (..invalid_input)>`. Parsing consumes the entire input and
 requires three decimal components without leading zeroes, optional prerelease
 identifiers after `-`, and optional build identifiers after `+`. Identifiers
 are nonempty dot-separated ASCII letters, digits, or hyphens. Numeric
@@ -43,7 +43,7 @@ Build metadata does not affect precedence. `same_precedence` reports whether
 text, including build metadata; equal precedence does not imply exact equality.
 
 `format(.value = &version, .allocator = allocator)` returns an owning String in
-`Errable#(String, (..out_of_memory))`. It copies the exact validated spelling,
+`Errable<String, (..out_of_memory)>`. It copies the exact validated spelling,
 including metadata. `format_into(.out = $&text, .value = &version,
 .allocator = allocator)` appends that spelling; reserved capacity avoids further
 allocation. Both use the shared StringFormatting contract with a static allocator

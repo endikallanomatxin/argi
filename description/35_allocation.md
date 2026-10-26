@@ -1,27 +1,27 @@
 # Allocators and raw storage
 
-`Allocator#(Provider)` reserves storage by size and alignment. It does not construct
+`Allocator<Provider>` reserves storage by size and alignment. It does not construct
 values or know their type:
 
 ```rg
-Allocator#(.Provider: Type): Contract = (
+Allocator<.Provider: Type>: Contract = (
     .allocate: (.self: $&Provider, .size: UIntNative, .alignment: UIntNative)
-        -> (.result: Errable#(Allocation, (..out_of_memory)))
+        -> (.result: Errable<Allocation, (..out_of_memory)>)
 )
 ```
 
-Calls use `Allocator#(Provider).allocate(...)`, or `Allocator#().allocate(...)`
+Calls use `Allocator<Provider>.allocate(...)`, or `Allocator<>.allocate(...)`
 to infer the provider from its input. `implement` supplies the operation;
-virtual handles retain selected evidence. `Deallocator#(Provider)` similarly
+virtual handles retain selected evidence. `Deallocator<Provider>` similarly
 provides scoped physical cleanup.
 
 The ordinary `allocate_bytes` helper accepts size and optional alignment.
-The unique typed `allocate#(T)` helper accepts an optional count, defaulting
+The unique typed `allocate<T>` helper accepts an optional count, defaulting
 to one; neither creates initialized values.
 
 The low-level alignment must be a nonzero power of two. Implementations check
 this precondition and `abort` if it is violated; an invalid alignment is not
-`..out_of_memory`. The typed `allocate#(.t: T)(.count)` helper computes the
+`..out_of_memory`. The typed `allocate<.t: T>(.count)` helper computes the
 size and alignment from `T`, checks multiplication overflow, and still returns
 raw `Allocation` storage. It privately retains the requested element size and
 count, including a zero count or zero-sized elements; this metadata establishes
@@ -34,7 +34,7 @@ slot. The allocation may still be released normally.
 
 ## Raw storage and typed slots
 
-`Allocation.data` is a non-dereferenceable `RawPointer#(UInt8)`. An
+`Allocation.data` is a non-dereferenceable `RawPointer<UInt8>`. An
 `Allocation` records size, alignment, a temporal anchor, and the means to
 release its storage. Its type alone does not determine whether the allocation
 has an independent lifetime or inherits one from an arena.
@@ -43,11 +43,11 @@ requires a checked establishment step.
 
 ```rg
 Allocation : Type = (
-    .data: RawPointer#(.t: UInt8)
+    .data: RawPointer<.t: UInt8>
     .size: UIntNative
     .alignment: UIntNative
     .anchor: &Any
-    .deallocator: Virtual#(.contract: Deallocator)
+    .deallocator: Virtual<.contract: Deallocator>
     ._storage_address: UIntNative
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative

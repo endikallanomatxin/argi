@@ -70,11 +70,11 @@ once init_terminal() -> () := {
     ...
 }
 
-path_a() -> () := {
+path_a := () -> ()  {
     init_terminal()
 }
 
-path_b() -> () := {
+path_b := () -> ()  {
     init_terminal()
 }
 ```

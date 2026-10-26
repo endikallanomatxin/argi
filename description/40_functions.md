@@ -5,7 +5,7 @@ signature has an explicit type. The input fields form one logical input
 structure; the output fields form one logical output structure.
 
 ```rg
-add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
+add := (.left: Int32, .right: Int32) -> (.sum: Int32)  {
     sum = left + right
 }
 ```
@@ -80,7 +80,7 @@ fields, `_` denotes the whole result structure; `_.field` selects one field:
 result ::= 20 | add(.left = _, .right = 22)
 sum ::= point | add(.left = _.x, .right = _.y)
 is_error ::= value | is(_, ..error)
-wide ::= small | convert#(.to: Int64)(_)
+wide ::= small | convert<.to: Int64>(_)
 ```
 
 The placeholder may be borrowed explicitly, for example
@@ -92,12 +92,12 @@ left-hand value is not silently inserted into an arbitrary argument.
 Call-site comptime type arguments can be positional, in declaration order:
 
 ```rg
-value ::= identity#(Int32)(.value = 42)
+value ::= identity<Int32>(.value = 42)
 ```
 
 Named comptime arguments remain available when a parameter needs to be
-identified explicitly. Positional type arguments use `#(Type, OtherType)`;
-named arguments use `#(.t: Type, .other: OtherType)`.
+identified explicitly. Positional type arguments use `<Type, OtherType>`;
+named arguments use `<.t: Type, .other: OtherType>`.
 
 ## Function variants
 
@@ -146,7 +146,7 @@ square-bracket grouping, for example `number | [_ * 2 + 1]`. Qualified calls and
 explicit or inferred comptime arguments use the same syntax as ordinary calls:
 
 ```rg
-result ::= value | module.identity#(.t: Int32)(.value = _ + 1)
+result ::= value | module.identity<.t: Int32>(.value = _ + 1)
 ```
 
 Each nested pipe binds placeholders in its own right operand. Its left operand

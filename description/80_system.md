@@ -123,9 +123,9 @@ referenced in the `assume` expression remain alive for its enclosing scope.
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume writer ::= $&BufferedWriter#(.base_type: File)(
+    assume writer ::= $&BufferedWriter<.base_type: File>(
         .base = $&system.terminal&.stdout,
-        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
+        .buffer = view($&zeroed<.t: [4096]UInt8>()),
     )
     print("Hello world\n")
 }

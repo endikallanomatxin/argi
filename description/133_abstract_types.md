@@ -8,22 +8,22 @@ Declare named participants and operation members, then provide their operations
 through an explicit implementation:
 
 ```rg
-Animal#(.Value: Type): Contract = (
+Animal<.Value: Type>: Contract = (
     .speak: (.who: &Value) -> (.sound: Int32)
 )
-Dog: Type = (.voice: Int32)
-implement Animal#(Dog) (
+Dog := (.voice: Int32)
+implement Animal<Dog> (
     .speak = (.who: &Dog) -> (.sound: Int32) { sound = who&.voice }
 )
 
-listen#(.Value: Type: Animal#(Value))(.who: &Value) -> (.sound: Int32) := {
-    sound = Animal#(Value).speak(who)
+listen := <.Value: Type: Animal<Value>> (.who: &Value) -> (.sound: Int32)  {
+    sound = Animal<Value>.speak(who)
 }
 ```
 
 A contract has no runtime representation. Store a concrete type, declare an
 explicitly constrained compile-time parameter, or request a borrowed virtual
-handle with `Virtual#(.contract: Animal)`. See [Virtual types](134_virtual_types.md).
+handle with `Virtual<.contract: Animal>`. See [Virtual types](134_virtual_types.md).
 
 Participants select the most specific applicable implementation. Its associated
 types and constants are resolved afterwards; they never infer missing participants

@@ -54,17 +54,17 @@ source. Argi separates the contract for copying from permission to insert that
 copy implicitly:
 
 ```rg
-InfalliblyCopyable#(.Value: Type): Contract = (
+InfalliblyCopyable<.Value: Type>: Contract = (
     .copy: (.self: &Value) -> (.value: Value)
 )
 
-FalliblyCopyable#(.Value: Type, .Provider: Type: Allocator): Contract = (
+FalliblyCopyable<.Value: Type, .Provider: Type: Allocator>: Contract = (
     .reasons: Type
     .copy: (.self: &Value, .allocator: $&Provider)
-        -> (.result: Errable#(Value, reasons))
+        -> (.result: Errable<Value, reasons>)
 )
 
-ImplicitlyCopyable#(.Value: Type): Contract = ()
+ImplicitlyCopyable<.Value: Type>: Contract = ()
 ```
 
 The relationships are:
@@ -77,12 +77,12 @@ FalliblyCopyable   => never copied implicitly
 
 An infallible but expensive type can implement `InfalliblyCopyable` while
 requiring explicit `copy(&value)`. A fallible type such as `String` can
-implement `FalliblyCopyable#(String, Provider)` with `.reasons = (..out_of_memory)`; its failure remains
+implement `FalliblyCopyable<String, Provider>` with `.reasons = (..out_of_memory)`; its failure remains
 part of `copy`, not a differently named operation.
 
 The allocator provider participates in fallible-copy selection. Associated
 reasons belong to that complete tuple. Qualify calls when necessary:
-`FalliblyCopyable#(String, PageAllocator).copy(&original, .allocator = allocator)`.
+`FalliblyCopyable<String, PageAllocator>.copy(&original, .allocator = allocator)`.
 A function merely named `copy` establishes no copy capability and does not
 change implicit-copy permission.
 

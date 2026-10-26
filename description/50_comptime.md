@@ -6,13 +6,13 @@ functions, and select code before the program runs.
 
 ## Established model
 
-`#(...)` declares compile-time parameters. A call supplies concrete values
-with `name#(.parameter = value)`, and the compiler specializes the generic
+`<...>` declares compile-time parameters. A call supplies concrete values
+with `name<.parameter = value>`, and the compiler specializes the generic
 declaration for those values. Type parameters are one case; parameters may
 also hold other compile-time values, such as array lengths.
 
 ```rg
-Array#(.n = 4, .t = Int32)
+Array<.n = 4, .t = Int32>
 ```
 
 `type_of(.value = expression)` obtains the type of an expression as a

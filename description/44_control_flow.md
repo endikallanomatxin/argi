@@ -76,10 +76,10 @@ mode selects the corresponding iterable contract:
 
 | Form | Required contract | Element type |
 | --- | --- | --- |
-| `for item in value` | `Iterable#(Collection)` | `T` |
-| `for & item in value` | `ReferenceIterable#(Collection)` | `&T` |
-| `for $& item in value` | `MutableReferenceIterable#(Collection)` | `$&T` |
-| `for ~ item in value` | `MovingIterable#(Collection)` | moved `T` |
+| `for item in value` | `Iterable<Collection>` | `T` |
+| `for & item in value` | `ReferenceIterable<Collection>` | `&T` |
+| `for $& item in value` | `MutableReferenceIterable<Collection>` | `$&T` |
+| `for ~ item in value` | `MovingIterable<Collection>` | moved `T` |
 
 `for ~ item in value` consumes the complete collection once through
 `to_moving_iterator(.value: Collection)`. The source becomes moved, including for an
@@ -98,23 +98,23 @@ respectively. A `for` loop accepts an iterable, rather than an iterator
 directly.
 
 ```rg
-Iterable#(.Collection: Type): Contract = (
+Iterable<.Collection: Type>: Contract = (
     .Item: Type
     .IteratorType: Type
     .to_iterator: (.value: &Collection) -> (.iterator: IteratorType)
 )
-ReferenceIterable#(.Collection: Type): Contract = (
+ReferenceIterable<.Collection: Type>: Contract = (
     .Item: Type
     .IteratorType: Type
     .to_reference_iterator: (.value: &Collection) -> (.iterator: IteratorType)
 )
-MutableReferenceIterable#(.Collection: Type): Contract = (
+MutableReferenceIterable<.Collection: Type>: Contract = (
     .Item: Type
     .IteratorType: Type
     .to_mutable_reference_iterator: (.value: $&Collection) -> (.iterator: IteratorType)
 )
 
-Iterator#(.State: Type): Contract = (
+Iterator<.State: Type>: Contract = (
     .Item: Type
     .has_next: (.self: &State) -> (.ok: Bool)
     .next: (.self: $&State) -> (.value: Item)

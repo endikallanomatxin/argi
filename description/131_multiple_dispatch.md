@@ -34,10 +34,10 @@ supplied participants establish selection before associated results are resolved
 ## Constructors and destruction
 
 A call to `T(...)` supplies T and infers its Args record, then selects the most
-specific applicable `Init#(T, Args)` implementation. The associated Result is
+specific applicable `Init<T, Args>` implementation. The associated Result is
 validated after selection. Structural construction remains available without Init.
 
-Explicit destruction and automatic cleanup use the same selected `Deinit#(T)`
+Explicit destruction and automatic cleanup use the same selected `Deinit<T>`
 evidence. Ordinary functions named `deinit` retain ordinary call effects and do
 not establish cleanup obligations. Neither lifecycle operation has a separate
 nominal family registry or global overload fallback.
@@ -58,8 +58,8 @@ retain ordinary selected calls and can provide different associated results.
 
 Scalar equality, including Bool, UnicodeScalar and RawPointer, selects Equal evidence.
 C enum and C function-pointer equality also select Equal evidence. Ordered
-comparisons use CompareRelations#(Left, Right), with four Bool predicates. Its
-generic implementation derives the predicates from Compare#(Left, Right).
+comparisons use CompareRelations<Left, Right>, with four Bool predicates. Its
+generic implementation derives the predicates from Compare<Left, Right>.
 More specific implementations can replace those algorithms. Ordering has no Args
 participant. Native predicates lower only after evidence selection; see
 [contracts](135_contracts.md).

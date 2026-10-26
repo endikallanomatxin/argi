@@ -1,6 +1,6 @@
 # Maps
 
-Core provides `HashMap#(.key: Key, .value: Value)` and `HashSet#(.key: Key)`.
+Core provides `HashMap<.key: Key, .value: Value>` and `HashSet<.key: Key>`.
 Both use `StandardHashPolicy` by default and accept custom policies.
 
 Use `String` for owning text keys and `StringView` for borrowed text keys.

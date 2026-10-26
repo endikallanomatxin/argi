@@ -5,7 +5,7 @@ including jointly virtualized participants. Explicit unary contracts support
 runtime handles with selected implementation evidence and bound associated
 types/constants. Joint evidence for multiple hidden participants remains pending.
 
-Contracts are static and use monomorphization by default. `Virtual#(.contract: A)`
+Contracts are static and use monomorphization by default. `Virtual<.contract: A>`
 requests runtime dispatch through the fixed interface of A, useful for streams,
 allocators, error tracers and heterogeneous values.
 
@@ -34,23 +34,23 @@ Programs invoke contract methods through ordinary function calls.
 ## Creation
 
 ```rg
-Shape#(.Participant: Type): Contract = (
+Shape<.Participant: Type>: Contract = (
     .get_value: (.self: &Participant) -> (.value: Int32) where {}
     .set_value: (.self: $&Participant, .value: Int32) -> () where {}
 )
 Box : Type = (.value: Int32)
-implement Shape#(Box) (.get_value = _get_box, .set_value = _set_box)
+implement Shape<Box> (.get_value = _get_box, .set_value = _set_box)
 
-_get_box(.self: &Box) -> (.value: Int32) := {
+_get_box := (.self: &Box) -> (.value: Int32)  {
     value = self&.value
 }
-_set_box(.self: $&Box, .value: Int32) -> () := {
+_set_box := (.self: $&Box, .value: Int32) -> ()  {
     self&.value = value
 }
 
 main := () -> (.status_code: Int32 = 0) {
     box :: Box = (.value = 42)
-    shape :: Virtual#(.contract: Shape) = to_virtual(.value = $&box)
+    shape :: Virtual<.contract: Shape> = to_virtual(.value = $&box)
     set_value(.self = $&shape, .value = 43)
     value ::= get_value(.self = &shape)
     if value != 43 { status_code = 1 }
@@ -63,8 +63,8 @@ argument can be inferred from an expected virtual result type. Without that
 context, select the contract explicitly:
 
 ```rg
-shape ::= to_virtual#(.contract: Shape)(.value = $&box)
-compact ::= to_virtual#(Shape)($&box)
+shape ::= to_virtual<.contract: Shape>(.value = $&box)
+compact ::= to_virtual<Shape>($&box)
 ```
 
 A contract containing any `$&Participant` receiver requires a mutable concrete
@@ -81,7 +81,7 @@ select a target contract: one concrete type can implement several contracts.
 A pipe can borrow the result with `&_` or `$&_`:
 
 ```rg
-assume tracer ::= NoopErrorTracer() | to_virtual#(ErrorTracer)($&_) | $&_
+assume tracer ::= NoopErrorTracer() | to_virtual<ErrorTracer>($&_) | $&_
 ```
 
 The concrete temporary and virtual wrapper remain alive for the enclosing
@@ -95,14 +95,14 @@ that handle's table. The receiver need not be the first input; its position
 comes from the contract.
 
 ```rg
-read_shape(.shape: &Virtual#(.contract: Shape)) -> (.value: Int32) := {
+read_shape := (.shape: &Virtual<.contract: Shape>) -> (.value: Int32)  {
     value = get_value(.self = shape)
 }
 ```
 
-Static code declares an explicit bound such as `#(.Value: Type: Shape#(Value))`. Use `Virtual#(.contract: Shape)` explicitly when dynamic dispatch
+Static code declares an explicit bound such as `<.Value: Type: Shape<Value>>`. Use `Virtual<.contract: Shape>` explicitly when dynamic dispatch
 is required. This dispatch support does not imply a general nominal
-`implement A#(Virtual#(A))` relationship.
+`implement A<Virtual<A>>` relationship.
 
 A vtable slot has a fixed callable signature after erasure. The receiver's
 concrete layout is hidden; other inputs and outputs must be usable without
@@ -128,7 +128,7 @@ virtual handle also needs a table. Return a known type or an explicit virtual
 handle instead. References to known receiver fields remain valid outputs;
 their lifetimes still depend on the receiver.
 
-An explicit `Virtual#(A)` input or output has a known representation and does
+An explicit `Virtual<A>` input or output has a known representation and does
 not request another erased `Participant` receiver. It may carry a different concrete
 implementation without an implicit same-type relation. A method may dispatch
 through that handle separately.
@@ -158,11 +158,11 @@ owned or opaque storage. Those effects must remain valid through erasure.
 A contract method can publish a safety contract after its signature:
 
 ```rg
-Source#(.Participant: Type): Contract = (
+Source<.Participant: Type>: Contract = (
     .get: (.self: &Participant) -> (.value: &Int32)
         where depends_on(value, self)
 )
-Counter#(.Participant: Type): Contract = (
+Counter<.Participant: Type>: Contract = (
     .increment: (.self: $&Participant) -> () where {}
 )
 ```
@@ -191,7 +191,7 @@ storage, not erased `Participant` or one of its private fields. Unlike `depends_
 is a guarantee, so returning independent storage on another path does not comply.
 
 ```rg
-Forwarder#(.Participant: Type): Contract = (
+Forwarder<.Participant: Type>: Contract = (
 .forward: (.self: &Participant, .input: $&Int32) -> (.value: $&Int32)
         where refers_to(value, input)
 )
@@ -205,7 +205,7 @@ contract permits. Generation invalidation does not grant permission to destroy
 owners, consume acquisition capabilities or store new hidden dependencies.
 
 ```rg
-Editor#(.Participant: Type): Contract = (
+Editor<.Participant: Type>: Contract = (
     .edit: (.self: &Participant, .target: $&Int32) -> ()
         where invalidates(target)
 )
@@ -222,7 +222,7 @@ caller then has an uninitialized place and may assign a new owner to it.
 Automatic cleanup does not destroy the consumed value again.
 
 ```rg
-Releaser#(.Participant: Type): Contract = (
+Releaser<.Participant: Type>: Contract = (
     .release: (.self: &Participant, .resource: $&Resource) -> ()
         where consumes(resource)
 )
@@ -255,7 +255,7 @@ through references stored in its fields. Declare other effects separately.
 > replacements and conditions requiring several independent discriminants.
 
 ```rg
-ConditionalReleaser#(.Participant: Type): Contract = (
+ConditionalReleaser<.Participant: Type>: Contract = (
     .release: (.self: &Participant, .resource: $&Resource) -> (.result: ?Int32) where {
         on result ..some { consumes(resource) }
         on result ..none {}
@@ -277,7 +277,7 @@ the same value type. The source must be initialized, and the destination must
 be available: uninitialized, deinitialized, or already moved from.
 
 ```rg
-Mover#(.Participant: Type): Contract = (
+Mover<.Participant: Type>: Contract = (
     .transfer: (.self: &Participant, .source: $&Resource, .destination: $&Resource) -> ()
         where relocates(destination, source)
 )
@@ -308,7 +308,7 @@ cleanup follows the actual transition even when the caller discards the result.
 A preserving outcome leaves the source initialized and the destination available.
 
 ```rg
-Mover#(.Participant: Type): Contract = (
+Mover<.Participant: Type>: Contract = (
     .transfer: (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (.result: ?Int32) where {
         on result ..some { relocates(destination, source) }
         on result ..none {}
@@ -349,8 +349,8 @@ with fresh ownership for the same output.
 A choice-valued result can distinguish permissions by variant:
 
 ```rg
-Factory#(.Participant: Type): Contract = (
-    .create: (.self: &Participant) -> (.result: Errable#(Item, Reasons)) where {
+Factory<.Participant: Type>: Contract = (
+    .create: (.self: &Participant) -> (.result: Errable<Item, Reasons>) where {
         on result ..ok {
             owns(result)
             depends_on(result, self)
@@ -384,7 +384,7 @@ or revive references to expired generations.
 A conditional generation permission can describe a fallible edit:
 
 ```rg
-Editor#(.Participant: Type): Contract = (
+Editor<.Participant: Type>: Contract = (
     .edit: (.self: &Participant, .target: $&Int32) -> (.result: ?Int32) where {
         on result ..some { invalidates(target) }
         on result ..none {}
@@ -429,7 +429,7 @@ For example, a fallible extraction can declare its successful value's provenance
 without adding the hidden contents' dependencies to the absent-value outcome:
 
 ```rg
-Extractor#(.Participant: Type): Contract = (
+Extractor<.Participant: Type>: Contract = (
     .item: Type
     domain contents
 
@@ -460,7 +460,7 @@ removes that proof. A later insertion, replacement of the storage generation or
 independent pending call cannot be undone by selecting an older result.
 
 ```rg
-Drain#(.Participant: Type): Contract = (
+Drain<.Participant: Type>: Contract = (
     domain contents
 
     .drain: (.self: $&Participant) -> (.result: ?Int32) where {
@@ -479,7 +479,7 @@ For example, a single-slot protocol can publish these effects independently of
 the implementation's representation:
 
 ```rg
-SlotProtocol#(.Participant: Type): Contract = (
+SlotProtocol<.Participant: Type>: Contract = (
     .item: Type
     .put: (.self: &Participant, .storage: $&Allocation, .slot: $&item, .value: item) -> () where {
         retains(storage, value)
@@ -507,7 +507,7 @@ Storage sources may also name receiver domains. For example, a collection whose
 representation stays inside `Participant` can declare:
 
 ```rg
-SlotProtocol#(.Participant: Type): Contract = (
+SlotProtocol<.Participant: Type>: Contract = (
     .item: Type
     domain contents
 
@@ -550,7 +550,7 @@ A contract can name storage domains without exposing concrete fields. Its
 methods refer to them through the receiver name:
 
 ```rg
-Source#(.Participant: Type): Contract = (
+Source<.Participant: Type>: Contract = (
     domain storage
 
     .get: (.self: &Participant) -> (.value: &Int32)
@@ -559,8 +559,8 @@ Source#(.Participant: Type): Contract = (
         where invalidates(self.storage)
 )
 
-Cell: Type = (.value: Int32, .other: Int32)
-implement Source#(Cell) (
+Cell := (.value: Int32, .other: Int32)
+implement Source<Cell> (
     .get = (.self: &Cell) -> (.value: &Int32) { value = &self&.value }
     .reset = (.self: $&Cell) -> () { self&.value = 0 }
 ) where { storage(self.value) }
@@ -639,7 +639,7 @@ storage generations, and opaque storage.
 > consumption and relocation require a single output choice; joint declarations
 > are rejected rather than publishing incomplete cleanup transitions.
 
-For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
+For example, a fixed `Readable<.item: Int32>` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,
 then fixes every method signature before erasing `Participant`. Handles for different
 associated arguments are different types; their possible implementation sets
@@ -650,12 +650,12 @@ selected output follows its payload; selecting another named input or output
 adds a condition on that value. Input conditions refer to call-entry variants,
 so a later mutation or tag test cannot establish the original input condition.
 All selectors of a joint guarantee must be proven for the same call.
-For an `Errable#(?&Int32, Reasons)` output, an inner `on result ..some`
+For an `Errable<?&Int32, Reasons>` output, an inner `on result ..some`
 can permit `depends_on(result, self)` while `..none` has no such dependency.
 Permissions on the outer payload also apply to its nested alternatives.
 
 ```argi
-.get: (.self: &Participant) -> (.result: Errable#(?&Int32, Reasons)) where {
+.get: (.self: &Participant) -> (.result: Errable<?&Int32, Reasons>) where {
     on result ..ok {
         on result ..some { depends_on(result, self) }
         on result ..none {}

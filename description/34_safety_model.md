@@ -81,7 +81,7 @@ alone is not evidence of an available value. Structural completeness proves
 initialization without reviving ended storage generations or stale references.
 
 For a value whose validity relation is not visible in its representation,
-`depend_on#(.t: T)(.value = value, .on = &owner).result` attaches the
+`depend_on<.t: T>(.value = value, .on = &owner).result` attaches the
 owner's storage generation to the returned value. Its existing cleanup
 responsibilities are unchanged. Using it after the owner is deinitialized is
 an error, even if the value is a scalar or has passed through another function.

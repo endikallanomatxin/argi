@@ -56,7 +56,7 @@ Several escape sequences are supported:
 UTF-8 text and records its byte length; it need not include a terminator.
 Both representations are private. Embedded NULs are valid text.
 
-Arbitrary bytes use `DynamicArray#(UInt8)` or byte array views.
+Arbitrary bytes use `DynamicArray<UInt8>` or byte array views.
 `string_from_bytes(.bytes, .allocator)` validates and copies them, returning
 `invalid_utf8` or `out_of_memory` on failure. Later changes to the source bytes
 do not affect the resulting text. There is no public unchecked byte-to-text view.
@@ -138,7 +138,7 @@ saturates at the largest capacity that leaves room for the terminator.
 The infallible `string_append_byte` and `string_append_bytes` helpers require
 sufficient existing capacity and abort before writing if that precondition fails.
 
-`join(.parts, .separator, .allocator)` accepts an `ArrayView#(StringView)`
+`join(.parts, .separator, .allocator)` accepts an `ArrayView<StringView>`
 and produces a new owning `String`. It inserts the separator only between
 parts, preserves empty parts and embedded NULs, and accepts an empty separator.
 An empty list produces an owning empty string. Parts and separator may overlap;
@@ -172,7 +172,7 @@ The text model uses these conventions:
   no separate `TextBuffer` type.
 - buffered I/O wrappers borrow their underlying streams and caller-provided
   initialized byte buffers. Both take `.base` and
-  `.buffer: MutableArrayView#(UInt8)` and construct without allocation or failure.
+  `.buffer: MutableArrayView<UInt8>` and construct without allocation or failure.
   Omitting `.buffer` creates an independent, zero-initialized 4096-byte buffer
   in the caller scope, just like writing the default expression explicitly.
   The adapter cannot outlive that storage.
@@ -193,11 +193,11 @@ The text model uses these conventions:
 - `String` itself is not directly indexable.
 - byte-level access is explicit:
   - `bytes_get(.view = &string, .index = i)` returns
-    `Errable#(UInt8, (..out_of_bounds))`. Valid indices are strictly below
+    `Errable<UInt8, (..out_of_bounds)>`. Valid indices are strictly below
     `byte_length`; the trailing NUL is accessible only through C interop.
     The same rule applies to `StringView`, including empty views.
   - `string_byte_reference` and `string_view_byte_address` return checked
-    `Errable#(&UInt8, (..out_of_bounds))` references within that same range.
+    `Errable<&UInt8, (..out_of_bounds)>` references within that same range.
   - `set_ascii(.self = $&string, .index = i, .byte = b)` checks the index and
     requires both the old and new byte to be ASCII.
   - `push_ascii`, `push_scalar`, and `push_view` append ASCII, a Unicode scalar,
@@ -297,7 +297,7 @@ of the destination string can allocate. A failed reservation leaves the
 existing string unchanged. String formatting returns `out_of_memory` on an
 allocation failure.
 
-`WriteValue#(Stream, T).write_value(.self: $&Stream, .value: T)` sends the same decimal bytes to a writer
+`WriteValue<Stream, T>.write_value(.self: $&Stream, .value: T)` sends the same decimal bytes to a writer
 without an allocator or an intermediate owning string. Participants are explicit
 in qualified calls; generic callers retain their stream and value type parameters.
 The contract permits specialization for a concrete stream/value pair.
