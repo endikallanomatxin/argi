@@ -38,8 +38,8 @@ main() -> (.status_code: Int32 = 0) := {
     if signed / 2 != -4 { status_code = 4 }
     distance: Distance = 1.5
     if distance + 0.5 != 2.0 { status_code = 5 }
-    raw ::= unwrap_or_abort(.value = vertex | convert#(.to: UIntNative)(_))
-    restored ::= unwrap_or_abort(.value = raw | convert#(.to: VertexId)(_))
+    raw ::= vertex | convert#(.to: UIntNative)(_)
+    restored ::= raw | convert#(.to: VertexId)(_)
     if restored != vertex { status_code = 8 }
     values: [2]VertexId = (3, 4)
     if values[0] != 3 or values[1] != 4 { status_code = 6 }

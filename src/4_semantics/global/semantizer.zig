@@ -1069,6 +1069,8 @@ pub const Session = struct {
                     return error.Reported;
                 if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                     return error.Reported;
+                if (try diagnoseTypeAliasCycles(allocator, &relocation.graph, modules, relocation.offsets.items, core, diagnostics))
+                    return error.Reported;
                 if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
                     return error.Reported;
                 if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
@@ -1145,7 +1147,7 @@ pub const Session = struct {
 
             try @import("record_literals.zig").checkRequiredFields(&relocation.graph, reachable, options.diagnostics);
 
-            if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+            if (try diagnoseInvalidValueAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
                 return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
 
             if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
@@ -1763,10 +1765,10 @@ fn diagnoseArrayAssignments(
     return false;
 }
 
-// Literal contextualization has already finished. Typed numeric values must
+// Literal contextualization has already finished. Typed nominal and numeric values must
 // agree with their destination; changing their node type would conceal a
 // conversion that codegen has no corresponding instruction to perform.
-fn diagnoseInvalidNumericAssignments(
+fn diagnoseInvalidValueAssignments(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
     reachable: ?*const reachability_mod.FunctionSet,
@@ -1784,7 +1786,7 @@ fn diagnoseInvalidNumericAssignments(
                 graph.binding(binding).initialization orelse continue,
                 graph.binding(binding).ty,
             },
-            .struct_value_literal, .array_literal => findAggregateNumericMismatch(graph, id) orelse continue,
+            .struct_value_literal, .array_literal => findAggregateValueMismatch(graph, id) orelse continue,
             .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
             .array_store => |store| .{ store.value, store.element_type },
             .pointer_assignment => |assignment| blk: {
@@ -1823,7 +1825,7 @@ fn diagnoseInvalidNumericAssignments(
             }
         }
         const unicode_mismatch = isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected);
-        const nominal_mismatch = hasUnderlyingType(graph, actual) or hasUnderlyingType(graph, expected);
+        const nominal_mismatch = global_types.hasNominalIdentity(graph, actual) or global_types.hasNominalIdentity(graph, expected);
         if (!unicode_mismatch and !nominal_mismatch and (!isNumericType(graph, actual) or !isNumericType(graph, expected))) continue;
         if (global_types.equal(graph, actual, expected)) continue;
         if (diagnostics) |sink| {
@@ -1862,8 +1864,8 @@ fn diagnoseInvalidNumericAssignments(
 }
 
 // Aggregate types alone do not prove that each child has the representation
-// expected by LLVM. Check typed numeric children after contextualization.
-fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
+// expected by LLVM. Check typed nominal and numeric children after contextualization.
+fn findAggregateValueMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
     const node = graph.node(id);
     const ty = node.ty orelse return null;
     switch (node.content) {
@@ -1879,12 +1881,12 @@ fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id:
                         }
                     }
                 } else if (offset < fields.len) expected = graph.fields.items[fields.start + offset].ty;
-                if (expected) |target| if (numericChildMismatch(graph, field.value, target)) return .{ field.value, target };
+                if (expected) |target| if (typedChildMismatch(graph, field.value, target)) return .{ field.value, target };
             }
         },
         .array_literal => |literal| {
             for (graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| {
-                if (numericChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
+                if (typedChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
             }
         },
         else => {},
@@ -1892,7 +1894,7 @@ fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id:
     return null;
 }
 
-fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
+fn typedChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
     const node = graph.node(child);
     const actual = node.ty orelse return false;
     if (isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected))
@@ -1902,15 +1904,8 @@ fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: glob
         const represented = global_types.representation(graph, expected) orelse return false;
         if (represented == .builtin and primitives.integerRange(represented.builtin, graph.target.stdTarget()) != null) return false;
     }
-    if (hasUnderlyingType(graph, actual) or hasUnderlyingType(graph, expected)) return !global_types.equal(graph, actual, expected);
+    if (global_types.hasNominalIdentity(graph, actual) or global_types.hasNominalIdentity(graph, expected)) return !global_types.equal(graph, actual, expected);
     return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
-}
-
-fn hasUnderlyingType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
-    return switch (graph.resolvedSemanticType(ty) orelse return false) {
-        .generic => if (global_types.genericInstance(graph, ty)) |instance| instance.shape == .alias else false,
-        else => false,
-    };
 }
 
 fn isUnicodeScalarType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
@@ -2506,6 +2501,49 @@ fn markUnresolvedTypeSlots(
             }
         }
     }
+}
+
+fn diagnoseTypeAliasCycles(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+    core: *core_mod.Resolver,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    const edges = try allocator.alloc(?global_sg.GlobalTypeId, graph.types.items.len);
+    defer allocator.free(edges);
+    @memset(edges, null);
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items) |operation| {
+            const pending = switch (operation) {
+                .resolve_type => |value| value,
+                else => continue,
+            };
+            const destination = globalizer.globalType(offsets[module_index], pending.destination);
+            if (!graph.isTypeUnresolved(destination)) continue;
+            const reference = module.semantic.external_refs.items[@intFromEnum(pending.external)];
+            if (reference.generic_arguments != null or reference.computed_type != null or reference.projection_base != null) continue;
+            edges[@intFromEnum(destination)] = try core.resolveTypeValue(module_index, reference);
+        }
+    }
+    for (edges, 0..) |edge, raw| {
+        var current = edge orelse continue;
+        for (0..edges.len) |_| {
+            if (@intFromEnum(current) == raw) {
+                // The diagnostic walk runs only after resolution stalls. No
+                // dependency index or cycle state survives publication.
+                for (graph.nodes.items) |node| {
+                    if (node.content != .type_literal or @intFromEnum(node.content.type_literal) != raw) continue;
+                    try diagnostics.add(diagnosticLocation(graph, diagnostics, node.source), .semantic, "cyclic type alias", .{});
+                    return true;
+                }
+                break;
+            }
+            current = edges[@intFromEnum(current)] orelse break;
+        }
+    }
+    return false;
 }
 
 fn diagnoseUnresolvedQualifiedTypes(

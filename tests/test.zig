@@ -15420,42 +15420,42 @@ test "argi repl recovers from aborted allocated System evaluations" {
     try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n", "#run evaluation aborted");
 }
 
-test "feature_tests/types/289_nominal_underlying" {
-    try expectSuccessfulBuild("tests/feature_tests/types/289_nominal_underlying");
-    try run("tests/feature_tests/types/289_nominal_underlying");
+test "feature_tests/types/289_annotated_type_aliases" {
+    try expectSuccessfulBuild("tests/feature_tests/types/289_annotated_type_aliases");
+    try run("tests/feature_tests/types/289_annotated_type_aliases");
 }
 
-test "feature_tests/types/290X_nominal_underlying_mismatch" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/290X_nominal_underlying_mismatch", "no function named 'accept' accepts arguments (.value: EdgeId)");
+test "feature_tests/types/290X_nominal_record_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/290X_nominal_record_mismatch", "no function named 'accept' accepts arguments (.value: EdgeId)");
 }
 
-test "feature_tests/types/291X_nominal_underlying_base_mismatch" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/291X_nominal_underlying_base_mismatch", "no function named 'accept' accepts arguments (.value: UIntNative)");
+test "feature_tests/types/291X_nominal_record_base_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/291X_nominal_record_base_mismatch", "no function named 'accept' accepts arguments (.value: UIntNative)");
 }
 
-test "feature_tests/types/292X_nominal_underlying_range" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/292X_nominal_underlying_range", "integer literal 256 does not fit in 'UInt8'");
+test "feature_tests/types/292X_annotated_alias_range" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/292X_annotated_alias_range", "integer literal 256 does not fit in 'UInt8'");
 }
 
-test "feature_tests/types/293X_nominal_underlying_cycle" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/293X_nominal_underlying_cycle", "cyclic underlying type");
+test "feature_tests/types/293X_type_alias_cycle" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/293X_type_alias_cycle", "cyclic type alias");
 }
 
-test "feature_tests/types/294_nominal_underlying_shapes" {
-    try expectSuccessfulBuild("tests/feature_tests/types/294_nominal_underlying_shapes");
-    try run("tests/feature_tests/types/294_nominal_underlying_shapes");
+test "feature_tests/types/294_annotated_alias_shapes" {
+    try expectSuccessfulBuild("tests/feature_tests/types/294_annotated_alias_shapes");
+    try run("tests/feature_tests/types/294_annotated_alias_shapes");
 }
 
-test "feature_tests/types/295X_nominal_underlying_contract" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/295X_nominal_underlying_contract", "does not satisfy contract constraint 'Marked'");
+test "feature_tests/types/295X_independent_record_contract" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/295X_independent_record_contract", "does not satisfy contract constraint 'Marked'");
 }
 
-test "feature_tests/types/296X_nominal_underlying_assignment" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/296X_nominal_underlying_assignment", "distinct nominal types require explicit conversion");
+test "feature_tests/types/296X_nominal_record_assignment" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/296X_nominal_record_assignment", "distinct nominal types require explicit conversion");
 }
 
-test "feature_tests/types/297X_nominal_underlying_raw_argument" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/297X_nominal_underlying_raw_argument", "no function named 'accept_raw' accepts arguments (.value: VertexId)");
+test "feature_tests/types/297X_nominal_record_raw_argument" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/297X_nominal_record_raw_argument", "no function named 'accept_raw' accepts arguments (.value: VertexId)");
 }
 
 test "feature_tests/testing/21_modern_test_syntax" {
@@ -15573,7 +15573,7 @@ test "feature_tests/modules/36X_nested_private_submodule" {
 
 test "bytecode nominal underlying scalar and aggregate representations" {
     try vmExpect("tests/feature_tests/execution/281_nominal_scalar_representations", 0, null);
-    try vmExpect("tests/feature_tests/types/294_nominal_underlying_shapes", 0, null);
+    try vmExpect("tests/feature_tests/types/294_annotated_alias_shapes", 0, null);
 }
 
 test "feature_tests/execution/281_nominal_scalar_representations" {
@@ -15678,4 +15678,16 @@ test "feature_tests/types/307_imported_nominal_signatures" {
 
 test "feature_tests/types/308X_imported_signature_requires_record" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/308X_imported_signature_requires_record", "function input signature must be a record type", "failed without a diagnostic");
+}
+
+test "feature_tests/types/309X_nested_nominal_record_assignment" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/309X_nested_nominal_record_assignment", "distinct nominal types require explicit conversion", "without a diagnostic");
+}
+
+test "feature_tests/types/310X_array_nominal_record_assignment" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/310X_array_nominal_record_assignment", "distinct nominal types require explicit conversion", "without a diagnostic");
+}
+
+test "feature_tests/types/311X_nominal_construction_recontextualization" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/311X_nominal_construction_recontextualization", "distinct nominal types require explicit conversion", "without a diagnostic");
 }

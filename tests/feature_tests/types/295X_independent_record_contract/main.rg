@@ -2,7 +2,7 @@ Marked#(.T: Type): Contract = ()
 
 Base: Type = (.value: Int32)
 
-Derived: Type = Base
+Derived := (.value: Int32)
 
 implement Marked#(Base) ()
 

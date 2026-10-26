@@ -1,8 +1,8 @@
-VertexId: Type = UIntNative
+VertexId := (.value: UIntNative)
 
 accept_raw(.value: UIntNative) -> () := {}
 
 main() -> () := {
-    vertex: VertexId = 1
+    vertex: VertexId = (.value = 1)
     accept_raw(.value = vertex)
 }

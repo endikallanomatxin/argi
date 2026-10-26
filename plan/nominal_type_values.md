@@ -223,9 +223,18 @@ before adding implementation exceptions.
   lowering, validation and backend paths are removed; scalar wrappers require a
   record definition.
 
+- Nominal assignment checks cover whole values and typed aggregate children,
+  rather than only scalar wrappers. The old wrapper fixtures now distinguish
+  transparent annotated aliases from independent one-field record definitions.
+  Cyclic closed aliases are diagnosed after pending resolution stalls. Context
+  cannot retag an already constructed nominal value; this is checked before
+  record completion as well as during ordinary literal coercion.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
 Broad validation still exposes explicit argument-type identity and stale
-diagnostic expectations; these are not a completed migration.
+diagnostic expectations; these are not a completed migration. Selected internal
+coverage also exposes constructor-navigation and shared-operation LSP fixtures
+whose contract signature migration remains pending.

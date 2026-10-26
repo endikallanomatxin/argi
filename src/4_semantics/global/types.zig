@@ -305,6 +305,13 @@ pub fn identityEqual(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.G
     };
 }
 
+pub fn hasNominalIdentity(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    return switch (graph.resolvedSemanticType(ty) orelse return false) {
+        .nominal, .generic => true,
+        else => false,
+    };
+}
+
 pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
     if (graph.isTypeUnresolved(a) or graph.isTypeUnresolved(b)) return false;
     if (a == b) return true;

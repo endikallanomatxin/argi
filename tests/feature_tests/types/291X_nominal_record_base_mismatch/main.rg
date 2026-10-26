@@ -1,4 +1,4 @@
-VertexId: Type = UIntNative
+VertexId := (.value: UIntNative)
 
 accept(.value: VertexId) -> () := {}
 

@@ -462,6 +462,7 @@ pub const Resolver = struct {
                     if (self.graph.node(id).content.list_literal.elements.len != 0) break :blk .resolved;
                     try self.graph.setNodeContent(self.allocator, id, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
                 }
+                if (self.contextualIdentityConflict(id, target)) break :blk .resolved;
                 try self.graph.setNodeType(self.allocator, id, target);
                 // Leave required-field diagnostics to the shared publication check.
                 if (!@import("record_literals.zig").hasRequiredFields(self.graph, id, target)) break :blk .resolved;
@@ -1684,6 +1685,7 @@ pub const Resolver = struct {
         if (content == .list_literal and content.list_literal.elements.len == 0 and types.fields(self.graph, target) != null)
             try self.graph.setNodeContent(self.allocator, node, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
         if (self.graph.node(node).content == .struct_value_literal) {
+            if (self.contextualIdentityConflict(node, target)) return true;
             if (!@import("record_literals.zig").hasRequiredFields(self.graph, node, target)) {
                 try self.graph.setNodeType(self.allocator, node, target);
                 return true;
@@ -1695,6 +1697,7 @@ pub const Resolver = struct {
     }
 
     pub fn completeRecordValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context) anyerror!bool {
+        if (self.contextualIdentityConflict(node, target)) return false;
         const fields = types.fields(self.graph, target) orelse return false;
         if (types.isCUnion(self.graph, target)) {
             _ = try self.coerceContextualValue(node, target);
@@ -2071,7 +2074,13 @@ pub const Resolver = struct {
         };
     }
 
+    fn contextualIdentityConflict(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        const actual = self.graph.node(node).ty orelse return false;
+        return types.hasNominalIdentity(self.graph, actual) and !types.equal(self.graph, actual, target);
+    }
+
     pub fn contextualLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        if (self.contextualIdentityConflict(node, target)) return false;
         if (self.integerLiteralFits(node, target) or self.floatLiteralFits(node, target)) return true;
         if (self.pendingChoiceLiteralFits(node, target)) return true;
         switch (self.graph.nodes.items[@intFromEnum(node)].content) {
@@ -2177,6 +2186,7 @@ pub const Resolver = struct {
     }
 
     pub fn coerceContextualValue(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) !bool {
+        if (self.contextualIdentityConflict(node, target)) return false;
         // Scalar literals have one nominal identity. Wait for bundled core to
         // resolve it rather than adopting an arbitrary early expected type.
         if (self.graph.node(node).content == .char_literal) return false;
@@ -2237,8 +2247,9 @@ pub const Resolver = struct {
             return true;
         }
         const expected_fields = types.fields(self.graph, target) orelse return false;
-        // TODO: Require every non-defaulted nominal field before retagging a
-        // literal; missing fields must not produce partially initialized values.
+        // Context supplies identity before missing-field diagnostics run. The
+        // shared record-literal publication check rejects incomplete values;
+        // contextual tagging alone does not establish initialization.
         for (0..expected_fields.len) |offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
             const actual = self.callArgument(literal, offset, expected.name) orelse continue;
