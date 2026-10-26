@@ -13,8 +13,8 @@ pub fn lower(
 ) !void {
     try validateBundledPrimitives(graph, files, diagnostics);
 
-    for (graph.semantic.function_semantics.items) |*semantic| {
-        const function = graph.functions.items[@intFromEnum(semantic.function)];
+    for (graph.functions.items) |*semantic| {
+        const function = semantic.*;
         const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
         const file = files[declaration.module_file_index];
         if (file.is_bundled_core) if (registry.findBundled(graph.text(declaration.name), file.path)) |spec| {
@@ -141,7 +141,7 @@ test "source metadata identities require canonical trusted declarations" {
         defer built.graph.deinit(a);
         var location_id = false;
         var resolver = false;
-        for (built.graph.semantic.function_semantics.items) |semantic| {
+        for (built.graph.functions.items) |semantic| {
             location_id = location_id or semantic.flags.is_source_location_id;
             resolver = resolver or semantic.flags.is_source_location_resolver;
             try std.testing.expectEqual(.none, semantic.safety_primitive);
@@ -181,7 +181,7 @@ test "trace helper metadata requires the registered core path and keeps ordinary
         defer built.graph.deinit(a);
         var view = false;
         var text = false;
-        for (built.graph.semantic.function_semantics.items) |semantic| {
+        for (built.graph.functions.items) |semantic| {
             view = view or semantic.flags.is_error_context_view;
             text = text or semantic.flags.is_error_context_text;
             try std.testing.expectEqual(.none, semantic.safety_primitive);

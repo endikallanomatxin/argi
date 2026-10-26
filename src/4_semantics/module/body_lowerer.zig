@@ -33,7 +33,7 @@ const ScopeMark = struct {
 pub const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };
 const ExpressionMode = enum { body, initializer };
 
-pub fn lowerMissingFunctions(
+pub fn lowerSourceFunctions(
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
@@ -121,12 +121,15 @@ const Context = struct {
     fn lowerFunctions(self: *Context) !Stats {
         var stats: Stats = .{};
         var raw_index: usize = 0;
-        // Lowering may enqueue additional function bodies. Fetch a fresh value
-        // on every iteration: appending interfaces can relocate their table.
-        while (raw_index < self.graph.functions.items.len) : (raw_index += 1) {
+        // Source interfaces are complete before this pass. Generated entry
+        // helpers are emitted with their bodies and need no second lowering.
+        // Fetch by ID: lowering a source body can relocate the function pool.
+        const source_function_count = self.graph.functions.items.len;
+        const source_declaration_count = self.graph.declarations.items.len - self.graph.generated_declaration_count;
+        while (raw_index < source_function_count) : (raw_index += 1) {
             const interface = self.graph.functions.items[raw_index];
             const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(raw_index)));
-            if (hasFunctionSemantic(self.graph, function_id)) continue;
+            if (@intFromEnum(interface.declaration) >= source_declaration_count) continue;
             self.current_function = function_id;
             // Function interfaces participate in dispatch even when their
             // bodies are unreachable, so their pending work is global.
@@ -174,8 +177,13 @@ const Context = struct {
             const foreign = if (declaration.c_options) |options| try self.lowerForeignOptions(options) else ForeignOptions{};
             if (foreign.exported and declaration.body == null)
                 return self.foreignOptionError(declaration.c_options.?, "an exported CFunction requires a body");
-            try self.graph.semantic.function_semantics.append(self.allocator, .{
-                .function = function_id,
+            const previous = self.graph.functions.items[@intFromEnum(function_id)];
+            self.graph.functions.items[@intFromEnum(function_id)] = .{
+                .declaration = previous.declaration,
+                .input = previous.input,
+                .output = previous.output,
+                .input_type = previous.input_type,
+                .output_type = previous.output_type,
                 .body = body,
                 .foreign_symbol = foreign.symbol,
                 .input_bindings = input_range,
@@ -190,7 +198,7 @@ const Context = struct {
                     .is_c_export = foreign.exported,
                     .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
                 },
-            });
+            };
             self.popScope();
             stats.lowered_functions += 1;
         }
@@ -905,13 +913,18 @@ const Context = struct {
         }
         self.graph.functions.items[@intFromEnum(function_id)].input = .{ .start = captured_fields_start, .len = input.len + @as(u32, @intCast(body.entry_captures.items.len)) };
         const input_bindings = try self.writer.appendBindingRefs(captured_bindings.items);
-        try self.graph.semantic.function_semantics.append(self.allocator, .{
-            .function = function_id,
+        const previous = self.graph.functions.items[@intFromEnum(function_id)];
+        self.graph.functions.items[@intFromEnum(function_id)] = .{
+            .declaration = previous.declaration,
+            .input = previous.input,
+            .output = previous.output,
+            .input_type = previous.input_type,
+            .output_type = previous.output_type,
             .body = block,
             .input_bindings = input_bindings,
             .output_bindings = output_bindings,
             .flags = .{ .has_declared_body = true, .is_comptime_entry = true, .uses_inferred_error_reasons = try body.interfaceUsesInferredErrable(output) },
-        });
+        };
         const result_type = if (output.len == 0) try self.builtin(.Void) else if (output.len == 1)
             (try views.fieldView(self.graph, @enumFromInt(output.start))).ty
         else
@@ -1020,13 +1033,18 @@ const Context = struct {
         }
         self.graph.semantic.blocks.items[@intFromEnum(block)].nodes = try self.writer.appendNodeRefs(nodes.items);
         self.graph.semantic.blocks.items[@intFromEnum(block)].ret_val = null;
-        try self.graph.semantic.function_semantics.append(self.allocator, .{
-            .function = function,
+        const previous = self.graph.functions.items[@intFromEnum(function)];
+        self.graph.functions.items[@intFromEnum(function)] = .{
+            .declaration = previous.declaration,
+            .input = previous.input,
+            .output = previous.output,
+            .input_type = previous.input_type,
+            .output_type = previous.output_type,
             .body = block,
             .input_bindings = try self.writer.appendBindingRefs(inputs.items),
             .output_bindings = try self.writer.appendBindingRefs(outputs.items),
             .flags = .{ .has_declared_body = true, .is_comptime_entry = true, .is_comptime_host_entry = true },
-        });
+        };
         const outer_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
         for (captures) |capture| try self.graph.semantic.value_fields.append(self.allocator, .{ .name = capture.name, .value = capture.value });
         const outer_arguments = try self.resolved(syntax, null, .{ .struct_value_literal = .{ .fields = .{ .start = outer_start, .len = @intCast(captures.len) } } });
@@ -1950,11 +1968,6 @@ const Context = struct {
         return null;
     }
 };
-
-fn hasFunctionSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFunctionId) bool {
-    for (graph.semantic.function_semantics.items) |semantic| if (semantic.function == id) return true;
-    return false;
-}
 
 test "module body lowerer keeps unresolved expression types explicit" {
     try std.testing.expect(@sizeOf(Lowered) <= 12);

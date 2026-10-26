@@ -52,7 +52,6 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try payload.function(entities.Ids, try views.functionView(graph, @enumFromInt(@as(u32, @intCast(index)))), bounds);
 
     const semantic = &graph.semantic;
-    try verifyOverlays(graph);
 
     for (semantic.unresolved_binding_types.items, 0..) |id, index| {
         try require(verify.idFits(id, semantic.bindings.items.len));
@@ -166,18 +165,6 @@ fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
         for (graph.symbol_declarations.items) |exported| try require(@intFromEnum(exported) != index);
     }
     try require(type_reference_cursor == graph.type_references.items.len);
-}
-
-fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
-    for (graph.semantic.function_semantics.items, 0..) |value, index| {
-        try require(verify.idFits(value.function, graph.functions.items.len));
-        try require(!hasFunctionOverlayBefore(graph, index, value.function));
-        try require(verify.optionalIdFits(value.body, graph.semantic.blocks.items.len));
-        try require(verify.rangeFits(value.input_bindings, graph.semantic.binding_refs.items.len));
-        try require(verify.rangeFits(value.output_bindings, graph.semantic.binding_refs.items.len));
-        try require(verify.optionalIdFits(value.inferred_error_reasons, views.typeCount(graph)));
-        if (value.foreign_symbol) |name| try require(verify.stringFits(name, graph.strings.items));
-    }
 }
 
 fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entities.PendingOperation) !void {
@@ -372,11 +359,6 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .virtual_registry_refs = semantic.virtual_registry_refs.items.len,
         .strings = graph.strings.items,
     };
-}
-
-fn hasFunctionOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleFunctionId) bool {
-    for (graph.semantic.function_semantics.items[0..end]) |value| if (value.function == id) return true;
-    return false;
 }
 
 fn rangeFitsRaw(start: u32, len: u32, total: usize) bool {

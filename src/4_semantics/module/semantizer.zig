@@ -69,7 +69,7 @@ pub fn finish(
     try lowerModuleConditions(allocator, graph, files);
     // Templates register contract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
-    const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
+    const bodies = try body_lowerer.lowerSourceFunctions(allocator, graph, files, diagnostics);
     try function_identity_lowerer.lower(graph, files, diagnostics);
     const relation_stats = try contract_relation_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, graph, files);

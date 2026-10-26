@@ -30,8 +30,7 @@ pub const TypeReferenceResolution = union(enum) {
 };
 
 pub const BuiltinType = primitives.BuiltinType;
-pub const FieldRange = struct { start: u32, len: u32 };
-pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange, input_type: ?ModuleTypeId = null, output_type: ?ModuleTypeId = null };
+pub const FieldRange = module_entities.FieldRange;
 pub const DeclarationKind = primitives.DeclarationKind;
 
 pub const Declaration = struct {
@@ -80,7 +79,7 @@ pub const ModuleSemanticGraph = struct {
     generated_declaration_count: u32 = 0,
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(ModuleDeclId) = .empty,
-    functions: std.ArrayList(FunctionInterface) = .empty,
+    functions: std.ArrayList(module_entities.Function) = .empty,
     strings: std.ArrayList(u8) = .empty,
     type_references: std.ArrayList(TypeReference) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
@@ -133,7 +132,7 @@ pub const ModuleSemanticGraph = struct {
     pub fn storageBytes(self: *const ModuleSemanticGraph) usize {
         return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) +
             self.symbols.items.len * @sizeOf(Symbol) + self.symbol_declarations.items.len * @sizeOf(ModuleDeclId) +
-            self.functions.items.len * @sizeOf(FunctionInterface) +
+            self.functions.items.len * @sizeOf(module_entities.Function) +
             self.strings.items.len +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.file_offsets.items.len * @sizeOf(FileOffsets) +

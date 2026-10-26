@@ -211,9 +211,11 @@ test "generic identities and materialized shapes relocate together" {
     try global_verify.verifyGlobal(&global);
 
     // The prefix module contributes one type, so generic-local type 0/1 become
-    // global type 1/2. Its declaration is global declaration 1.
+    // global type 1/2. Its source declaration is global declaration 1, but
+    // the prefix contributes no family definitions, so the family remains 0.
     const identity = global.types.items[2].generic;
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(identity.base));
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(identity.base));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(global.familyDeclaration(identity.base)));
     try std.testing.expectEqual(@as(u32, 0), identity.arguments.start);
     try std.testing.expectEqual(@as(u32, 1), identity.arguments.len);
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(global.generic_arguments.items[0].value.type));

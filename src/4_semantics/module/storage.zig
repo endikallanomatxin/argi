@@ -11,7 +11,6 @@ pub const Storage = struct {
 
     declaration_bindings: std.ArrayList(entities.DeclarationBinding) = .empty,
     module_aliases: std.ArrayList(entities.ModuleAlias) = .empty,
-    function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
 
     /// Canonical pools shared by discovery and subsequent lowering.
     fields: std.ArrayList(entities.Field) = .empty,
@@ -67,7 +66,6 @@ pub const Storage = struct {
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         self.declaration_bindings.deinit(allocator);
         self.module_aliases.deinit(allocator);
-        self.function_semantics.deinit(allocator);
         self.fields.deinit(allocator);
         self.variants.deinit(allocator);
         self.generic_arguments.deinit(allocator);
@@ -114,7 +112,6 @@ pub const Storage = struct {
         return @sizeOf(bool) +
             self.declaration_bindings.items.len * @sizeOf(entities.DeclarationBinding) +
             self.module_aliases.items.len * @sizeOf(entities.ModuleAlias) +
-            self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
             self.fields.items.len * @sizeOf(entities.Field) +
             self.variants.items.len * @sizeOf(entities.ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(entities.GenericArgument) +

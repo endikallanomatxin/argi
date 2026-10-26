@@ -66,28 +66,9 @@ pub fn genericArgumentView(graph: *const graph_mod.ModuleSemanticGraph, id: enti
 pub fn functionView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFunctionId) !entities.Function {
     const raw: usize = @intFromEnum(id);
     if (raw >= graph.functions.items.len) return error.InvalidModuleFunctionId;
-    const function = graph.functions.items[raw];
-    const semantic = findFunctionSemantic(graph, id);
-    return .{
-        .declaration = function.declaration,
-        .input = .{ .start = function.input.start, .len = function.input.len },
-        .output = .{ .start = function.output.start, .len = function.output.len },
-        .input_type = function.input_type,
-        .output_type = function.output_type,
-        .body = if (semantic) |value| value.body else null,
-        .input_bindings = if (semantic) |value| value.input_bindings else .{ .start = 0, .len = 0 },
-        .output_bindings = if (semantic) |value| value.output_bindings else .{ .start = 0, .len = 0 },
-        .inferred_error_reasons = if (semantic) |value| value.inferred_error_reasons else null,
-        .foreign_symbol = if (semantic) |value| value.foreign_symbol else null,
-        .safety_primitive = if (semantic) |value| value.safety_primitive else .none,
-        .flags = if (semantic) |value| value.flags else .{},
-    };
+    return graph.functions.items[raw];
 }
 
-fn findFunctionSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFunctionId) ?entities.FunctionSemantic {
-    for (graph.semantic.function_semantics.items) |value| if (value.function == id) return value;
-    return null;
-}
 test "module views expose one canonical type pool" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };

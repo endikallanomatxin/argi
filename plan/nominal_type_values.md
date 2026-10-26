@@ -153,8 +153,9 @@ before adding implementation exceptions.
 - Discovery and later lowering share canonical type, field, variant, and
   generic-argument pools. One interface constructor handles local/imported types;
   the early duplicate builder, prefix offsets, field/variant overlays, and final
-  canonicalization copy are removed. Function/declaration metadata still needs
-  consolidation.
+  canonicalization copy are removed. Functions also use one canonical record;
+  the interface/body metadata overlay and its linear lookups are removed.
+  Declaration metadata still needs consolidation.
 - Syntax stores function definitions and parameterized definitions independently
   of their binding names. Calls reference callee expressions; type and function
   applications share specialization nodes. Parameter and specialization lists
@@ -202,3 +203,8 @@ inference, generic operation signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
 Broad validation currently exposes constructor inference, explicit argument-type
 identity, and stale diagnostic expectations; these are not a completed migration.
+
+Incremental validation still has three unresolved cases: extra reached inputs on
+inline implementations, session fixtures that independently redefine the same
+record shape, and choice defaults in staged generic calls. Keep these separate
+from the completed canonical-function storage consolidation.
