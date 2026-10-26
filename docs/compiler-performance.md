@@ -298,3 +298,40 @@ Logs: `.zig-cache/execution-boundaries-{before,after}-release-*.csv` and
 prelude calls/resources/rejections and minimal calls/bindings. All report the
 10/100 milestones, plus 1,000 for the minimal workloads. Initial core/prelude
 preparation and reset/teardown are outside the cumulative command timings.
+
+### Linear session-layout identity validation
+
+`session_layout.build` previously searched every preceding binding for each row.
+It now uses a temporary dense bitset keyed by validated global binding IDs. This
+preserves duplicate rejection (including static bindings), source order and
+cleanup selection; the bitset is not retained by executable units. Allocation
+failure tests cover construction and both invalid/duplicate input paths.
+
+Paired ReleaseSafe profiles with binaries in `.zig-cache/` and a 1,024 MiB limit:
+
+| Session | Commands | Layout before/after ms | Total before/after ms |
+|---|---:|---:|---:|
+| Minimal bindings | 100 | 1.091 / 0.884 | See cumulative logs |
+| Minimal bindings | 1,000 | 189.173 / 45.690 | 2,599.978 / 2,432.001 |
+| Prelude resources | 100 | 8.038 / 6.576 | 3,279.656 / 3,080.639 |
+
+These are individual instrumented runs, not statistical throughput estimates.
+The resource total varies mainly outside layout construction. Retained and peak
+tracked memory, compiled instructions and reuse counters match in paired runs:
+16.106/18.012 MiB for 1,000 bindings and 145.689/147.826 MiB for 100 resources.
+A 1,000-call control spends 1.681 ms in session layouts. The rejection control
+publishes no units and retains 100.660 MiB after 100 commands.
+
+The same reports distinguish retained frame identity metadata from slot backing.
+After 1,000 minimal calls, 2,001 dead frame identities occupy 208,208 bytes, while
+dead frame slots retain only 528 bytes. The 100-resource workload has 31,318 dead
+identities (3,622,528 identity bytes) and 405,680 dead slot bytes. Those figures do
+not justify changing identity lifetime or reclaiming storage through live
+references without a more specific workload. Verification costs 21.677 ms for
+1,000 bindings and 175.261 ms for 100 resources; join-state representation needs
+a branch-heavy workload before any change. Continuation fork/seal remains the
+larger binding-session cost and is a separate follow-up.
+
+Logs: `.zig-cache/session-layout-{before,after}-{bindings-1000,resources-100}.csv`,
+plus after-only calls and rejections controls. All command runs include the
+10/100 milestones; minimal runs also include 1,000.
