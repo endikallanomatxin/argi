@@ -14,9 +14,8 @@ pub const SelectedOperation = struct {
     conformance: graph_mod.ContractConformance,
     binding: graph_mod.ContractOperationBinding,
 
-    pub fn materializedFunction(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph) ?graph_mod.GlobalFunctionId {
-        if (self.identity.index >= self.conformance.operations.len) return null;
-        return graph.function_refs.items[self.conformance.operations.start + self.identity.index];
+    pub fn materializedFunction(self: SelectedOperation) ?graph_mod.GlobalFunctionId {
+        return self.binding.materialized_function;
     }
 
     pub fn participant(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph, index: usize) ?graph_mod.GlobalTypeId {
@@ -94,10 +93,11 @@ pub const MaterializedOperations = struct {
         while (self.conformance_index < self.graph.contract_conformances.items.len) {
             const conformance = self.graph.contract_conformances.items[self.conformance_index];
             if (conformance.declaration == self.contract) {
-                while (self.operation_index < conformance.operations.len) {
+                while (self.operation_index < conformance.operation_bindings.len) {
                     const index = self.operation_index;
                     self.operation_index += 1;
-                    if (operationInConformance(self.graph, conformance, index)) |selected| return selected;
+                    if (operationInConformance(self.graph, conformance, index)) |selected|
+                        if (selected.materializedFunction() != null) return selected;
                 }
             }
             self.conformance_index += 1;
@@ -114,7 +114,7 @@ pub fn materializedOperations(graph: *const graph_mod.GlobalSemanticGraph, contr
 pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalFamilyDefinitionId, function: graph_mod.GlobalFunctionId) ?SelectedOperation {
     var operations = materializedOperations(graph, contract);
     while (operations.next()) |selected| {
-        if (selected.materializedFunction(graph) == function) return selected;
+        if (selected.materializedFunction() == function) return selected;
     }
     return null;
 }

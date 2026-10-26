@@ -988,14 +988,14 @@ test "unary and tuple conformances publish canonical static evidence" {
         const unary = std.mem.eql(u8, name, "Readable");
         try std.testing.expectEqual(@as(u32, if (unary) 1 else 2), conformance.participants.len);
         try std.testing.expectEqual(@as(u32, if (unary) 2 else 1), conformance.associated_arguments.len);
-        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operation_bindings.len);
         const associated = result.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len];
         try std.testing.expectEqualStrings("Result", result.graph.text(associated[0].name));
         if (unary) {
             try std.testing.expectEqualStrings("Count", result.graph.text(associated[1].name));
             try std.testing.expectEqual(@as(i64, 2), associated[1].value.comptime_int);
         }
-        const method = result.graph.function_refs.items[conformance.operations.start];
+        const method = result.graph.contract_operation_bindings.items[conformance.operation_bindings.start].materialized_function.?;
         try std.testing.expectEqualStrings(if (unary) "read" else "multiply", result.graph.text(result.graph.declaration(result.graph.function(method).declaration).name));
     }
     try std.testing.expectEqual(@as(usize, 2), evidence);
@@ -1054,9 +1054,9 @@ test "scoped implementation evidence retains call and source identities" {
         if (result.graph.modules.items[@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?)].is_bundled_core) continue;
         evidence += 1;
         operation_bindings += conformance.operation_bindings.len;
-        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
         try std.testing.expectEqual(@as(u32, 1), conformance.operation_bindings.len);
-        const method = result.graph.function_refs.items[conformance.operations.start];
+        try std.testing.expectEqual(@as(u32, 1), conformance.operation_bindings.len);
+        const method = result.graph.contract_operation_bindings.items[conformance.operation_bindings.start].materialized_function.?;
         try std.testing.expectEqualStrings("multiply", result.graph.text(result.graph.declarationSourceName(result.graph.function(method).declaration)));
     }
     try std.testing.expectEqual(@as(usize, 2), evidence);
@@ -1141,7 +1141,7 @@ test "generic implementation selection binds associated results and operation bo
     for (result.graph.contract_conformances.items) |conformance| {
         if (@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?) != 0) continue;
         try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
-        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operation_bindings.len);
     }
 }
 

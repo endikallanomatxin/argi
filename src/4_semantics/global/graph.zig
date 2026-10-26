@@ -112,6 +112,7 @@ pub const ContractOperationBinding = struct {
     name: StringRange,
     declaration: GlobalDeclId,
     instantiate_associated: bool = false,
+    materialized_function: ?GlobalFunctionId = null,
 };
 pub const ContractConformance = struct {
     // Declaration/signature validation is separate from the later safety proof.
@@ -122,7 +123,6 @@ pub const ContractConformance = struct {
     declaration: GlobalFamilyDefinitionId,
     participants: primitives.Range(GlobalGenericArgId),
     associated_arguments: primitives.Range(GlobalGenericArgId),
-    operations: primitives.Range(GlobalFunctionId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
 };
 pub const ReachAlternative = primitives.ReachAlternative(Ids);
@@ -214,6 +214,7 @@ pub const GlobalSemanticGraph = struct {
         block_rewrites_len: usize,
         error_context_rewrites_len: usize,
         conformance_rewrites_len: usize,
+        operation_completions_len: usize,
         variant_rewrites_len: usize,
         definition_rewrites_len: usize,
         error_propagation_rewrites_len: usize,
@@ -230,6 +231,7 @@ pub const GlobalSemanticGraph = struct {
         error_propagations: usize,
         error_contexts: usize,
         contract_conformances: usize,
+        contract_operation_bindings: usize,
         variants: usize,
         functions: usize,
         depth: usize,
@@ -278,6 +280,7 @@ pub const GlobalSemanticGraph = struct {
             .error_propagations = self.error_propagations.items.len,
             .error_contexts = self.error_contexts.items.len,
             .contract_conformances = self.contract_conformances.items.len,
+            .contract_operation_bindings = self.contract_operation_bindings.items.len,
             .variants = self.variants.items.len,
             .functions = self.functions.items.len,
             .depth = if (parent) |value| value.depth + 1 else 1,
@@ -300,6 +303,7 @@ pub const GlobalSemanticGraph = struct {
         error_propagation_rewrites: std.ArrayList(struct { id: GlobalErrorPropagationId, previous: ErrorPropagation }) = .empty,
         definition_rewrites: std.ArrayList(struct { id: GlobalTypeDefinitionId, previous: TypeDefinition }) = .empty,
         variant_rewrites: std.ArrayList(struct { id: GlobalVariantId, previous: ChoiceVariant }) = .empty,
+        operation_completions: std.ArrayList(struct { id: ContractOperationBindingId, previous: ?GlobalFunctionId }) = .empty,
         conformance_rewrites: std.ArrayList(struct { index: u32, previous: ContractConformance }) = .empty,
         error_context_rewrites: std.ArrayList(struct { id: GlobalErrorContextId, previous: ErrorContext }) = .empty,
         block_rewrites: std.ArrayList(struct { id: GlobalBlockId, previous: Block }) = .empty,
@@ -325,6 +329,7 @@ pub const GlobalSemanticGraph = struct {
             self.block_rewrites.deinit(allocator);
             self.error_context_rewrites.deinit(allocator);
             self.conformance_rewrites.deinit(allocator);
+            self.operation_completions.deinit(allocator);
             self.definition_rewrites.deinit(allocator);
             self.variant_rewrites.deinit(allocator);
             self.error_propagation_rewrites.deinit(allocator);
@@ -537,6 +542,7 @@ pub const GlobalSemanticGraph = struct {
             .block_rewrites_len = self.construction.block_rewrites.items.len,
             .error_context_rewrites_len = self.construction.error_context_rewrites.items.len,
             .conformance_rewrites_len = self.construction.conformance_rewrites.items.len,
+            .operation_completions_len = self.construction.operation_completions.items.len,
             .variant_rewrites_len = self.construction.variant_rewrites.items.len,
             .definition_rewrites_len = self.construction.definition_rewrites.items.len,
             .error_propagation_rewrites_len = self.construction.error_propagation_rewrites.items.len,
@@ -583,6 +589,10 @@ pub const GlobalSemanticGraph = struct {
         while (self.construction.variant_rewrites.items.len > saved.variant_rewrites_len) {
             const rewrite = self.construction.variant_rewrites.pop().?;
             self.variants.items[@intFromEnum(rewrite.id)] = rewrite.previous;
+        }
+        while (self.construction.operation_completions.items.len > saved.operation_completions_len) {
+            const completion = self.construction.operation_completions.pop().?;
+            self.contract_operation_bindings.items[@intFromEnum(completion.id)].materialized_function = completion.previous;
         }
         while (self.construction.conformance_rewrites.items.len > saved.conformance_rewrites_len) {
             const rewrite = self.construction.conformance_rewrites.pop().?;
@@ -953,6 +963,8 @@ pub const GlobalSemanticGraph = struct {
         self.construction.error_context_rewrites = .empty;
         self.construction.conformance_rewrites.deinit(allocator);
         self.construction.conformance_rewrites = .empty;
+        self.construction.operation_completions.deinit(allocator);
+        self.construction.operation_completions = .empty;
         self.construction.definition_rewrites.deinit(allocator);
         self.construction.definition_rewrites = .empty;
         self.construction.variant_rewrites.deinit(allocator);
@@ -1023,6 +1035,18 @@ pub const GlobalSemanticGraph = struct {
         if (self.mutation_frontier == null or raw < self.mutation_frontier.?.error_contexts)
             try self.construction.error_context_rewrites.append(allocator, .{ .id = id, .previous = self.error_contexts.items[raw] });
         self.error_contexts.items[raw] = value;
+    }
+
+    pub fn completeOperationBinding(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: ContractOperationBindingId, function_id: GlobalFunctionId) !void {
+        const raw = @intFromEnum(id);
+        const previous = self.contract_operation_bindings.items[raw].materialized_function;
+        if (previous) |published| {
+            std.debug.assert(published == function_id);
+            return;
+        }
+        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.contract_operation_bindings)
+            try self.construction.operation_completions.append(allocator, .{ .id = id, .previous = previous });
+        self.contract_operation_bindings.items[raw].materialized_function = function_id;
     }
 
     pub fn setContractConformance(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, index: u32, value: ContractConformance) !void {
@@ -2146,6 +2170,8 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             try graph.error_propagations.append(a, propagation);
             try graph.error_contexts.append(a, context);
             try graph.contract_conformances.append(a, conformance);
+            const operation = std.mem.zeroes(ContractOperationBinding);
+            try graph.contract_operation_bindings.append(a, operation);
             try graph.variants.append(a, variant);
             try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 0 } });
             try graph.types.append(a, .{ .builtin = .Int32 });
@@ -2158,6 +2184,7 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
                 std.debug.assert(std.meta.eql(propagation, graph.error_propagations.items[0]));
                 std.debug.assert(std.meta.eql(context, graph.error_contexts.items[0]));
                 std.debug.assert(std.meta.eql(conformance, graph.contract_conformances.items[0]));
+                std.debug.assert(std.meta.eql(operation, graph.contract_operation_bindings.items[0]));
                 std.debug.assert(std.meta.eql(variant, graph.variants.items[0]));
                 std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
             }
@@ -2176,8 +2203,8 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             updated_context.ok_value_field_index = 2;
             try graph.setErrorContext(a, @enumFromInt(0), updated_context);
             var validated = conformance;
-            try graph.function_refs.append(a, @enumFromInt(0));
-            validated.operations = .{ .start = 0, .len = 1 };
+            try graph.completeOperationBinding(a, @enumFromInt(0), @enumFromInt(0));
+            validated.operation_bindings = .{ .start = 0, .len = 1 };
             validated.declaration_validated = true;
             try graph.setContractConformance(a, 0, validated);
             var resolved_variant = variant;
@@ -2193,6 +2220,7 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             try std.testing.expectEqualDeep(propagation, graph.error_propagations.items[0]);
             try std.testing.expectEqualDeep(context, graph.error_contexts.items[0]);
             try std.testing.expectEqualDeep(conformance, graph.contract_conformances.items[0]);
+            try std.testing.expectEqualDeep(operation, graph.contract_operation_bindings.items[0]);
             try std.testing.expectEqualDeep(variant, graph.variants.items[0]);
             try std.testing.expectEqualDeep(saved, graph.checkpoint());
         }

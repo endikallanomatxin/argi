@@ -1884,7 +1884,7 @@ pub const Resolver = struct {
 
     fn resolveOperationBinding(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(index)) orelse return error.InvalidContractOperation;
-        if (evidence.materializedFunction(self.graph)) |function| return function;
+        if (evidence.materializedFunction()) |function| return function;
         const method = try self.resolveOperationBody(conformance, index);
         if (standard_contracts.standardDefinition(self.graph, "Deinit") == conformance.declaration)
             return self.makeDestructorOperation(method, try self.core.functionOutputType(method), conformance.source);
@@ -2094,10 +2094,9 @@ pub const Resolver = struct {
                 try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source, .{ .conformance = @intCast(index), .index = @intCast(operation_index) });
                 try operations.append(self.allocator, selected.function);
             }
-            const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
-            try self.graph.function_refs.appendSlice(self.allocator, operations.items);
+            for (operations.items, 0..) |function_id, operation_index|
+                try self.graph.completeOperationBinding(self.allocator, @enumFromInt(conformance.operation_bindings.start + @as(u32, @intCast(operation_index))), function_id);
             var completed = self.graph.contract_conformances.items[index];
-            completed.operations = .{ .start = operation_start, .len = @intCast(operations.items.len) };
             // Empty marker contracts are validated too. Keep retrying markers
             // with unresolved arguments so projection/alias resolution cannot
             // hide a later bound failure or duplicate participant tuple.

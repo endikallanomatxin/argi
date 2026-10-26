@@ -468,12 +468,14 @@ test "reachability roots select main or one test" {
     try std.testing.expect(!selected.contains(@enumFromInt(0)));
     try std.testing.expect(selected.contains(@enumFromInt(1)));
 
-    try graph.function_refs.append(allocator, @enumFromInt(1));
+    var binding = std.mem.zeroes(graph_mod.ContractOperationBinding);
+    binding.materialized_function = @enumFromInt(1);
+    try graph.contract_operation_bindings.append(allocator, binding);
     try graph.contract_conformances.append(allocator, .{
         .declaration = @enumFromInt(0),
         .participants = .{ .start = 0, .len = 0 },
         .associated_arguments = .{ .start = 0, .len = 0 },
-        .operations = .{ .start = 0, .len = 1 },
+        .operation_bindings = .{ .start = 0, .len = 1 },
         .source = .{ .file_index = 0, .offset = 0 },
     });
     var runtime = try executionRoots(allocator, &graph, null);

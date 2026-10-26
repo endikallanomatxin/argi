@@ -239,7 +239,7 @@ pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod
     var operations = contract_evidence.materializedOperations(graph, contract);
     var found: ?graph_mod.GlobalFunctionId = null;
     while (operations.next()) |selected| {
-        const id = selected.materializedFunction(graph) orelse continue;
+        const id = selected.materializedFunction() orelse continue;
         const function = graph.function(id);
         if (!function.flags.is_deinit or function.input.len == 0) continue;
         const participant = selected.participant(graph, 0) orelse continue;
@@ -623,7 +623,6 @@ test "cleanup queries require selected Deinit evidence" {
     try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
 
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
-    try graph.function_refs.append(allocator, @enumFromInt(0));
     try graph.contract_operation_bindings.append(allocator, .{
         .contract_definition = @enumFromInt(0),
         .requirement_index = 0,
@@ -631,12 +630,12 @@ test "cleanup queries require selected Deinit evidence" {
         .implementation_source = source,
         .name = name,
         .declaration = @enumFromInt(1),
+        .materialized_function = @enumFromInt(0),
     });
     try graph.contract_conformances.append(allocator, .{
         .declaration = @enumFromInt(0),
         .participants = .{ .start = 0, .len = 1 },
         .associated_arguments = .{ .start = 1, .len = 0 },
-        .operations = .{ .start = 0, .len = 1 },
         .operation_bindings = .{ .start = 0, .len = 1 },
         .source = source,
     });

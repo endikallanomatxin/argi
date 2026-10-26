@@ -258,6 +258,12 @@ before adding implementation exceptions.
   implementation binding, Safety evidence and execution of generic requirements
   still need integration before the feature is usable.
 
+- Selected operation bindings retain their optional materialized function
+  directly. The parallel per-conformance function-reference list is removed.
+  Completion is monotonic and journaled, including nested transactions and
+  allocation-failure rollback; reachability and verification use the same evidence.
+  Generic per-call specialization remains to be connected to these definitions.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove
