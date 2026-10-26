@@ -161,6 +161,10 @@ before adding implementation exceptions.
 - Concrete type values can be aliased across bindings and modules, used in
   signatures and construction, and evaluated through `#run`. Deferred type uses
   participate in the ordinary pending-work mechanism.
-- Definition-owned nominal identity and unspecialized family aliases are not
-  migrated yet. Legacy
-  spellings still parse into the common definition representation during migration.
+- Unspecialized type/function families have a distinct compile-time value
+  classification, without runtime storage. Binding and module aliases preserve
+  their original templates and specialize through ordinary resolution. Concrete
+  types and families share alias traversal but remain distinct classifications.
+- Definition-owned nominal identity is not migrated yet: semantic identities
+  still reference declarations. Legacy spellings still parse into the common
+  definition representation during migration.

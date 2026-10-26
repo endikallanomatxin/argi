@@ -5883,7 +5883,7 @@ pub const Infer = struct {
                     if (variant.payload_type) |payload| if (self.typeContainsPointer(payload)) break :blk true;
                 break :blk false;
             },
-            .builtin => false,
+            .builtin, .definition => false,
         };
     }
 

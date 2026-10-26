@@ -496,7 +496,7 @@ pub const Resolver = struct {
 
     pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, contract_type: global_sg.GlobalTypeId) bool {
         const declaration = switch (self.graph.types.items[@intFromEnum(contract_type)]) {
-            .declared => |value| value,
+            .declared, .definition => |value| value,
             else => return false,
         };
         if (self.findContractDefinition(declaration) == null) return false;
@@ -2490,6 +2490,7 @@ pub const Resolver = struct {
     pub fn runtimeBindingContract(self: *const Resolver, binding_id: global_sg.GlobalBindingId) ?ContractUse {
         const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
         if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) return null;
+        if (@import("types.zig").isStaticBinding(self.graph, binding_id)) return null;
         // Ordinary bindings cannot violate the contract/runtime boundary. Only
         // contract-typed bindings need the interface exception and its lookup.
         const use = self.contractUse(binding.ty) orelse return null;
@@ -2499,7 +2500,7 @@ pub const Resolver = struct {
 
     pub fn contractUse(self: *const Resolver, ty: global_sg.GlobalTypeId) ?ContractUse {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
-            .declared => |declaration| if (self.findContractDefinition(declaration) != null)
+            .declared, .definition => |declaration| if (self.findContractDefinition(declaration) != null)
                 .{ .declaration = declaration, .arguments = .{ .start = 0, .len = 0 } }
             else
                 null,
@@ -2693,7 +2694,7 @@ pub const Resolver = struct {
             else => ty,
         };
         return switch (self.graph.types.items[@intFromEnum(contract_ty)]) {
-            .declared => |declaration| if (self.findContractDefinition(declaration) != null) declaration else null,
+            .declared, .definition => |declaration| if (self.findContractDefinition(declaration) != null) declaration else null,
             .generic => |generic| if (self.findContractDefinition(generic.base) != null) generic.base else null,
             else => null,
         };

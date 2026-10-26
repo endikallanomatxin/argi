@@ -54,7 +54,7 @@ pub fn declaration(comptime Ids: type, value: primitives.Declaration(Ids), bound
 pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bounds: Bounds) !void {
     switch (value) {
         .builtin => {},
-        .declared => |id| try require(verify.idFits(id, bounds.declarations)),
+        .declared, .definition => |id| try require(verify.idFits(id, bounds.declarations)),
         .pointer => |item| try require(verify.idFits(item.child, bounds.types)),
         .array => |item| try require(verify.idFits(item.element, bounds.types)),
         .nullable, .inferred_errable => |id| try require(verify.idFits(id, bounds.types)),
@@ -359,6 +359,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
         },
 
         .type_literal => |id| try require(verify.idFits(id, bounds.types)),
+        .definition_literal => |id| try require(verify.idFits(id, bounds.declarations)),
         .denied_implicit_copy => |id| try require(verify.idFits(id, bounds.nodes)),
         .explicit_cast => |item| {
             try require(verify.idFits(item.value, bounds.nodes));

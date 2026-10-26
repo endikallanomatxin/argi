@@ -540,7 +540,8 @@ pub const Resolver = struct {
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
             null;
-        const name = module.text(reference.name);
+        const selected_definition = try self.core.resolveDefinitionReference(current_module, reference, &.{.function});
+        const name = if (selected_definition) |id| self.graph.text(self.graph.declaration(id).name) else module.text(reference.name);
         var selected: ?global_sg.GlobalDeclId = null;
         var selected_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var tied = false;
@@ -562,7 +563,9 @@ pub const Resolver = struct {
             const candidate_module = &self.modules[candidate_index];
             const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
             const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
-            if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
+            if (selected_definition) |id| {
+                if (declaration != id) continue;
+            } else if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
             self.generics.bindGlobalArgumentsPartial(candidate_index, parameterized.parameters, arguments, &bindings) catch |err| {
@@ -985,13 +988,15 @@ pub const Resolver = struct {
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
             null;
+        const selected_definition = try self.core.resolveDefinitionReference(current_module, reference, &.{.function});
         return self.resolveImplicitGenericFunctionFiltered(
             current_module,
-            module.text(reference.name),
+            if (selected_definition) |id| self.graph.text(self.graph.declaration(id).name) else module.text(reference.name),
             module_filter,
             input,
             reach_context,
             null,
+            selected_definition,
         );
     }
 
@@ -1058,8 +1063,9 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
+        selected_definition: ?global_sg.GlobalDeclId,
     ) !global_sg.GlobalFunctionId {
-        const selected = try self.selectImplicitGenericFunctionFiltered(current_module, name, module_filter, input, reach, ambiguity_candidates);
+        const selected = try self.selectImplicitGenericFunctionFiltered(current_module, name, module_filter, input, reach, ambiguity_candidates, selected_definition);
         const started = self.profileTimestamp();
         const result = try self.instantiate(selected.declaration, selected.arguments);
         self.addProfileTime(started, &self.selection_profile.implicit_final_instantiation_ns);
@@ -1088,7 +1094,7 @@ pub const Resolver = struct {
             self.failed_constraint = failed;
             self.generics.argument_failure = argument_failure;
         }
-        const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null) catch |err| {
+        const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null, null) catch |err| {
             return switch (err) {
                 error.ComptimeExecutionPending => blk: {
                     speculation.retainPendingExecution();
@@ -1111,6 +1117,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach_context: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
+        selected_definition: ?global_sg.GlobalDeclId,
     ) !ImplicitGenericSelection {
         if (self.profile_io != null) self.selection_profile.implicit_calls += 1;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
@@ -1144,7 +1151,9 @@ pub const Resolver = struct {
             const candidate_module = &self.modules[candidate_index];
             const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
             const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
-            if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
+            if (selected_definition) |id| {
+                if (declaration != id) continue;
+            } else if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
             candidate_count += 1;
             const parameter_count = candidate_module.semantic.parameterized_storage.comptime_parameters.items.len;
             try binding_types.resize(self.allocator, parameter_count);
@@ -1435,6 +1444,7 @@ pub const Resolver = struct {
             input,
             null,
             candidates,
+            null,
         ) catch |err| return switch (err) {
             error.AmbiguousGenericFunction => true,
             else => false,
@@ -2706,6 +2716,7 @@ pub const Resolver = struct {
                     .bool_literal => |value| .{ .bool_literal = value },
                     .string_literal => |value| .{ .string_literal = try self.copyString(value) },
                     .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions) },
+                    .definition_literal => |value| .{ .definition_literal = try self.resolver.generics.resolveParameterizedDeclaration(self.module_index, value) },
                     .move_value => |value| .{ .move_value = try self.instantiateNode(value) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,

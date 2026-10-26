@@ -15643,3 +15643,10 @@ test "feature_tests/types/302_type_value_aliases" {
     try runExpect(path, 0);
     try vmExpect(path, 0, null);
 }
+
+test "feature_tests/types/303_definition_value_aliases" {
+    const path = "tests/feature_tests/types/303_definition_value_aliases";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}

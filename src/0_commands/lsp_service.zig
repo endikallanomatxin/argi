@@ -900,6 +900,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
     switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |value| try writer.writeAll(@tagName(value)),
         .declared => |decl| try writer.writeAll(graph.text(graph.declarations.items[@intFromEnum(decl)].name)),
+        .definition => |decl| try writer.print("definition({s})", .{graph.text(graph.declaration(decl).name)}),
         .pointer => |pointer| {
             try writer.writeAll(if (pointer.mutability == .read_write) "$&" else "&");
             try writeType(writer, graph, pointer.child);

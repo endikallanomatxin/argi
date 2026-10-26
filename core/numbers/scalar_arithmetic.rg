@@ -97,7 +97,7 @@ implement _BuiltinEquality#(Float64) ()
 
 implement _BuiltinEquality#(Bool) ()
 
-implement _BuiltinEquality#(RawPointer) ()
+implement#(.Element: Type) _BuiltinEquality#(RawPointer#(.t: Element)) ()
 
 implement#(.Value: Type: _BuiltinEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
     .equal = (.args: (.left: Value, .right: Value)) -> (.ok: Bool) {
@@ -162,7 +162,7 @@ implement _BuiltinOrdering#(Float64) ()
 
 implement _BuiltinOrdering#(Bool) ()
 
-implement _BuiltinOrdering#(RawPointer) ()
+implement#(.Element: Type) _BuiltinOrdering#(RawPointer#(.t: Element)) ()
 
 implement TotalOrder#(Int8, Int8) ()
 

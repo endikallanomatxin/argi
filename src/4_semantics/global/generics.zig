@@ -99,7 +99,7 @@ pub const Resolver = struct {
                 const reference = module.semantic.external_refs.items[@intFromEnum(external)];
                 const args = reference.generic_arguments orelse continue;
                 if (reference.kind != .type) continue;
-                const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch continue;
+                const base = (try self.core.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type })) orelse continue;
                 const global_args = try self.relocateModuleArguments(module_index, args);
                 const destination = globalizer.globalType(o, local_id);
                 try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
@@ -229,7 +229,7 @@ pub const Resolver = struct {
             return .resolved;
         }
         const args = reference.generic_arguments orelse return .not_applicable;
-        const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch return .deferred;
+        const base = (try self.core.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type })) orelse return .deferred;
         const global_args = try self.relocateModuleArguments(module_index, args);
         const destination = globalizer.globalType(o, value.destination);
         try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
@@ -571,7 +571,7 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(external)];
         if (reference.generic_arguments == null)
             return (try self.core.resolveTypeValue(module_index, reference)) orelse error.ComptimeExecutionPending;
-        const decl = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type });
+        const decl = (try self.core.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type })) orelse return error.ComptimeExecutionPending;
         const global_args = try self.relocateModuleArguments(module_index, reference.generic_arguments.?);
         const id = try self.internType(.{ .generic = .{ .base = decl, .arguments = global_args } });
         _ = try self.ensureGenericInstance(id);
@@ -587,6 +587,7 @@ pub const Resolver = struct {
         return switch (value) {
             .builtin => |builtin| self.internType(.{ .builtin = builtin }),
             .declared => |decl| self.internType(.{ .declared = try self.resolveParameterizedDeclaration(module_index, decl) }),
+            .definition => |decl| self.internType(.{ .definition = try self.resolveParameterizedDeclaration(module_index, decl) }),
             .pointer => |pointer| self.internType(.{ .pointer = .{
                 .child = try self.instantiateParameterizedType(module_index, pointer.child, bindings),
                 .mutability = pointer.mutability,
@@ -630,11 +631,11 @@ pub const Resolver = struct {
         const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
-            .external => |external| self.core.resolveDeclaration(
+            .external => |external| (try self.core.resolveDefinitionReference(
                 module_index,
                 self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
                 &.{ .type, .contract_type, .function },
-            ),
+            )) orelse error.ComptimeExecutionPending,
         };
     }
 
@@ -1019,6 +1020,7 @@ fn sameShallowType(graph: *const global_sg.GlobalSemanticGraph, a: global_sg.Glo
     return switch (a) {
         .builtin => |value| value == b.builtin,
         .declared => |value| value == b.declared,
+        .definition => |value| value == b.definition,
         .pointer => |value| value.mutability == b.pointer.mutability and global_types.identityEqual(graph, value.child, b.pointer.child),
         .array => |value| value.length == b.array.length and global_types.identityEqual(graph, value.element, b.array.element),
         .nullable => |value| global_types.identityEqual(graph, value, b.nullable),

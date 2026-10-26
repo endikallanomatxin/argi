@@ -31,7 +31,7 @@ pub const Lowerer = struct {
                 };
                 break :blk c.LLVMStructType(&fields, fields.len, 0);
             },
-            .nullable, .inferred_errable => Error.InvalidType,
+            .definition, .nullable, .inferred_errable => Error.InvalidType,
         };
     }
 
@@ -149,6 +149,7 @@ pub const Lowerer = struct {
 
     pub fn encodeType(self: *Lowerer, buffer: *std.array_list.Managed(u8), ty: graph_mod.GlobalTypeId) !void {
         switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .definition => |id| try self.appendPrint(buffer, "definition{d}", .{@intFromEnum(id)}),
             .builtin => |builtin| try buffer.appendSlice(switch (builtin) {
                 .Void => "void",
                 .Int8 => "i8",

@@ -297,6 +297,9 @@ pub fn SemanticType(comptime Ids: type) type {
     return union(enum) {
         builtin: BuiltinType,
         declared: Ids.DeclId,
+        /// Compile-time classification of an unspecialized definition value.
+        /// It has no runtime storage layout and is not a concrete Type value.
+        definition: Ids.DeclId,
         pointer: struct { child: Ids.TypeId, mutability: PointerMutability },
         array: struct { length: u64, element: Ids.TypeId },
         nullable: Ids.TypeId,
@@ -769,6 +772,7 @@ pub fn Node(comptime Ids: type) type {
                 cleanup_target: ?Ids.NodeId = null,
             },
             type_literal: Ids.TypeId,
+            definition_literal: Ids.DeclId,
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };
     };

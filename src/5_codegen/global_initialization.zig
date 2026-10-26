@@ -44,7 +44,7 @@ const State = struct {
             self.failure.* = id;
         };
         if (@intFromEnum(id) >= self.graph.bindings.items.len) return error.InvalidGlobalInitializer;
-        if (types.staticTypeBinding(self.graph, id) != null) return;
+        if (types.isStaticBinding(self.graph, id)) return;
         const state = &self.states[@intFromEnum(id)];
         switch (state.*) {
             .done => return,

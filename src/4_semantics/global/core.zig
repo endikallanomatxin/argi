@@ -497,22 +497,48 @@ pub const Resolver = struct {
         };
     }
 
-    /// Resolve a type name to its compile-time value. A binding forwards the
-    /// initializer's identity; it never acquires nominality from its own name.
-    pub fn declarationTypeValue(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalTypeId {
-        const declaration = self.graph.declaration(id);
-        if (declaration.type_id) |ty| return ty;
-        if (declaration.kind != .binding) return null;
+    /// The module owns the declaration-to-storage relation. Keep this lookup
+    /// shared by all compile-time value classifications rather than teaching
+    /// each resolver how module-local binding IDs are relocated.
+    fn declarationBinding(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalBindingId {
+        if (self.graph.declaration(id).kind != .binding) return null;
         const owner = self.graph.moduleForDeclaration(id) orelse return null;
         const module_index = @intFromEnum(owner);
         if (module_index >= self.modules.len) return null;
         const offsets = self.offsets[module_index];
         for (self.modules[module_index].semantic.declaration_bindings.items) |relation| {
-            if (globalizer.globalDecl(offsets, relation.declaration) != id) continue;
-            const binding = globalizer.globalBinding(offsets, relation.binding);
-            if (self.graph.isBindingTypeUnresolved(binding)) return null;
-            return types.staticTypeBinding(self.graph, binding);
+            if (globalizer.globalDecl(offsets, relation.declaration) == id)
+                return globalizer.globalBinding(offsets, relation.binding);
         }
+        return null;
+    }
+
+    /// Resolve a type name to its compile-time value. A binding forwards the
+    /// initializer's identity; it never acquires nominality from its own name.
+    pub fn declarationTypeValue(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalTypeId {
+        const declaration = self.graph.declaration(id);
+        if (declaration.generic_parameter_count != null or declaration.kind == .contract_type) return null;
+        if (declaration.type_id) |ty| return ty;
+        const binding = self.declarationBinding(id) orelse return null;
+        if (self.graph.isBindingTypeUnresolved(binding)) return null;
+        return types.staticTypeBinding(self.graph, binding);
+    }
+
+    /// Resolve the visible binding first, then follow its definition value.
+    /// Visibility applies to that binding; an exported alias may name a private
+    /// underlying definition without changing its lexical context.
+    pub fn resolveDefinitionReference(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, kinds: []const primitives.DeclarationKind) !?global_sg.GlobalDeclId {
+        const id = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type, .function, .binding }) catch |err| switch (err) {
+            error.UnknownGlobalDeclaration => return null,
+            else => return err,
+        };
+        const declaration = self.graph.declaration(id);
+        const definition = if (declaration.kind == .binding) blk: {
+            const binding = self.declarationBinding(id) orelse return null;
+            if (self.graph.isBindingTypeUnresolved(binding)) return null;
+            break :blk types.staticDefinitionBinding(self.graph, binding) orelse return null;
+        } else id;
+        for (kinds) |kind| if (self.graph.declaration(definition).kind == kind) return definition;
         return null;
     }
 
@@ -521,6 +547,12 @@ pub const Resolver = struct {
             error.UnknownGlobalDeclaration => return null,
             else => return err,
         };
+        if (self.graph.declaration(declaration).kind == .contract_type)
+            return try types.definitionClass(self.allocator, self.graph, declaration);
+        if (self.graph.declaration(declaration).kind == .binding) {
+            if (try self.resolveDefinitionReference(module_index, reference, &.{.contract_type})) |contract|
+                return try types.definitionClass(self.allocator, self.graph, contract);
+        }
         return self.declarationTypeValue(declaration);
     }
 
@@ -779,6 +811,8 @@ pub const Resolver = struct {
             const pointer = globalizer.globalNode(o, local);
             const ty = self.graph.node(pointer).ty orelse return .deferred;
             if (self.graph.isTypeUnresolved(ty)) return .deferred;
+            if (types.definitionValue(self.graph, pointer) != null or types.typeValue(self.graph, pointer) != null) return .not_applicable;
+            if (self.graph.semanticType(ty) == .definition or types.isBuiltin(self.graph, ty, .Type)) return .deferred;
             if (!c_abi.isFunctionPointer(self.graph, ty)) return .invalid;
             const declaration = switch (self.graph.resolvedSemanticType(ty).?) {
                 .declared => |id| self.graph.declaration(id),

@@ -867,6 +867,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
 }
 
 fn genericParameterCount(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) ?u32 {
-    const definition = tree.typeDeclaration(node) orelse return null;
-    return @intCast(definition.generic_params.len);
+    const value = tree.definitionValue(node) orelse return null;
+    const definition = tree.parameterizedDefinition(value) orelse return null;
+    return @intCast(definition.parameters.len);
 }

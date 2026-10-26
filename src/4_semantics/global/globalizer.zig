@@ -292,6 +292,7 @@ fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.Globa
     return switch (value) {
         .builtin => |item| .{ .builtin = item },
         .declared => |id| .{ .declared = globalDecl(o, id) },
+        .definition => |id| .{ .definition = globalDecl(o, id) },
         .pointer => |item| .{ .pointer = .{ .child = globalType(o, item.child), .mutability = item.mutability } },
         .array => |item| .{ .array = .{ .length = item.length, .element = globalType(o, item.element) } },
         .nullable => |id| .{ .nullable = globalType(o, id) },
@@ -641,6 +642,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value), .cleanup_target = if (value.cleanup_target) |id| globalNode(o, id) else null } },
 
             .type_literal => |id| .{ .type_literal = globalType(o, id) },
+            .definition_literal => |id| .{ .definition_literal = globalDecl(o, id) },
             .explicit_cast => |value| .{ .explicit_cast = .{ .value = globalNode(o, value.value), .target_type = globalType(o, value.target_type) } },
         },
     };

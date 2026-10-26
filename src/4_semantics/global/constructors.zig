@@ -43,7 +43,7 @@ pub const Resolver = struct {
         source: primitives.SourceRef,
     ) anyerror!?global_sg.Node {
         const self: *Resolver = @ptrCast(@alignCast(context_ptr));
-        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding }) catch |err| switch (err) {
+        const declaration_id = (try self.core.resolveDefinitionReference(module_index, reference, &.{.type})) orelse self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding }) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return null,
             else => return err,
         };
@@ -292,7 +292,7 @@ pub const Resolver = struct {
             const expression = globalizer.globalNode(o, callee);
             break :blk types.typeValue(self.graph, expression) orelse return .not_applicable;
         } else blk: {
-            const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding }) catch |err| switch (err) {
+            const declaration_id = (try self.core.resolveDefinitionReference(module_index, reference, &.{.type})) orelse self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding }) catch |err| switch (err) {
                 error.UnknownGlobalDeclaration => return .not_applicable,
                 else => return err,
             };
@@ -410,10 +410,7 @@ pub const Resolver = struct {
         };
         errdefer failed = true;
 
-        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
-            error.UnknownGlobalDeclaration => return .not_applicable,
-            else => return err,
-        };
+        const declaration_id = (try self.core.resolveDefinitionReference(module_index, reference, &.{.type})) orelse return .not_applicable;
         const generics = self.generics.?;
         const arguments = (try generics.resolveCallArguments(module_index, reference)).?;
         if (generics.findTypeParameterized(declaration_id)) |located| {

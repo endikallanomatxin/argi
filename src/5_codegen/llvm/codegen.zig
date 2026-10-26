@@ -767,7 +767,7 @@ pub const CodeGenerator = struct {
                 .binding_declaration => |id| id,
                 else => continue,
             };
-            if (self.global_bindings.contains(binding) or types.staticTypeBinding(self.graph, binding) != null) continue;
+            if (self.global_bindings.contains(binding) or types.isStaticBinding(self.graph, binding)) continue;
             const record = self.graph.bindings.items[@intFromEnum(binding)];
             const type_ref = try self.toLLVMType(record.ty);
             const name_z = try self.dupZ(self.graph.text(record.name));
@@ -1155,9 +1155,9 @@ pub const CodeGenerator = struct {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .argument_default => CodegenError.InvalidType,
-            .declaration, .reach_directive, .type_literal => null,
+            .declaration, .reach_directive, .type_literal, .definition_literal => null,
             .binding_declaration => |binding| blk: {
-                if (types.staticTypeBinding(self.graph, binding) != null) break :blk null;
+                if (types.isStaticBinding(self.graph, binding)) break :blk null;
                 if (self.global_bindings.contains(binding)) {
                     try self.ensureGlobalInitialized(binding);
                 } else {

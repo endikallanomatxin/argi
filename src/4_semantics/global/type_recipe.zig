@@ -204,6 +204,7 @@ pub const Recipe = struct {
             return switch (shape) {
                 .builtin => |value| value == actual.builtin,
                 .declared => |value| value == actual.declared,
+                .definition => |value| value == actual.definition,
                 .pointer => |value| value.mutability == actual.pointer.mutability and try self.typeId(value.child, actual.pointer.child),
                 .array => |value| value.length == actual.array.length and try self.typeId(value.element, actual.array.element),
                 .nullable => |value| try self.typeId(value, actual.nullable),
@@ -276,6 +277,7 @@ pub const Recipe = struct {
                 const description: p.SemanticType(Ids) = switch (shape) {
                     .builtin => |v| .{ .builtin = v },
                     .declared => |v| .{ .declared = try self.declaration(v) },
+                    .definition => |v| .{ .definition = try self.declaration(v) },
                     .pointer => |v| .{ .pointer = .{ .child = try self.typeId(v.child, depth + 1), .mutability = v.mutability } },
                     .array => |v| .{ .array = .{ .element = try self.typeId(v.element, depth + 1), .length = v.length } },
                     .nullable => |v| .{ .nullable = try self.typeId(v, depth + 1) },
@@ -410,6 +412,7 @@ pub const Recipe = struct {
             const result = if (node == .stable) node.stable else try self.generics.internType(switch (node.shape) {
                 .builtin => |v| .{ .builtin = v },
                 .declared => |v| .{ .declared = v },
+                .definition => |v| .{ .definition = v },
                 .pointer => |v| .{ .pointer = .{ .child = try self.typeId(v.child), .mutability = v.mutability } },
                 .array => |v| .{ .array = .{ .element = try self.typeId(v.element), .length = v.length } },
                 .nullable => |v| .{ .nullable = try self.typeId(v) },

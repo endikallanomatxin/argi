@@ -22,7 +22,7 @@ pub fn build(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, 
         const index = @intFromEnum(binding);
         if (seen.isSet(index)) return error.DuplicateSessionBinding;
         seen.set(index);
-        if (types.staticTypeBinding(graph, binding) != null) continue;
+        if (types.isStaticBinding(graph, binding)) continue;
         const ty = graph.binding(binding).ty;
         const cleanup: []const b.Cleanup = if (required[@intFromEnum(binding)]) selected: {
             _ = try counts.count(allocator, graph, ty);

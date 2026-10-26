@@ -316,6 +316,7 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
             .builtin => |y| x == y,
             else => false,
         },
+        .definition => |x| right == .definition and x == right.definition,
         .declared => |x| switch (right) {
             .declared => |y| x == y,
             else => false,
@@ -378,6 +379,7 @@ pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
         .inferred_choice => |shape| choiceLayout(graph, shape.variants, .regular),
         .generic => genericLayout(graph, ty),
         .virtual => .{ .size = graph.target.pointerBytes() * 2, .alignment = graph.target.pointerBytes() },
+        .definition => error.TypeHasNoRuntimeLayout,
         .nullable, .inferred_errable => error.UnmaterializedGlobalType,
     };
 }
@@ -691,12 +693,19 @@ pub fn isStringView(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
         isBuiltin(graph, pointer.pointer.child, .UInt8) and isBuiltin(graph, length.ty, .UIntNative);
 }
 
-/// Resolve compiler-owned type constants without introducing runtime type values.
-pub fn typeValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalTypeId {
+/// Compiler-owned entity values have no runtime storage. Following a binding
+/// preserves the value, including its precise classification and identity.
+pub const EntityValue = union(enum) {
+    type: graph_mod.GlobalTypeId,
+    definition: graph_mod.GlobalDeclId,
+};
+
+pub fn entityValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?EntityValue {
     var node = initial;
     for (0..graph.nodes.items.len + 1) |_| {
         switch (graph.node(node).content) {
-            .type_literal => |ty| return ty,
+            .type_literal => |ty| return .{ .type = ty },
+            .definition_literal => |definition| return .{ .definition = definition },
             .binding_use => |id| {
                 const binding = graph.binding(id);
                 if (binding.mutability != .constant or binding.deferred_initialization) return null;
@@ -706,6 +715,39 @@ pub fn typeValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod
         }
     }
     return null;
+}
+
+pub fn typeValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalTypeId {
+    const value = entityValue(graph, initial) orelse return null;
+    return if (value == .type) value.type else null;
+}
+
+pub fn definitionClass(allocator: std.mem.Allocator, graph: *graph_mod.GlobalSemanticGraph, definition: graph_mod.GlobalDeclId) !graph_mod.GlobalTypeId {
+    for (graph.types.items, 0..) |ty, raw| {
+        if (ty == .definition and ty.definition == definition) return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+    const id: graph_mod.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(allocator, .{ .definition = definition });
+    return id;
+}
+
+/// Definition values are distinct from concrete types. Aliases preserve the
+/// producer identity and never allocate another template or specialization.
+pub fn definitionValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalDeclId {
+    const value = entityValue(graph, initial) orelse return null;
+    return if (value == .definition) value.definition else null;
+}
+
+pub fn staticDefinitionBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.GlobalDeclId {
+    const binding = graph.binding(id);
+    if (binding.mutability != .constant or binding.deferred_initialization) return null;
+    const semantic = graph.resolvedSemanticType(binding.ty) orelse return null;
+    if (semantic != .definition) return null;
+    return definitionValue(graph, binding.initialization orelse return null);
+}
+
+pub fn isStaticBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) bool {
+    return staticTypeBinding(graph, id) != null or staticDefinitionBinding(graph, id) != null;
 }
 
 pub fn staticTypeBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.GlobalTypeId {
@@ -779,4 +821,31 @@ test "static type values preserve long alias chains and reject cycles or mutable
     graph.bindings.items[0].mutability = .constant;
     graph.bindings.items[0].initialization = @enumFromInt(128);
     try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, null), staticTypeBinding(&graph, @enumFromInt(127)));
+}
+
+test "definition values preserve classification and aliases without runtime layout" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const declaration: graph_mod.GlobalDeclId = @enumFromInt(0);
+    const name = try graph.addString(a, "family");
+    try graph.declarations.append(a, .{ .kind = .type, .name = name, .source = source, .generic_parameter_count = 1 });
+    const classification = try definitionClass(a, &graph, declaration);
+    try std.testing.expectEqual(classification, try definitionClass(a, &graph, declaration));
+    try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .definition_literal = declaration } });
+    for (0..128) |raw| {
+        try graph.bindings.append(a, .{ .source = source, .name = name, .ty = classification, .initialization = @enumFromInt(@as(u32, @intCast(raw))), .mutability = .constant });
+        try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .binding_use = @enumFromInt(@as(u32, @intCast(raw))) } });
+    }
+    const last: graph_mod.GlobalBindingId = @enumFromInt(127);
+    try std.testing.expectEqual(@as(?graph_mod.GlobalDeclId, declaration), staticDefinitionBinding(&graph, last));
+    try std.testing.expectEqual(null, staticTypeBinding(&graph, last));
+    try std.testing.expect(isStaticBinding(&graph, last));
+    try std.testing.expectError(error.TypeHasNoRuntimeLayout, layoutOf(&graph, classification));
+    graph.bindings.items[0].mutability = .variable;
+    try std.testing.expectEqual(null, staticDefinitionBinding(&graph, last));
+    graph.bindings.items[0].mutability = .constant;
+    graph.bindings.items[0].initialization = @enumFromInt(128);
+    try std.testing.expectEqual(null, staticDefinitionBinding(&graph, last));
 }

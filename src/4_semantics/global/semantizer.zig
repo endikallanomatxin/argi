@@ -4031,6 +4031,10 @@ fn dumpUnresolved(
                         "global sema unresolved: module={d} dir={s} op=resolve_field name={s} node={d}\n",
                         .{ module_index, module.module_dir, module.text(field.field_name), @intFromEnum(field.node) },
                     ),
+                    .resolve_type => |value| {
+                        const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
+                        std.debug.print("global sema unresolved: module={d} dir={s} op=resolve_type name={s} source={d} computed={} projection={}\n", .{ module_index, module.module_dir, module.text(reference.name), reference.source.offset, reference.computed_type != null, reference.projection_base != null });
+                    },
                     else => std.debug.print(
                         "global sema unresolved: module={d} dir={s} op={s}\n",
                         .{ module_index, module.module_dir, @tagName(operation) },

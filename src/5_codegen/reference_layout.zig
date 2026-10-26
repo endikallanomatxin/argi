@@ -32,7 +32,7 @@ pub const Layout = struct {
         const semantic = graph.resolvedSemanticType(ty) orelse return error.InvalidReferenceLayout;
         return switch (semantic) {
             .pointer => .reference,
-            .builtin => .leaf,
+            .builtin, .definition => .leaf,
             .array => |a| .{ .array = .{ .element = a.element, .length = a.length } },
             .structural => |s| .{ .fields = s.fields },
             inline .structural_choice, .inferred_choice => |s| .{ .variants = s.variants },

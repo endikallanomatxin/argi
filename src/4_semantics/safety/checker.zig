@@ -836,11 +836,8 @@ pub const SafetyChecker = struct {
             const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
             if (self.graph.semanticType(ty) == .virtual) {
                 const contract_type = self.graph.semanticType(ty).virtual;
-                const declaration = switch (self.graph.semanticType(contract_type)) {
-                    .declared => |decl| decl,
-                    .generic => |generic| generic.base,
-                    else => return error.InvalidVirtualContractType,
-                };
+                const declaration = @import("../global/contract_evidence.zig").contractDeclaration(self.graph, contract_type) orelse
+                    return error.InvalidVirtualContractType;
                 const count = self.graph.declaration(declaration).contract_domain_count;
                 const domains = try self.allocator.alloc(facts.DomainFacts, count);
                 for (domains, 0..) |*domain, domain_index| {
@@ -4767,7 +4764,7 @@ pub const SafetyChecker = struct {
             .pointer, .virtual => true,
             .array => |array| self.typeContainsPointer(array.element),
             .nullable, .inferred_errable => |child| self.typeContainsPointer(child),
-            .builtin => false,
+            .builtin, .definition => false,
             .declared, .structural => blk: {
                 const range = types.fields(self.graph, ty) orelse break :blk self.choiceTypeContainsPointer(ty);
                 for (self.graph.fields.items[range.start..][0..range.len]) |field|

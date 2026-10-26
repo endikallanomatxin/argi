@@ -414,7 +414,11 @@ const Layout = struct {
             else
                 null;
             if (members) |items| {
-                layout.group[groupOpening(&tree, node, tokens)] = true;
+                const opening = groupOpening(&tree, node, tokens);
+                // Angle lists retain explicit comma separators. Their members
+                // must not become items of the surrounding parenthesis frame.
+                if (tokens.contents[opening] == .comparison_operator) continue;
+                layout.group[opening] = true;
                 // Reserve the padding a compact row would receive from its
                 // siblings, even when an expanded child currently separates them.
                 const widths = try allocator.alloc(?usize, items.len);
@@ -1517,6 +1521,10 @@ test "formatter preserves explicit semicolon statement boundaries" {
 }
 
 test "formatter distinguishes specialization brackets from comparisons" {
+    try expectFormat(
+        "read:=(.value:Box<Int32>)->(.result:Int32){result=value.value}\n",
+        "read := (.value: Box<Int32>) -> (.result: Int32) { result = value.value }\n",
+    );
     try expectFormat(
         "Box:=<.T:Type>(.value:T)\nidentity:=<.T:Type>(.value:T)->(.result:T){result=value}\n",
         "Box := <.T: Type> (.value: T)\n\nidentity := <.T: Type> (.value: T) -> (.result: T) { result = value }\n",
