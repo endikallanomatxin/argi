@@ -72,6 +72,7 @@ pub const VariantRange = primitives.Range(GlobalVariantId);
 pub const Declaration = primitives.Declaration(Ids);
 pub const TypeDefinition = primitives.TypeDefinition(Ids);
 pub const FamilyDefinition = primitives.FamilyDefinition(Ids);
+pub const DefinitionValue = primitives.DefinitionValue(Ids);
 pub const GlobalType = primitives.SemanticType(Ids);
 pub const GenericInstance = type_shapes.GenericInstance(Ids);
 pub const Field = primitives.Field(Ids);

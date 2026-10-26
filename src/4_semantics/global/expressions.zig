@@ -154,7 +154,7 @@ pub const Resolver = struct {
             try self.graph.setNode(self.allocator, target, .{
                 .source = self.graph.node(target).source,
                 .ty = classification,
-                .content = .{ .definition_literal = id },
+                .content = .{ .definition_literal = .{ .origin = id } },
             });
             return true;
         }

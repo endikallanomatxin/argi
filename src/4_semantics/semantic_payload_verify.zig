@@ -385,7 +385,10 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
         },
 
         .type_literal => |id| try require(verify.idFits(id, bounds.types)),
-        .definition_literal => |id| try require(verify.idFits(id, bounds.family_definitions)),
+        .definition_literal => |definition| {
+            try require(verify.idFits(definition.origin, bounds.family_definitions));
+            try require(verify.rangeFits(definition.captures, bounds.generic_arguments));
+        },
         .denied_implicit_copy => |id| try require(verify.idFits(id, bounds.nodes)),
         .explicit_cast => |item| {
             try require(verify.idFits(item.value, bounds.nodes));

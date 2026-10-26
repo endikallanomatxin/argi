@@ -333,6 +333,15 @@ pub fn FamilyDefinition(comptime Ids: type) type {
 /// `Ids` is a namespace containing the graph-specific identity types. ModuleSG
 /// and GlobalSG instantiate the same resolved semantic shapes with different
 /// enum IDs.
+/// A compile-time family value retains its definition and lexical bindings.
+/// Its classification remains the originating family; captures are value data.
+pub fn DefinitionValue(comptime Ids: type) type {
+    return struct {
+        origin: Ids.FamilyDefinitionId,
+        captures: Range(Ids.GenericArgId) = .{ .start = 0, .len = 0 },
+    };
+}
+
 pub fn SemanticType(comptime Ids: type) type {
     return union(enum) {
         builtin: BuiltinType,
@@ -814,7 +823,7 @@ pub fn Node(comptime Ids: type) type {
                 cleanup_target: ?Ids.NodeId = null,
             },
             type_literal: Ids.TypeId,
-            definition_literal: Ids.FamilyDefinitionId,
+            definition_literal: DefinitionValue(Ids),
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };
     };

@@ -720,7 +720,7 @@ pub fn isStringView(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
 /// preserves the value, including its precise classification and identity.
 pub const EntityValue = union(enum) {
     type: graph_mod.GlobalTypeId,
-    definition: graph_mod.GlobalFamilyDefinitionId,
+    definition: graph_mod.DefinitionValue,
 };
 
 pub fn entityValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?EntityValue {
@@ -756,12 +756,12 @@ pub fn definitionClass(allocator: std.mem.Allocator, graph: *graph_mod.GlobalSem
 
 /// Definition values are distinct from concrete types. Aliases preserve the
 /// producer identity and never allocate another template or specialization.
-pub fn definitionValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalFamilyDefinitionId {
+pub fn definitionValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.DefinitionValue {
     const value = entityValue(graph, initial) orelse return null;
     return if (value == .definition) value.definition else null;
 }
 
-pub fn staticDefinitionBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.GlobalFamilyDefinitionId {
+pub fn staticDefinitionBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.DefinitionValue {
     const binding = graph.binding(id);
     if (binding.mutability != .constant or binding.deferred_initialization) return null;
     const semantic = graph.resolvedSemanticType(binding.ty) orelse return null;
@@ -850,13 +850,13 @@ test "definition values preserve classification and aliases without runtime layo
     try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 1 });
     const classification = try definitionClass(a, &graph, declaration);
     try std.testing.expectEqual(classification, try definitionClass(a, &graph, declaration));
-    try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .definition_literal = declaration } });
+    try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .definition_literal = .{ .origin = declaration } } });
     for (0..128) |raw| {
         try graph.bindings.append(a, .{ .source = source, .name = name, .ty = classification, .initialization = @enumFromInt(@as(u32, @intCast(raw))), .mutability = .constant });
         try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .binding_use = @enumFromInt(@as(u32, @intCast(raw))) } });
     }
     const last: graph_mod.GlobalBindingId = @enumFromInt(127);
-    try std.testing.expectEqual(@as(?graph_mod.GlobalFamilyDefinitionId, declaration), staticDefinitionBinding(&graph, last));
+    try std.testing.expectEqual(declaration, staticDefinitionBinding(&graph, last).?.origin);
     try std.testing.expectEqual(null, staticTypeBinding(&graph, last));
     try std.testing.expect(isStaticBinding(&graph, last));
     try std.testing.expectError(error.TypeHasNoRuntimeLayout, layoutOf(&graph, classification));
@@ -939,4 +939,26 @@ test "operation compatibility retains nominal field identity and allows only opt
     try std.testing.expect(!operationInputsCompatible(&graph, required, .{ .start = 4, .len = 1 }));
     try std.testing.expect(!operationInputsCompatible(&graph, .{ .start = 4, .len = 1 }, .{ .start = 4, .len = 2 }));
     try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+}
+
+test "definition values preserve captured environments through binding aliases" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 2 });
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .builtin = .Int32 } });
+    const classification = try definitionClass(a, &graph, @enumFromInt(0));
+    for (0..2) |raw| {
+        try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(raw) } });
+        try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .definition_literal = .{ .origin = @enumFromInt(0), .captures = .{ .start = @intCast(raw), .len = 1 } } } });
+        try graph.bindings.append(a, .{ .source = source, .name = try graph.addString(a, "alias"), .ty = classification, .initialization = @enumFromInt(raw), .mutability = .constant });
+    }
+    const first = staticDefinitionBinding(&graph, @enumFromInt(0)).?;
+    const second = staticDefinitionBinding(&graph, @enumFromInt(1)).?;
+    try std.testing.expectEqual(first.origin, second.origin);
+    try std.testing.expect(!genericArgumentsEqual(&graph, first.captures, second.captures));
+    for (0..128) |_| try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .comptime_int = 7 } });
+    try std.testing.expectEqualDeep(first, staticDefinitionBinding(&graph, @enumFromInt(0)).?);
+    try std.testing.expectEqualDeep(second, staticDefinitionBinding(&graph, @enumFromInt(1)).?);
 }

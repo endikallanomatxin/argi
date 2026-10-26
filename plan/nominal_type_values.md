@@ -70,6 +70,12 @@ Families may be bound, passed, and returned in compile-time contexts while keepi
 their precise classification and identity. They have no runtime representation.
 Captured dependencies must be compile-time values; identity must include captured
 specialization bindings that affect meaning. Runtime storage cannot be captured.
+A family value carries its originating definition and a range of captured lexical
+arguments. Its compile-time classification identifies the producer; the captures
+belong to the value. Specialization binds that prefix before interpreting the
+caller's own arguments, which cannot overwrite captured bindings. Use existing
+canonical argument pools rather than copying templates or allocating a new nominal
+definition for each captured environment.
 Aliases retain the original definition's lexical context and ownership. Distinguish
 definition visibility from legitimate instantiation context; materialization timing
 must not change resolution.
@@ -287,6 +293,13 @@ before adding implementation exceptions.
   retains accepted instances across rejected submissions; declaration Safety
   metadata is freed recursively, including partially built outcomes on allocation
   failure.
+
+- Definition values retain origin plus captured argument ranges through aliases,
+  relocation and specialized IR. Type/function application binds the lexical prefix
+  before explicit arguments; bound-argument publication is shared. Internal tests
+  cover distinct environments, pool growth and rejection of capture rebinding.
+  Source construction of associated family values and their signature checking
+  remain pending; the representation does not by itself complete that feature.
 
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate

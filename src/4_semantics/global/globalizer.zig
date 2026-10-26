@@ -671,7 +671,10 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value), .cleanup_target = if (value.cleanup_target) |id| globalNode(o, id) else null } },
 
             .type_literal => |id| .{ .type_literal = globalType(o, id) },
-            .definition_literal => |id| .{ .definition_literal = globalFamilyDefinition(o, id) },
+            .definition_literal => |value| .{ .definition_literal = .{
+                .origin = globalFamilyDefinition(o, value.origin),
+                .captures = relocateEntityRange(global_sg.GlobalGenericArgId, o.generic_argument_base, value.captures),
+            } },
             .explicit_cast => |value| .{ .explicit_cast = .{ .value = globalNode(o, value.value), .target_type = globalType(o, value.target_type) } },
         },
     };

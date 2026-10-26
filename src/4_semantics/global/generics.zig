@@ -230,7 +230,9 @@ pub const Resolver = struct {
         }
         const args = reference.generic_arguments orelse return .not_applicable;
         const base = (try self.core.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type })) orelse return .deferred;
-        const global_args = try self.relocateModuleArguments(module_index, args);
+        var global_args = try self.relocateModuleArguments(module_index, args);
+        if (try self.core.resolveDefinitionAlias(module_index, reference)) |definition|
+            global_args = try self.completeDefinitionArguments(definition, global_args);
         const destination = globalizer.globalType(o, value.destination);
         try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
         _ = try self.ensureGenericInstance(destination);
@@ -379,6 +381,44 @@ pub const Resolver = struct {
             self.* = undefined;
         }
     };
+
+    fn completeDefinitionArguments(self: *Resolver, value: global_sg.DefinitionValue, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !primitives.Range(global_sg.GlobalGenericArgId) {
+        if (value.captures.len == 0) return arguments;
+        const located = self.findTypeParameterized(value.origin) orelse return error.ExpectedParameterizedType;
+        var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        const remaining = try self.bindDefinitionCaptures(located.module_index, located.parameterized.parameters, value, &bindings);
+        try self.bindGlobalArguments(located.module_index, remaining, arguments, &bindings);
+        return self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings);
+    }
+
+    pub fn bindDefinitionCaptures(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), value: global_sg.DefinitionValue, bindings: *Bindings) !primitives.Range(ir.ComptimeParameterId) {
+        if (value.captures.len > parameters.len) return error.TooManyGenericArguments;
+        try self.bindGlobalArgumentsPartial(module_index, .{ .start = parameters.start, .len = value.captures.len }, value.captures, bindings);
+        return .{ .start = parameters.start + value.captures.len, .len = parameters.len - value.captures.len };
+    }
+
+    pub fn appendBoundArguments(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *const Bindings) !primitives.Range(global_sg.GlobalGenericArgId) {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage;
+        // Missing bindings must not publish a partial argument tail.
+        for (parameters.start..parameters.start + parameters.len) |raw| switch (storage.comptime_parameters.items[raw].kind) {
+            .type => if (bindings.types[raw] == null) return error.MissingGenericArgument,
+            .comptime_int => if (bindings.ints[raw] == null) return error.MissingGenericArgument,
+        };
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            try self.graph.generic_arguments.append(self.allocator, .{
+                .name = try self.graph.addString(self.allocator, module.text(parameter.name)),
+                .value = switch (parameter.kind) {
+                    .type => .{ .type = bindings.types[raw].? },
+                    .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                },
+            });
+        }
+        return .{ .start = start, .len = parameters.len };
+    }
 
     pub fn bindGlobalArguments(
         self: *Resolver,
@@ -734,9 +774,10 @@ pub const Resolver = struct {
                 .layout = shape.layout,
             } }),
             .generic => |generic| blk: {
-                const base = try self.resolveParameterizedFamily(module_index, generic.base);
+                const definition = try self.resolveParameterizedDefinitionValue(module_index, generic.base);
                 const args = try self.instantiateParameterizedArguments(module_index, generic.arguments, bindings);
-                const id = try self.internType(.{ .generic = .{ .base = base, .arguments = args } });
+                const complete_args = try self.completeDefinitionArguments(definition, args);
+                const id = try self.internType(.{ .generic = .{ .base = definition.origin, .arguments = complete_args } });
                 _ = try self.ensureGenericInstance(id);
                 break :blk id;
             },
@@ -753,10 +794,18 @@ pub const Resolver = struct {
     }
 
     pub fn resolveParameterizedFamily(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.GlobalFamilyDefinitionId {
+        return (try self.resolveParameterizedDefinitionValue(module_index, id)).origin;
+    }
+
+    pub fn resolveParameterizedDefinitionValue(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.DefinitionValue {
         const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
-            .module => |local| self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse error.ExpectedParameterizedDefinition,
-            .external => |external| self.resolveExternalFamily(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{ .type, .contract_type, .function }),
+            .module => |local| .{ .origin = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse return error.ExpectedParameterizedDefinition },
+            .external => |external| value: {
+                const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)];
+                if (try self.core.resolveDefinitionAlias(module_index, reference)) |definition| break :value definition;
+                break :value .{ .origin = try self.resolveExternalFamily(module_index, reference, &.{ .type, .contract_type, .function }) };
+            },
         };
     }
 
@@ -1368,4 +1417,35 @@ test "pending generic work is discarded across rollback and allocation failure" 
     defer next.deinit(a);
     try next.discover(a, &graph, null);
     try std.testing.expectEqualSlices(global_sg.GlobalTypeId, &.{@enumFromInt(0)}, next.items.items);
+}
+
+test "definition captures bind the lexical prefix before explicit specialization arguments" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(a);
+    var writer = @import("../module/writer.zig").Writer.init(a, &module);
+    for ([_][]const u8{ "Captured", "Value" }) |name|
+        try module.semantic.parameterized_storage.comptime_parameters.append(a, .{ .name = try writer.addString(name), .kind = .type });
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .builtin = .Int32 } });
+    try graph.generic_arguments.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } },
+        .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } },
+    });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{module}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    var bindings = try Resolver.Bindings.init(a, 2);
+    defer bindings.deinit(a);
+    const remaining = try resolver.bindDefinitionCaptures(0, .{ .start = 0, .len = 2 }, .{ .origin = @enumFromInt(0), .captures = .{ .start = 0, .len = 1 } }, &bindings);
+    try std.testing.expectEqual(@as(u32, 1), remaining.start);
+    try resolver.bindGlobalArguments(0, remaining, .{ .start = 1, .len = 1 }, &bindings);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(0)), bindings.types[0]);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(1)), bindings.types[1]);
+    const arguments = try resolver.appendBoundArguments(0, .{ .start = 0, .len = 2 }, &bindings);
+    try std.testing.expectEqualStrings("Captured", graph.text(graph.generic_arguments.items[arguments.start].name));
+    try std.testing.expectEqualStrings("Value", graph.text(graph.generic_arguments.items[arguments.start + 1].name));
+    try graph.generic_arguments.append(a, .{ .name = try graph.addString(a, "Captured"), .value = .{ .type = @enumFromInt(1) } });
+    try std.testing.expectError(error.UnknownGenericArgument, resolver.bindGlobalArgumentsPartial(0, remaining, .{ .start = @intCast(graph.generic_arguments.items.len - 1), .len = 1 }, &bindings));
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(0)), bindings.types[0]);
 }

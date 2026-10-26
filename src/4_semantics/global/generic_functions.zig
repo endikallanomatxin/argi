@@ -594,7 +594,7 @@ pub const Resolver = struct {
         else
             null;
         const selected_definition = try self.core.resolveDefinitionAlias(current_module, reference);
-        const name = if (selected_definition) |id| self.graph.familyDefinitionName(id) else module.text(reference.name);
+        const name = if (selected_definition) |value| self.graph.familyDefinitionName(value.origin) else module.text(reference.name);
         var selected: ?global_sg.GlobalDeclId = null;
         var selected_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var tied = false;
@@ -617,11 +617,15 @@ pub const Resolver = struct {
             const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
             const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
             if (selected_definition) |id| {
-                if (self.graph.familyForDeclaration(declaration) != id) continue;
+                if (self.graph.familyForDeclaration(declaration) != id.origin) continue;
             } else if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
-            self.generics.bindGlobalArgumentsPartial(candidate_index, parameterized.parameters, arguments, &bindings) catch |err| {
+            const remaining = if (selected_definition) |definition|
+                try self.generics.bindDefinitionCaptures(candidate_index, parameterized.parameters, definition, &bindings)
+            else
+                parameterized.parameters;
+            self.generics.bindGlobalArgumentsPartial(candidate_index, remaining, arguments, &bindings) catch |err| {
                 if (err == error.OutOfMemory) return err;
                 argument_failure = err;
                 continue;
@@ -1082,22 +1086,7 @@ pub const Resolver = struct {
         parameters: primitives.Range(ir.ComptimeParameterId),
         bindings: *const generic_mod.Resolver.Bindings,
     ) !primitives.Range(global_sg.GlobalGenericArgId) {
-        // An incomplete candidate must not publish a partial argument tail.
-        if (!self.parametersBound(module_index, parameters, bindings)) return error.MissingGenericArgument;
-        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        const storage = &self.modules[module_index].semantic.parameterized_storage;
-        for (parameters.start..parameters.start + parameters.len) |raw| {
-            const parameter = storage.comptime_parameters.items[raw];
-            const value: global_sg.GenericArgument.Value = switch (parameter.kind) {
-                .type => .{ .type = bindings.types[raw] orelse return error.MissingGenericArgument },
-                .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse return error.MissingGenericArgument },
-            };
-            try self.graph.generic_arguments.append(self.allocator, .{
-                .name = try self.graph.addString(self.allocator, self.modules[module_index].text(parameter.name)),
-                .value = value,
-            });
-        }
-        return .{ .start = start, .len = parameters.len };
+        return self.generics.appendBoundArguments(module_index, parameters, bindings);
     }
 
     fn resolveImplicitGenericFunction(
@@ -1115,7 +1104,7 @@ pub const Resolver = struct {
         const selected_definition = try self.core.resolveDefinitionAlias(current_module, reference);
         return self.resolveImplicitGenericFunctionFiltered(
             current_module,
-            if (selected_definition) |id| self.graph.familyDefinitionName(id) else module.text(reference.name),
+            if (selected_definition) |value| self.graph.familyDefinitionName(value.origin) else module.text(reference.name),
             module_filter,
             input,
             reach_context,
@@ -1187,7 +1176,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
-        selected_definition: ?global_sg.GlobalFamilyDefinitionId,
+        selected_definition: ?global_sg.DefinitionValue,
     ) !global_sg.GlobalFunctionId {
         const selected = try self.selectImplicitGenericFunctionFiltered(current_module, name, module_filter, input, reach, ambiguity_candidates, selected_definition);
         const started = self.profileTimestamp();
@@ -1241,7 +1230,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach_context: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
-        selected_definition: ?global_sg.GlobalFamilyDefinitionId,
+        selected_definition: ?global_sg.DefinitionValue,
     ) !ImplicitGenericSelection {
         if (self.profile_io != null) self.selection_profile.implicit_calls += 1;
         _ = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
@@ -1276,7 +1265,7 @@ pub const Resolver = struct {
             const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
             const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
             if (selected_definition) |id| {
-                if (self.graph.familyForDeclaration(declaration) != id) continue;
+                if (self.graph.familyForDeclaration(declaration) != id.origin) continue;
             } else if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
             candidate_count += 1;
             const parameter_count = candidate_module.semantic.parameterized_storage.comptime_parameters.items.len;
@@ -1288,6 +1277,7 @@ pub const Resolver = struct {
                 .types = binding_types.items,
                 .ints = binding_ints.items,
             };
+            if (selected_definition) |definition| _ = try self.generics.bindDefinitionCaptures(candidate_index, parameterized.parameters, definition, &bindings);
             var candidate_deferred = false;
             const matches = self.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings) catch |err| matches: {
                 if (err == error.ConflictingGenericArgument) {
@@ -2970,7 +2960,10 @@ pub const Resolver = struct {
                     .bool_literal => |value| .{ .bool_literal = value },
                     .string_literal => |value| .{ .string_literal = try self.copyString(value) },
                     .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions) },
-                    .definition_literal => |value| .{ .definition_literal = try self.resolver.generics.resolveParameterizedFamily(self.module_index, value) },
+                    .definition_literal => |value| .{ .definition_literal = .{
+                        .origin = try self.resolver.generics.resolveParameterizedFamily(self.module_index, value.origin),
+                        .captures = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.captures, self.substitutions),
+                    } },
                     .move_value => |value| .{ .move_value = try self.instantiateNode(value) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,
@@ -3142,7 +3135,7 @@ pub const Resolver = struct {
                     },
                     .definition => |definition| .{
                         .source = self.resolver.sourceFor(self.module_index, value.source),
-                        .ty = try global_types.definitionClass(self.resolver.allocator, self.resolver.graph, definition),
+                        .ty = try global_types.definitionClass(self.resolver.allocator, self.resolver.graph, definition.origin),
                         .content = .{ .definition_literal = definition },
                     },
                 };

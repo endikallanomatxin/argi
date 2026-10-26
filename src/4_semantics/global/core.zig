@@ -528,7 +528,7 @@ pub const Resolver = struct {
     /// Resolve the visible binding first, then follow its definition value.
     /// Visibility applies to that binding; an exported alias may name a private
     /// underlying definition without changing its lexical context.
-    pub fn resolveDefinitionAlias(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?global_sg.GlobalFamilyDefinitionId {
+    pub fn resolveDefinitionAlias(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?global_sg.DefinitionValue {
         const id = self.resolveDeclaration(module_index, reference, &.{.binding}) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return null,
             else => return err,
@@ -547,7 +547,7 @@ pub const Resolver = struct {
         const definition = if (declaration.kind == .binding) blk: {
             const binding = self.declarationBinding(id) orelse return null;
             if (self.graph.isBindingTypeUnresolved(binding)) return null;
-            break :blk types.staticDefinitionBinding(self.graph, binding) orelse return null;
+            break :blk (types.staticDefinitionBinding(self.graph, binding) orelse return null).origin;
         } else declaration.family_definition orelse return null;
         const family = self.graph.familyDefinition(definition);
         for (kinds) |kind| if (switch (kind) {
@@ -567,8 +567,9 @@ pub const Resolver = struct {
             if (primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget())) |kind|
                 return .{ .type = try self.builtin(kind) };
         }
+        if (try self.resolveDefinitionAlias(module_index, reference)) |value| return .{ .definition = value };
         if (try self.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type, .function })) |id| {
-            return .{ .definition = id };
+            return .{ .definition = .{ .origin = id } };
         }
         if (try self.resolveTypeValue(module_index, reference)) |ty| return .{ .type = ty };
         return null;
