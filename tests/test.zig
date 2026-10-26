@@ -15691,3 +15691,10 @@ test "feature_tests/types/310X_array_nominal_record_assignment" {
 test "feature_tests/types/311X_nominal_construction_recontextualization" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/311X_nominal_construction_recontextualization", "distinct nominal types require explicit conversion", "without a diagnostic");
 }
+
+test "feature_tests/types/312_named_operation_alias_signatures" {
+    const path = "tests/feature_tests/types/312_named_operation_alias_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}

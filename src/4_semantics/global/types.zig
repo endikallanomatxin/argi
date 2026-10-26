@@ -305,6 +305,26 @@ pub fn identityEqual(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.G
     };
 }
 
+/// Operation compatibility compares the callable fields, not the nominal
+/// identity of their enclosing records. Field types retain ordinary equality.
+/// Extra implementation inputs must be optional so requirement-only callers
+/// can still invoke the implementation.
+pub fn operationInputsCompatible(graph: *const graph_mod.GlobalSemanticGraph, required: graph_mod.FieldRange, implementation: graph_mod.FieldRange) bool {
+    if (implementation.len < required.len) return false;
+    if (!operationFieldsEqual(graph, required, .{ .start = implementation.start, .len = required.len })) return false;
+    for (graph.fields.items[implementation.start + required.len ..][0 .. implementation.len - required.len]) |field|
+        if (field.default_value == null) return false;
+    return true;
+}
+
+pub fn operationFieldsEqual(graph: *const graph_mod.GlobalSemanticGraph, required: graph_mod.FieldRange, implementation: graph_mod.FieldRange) bool {
+    if (required.len != implementation.len) return false;
+    for (graph.fields.items[required.start..][0..required.len], graph.fields.items[implementation.start..][0..implementation.len]) |expected, actual| {
+        if (!std.mem.eql(u8, graph.text(expected.name), graph.text(actual.name)) or !equal(graph, expected.ty, actual.ty)) return false;
+    }
+    return true;
+}
+
 pub fn hasNominalIdentity(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
     return switch (graph.resolvedSemanticType(ty) orelse return false) {
         .nominal, .generic => true,
@@ -894,4 +914,30 @@ test "family identity survives aliases pool growth and rejected definitions" {
     try std.testing.expectEqual(@as(usize, 1), graph.family_definitions.items.len);
     try std.testing.expectEqual(@as(usize, 0), graph.declarations.items.len);
     try std.testing.expectEqual(classification, try definitionClass(a, &graph, family));
+}
+
+test "operation compatibility retains nominal field identity and allows only optional extra inputs" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const item = try graph.addString(a, "item");
+    const fallback = try graph.addString(a, "fallback");
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .nominal = @enumFromInt(0) }, .{ .nominal = @enumFromInt(1) } });
+    for (0..2) |_| try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .bool_literal = false } });
+    try graph.fields.appendSlice(a, &.{
+        .{ .source = source, .name = item, .ty = @enumFromInt(0) },
+        .{ .source = source, .name = item, .ty = @enumFromInt(1) },
+        .{ .source = source, .name = item, .ty = @enumFromInt(1) },
+        .{ .source = source, .name = fallback, .ty = @enumFromInt(0), .default_value = @enumFromInt(0) },
+        .{ .source = source, .name = item, .ty = @enumFromInt(2) },
+        .{ .source = source, .name = fallback, .ty = @enumFromInt(0) },
+    });
+    const required: graph_mod.FieldRange = .{ .start = 1, .len = 1 };
+    try std.testing.expect(operationInputsCompatible(&graph, required, .{ .start = 2, .len = 2 }));
+    try std.testing.expect(!operationFieldsEqual(&graph, required, .{ .start = 2, .len = 2 }));
+    try std.testing.expect(!operationInputsCompatible(&graph, required, .{ .start = 4, .len = 1 }));
+    try std.testing.expect(!operationInputsCompatible(&graph, .{ .start = 4, .len = 1 }, .{ .start = 4, .len = 2 }));
+    try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));
 }

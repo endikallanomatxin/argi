@@ -722,7 +722,7 @@ pub const Resolver = struct {
         return self.inferFamilyApplication(module_index, expression.resolved.generic, .{ .fields = input }, bindings, field_offset, reach);
     }
 
-    const FamilyInput = union(enum) { fields: global_sg.GlobalNodeId, value_type: global_sg.GlobalTypeId };
+    const FamilyInput = union(enum) { fields: global_sg.GlobalNodeId, value_type: global_sg.GlobalTypeId, signature_type: global_sg.GlobalTypeId };
 
     fn inferFamilyApplication(self: *Resolver, module_index: usize, application: @FieldType(ir.ResolvedType, "generic"), input: FamilyInput, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, reach: ?ReachInferenceContext) anyerror!bool {
         const family = try self.generics.resolveParameterizedFamily(module_index, application.base);
@@ -754,6 +754,7 @@ pub const Resolver = struct {
                     if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.parameterized.body, node, &local, context, field_offset)) return false;
             },
             .value_type => |actual| if (!try self.inferInputType(located.module_index, located.parameterized.body, actual, &local)) return false,
+            .signature_type => |required| if (!try self.inferSignatureBindings(located.module_index, located.parameterized.body, required, &local)) return false,
         }
         try self.generics.applyParameterDefaults(located.module_index, parameters, &local);
         // Return only evidence inferred from inputs/defaults. Result types never
@@ -1974,17 +1975,24 @@ pub const Resolver = struct {
         };
     }
 
-    /// Alias identity is fixed by its declaration. Infer its ordinary generic
-    /// arguments from the selected requirement's inputs, never its result type
-    /// and never a search through same-named functions.
-    /// Infer callable parameters from corresponding inputs. This does not
+    /// Preserve the aliased function definition. Infer callable parameters
+    /// from the selected requirement's inputs, never its result type or a
+    /// search through same-named functions. This does not
     /// equate the two domain record types or convert a record value: ordinary
     /// call construction contextualizes the argument literal to the callee.
     fn inferSignatureBindings(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, required: global_sg.GlobalTypeId, bindings: *generic_mod.Resolver.Bindings) !bool {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
         const representation = storage.representation(pattern);
-        if (representation != .resolved or representation.resolved != .structural) return false;
+        if (representation == .resolved and representation.resolved == .generic)
+            return self.inferFamilyApplication(module_index, representation.resolved.generic, .{ .signature_type = required }, bindings, 0, null);
+        if (representation != .resolved or representation.resolved != .structural) {
+            const actual = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+                error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+                else => return err,
+            };
+            return global_types.operationInputsCompatible(self.graph, global_types.fields(self.graph, required) orelse return false, global_types.fields(self.graph, actual) orelse return false);
+        }
         const fields = representation.resolved.structural.fields;
         const inputs = global_types.fields(self.graph, required) orelse return false;
         if (fields.len < inputs.len) return false;
@@ -2076,9 +2084,8 @@ pub const Resolver = struct {
         if (existing) |id| {
             if (expected) |signature| {
                 const function = self.graph.function(id);
-                const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
                 const required = global_types.fields(self.graph, signature.input) orelse return error.ContextualSignatureMismatch;
-                if (!contracts.inputFieldsSatisfyRequirement(required, function.input)) return error.ContextualSignatureMismatch;
+                if (!global_types.operationInputsCompatible(self.graph, required, function.input)) return error.ContextualSignatureMismatch;
                 if (function.output_type == null or !global_types.equal(self.graph, function.output_type.?, signature.output)) return error.ContextualOutputSignatureMismatch;
             }
             if (self.profile_io != null) self.profile_instantiate_existing += 1;

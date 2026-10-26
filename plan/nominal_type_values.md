@@ -116,6 +116,13 @@ a signature/type family, not several conflicting `Init<String>` conformances
 distinguished by a free allocator parameter. Do not impose a provider participant
 on every protocol or implicitly erase allocators to virtual values.
 
+Operation implementation compatibility is separate from type equality. Required
+inputs match by position, name and ordinary type equality; additional implementation
+inputs need defaults. Outputs match exactly in count, names and field types. This
+rule does not equate the enclosing nominal signature records or permit conversions
+between independently defined field types. Generic aliases infer their parameters
+from the required inputs, including through named signature families, never outputs.
+
 Before migrating those protocols, specify how contracts declare generic operation
 signatures, how associated families share their parameters, and how implementation
 compatibility is verified. Preserve static inference, explicit/reached capability

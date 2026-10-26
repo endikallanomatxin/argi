@@ -453,27 +453,6 @@ pub const Resolver = struct {
         return try arena.dupe(primitives.StorageDomainMapping, result.items);
     }
 
-    pub fn inputFieldsSatisfyRequirement(
-        self: *const Resolver,
-        required: global_sg.FieldRange,
-        implementation: global_sg.FieldRange,
-    ) bool {
-        if (implementation.len < required.len) return false;
-        for (0..required.len) |index| {
-            const expected = self.graph.fields.items[required.start + @as(u32, @intCast(index))];
-            const actual = self.graph.fields.items[implementation.start + @as(u32, @intCast(index))];
-            if (!global_types.equal(self.graph, expected.ty, actual.ty)) return false;
-        }
-        // Implementations may expose additional optional/reached parameters:
-        // callers satisfying the contract must still be able to invoke
-        // the function using only the requirement's inputs.
-        for (required.len..implementation.len) |index| {
-            const extra = self.graph.fields.items[implementation.start + @as(u32, @intCast(index))];
-            if (extra.default_value == null) return false;
-        }
-        return true;
-    }
-
     pub fn resolveNestedCall(
         self: *Resolver,
         module_index: usize,
@@ -2066,16 +2045,8 @@ pub const Resolver = struct {
                     const function = self.graph.function(method);
                     const required_inputs = global_types.fields(self.graph, input).?;
                     const required_outputs = global_types.fields(self.graph, output).?;
-                    if (!self.inputFieldsSatisfyRequirement(required_inputs, function.input)) break :selected .missing;
-                    for (0..required_inputs.len) |position| {
-                        if (!std.mem.eql(u8, self.graph.text(self.graph.fields.items[required_inputs.start + position].name), self.graph.text(self.graph.fields.items[function.input.start + position].name))) break :selected .missing;
-                    }
-                    if (required_outputs.len != function.output.len) break :selected .incompatible_output;
-                    for (0..required_outputs.len) |position| {
-                        const required = self.graph.fields.items[required_outputs.start + position];
-                        const actual = self.graph.fields.items[function.output.start + position];
-                        if (!global_types.equal(self.graph, required.ty, actual.ty) or !std.mem.eql(u8, self.graph.text(required.name), self.graph.text(actual.name))) break :selected .incompatible_output;
-                    }
+                    if (!global_types.operationInputsCompatible(self.graph, required_inputs, function.input)) break :selected .missing;
+                    if (!global_types.operationFieldsEqual(self.graph, required_outputs, function.output)) break :selected .incompatible_output;
                     break :selected .{ .function = method };
                 };
                 if (selected != .function) {
