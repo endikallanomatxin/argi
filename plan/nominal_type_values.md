@@ -419,8 +419,9 @@ before adding implementation exceptions.
   parameters, with a bounded depth. Matching outer parameter kinds alone no longer
   accepts incompatible nested arities. Positive nested application and negative
   nested-signature fixtures complement the existing top-level arity checks.
-  Integer parameter types and bound implication still need full compatibility
-  checks; this shape check does not claim universal signature compatibility.
+  Integer parameter types are compared by semantic identity, including aliases,
+  nested signatures and captured lexical environments. Bounds still need
+  implication checks; this does not claim universal signature compatibility.
 
 - Specialization in value position uses a shared entity-application recipe.
   Type producers yield Type values; function producers retain their origin and

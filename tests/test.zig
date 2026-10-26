@@ -15820,10 +15820,24 @@ test "feature_tests/types/333X_text_value_nominal_identity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/333X_text_value_nominal_identity", "no function named 'accept_c_text' accepts arguments", "without a diagnostic");
 }
 
-
 test "feature_tests/types/334_associated_argument_family_inference" {
     const path = "tests/feature_tests/types/334_associated_argument_family_inference";
     try expectSuccessfulBuild(path);
     try runExpect(path, 42);
     try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/335X_family_integer_parameter_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/335X_family_integer_parameter_type", "type-family argument does not match its parameter signature", "failed without a diagnostic");
+}
+
+test "feature_tests/types/336_family_integer_parameter_alias" {
+    const path = "tests/feature_tests/types/336_family_integer_parameter_alias";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/337X_nested_family_integer_parameter_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/337X_nested_family_integer_parameter_type", "type-family argument does not match its parameter signature", "failed without a diagnostic");
 }
