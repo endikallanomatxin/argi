@@ -335,3 +335,94 @@ larger binding-session cost and is a separate follow-up.
 Logs: `.zig-cache/session-layout-{before,after}-{bindings-1000,resources-100}.csv`,
 plus after-only calls and rejections controls. All command runs include the
 10/100 milestones; minimal runs also include 1,000.
+
+### Continuation publication and branch verification
+
+A continuation candidate now retains its parent proof and forks the parent's
+mutable tables directly into checking scratch. Previously it cloned those
+tables into the candidate arena, then immediately cloned them again into
+scratch and discarded the first copy. Publication still snapshots final facts
+into an independent proof arena; rejecting a candidate still leaves its parent
+unchanged. No historical chain or new persistent cache is introduced.
+
+`continuation_fork` now times that actual checking fork. The earlier timer
+covered the discarded candidate-arena copy while the second copy was included
+only in `checking`. Compare cumulative command timings rather than interpreting
+the boundary counters as two equivalent implementations of all copying work.
+
+The `branches` execution scenario calls a reusable Argi function with 32 local
+slots, 32 conditional writes and an outer branch. It reports ordinary reuse
+counters and separately re-verifies the published unit at each milestone,
+outside command timing. `# verifier` rows contain command count, cumulative
+requested allocation bytes, peak live bytes and bytes retained after this
+isolated verification. `--verifier` remains the synthetic linear/diamond
+comparison; it is not a substitute for the Argi workload.
+
+An attempted pointer-free bulk-copy path in fact snapshots did not improve the
+measured 1,000-binding seal time (515.5 ms versus 510.2 ms in the prior profile).
+That extra mechanism was discarded. Only the redundant whole-state fork was
+removed.
+
+A paired ReleaseSafe 1,000-binding run measured 2,368.0 ms before the fork change
+and 2,023.8 ms after it, with frontend/publication falling from 2,167.2 to
+1,814.8 ms. Retained memory remained 16.106 MiB; peak tracked allocations fell
+from 18.012 to 17.377 MiB. This is one instrumented comparison, not a general
+throughput guarantee. Both binaries use the repository core from `.zig-cache/`.
+The 1,000-call control completed in 1,138.7 ms with 999 body reuses. Across 1,000
+prelude rejections, retained allocations remained 100.660 MiB, with no published
+bytecode or additional dead frames.
+
+The real branch workload completed 1,000 calls with 999 body reuses. Re-verifying
+its published unit requested 860,383 bytes cumulatively, peaked at 21,974 live
+bytes, and retained zero bytes at every milestone. The synthetic 1,000-slot
+comparison peaked at 25,289 bytes for linear code and 2,077,429 bytes for 1,000
+diamonds; both retained zero. These results support keeping the current join
+representation rather than adding another cache or persistent verifier state.
+
+The default resource run reached its VM cell quota after 125 commands, retaining
+146.625 MiB with a 149.660 MiB tracked peak. This was `ExecutionMemoryLimit`, not
+an allocator failure or the benchmark's 1,024 MiB allocation limit. Investigation
+found that transferring a reusable call buffer charged its slots and flags
+again. Quota accounting now charges backing once and each fresh frame identity
+once; session preflight uses the same rule. This changes no reference identity,
+cleanup obligation or physical buffer lifetime. Tight-quota and allocation-failure
+tests cover transfer, rejection and preservation of the reusable buffer.
+
+Aggregate backing, rebuilt projections and immutable snapshots still belong to
+the execution arena. Ending a call does not prove that these are unreachable:
+results, session values and references can retain them. Reclaiming them requires
+an explicit distinction between temporary and published backing, including
+virtual descriptors and acquired storage, rather than resetting an invocation
+arena or reusing dead frame IDs. That is a concrete follow-up, not a reason to
+introduce reclamation into this change without lifetime evidence.
+
+Logs: `.zig-cache/continuation-single-fork-*.csv`,
+`.zig-cache/continuation-verifier-synthetic.csv`, and the focused
+`.zig-cache/retained-call-quota-internal.log`. The attempted bulk-copy control is
+`.zig-cache/continuation-bulk-only-bindings-1000.csv`.
+
+After correcting buffer charges, the same default-quota resource scenario stops
+after 478 commands, with 320.530 MiB retained and a 326.798 MiB tracked peak.
+The 100-command milestone still retains 145.689 MiB: correcting quota accounting
+is not physical memory reclamation. The default cell guard remains enabled; the
+attempted 1,000-resource run is deliberately reported as quota-limited, rather
+than as a completed throughput sample. Its bounded failure is recorded in
+`.zig-cache/retained-call-quota-resources-1000.csv`.
+
+Final unprofiled A/B/B/A 1,000-binding runs measured 2,368.5/2,242.7 ms before
+and 1,851.5/1,944.1 ms after these changes (means 2,305.6/1,897.8 ms, about 18%
+lower for this local workload). Logs are
+`.zig-cache/retained-call-quota-throughput-{before,after}.csv`. The final prelude
+call control completed 100 commands in 1,844.1 ms, retaining 102.133 MiB; the
+1,000-branch control retained the same 21,974-byte isolated verifier peak and
+zero verifier bytes after completion.
+
+Validation: the full Debug internal suite passed 980 tests with one skip before
+the quota correction. After that correction, 45 focused storage, acquisition,
+quota and allocation-failure tests passed. The complete ReleaseSafe program
+suite passed 2,362 tests with 11 optional skips, no failures and no leaks,
+including the real-terminal editor, native/VM, compile-time, rejected-command,
+reference, ownership and cleanup cases. Changed Zig files and the new aggregate
+diagnostic fixture pass their official format checks. Logs:
+`.zig-cache/overnight-final-{internal,programs}.log` and
+`.zig-cache/retained-call-quota-internal.log`.

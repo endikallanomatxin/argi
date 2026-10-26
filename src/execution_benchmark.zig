@@ -50,7 +50,7 @@ const Memory = struct {
     }
 };
 
-const Scenario = enum { update, bindings, calls, resources, definitions, rejections };
+const Scenario = enum { update, bindings, calls, branches, resources, definitions, rejections };
 const Modules = enum { minimal, core, prelude };
 
 fn elapsed(io: std.Io, start: i96) u64 {
@@ -127,6 +127,25 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
         mib(summary_arenas),                  stats.reused_functions,
     });
     std.debug.print(",{d},{d},{d},{d:.3}\n", .{ session.compiler.bodies_checked, session.compiler.bodies_reused, session.compiler.body_cache.entries.count(), mib(body_arenas) });
+    if (scenario == .branches and commands != 0) {
+        const b = @import("5_codegen/bytecode/bytecode.zig");
+        var program: ?*const b.Program = null;
+        var bodies = session.runtime.bodies.entries.iterator();
+        while (bodies.next()) |entry| {
+            const graph = &session.compiler.semantic.relocation.graph;
+            const declaration = graph.declaration(graph.function(entry.key_ptr.*).declaration);
+            if (std.mem.eql(u8, graph.text(declaration.name), "branch_workload")) {
+                program = entry.value_ptr.origin.program();
+                break;
+            }
+        }
+        var verification_memory: Memory = .{ .limit = 128 * 1024 * 1024 };
+        var requested: u64 = 0;
+        var allocations: @import("1_base/profile.zig").AllocationCounter = .{ .child = verification_memory.allocator(), .requested_bytes = &requested };
+        try @import("5_codegen/bytecode/verify.zig").verify(allocations.allocator(), (program orelse return error.MissingBenchmarkProgram).*);
+        std.debug.print("# verifier,{d},{d},{d},{d}\n", .{ commands, requested, verification_memory.peak, verification_memory.live });
+        if (verification_memory.live != 0) return error.VerifierRetainedMemory;
+    }
     // Check the actual retained value without adding a measurement submission.
     const bindings = session.compiler.semantic.resolvers.expressions.session_bindings.items;
     const frame = session.runtime.context.bindings.get(bindings[bindings.len - 1]) orelse return error.MissingBenchmarkBinding;
@@ -151,6 +170,20 @@ fn reportGraphPools(session: *const interactive.Interactive, commands: usize) vo
             if (reserved != 0) std.debug.print("# graph_pool,{d},{s},{d},{d}\n", .{ commands, field.name, payload, reserved });
         }
     }
+}
+
+// A reusable function with local slots and conditional writes exercises real
+// verifier joins, while subsequent commands also measure verified-body reuse.
+fn branchSource(allocator: std.mem.Allocator) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    try output.writer.writeAll("branch_workload := (.condition: Bool) -> (.result: Int32 = 42) {\nif condition {\n");
+    for (0..32) |index| try output.writer.print(
+        "local_{d} :: Int32 = 42\nif condition {{ local_{d} = 1 }} else {{ local_{d} = 2 }}\nresult = local_{d}\n",
+        .{ index, index, index, index },
+    );
+    try output.writer.writeAll("result = 42\n}\n}\n");
+    return output.toOwnedSlice();
 }
 
 fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize, graph_pools: bool, resolution_profile: bool) !void {
@@ -185,6 +218,12 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
             };
         }
         if (scenario == .calls) try session.submitDefinitions("identity := (.value: Int32) -> (.result: Int32) { result = value }");
+        if (scenario == .branches) {
+            const definition = try branchSource(allocator);
+            defer allocator.free(definition);
+            try session.submitDefinitions(definition);
+            try session.submitStatements("condition :: Bool = true");
+        }
         try session.submitStatements("value :: Int32 = 42");
         var scans: @import("4_semantics/global/resolution_profile.zig").Profile = .{ .io = io };
         if (resolution_profile) session.compiler.semantic.resolvers.core.scan_profile = &scans;
@@ -200,6 +239,7 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
             const source = switch (scenario) {
                 .update => try allocator.dupe(u8, "value = 42"),
                 .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
+                .branches => try allocator.dupe(u8, "value = branch_workload(.condition = condition)"),
                 .rejections => try allocator.dupe(u8, "value = 42\nmissing_function()"),
                 .definitions => try std.fmt.allocPrint(allocator, "function_{d} := () -> (.result: Int32) {{ result = 42 }}", .{index}),
                 .bindings => try std.fmt.allocPrint(allocator, "value_{d} :: Int32 = 42", .{index}),
@@ -312,7 +352,7 @@ pub fn main(init: std.process.Init) !void {
     if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|resources|definitions|rejections] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|branches|resources|definitions|rejections] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB\n", .{});
     if (resolution_profile) std.debug.print("# resolution,commands,pass,calls,pool_entries,changed_passes,inclusive_ms,fixed_point_rounds\n", .{});
     try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools, resolution_profile);
