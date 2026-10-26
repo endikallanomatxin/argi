@@ -31,7 +31,7 @@ pub const TypeReferenceResolution = union(enum) {
 
 pub const BuiltinType = primitives.BuiltinType;
 pub const FieldRange = struct { start: u32, len: u32 };
-pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
+pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange, input_type: ?ModuleTypeId = null, output_type: ?ModuleTypeId = null };
 pub const DeclarationKind = primitives.DeclarationKind;
 
 pub const Declaration = struct {

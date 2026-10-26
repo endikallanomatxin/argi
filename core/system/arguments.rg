@@ -1,3 +1,5 @@
+_ArgumentsInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 argi_runtime_argc() -> (.count: UIntNative): ExternFunction
 
 argi_runtime_argv() -> (.address: UIntNative): ExternFunction
@@ -13,9 +15,7 @@ ArgumentsIterator: Type = (
     .index : UIntNative
 )
 
-once _acquire_arguments := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : Arguments
-) {
+once _acquire_arguments := (.args: _ArgumentsInitArgs) -> (.result: Arguments) {
     assume ffi := args.ffi
 
     result = (
@@ -25,7 +25,7 @@ once _acquire_arguments := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi
     )
 }
 
-implement Init#(Arguments, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(Arguments, _ArgumentsInitArgs) (
     .Result : Type = Arguments
     .init   = _acquire_arguments
 )

@@ -77,7 +77,7 @@ test "parameterized pools retain immediate children across recursive lowering" {
     const parameterized_storage = &graph.semantic.parameterized_storage;
     const ir = &parameterized_storage.ir;
     const body = parameterized_storage.parameterized_types.items[1].body;
-    const fields = ir.types.items[@intFromEnum(body)].resolved.structural.fields;
+    const fields = ir.representation(body).resolved.structural.fields;
     try std.testing.expectEqual(@as(u32, 3), fields.len);
     try std.testing.expectEqualStrings("first", graph.text(ir.fields.items[fields.start].name));
     try std.testing.expectEqualStrings("second", graph.text(ir.fields.items[fields.start + 1].name));
@@ -87,7 +87,7 @@ test "parameterized pools retain immediate children across recursive lowering" {
     const inner_generic = ir.types.items[@intFromEnum(inner)].resolved.generic;
     const parameter = ir.generic_arguments.items[inner_generic.arguments.start].value.type;
     try std.testing.expect(ir.types.items[@intFromEnum(parameter)] == .parameter);
-    const choice = ir.types.items[@intFromEnum(ir.fields.items[fields.start + 2].ty)].resolved.structural_choice;
+    const choice = ir.representation(ir.fields.items[fields.start + 2].ty).resolved.structural_choice;
     try std.testing.expectEqualStrings("outer", graph.text(ir.variants.items[choice.variants.start].semantic.name));
 
     const globalizer = @import("../global/globalizer.zig");
@@ -105,7 +105,12 @@ test "parameterized pools retain immediate children across recursive lowering" {
     try relocation.graph.types.append(allocator, .{ .builtin = .Int32 });
     substitutions.types[parameterized_storage.parameterized_types.items[1].parameters.start] = int_type;
     const instantiated = try resolver.instantiateParameterizedType(0, body, &substitutions);
-    const global_fields = relocation.graph.types.items[@intFromEnum(instantiated)].structural.fields;
+    const definition = relocation.graph.types.items[@intFromEnum(instantiated)].nominal;
+    const global_fields = relocation.graph.typeDefinition(definition).struct_fields.?;
+    const retained_definitions = relocation.graph.type_definitions.items.len;
+    try std.testing.expectEqual(instantiated, try resolver.instantiateParameterizedType(0, body, &substitutions));
+    try std.testing.expectEqual(retained_definitions, relocation.graph.type_definitions.items.len);
+    try std.testing.expect(relocation.graph.typeDefinition(definition).specialization != null);
     try std.testing.expectEqualStrings("first", relocation.graph.text(relocation.graph.fields.items[global_fields.start].name));
     try std.testing.expectEqualStrings("second", relocation.graph.text(relocation.graph.fields.items[global_fields.start + 1].name));
     const global_generic = relocation.graph.types.items[@intFromEnum(relocation.graph.fields.items[global_fields.start + 1].ty)].generic;
@@ -298,7 +303,7 @@ test "module semantizing marks inferred error signatures" {
     try std.testing.expect((try @import("views.zig").functionView(&result.graph, @enumFromInt(0))).flags.uses_inferred_error_reasons);
 }
 
-test "module callable interfaces preserve anonymous structural types" {
+test "module callable interfaces preserve anonymous nominal definitions" {
     const allocator = std.testing.allocator;
     const source = "read(.value: (.nested: (.number: Int32))) -> (.result: (.nested: (.number: Int32))) := { result = value }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
@@ -308,11 +313,13 @@ test "module callable interfaces preserve anonymous structural types" {
 
     const interface = graph.functions.items[0];
     for ([_]@import("entities.zig").Field{ graph.semantic.fields.items[interface.input.start], graph.semantic.fields.items[interface.output.start] }) |field| {
-        const shape = graph.semantic.types.items[@intFromEnum(field.ty)].resolved.structural.fields;
+        const definition = graph.semantic.types.items[@intFromEnum(field.ty)].resolved.nominal;
+        const shape = graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields.?;
         try std.testing.expectEqual(@as(u32, 1), shape.len);
         const nested = graph.semantic.fields.items[shape.start];
         try std.testing.expectEqualStrings("nested", graph.text(nested.name));
-        const nested_shape = graph.semantic.types.items[@intFromEnum(nested.ty)].resolved.structural.fields;
+        const nested_definition = graph.semantic.types.items[@intFromEnum(nested.ty)].resolved.nominal;
+        const nested_shape = graph.semantic.type_definitions.items[@intFromEnum(nested_definition)].struct_fields.?;
         try std.testing.expectEqual(@as(u32, 1), nested_shape.len);
         const number = graph.semantic.fields.items[nested_shape.start];
         try std.testing.expectEqualStrings("number", graph.text(number.name));
@@ -332,7 +339,7 @@ test "anonymous structural types retain module-local default provenance" {
     const input = graph.semantic.fields.items[interface.input.start];
     const external = graph.semantic.types.items[@intFromEnum(input.ty)].external;
     const reference = graph.semantic.external_refs.items[@intFromEnum(external)];
-    const recipe = graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(reference.computed_type.?)].resolved.structural;
+    const recipe = graph.semantic.parameterized_storage.ir.representation(reference.computed_type.?).resolved.structural;
     const number = graph.semantic.parameterized_storage.ir.fields.items[recipe.fields.start];
     try std.testing.expect(number.default_value != null);
     try std.testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, source, "number").?)), number.source.offset);
@@ -616,7 +623,7 @@ test "virtual type arguments remain runtime contracts in parameterized IR" {
     const storage = &module.semantic.parameterized_storage;
     const template = storage.parameterized_functions.items[0];
     try std.testing.expectEqual(@as(u32, 1), template.parameters.len);
-    const input = storage.ir.types.items[@intFromEnum(template.input)].resolved.structural;
+    const input = storage.ir.representation(template.input).resolved.structural;
     const field = storage.ir.fields.items[input.fields.start];
     try std.testing.expect(storage.ir.types.items[@intFromEnum(field.ty)] == .resolved);
     try std.testing.expect(storage.ir.types.items[@intFromEnum(field.ty)].resolved == .virtual);
@@ -632,7 +639,7 @@ test "parameterized call defaults preserve reach alternatives" {
     defer module.deinit(allocator);
     _ = try @import("parameterized/lowerer.zig").lower(allocator, &module, &files);
     const storage = &module.semantic.parameterized_storage.ir;
-    const input = storage.types.items[@intFromEnum(module.semantic.parameterized_storage.parameterized_functions.items[0].input)].resolved.structural;
+    const input = storage.representation(module.semantic.parameterized_storage.parameterized_functions.items[0].input).resolved.structural;
     const field = storage.fields.items[input.fields.start];
     const default_node = storage.nodes.items[@intFromEnum(field.default_value.?)].resolved;
     const reach = storage.reaches.items[@intFromEnum(default_node.content.reach_directive)];
@@ -895,12 +902,12 @@ test "unary and tuple contracts retain explicit symbolic participants" {
         try std.testing.expectEqual(@intFromEnum(participant), definition.participants.start);
         try std.testing.expect(participant != @as(@import("parameterized/storage.zig").ComptimeParameterId, @enumFromInt(definition.parameters.start)));
         const requirement = storage.contract_requirements.items[definition.requirements.start];
-        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const fields = storage.ir.representation(requirement.input).resolved.structural.fields;
         const other = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
         const receiver = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start + 1].ty)].resolved.pointer.child;
         try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(receiver)].parameter);
         try std.testing.expect(storage.ir.types.items[@intFromEnum(other)].parameter != participant);
-        const output = storage.ir.types.items[@intFromEnum(requirement.output)].resolved.structural.fields;
+        const output = storage.ir.representation(requirement.output).resolved.structural.fields;
         const returned = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[output.start].ty)].resolved.pointer.child;
         try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(returned)].parameter);
     }
@@ -913,10 +920,10 @@ test "unary and tuple contracts retain explicit symbolic participants" {
     try std.testing.expectEqualStrings("Count", graph.text(storage.comptime_parameters.items[pair.parameters.start + 1].name));
     try std.testing.expectEqual(.comptime_int, storage.comptime_parameters.items[pair.parameters.start + 1].kind);
     const pair_requirement = storage.contract_requirements.items[pair.requirements.start];
-    const pair_output = storage.ir.types.items[@intFromEnum(pair_requirement.output)].resolved.structural.fields;
+    const pair_output = storage.ir.representation(pair_requirement.output).resolved.structural.fields;
     const result_type = storage.ir.fields.items[pair_output.start].ty;
     try std.testing.expectEqual(pair.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(result_type)].parameter));
-    const pair_input = storage.ir.types.items[@intFromEnum(pair_requirement.input)].resolved.structural.fields;
+    const pair_input = storage.ir.representation(pair_requirement.input).resolved.structural.fields;
     const left = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[pair_input.start].ty)].resolved.pointer.child;
     try std.testing.expectEqual(pair.participants.start, @intFromEnum(storage.ir.types.items[@intFromEnum(left)].parameter));
 }
@@ -946,7 +953,7 @@ test "contract participants require ordinary bindings in generic evaluation" {
         var bindings = try generics.Resolver.Bindings.init(allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(allocator);
         const requirement = storage.contract_requirements.items[definition.requirements.start];
-        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const fields = storage.ir.representation(requirement.input).resolved.structural.fields;
         const parameter_type = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
         try std.testing.expectError(error.UnboundGenericTypeParameter, resolver.instantiateParameterizedType(0, parameter_type, &bindings));
         bindings.types[definition.participants.start] = int_type;
@@ -1337,4 +1344,52 @@ test "canonical choice construction keeps siblings contiguous across nested payl
     const anonymous = graph.semantic.types.items[@intFromEnum(input)].resolved.structural_choice.variants;
     try std.testing.expectEqualStrings("left", graph.text(graph.semantic.variants.items[anonymous.start].name));
     try std.testing.expectEqualStrings("right", graph.text(graph.semantic.variants.items[anonymous.start + 1].name));
+}
+
+test "nested record definitions own identity independently of equal fields" {
+    const allocator = std.testing.allocator;
+    const source = "Holder := (.first: (.value: Int32), .second: (.value: Int32))\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "holder/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "holder", &inputs);
+    defer graph.deinit(allocator);
+    _ = try initializer_lowerer.lower(allocator, &graph, &inputs, null);
+    const views = @import("views.zig");
+    const definition = graph.definitionForDeclaration(@enumFromInt(0)).?;
+    const fields = graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields.?;
+    const first = try views.fieldView(&graph, @enumFromInt(fields.start));
+    const second = try views.fieldView(&graph, @enumFromInt(fields.start + 1));
+    const left = (try views.typeView(&graph, first.ty)).resolved.nominal;
+    const right = (try views.typeView(&graph, second.ty)).resolved.nominal;
+    try std.testing.expect(left != right);
+    try std.testing.expectEqual(null, graph.semantic.type_definitions.items[@intFromEnum(left)].declaration);
+    try std.testing.expectEqual(null, graph.semantic.type_definitions.items[@intFromEnum(right)].declaration);
+    var writer = @import("writer.zig").Writer.init(allocator, &graph);
+    const retained_count = graph.semantic.type_definitions.items.len;
+    const original_source = graph.semantic.type_definitions.items[@intFromEnum(left)].source;
+    try std.testing.expectEqual(left, try writer.typeDefinitionAt(original_source));
+    try std.testing.expectEqual(retained_count, graph.semantic.type_definitions.items.len);
+}
+
+test "named function signatures retain ordinary nominal types and their defaults" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Args := (.value: Int32 = 11)\n" ++
+        "Result := (.result: Int32 = 17)\n" ++
+        "f := Args -> Result { result = value }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var result = try module_semantizer.build(allocator, "signatures", &.{.{ .path = "signatures/main.rg", .tree = &tree, .source = source }});
+    defer result.graph.deinit(allocator);
+    const graph = &result.graph;
+    const function = try @import("views.zig").functionView(graph, @enumFromInt(0));
+    try std.testing.expectEqual(graph.declarations.items[0].type_id, function.input_type);
+    try std.testing.expectEqual(graph.declarations.items[1].type_id, function.output_type);
+    const args = graph.semantic.type_definitions.items[@intFromEnum(graph.definitionForDeclaration(@enumFromInt(0)).?)].struct_fields.?;
+    try std.testing.expectEqual(args.start, function.input.start);
+    try std.testing.expectEqual(args.len, function.input.len);
+    const default_node = graph.semantic.fields.items[args.start].default_value.?;
+    try std.testing.expectEqual(@as(i128, 11), graph.semantic.nodes.items[@intFromEnum(default_node)].resolved.content.int_literal);
+    try std.testing.expect(function.body != null);
 }

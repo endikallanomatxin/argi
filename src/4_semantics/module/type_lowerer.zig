@@ -126,11 +126,12 @@ pub const Context = struct {
     // Entry signatures initialize their output defaults in the function body.
     // Their field types still retain nested record defaults normally.
     pub fn lowerRecordFields(self: *Context, owner: syn.NodeIndex, literal: syn.StructTypeLiteral) anyerror!entities.ModuleTypeId {
-        _ = owner;
-        return self.writer.addResolvedType(.{ .structural = .{
-            .fields = try self.lowerFields(literal),
-            .layout = .regular,
-        } });
+        const definition = try self.writer.typeDefinitionAt(.{ .file_index = self.file_index, .offset = self.tree.location(owner).offset });
+        if (self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields == null) {
+            const fields = try self.lowerFields(literal);
+            self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields = fields;
+        }
+        return self.internDerived(.{ .nominal = definition });
     }
 
     pub fn lowerFields(self: *Context, literal: syn.StructTypeLiteral) anyerror!entities.FieldRange {
@@ -302,6 +303,7 @@ pub const Context = struct {
         for (self.graph.semantic.types.items, 0..) |candidate, raw| {
             if (candidate != .resolved or std.meta.activeTag(candidate.resolved) != std.meta.activeTag(ty)) continue;
             const same = switch (ty) {
+                .nominal => |value| candidate.resolved.nominal == value,
                 .pointer => |value| candidate.resolved.pointer.child == value.child and candidate.resolved.pointer.mutability == value.mutability,
                 .array => |value| candidate.resolved.array.element == value.element and candidate.resolved.array.length == value.length,
                 .nullable => |value| candidate.resolved.nullable == value,

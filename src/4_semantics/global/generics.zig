@@ -300,6 +300,12 @@ pub const Resolver = struct {
         if (global_types.genericInstance(self.graph, ty) != null) return .complete;
         const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings);
         const shape = switch (self.graph.types.items[@intFromEnum(body_type)]) {
+            .nominal => |id| nominal: {
+                const definition = self.graph.typeDefinition(id);
+                if (definition.struct_fields) |fields| break :nominal @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .structure = .{ .fields = fields, .layout = definition.struct_layout } };
+                if (definition.choice_variants) |variants| break :nominal @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .choice = .{ .variants = variants, .layout = definition.choice_layout } };
+                break :nominal @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .alias = body_type };
+            },
             .structural => |value| @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .structure = .{
                 .fields = value.fields,
                 .layout = value.layout,
@@ -504,6 +510,7 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage.ir;
         return switch (storage.types.items[@intFromEnum(id)]) {
             .concrete => |value| globalizer.globalType(self.offsets[module_index], value),
+            .definition => |value| self.instantiateDefinition(module_index, value.origin, value.body, value.arguments, bindings),
             .parameter => |parameter| bindings.types[@intFromEnum(parameter)] orelse return error.UnboundGenericTypeParameter,
             .projection => |value| blk: {
                 const base = try self.instantiateParameterizedType(module_index, value.base, bindings);
@@ -527,6 +534,76 @@ pub const Resolver = struct {
             .choice_union => |value| self.instantiateChoiceUnion(module_index, value.left, value.right, bindings),
             .resolved => |value| self.instantiateResolvedParameterizedType(module_index, value, bindings),
         };
+    }
+
+    pub const DefinitionArguments = struct { pattern: primitives.Range(ir.ParameterizedGenericArgId), actual: primitives.Range(global_sg.GlobalGenericArgId) };
+
+    pub fn definitionArguments(self: *const Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, actual: global_sg.GlobalTypeId) ?DefinitionArguments {
+        const expression = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern)];
+        if (expression != .definition) return null;
+        const id = switch (self.graph.resolvedSemanticType(actual) orelse return null) {
+            .nominal => |value| value,
+            else => return null,
+        };
+        const origin = globalizer.globalTypeDefinition(self.offsets[module_index], expression.definition.origin);
+        const definition = self.graph.typeDefinition(id);
+        const arguments = if (definition.specialization) |instance| arguments: {
+            if (instance.origin != origin) return null;
+            break :arguments instance.arguments;
+        } else arguments: {
+            if (id != origin) return null;
+            break :arguments primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
+        };
+        if (arguments.len != expression.definition.arguments.len) return null;
+        return .{ .pattern = expression.definition.arguments, .actual = arguments };
+    }
+
+    fn instantiateDefinition(self: *Resolver, module_index: usize, local_origin: module_entities.ModuleTypeDefinitionId, body: ir.ParameterizedTypeId, captures: primitives.Range(ir.ParameterizedGenericArgId), bindings: *Bindings) !global_sg.GlobalTypeId {
+        const origin = globalizer.globalTypeDefinition(self.offsets[module_index], local_origin);
+        const arguments = try self.instantiateParameterizedArguments(module_index, captures, bindings);
+        if (try self.findDefinitionInstance(origin, arguments)) |existing| return existing;
+        const representation = try self.instantiateParameterizedType(module_index, body, bindings);
+        return self.publishDefinitionInstance(origin, arguments, representation);
+    }
+
+    pub fn findDefinitionInstance(self: *Resolver, origin: global_sg.GlobalTypeDefinitionId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !?global_sg.GlobalTypeId {
+        if (arguments.len == 0) {
+            const definition = self.graph.typeDefinition(origin);
+            if (definition.struct_fields != null or definition.choice_variants != null)
+                return try self.internType(.{ .nominal = origin });
+        } else for (self.graph.type_definitions.items, 0..) |definition, raw| {
+            const instance = definition.specialization orelse continue;
+            if (instance.origin == origin and global_types.genericArgumentsEqual(self.graph, instance.arguments, arguments))
+                return try self.internType(.{ .nominal = @enumFromInt(@as(u32, @intCast(raw))) });
+        }
+        return null;
+    }
+
+    /// Shared publication path for ordinary instantiation and speculative type
+    /// recipes. Identity depends on origin and captures, never the shape.
+    pub fn publishDefinitionInstance(self: *Resolver, origin: global_sg.GlobalTypeDefinitionId, arguments: primitives.Range(global_sg.GlobalGenericArgId), representation: global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
+        if (try self.findDefinitionInstance(origin, arguments)) |existing| return existing;
+        var definition = self.graph.typeDefinition(origin);
+        switch (self.graph.types.items[@intFromEnum(representation)]) {
+            .structural => |shape| {
+                definition.struct_fields = shape.fields;
+                definition.struct_layout = shape.layout;
+            },
+            .structural_choice => |shape| {
+                definition.choice_variants = shape.variants;
+                definition.choice_layout = shape.layout;
+            },
+            else => return error.InvalidNominalDefinitionRecipe,
+        }
+        if (arguments.len == 0) {
+            try self.graph.completeTypeDefinition(self.allocator, origin, definition);
+            return self.internType(.{ .nominal = origin });
+        }
+        definition.specialization = .{ .origin = origin, .arguments = arguments };
+        definition.declaration = null;
+        const id: global_sg.GlobalTypeDefinitionId = @enumFromInt(@as(u32, @intCast(self.graph.type_definitions.items.len)));
+        try self.graph.type_definitions.append(self.allocator, definition);
+        return self.internType(.{ .nominal = id });
     }
 
     fn instantiateChoiceUnion(self: *Resolver, module_index: usize, left: ir.ParameterizedTypeId, right: ir.ParameterizedTypeId, bindings: *Bindings) !global_sg.GlobalTypeId {

@@ -1,3 +1,5 @@
+_NetworkInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 -- Native addresses are copied values socket handles are private owners.
 _NetworkAddress: CStruct = (._bytes: [128]UInt8, ._length: UInt32)
 
@@ -85,9 +87,7 @@ _network_shutdown(.handle: UIntNative) -> (.status: Int32): CFunction(
 
 Network: Type = (._ffi: $&ForeignFunctionInterface, ._ready: Bool)
 
-once _acquire_network := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : Network
-) {
+once _acquire_network := (.args: _NetworkInitArgs) -> (.result: Network) {
     ffi ::= args.ffi
 
     assume ffi
@@ -95,7 +95,7 @@ once _acquire_network := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi))
     result = (._ffi = ffi, ._ready = _network_init().status == 0)
 }
 
-implement Init#(Network, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(Network, _NetworkInitArgs) (
     .Result : Type = Network
     .init   = _acquire_network
 )

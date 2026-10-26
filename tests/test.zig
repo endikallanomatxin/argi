@@ -15650,3 +15650,10 @@ test "feature_tests/types/303_definition_value_aliases" {
     try runExpect(path, 0);
     try vmExpect(path, 0, null);
 }
+
+test "feature_tests/types/304_named_nominal_signatures" {
+    const path = "tests/feature_tests/types/304_named_nominal_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}

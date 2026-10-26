@@ -93,6 +93,11 @@ pub const IntExpression = union(enum) {
 
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
+    definition: struct {
+        origin: entities.ModuleTypeDefinitionId,
+        body: ParameterizedTypeId,
+        arguments: primitives.Range(ParameterizedGenericArgId),
+    },
     parameter: ComptimeParameterId,
     projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     external: entities.ExternalRefId,
@@ -245,6 +250,17 @@ pub const Node = union(enum) {
 };
 
 pub const Storage = struct {
+    /// Inspect a definition's representation without changing its identity.
+    pub fn representation(self: *const Storage, id: ParameterizedTypeId) Type {
+        var current = id;
+        for (0..self.types.items.len) |_| {
+            const value = self.types.items[@intFromEnum(current)];
+            if (value != .definition) return value;
+            current = value.definition.body;
+        }
+        unreachable;
+    }
+
     int_expressions: std.ArrayList(IntExpression) = .empty,
     types: std.ArrayList(Type) = .empty,
     declarations: std.ArrayList(Decl) = .empty,

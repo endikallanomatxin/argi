@@ -178,3 +178,25 @@ before adding implementation exceptions.
   templates directly; declaration associations provide names and navigation.
   Anonymous type definitions still need migration. Legacy spellings still parse
   into the common definition representation during migration.
+
+### Current aggregate migration boundary
+
+- Concrete and parameterized records retain their source definition identity.
+  Dependent instances include captured compile-time arguments; repeated lowering
+  reuses identities. Diagnostic source remapping does not affect identity.
+- Definition completion is journaled. Speculative type recipes preserve origin,
+  arguments, representation and defaults, including completion of retained IDs.
+- Concrete and specialized function interfaces retain input/output Type IDs.
+  Local named records supply signatures and defaults; explicitly specialized
+  functions also bind fields from named generic signature types. Inline implementations are
+  constructed against their selected required signature. Ordinary operation
+  aliases infer parameters from corresponding inputs and retain their own types.
+- Named once capability constructors share explicit Args definitions with Init.
+  A native/VM fixture covers named signatures, defaults and calls through #run.
+
+Still pending: deferred/imported signatures, inference through open named signatures,
+nominal choices versus structural option sets, general contextual aggregate
+inference, generic operation signatures and associated Args migration. Remove
+remaining field-range-only consumers and legacy generic representation paths.
+Broad validation currently exposes constructor inference, explicit argument-type
+identity, and stale diagnostic expectations; these are not a completed migration.

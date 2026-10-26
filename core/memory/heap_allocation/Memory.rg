@@ -1,3 +1,5 @@
+_MemoryInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 -- Page mappings retain the foreign-call authorization used to acquire them.
 Memory: Type = (
     ._ffi       : $&ForeignFunctionInterface
@@ -12,9 +14,7 @@ _trusted_acquisition_subaddress(.base: UIntNative, .address: UIntNative) -> (
     result = address
 }
 
-once _acquire_memory := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : Memory
-) {
+once _acquire_memory := (.args: _MemoryInitArgs) -> (.result: Memory) {
     assume ffi := args.ffi
 
     result._ffi = ffi
@@ -23,7 +23,7 @@ once _acquire_memory := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) 
     if result._page_size == 0 { result._page_size = 4096 }
 }
 
-implement Init#(Memory, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(Memory, _MemoryInitArgs) (
     .Result : Type = Memory
     .init   = _acquire_memory
 )

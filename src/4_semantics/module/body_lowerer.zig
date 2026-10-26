@@ -168,7 +168,7 @@ const Context = struct {
             const output_range = try self.writer.appendBindingRefs(outputs.items);
             self.writer.pending_owner_function = function_id;
             const body = if (staged_body) null else if (declaration.body) |body_node|
-                try self.lowerBlockWithDefaults(body_node, .{ .syntax = declaration.output, .bindings = outputs.items })
+                try self.lowerBlockWithDefaults(body_node, .{ .syntax = declaration.output, .bindings = outputs.items, .fields = interface.output })
             else
                 null;
             const foreign = if (declaration.c_options) |options| try self.lowerForeignOptions(options) else ForeignOptions{};
@@ -281,7 +281,7 @@ const Context = struct {
         }
     }
 
-    const OutputDefaults = struct { syntax: syn.NodeIndex, bindings: []const entities.ModuleBindingId };
+    const OutputDefaults = struct { syntax: syn.NodeIndex, bindings: []const entities.ModuleBindingId, fields: ?graph_mod.FieldRange = null };
 
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleBlockId {
         return self.lowerBlockWithDefaults(node, null);
@@ -307,17 +307,27 @@ const Context = struct {
         // Defaults execute in the same lexical scope as the body. In particular,
         // pipe/handle temporaries need ordinary declarations and scope cleanup.
         if (defaults) |entry| {
-            const fields = (self.tree.structTypeLiteral(entry.syntax) orelse return error.ExpectedStructType).fields;
-            if (fields.len != entry.bindings.len) return error.InterfaceFieldCountMismatch;
-            for (fields, entry.bindings) |field_node, binding| {
-                const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
-                const initializer = field.default_value orelse continue;
-                temporaries.clearRetainingCapacity();
-                const ty = self.graph.semantic.bindings.items[@intFromEnum(binding)].ty;
-                const value = try self.valuePosition(initializer, try self.lowerNode(initializer, ty));
-                try nodes.appendSlice(temporaries.items);
-                const write = try self.resolved(initializer, ty, .{ .assignment = .{ .binding = binding, .value = value.node } });
-                try nodes.append(write.node);
+            if (self.tree.structTypeLiteral(entry.syntax) == null) {
+                const fields = entry.fields orelse return error.ExpectedRecordSignature;
+                if (fields.len != entry.bindings.len) return error.InterfaceFieldCountMismatch;
+                for (self.graph.semantic.fields.items[fields.start..][0..fields.len], entry.bindings) |field, binding| {
+                    const initializer = field.default_value orelse continue;
+                    const write = try self.resolved(entry.syntax, field.ty, .{ .assignment = .{ .binding = binding, .value = initializer } });
+                    try nodes.append(write.node);
+                }
+            } else {
+                const fields = self.tree.structTypeLiteral(entry.syntax).?.fields;
+                if (fields.len != entry.bindings.len) return error.InterfaceFieldCountMismatch;
+                for (fields, entry.bindings) |field_node, binding| {
+                    const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
+                    const initializer = field.default_value orelse continue;
+                    temporaries.clearRetainingCapacity();
+                    const ty = self.graph.semantic.bindings.items[@intFromEnum(binding)].ty;
+                    const value = try self.valuePosition(initializer, try self.lowerNode(initializer, ty));
+                    try nodes.appendSlice(temporaries.items);
+                    const write = try self.resolved(initializer, ty, .{ .assignment = .{ .binding = binding, .value = value.node } });
+                    try nodes.append(write.node);
+                }
             }
         }
         var ret_val: ?entities.ModuleNodeId = null;
@@ -799,8 +809,11 @@ const Context = struct {
         const literal = self.tree.structTypeLiteral(node) orelse return error.InvalidComptimeEntrySignature;
         var lowerer = self.typeLowerer();
         const ty = try views.typeView(self.graph, try lowerer.lowerRecordFields(node, literal));
-        if (ty != .resolved or ty.resolved != .structural) return error.InvalidComptimeEntrySignature;
-        const fields = ty.resolved.structural.fields;
+        if (ty != .resolved) return error.InvalidComptimeEntrySignature;
+        const fields = switch (ty.resolved) {
+            .nominal => |definition| self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields orelse return error.InvalidComptimeEntrySignature,
+            else => return error.InvalidComptimeEntrySignature,
+        };
         return .{ .start = fields.start, .len = fields.len };
     }
 

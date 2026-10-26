@@ -662,6 +662,16 @@ pub const Resolver = struct {
         return self.inferBindingsFromInputFields(module_index, pattern, input, bindings, 0, true);
     }
 
+    fn matchClosedSignatureInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, field_offset: u32) !bool {
+        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.ComptimeExecutionPending => return false,
+            else => return err,
+        };
+        const fields = global_types.fields(self.graph, ty) orelse return false;
+        if (field_offset > fields.len) return false;
+        return self.core.matchCallInput(.{ .start = fields.start + field_offset, .len = fields.len - field_offset }, input) == .applicable;
+    }
+
     fn inferBindingsFromInputFields(
         self: *Resolver,
         module_index: usize,
@@ -677,12 +687,12 @@ pub const Resolver = struct {
         };
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
-        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
+        const shape = switch (storage.representation(pattern)) {
             .resolved => |ty| switch (ty) {
                 .structural => |value| value,
-                else => return false,
+                else => return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset),
             },
-            else => return false,
+            else => return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset),
         };
         if (field_offset > shape.fields.len) return false;
 
@@ -728,7 +738,7 @@ pub const Resolver = struct {
         };
         const candidate_module = &self.modules[module_index];
         const storage = &candidate_module.semantic.parameterized_storage.ir;
-        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
+        const shape = switch (storage.representation(pattern)) {
             .resolved => |resolved| switch (resolved) {
                 .structural => |value| value,
                 else => return true,
@@ -1165,7 +1175,7 @@ pub const Resolver = struct {
                 .ints = binding_ints.items,
             };
             const storage = &candidate_module.semantic.parameterized_storage.ir;
-            const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
+            const shape = switch (storage.representation(parameterized.input)) {
                 .resolved => |ty| switch (ty) {
                     .structural => |shape| shape,
                     else => continue,
@@ -1479,7 +1489,7 @@ pub const Resolver = struct {
         fields: global_sg.FieldRange,
     ) !global_sg.FieldRange {
         const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
+        const shape = switch (storage.representation(pattern)) {
             .resolved => |resolved| switch (resolved) {
                 .structural => |shape| shape,
                 else => return fields,
@@ -1555,6 +1565,22 @@ pub const Resolver = struct {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
         switch (storage.types.items[@intFromEnum(pattern)]) {
+            .definition => {
+                const arguments = self.generics.definitionArguments(module_index, pattern, actual) orelse return false;
+                for (0..arguments.pattern.len) |position| {
+                    const wanted = storage.generic_arguments.items[arguments.pattern.start + position];
+                    const given = self.graph.generic_arguments.items[arguments.actual.start + position];
+                    switch (wanted.value) {
+                        .type => |ty| {
+                            if (given.value != .type or !try self.inferInputType(module_index, ty, given.value.type, bindings)) return false;
+                        },
+                        .comptime_int => |integer| {
+                            if (given.value != .comptime_int or !try self.inferIntExpression(module_index, integer, given.value.comptime_int, bindings)) return false;
+                        },
+                    }
+                }
+                return true;
+            },
             .parameter => |parameter| {
                 const comptime_parameter = module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)];
                 // A contract declaration can appear as an intermediate input
@@ -1864,6 +1890,28 @@ pub const Resolver = struct {
     /// Alias identity is fixed by its declaration. Infer its ordinary generic
     /// arguments from the selected requirement's inputs, never its result type
     /// and never a search through same-named functions.
+    /// Infer callable parameters from corresponding inputs. This does not
+    /// equate the two domain record types or convert a record value: ordinary
+    /// call construction contextualizes the argument literal to the callee.
+    fn inferSignatureBindings(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, required: global_sg.GlobalTypeId, bindings: *generic_mod.Resolver.Bindings) !bool {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage.ir;
+        const representation = storage.representation(pattern);
+        if (representation != .resolved or representation.resolved != .structural) return false;
+        const fields = representation.resolved.structural.fields;
+        const inputs = global_types.fields(self.graph, required) orelse return false;
+        if (fields.len < inputs.len) return false;
+        for (0..inputs.len) |position| {
+            const wanted = storage.fields.items[fields.start + position];
+            const given = self.graph.fields.items[inputs.start + position];
+            if (!std.mem.eql(u8, module.text(wanted.name), self.graph.text(given.name))) return false;
+            if (!try self.inferInputType(module_index, wanted.ty, given.ty, bindings)) return false;
+        }
+        for (inputs.len..fields.len) |position|
+            if (storage.fields.items[fields.start + position].default_value == null) return false;
+        return true;
+    }
+
     pub fn instantiateOperationAlias(context: *anyopaque, declaration: global_sg.GlobalDeclId, input: global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId {
         const self: *Resolver = @ptrCast(@alignCast(context));
         const saved_publication = self.publishing_signature;
@@ -1873,7 +1921,7 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        if (!try self.inferInputType(located.module_index, located.parameterized.input, input, &bindings)) return error.OperationAliasInputMismatch;
+        if (!try self.inferSignatureBindings(located.module_index, located.parameterized.input, input, &bindings)) return error.OperationAliasInputMismatch;
         if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) return error.OperationAliasConstraintMismatch;
         const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch |err| {
             if (err == error.MissingGenericArgument) return error.OperationAliasMissingParameter;
@@ -1882,12 +1930,12 @@ pub const Resolver = struct {
         return self.instantiate(declaration, arguments);
     }
 
-    pub fn instantiateReferencedFunction(context: *anyopaque, declaration: global_sg.GlobalDeclId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) anyerror!global_sg.GlobalFunctionId {
+    pub fn instantiateReferencedFunction(context: *anyopaque, declaration: global_sg.GlobalDeclId, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalTypeId, output: global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId {
         const self: *Resolver = @ptrCast(@alignCast(context));
         const saved_publication = self.publishing_signature;
         self.publishing_signature = true;
         defer self.publishing_signature = saved_publication;
-        return self.instantiate(declaration, arguments);
+        return self.instantiateWithSignature(declaration, arguments, .{ .input = input, .output = output });
     }
 
     pub fn instantiate(
@@ -1895,6 +1943,36 @@ pub const Resolver = struct {
         declaration: global_sg.GlobalDeclId,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
     ) !global_sg.GlobalFunctionId {
+        return self.instantiateWithSignature(declaration, arguments, null);
+    }
+
+    fn contextualSignatureType(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, expected: global_sg.GlobalTypeId, direction: enum { input, output }, bindings: *generic_mod.Resolver.Bindings) anyerror!global_sg.GlobalTypeId {
+        const mismatch = if (direction == .input) error.ContextualSignatureMismatch else error.ContextualOutputSignatureMismatch;
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage.ir;
+        const expression = storage.types.items[@intFromEnum(pattern)];
+        if (expression == .definition) {
+            const shape = storage.representation(pattern);
+            if (shape != .resolved or shape.resolved != .structural) return mismatch;
+            const fields = global_types.fields(self.graph, expected) orelse return mismatch;
+            const written = shape.resolved.structural.fields;
+            if (written.len != fields.len) return mismatch;
+            for (0..written.len) |offset| {
+                const field = storage.fields.items[written.start + offset];
+                const required = self.graph.fields.items[fields.start + offset];
+                if (!std.mem.eql(u8, module.text(field.name), self.graph.text(required.name))) return mismatch;
+                _ = try self.contextualSignatureType(module_index, field.ty, required.ty, direction, bindings);
+            }
+            return expected;
+        }
+        const actual = try self.generics.instantiateParameterizedType(module_index, pattern, bindings);
+        if (!global_types.equal(self.graph, actual, expected)) return mismatch;
+        return expected;
+    }
+
+    const ExpectedSignature = struct { input: global_sg.GlobalTypeId, output: global_sg.GlobalTypeId };
+
+    fn instantiateWithSignature(self: *Resolver, declaration: global_sg.GlobalDeclId, arguments: primitives.Range(global_sg.GlobalGenericArgId), expected: ?ExpectedSignature) anyerror!global_sg.GlobalFunctionId {
         const profile_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         defer if (self.profile_io) |io| {
             self.profile_instantiate_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - profile_started;
@@ -1904,6 +1982,12 @@ pub const Resolver = struct {
         const existing = self.findExisting(declaration, arguments);
         if (self.profile_io) |io| self.profile_instantiate_lookup_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - lookup_started;
         if (existing) |id| {
+            if (expected) |signature| {
+                const function = self.graph.function(id);
+                if (function.input_type == null or function.output_type == null or
+                    !global_types.equal(self.graph, function.input_type.?, signature.input) or
+                    !global_types.equal(self.graph, function.output_type.?, signature.output)) return error.ContextualSignatureMismatch;
+            }
             if (self.profile_io != null) self.profile_instantiate_existing += 1;
             return id;
         }
@@ -1942,8 +2026,8 @@ pub const Resolver = struct {
             try contracts.prepareStorageCleanupEvidence(participant.type);
         }
 
-        const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
-        const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
+        const input_ty = if (expected) |signature| try self.contextualSignatureType(located.module_index, located.parameterized.input, signature.input, .input, &substitutions) else try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
+        const output_ty = if (expected) |signature| try self.contextualSignatureType(located.module_index, located.parameterized.output, signature.output, .output, &substitutions) else try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
         const input_shape = try self.interfaceFields(input_ty);
         const output_shape = try self.interfaceFields(output_ty);
         var inferred_errors = false;
@@ -1955,8 +2039,9 @@ pub const Resolver = struct {
         var context = InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
         if (self.profile_io) |io| self.profile_instance_context_init_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - context_started;
         defer context.deinit();
-        const input_bindings = try context.instantiateBindingRange(located.parameterized.input_bindings);
-        const output_bindings = try context.instantiateBindingRange(located.parameterized.output_bindings);
+        context.expected_signature = expected;
+        const input_bindings = try context.instantiateSignatureBindings(located.parameterized.input_bindings, input_shape, .constant);
+        const output_bindings = try context.instantiateSignatureBindings(located.parameterized.output_bindings, output_shape, .variable);
         const input_fields = try self.materializeInterfaceDefaults(input_shape, input_bindings);
         const output_fields = try self.materializeInterfaceDefaults(output_shape, output_bindings);
 
@@ -1965,6 +2050,8 @@ pub const Resolver = struct {
             .declaration = declaration,
             .input = input_fields,
             .output = output_fields,
+            .input_type = input_ty,
+            .output_type = output_ty,
             .body = null,
             .input_bindings = input_bindings,
             .output_bindings = output_bindings,
@@ -2235,6 +2322,7 @@ pub const Resolver = struct {
 
     const InstanceContext = struct {
         active_parent: ?*InstanceContext = null,
+        expected_signature: ?ExpectedSignature = null,
         resolver: *Resolver,
         module_index: usize,
         parameterized: parameterized_storage.ParameterizedFunction,
@@ -2275,6 +2363,28 @@ pub const Resolver = struct {
             self.block_map.deinit(self.resolver.allocator);
         }
 
+        fn instantiateSignatureBindings(self: *InstanceContext, range: primitives.Range(ir.ParameterizedBindingId), fields: global_sg.FieldRange, mutability: primitives.Mutability) !global_sg.BindingRange {
+            if (range.len != 0 or fields.len == 0) return self.instantiateBindingRange(range);
+            // Named signature types provide their fields after specialization;
+            // they do not need duplicate template-local parameter declarations.
+            const bindings = try self.resolver.allocator.alloc(global_sg.GlobalBindingId, fields.len);
+            defer self.resolver.allocator.free(bindings);
+            for (0..fields.len) |offset| {
+                const field = self.resolver.graph.fields.items[fields.start + offset];
+                bindings[offset] = @enumFromInt(@as(u32, @intCast(self.resolver.graph.bindings.items.len)));
+                try self.resolver.graph.bindings.append(self.resolver.allocator, .{
+                    .name = field.name,
+                    .source = field.source,
+                    .ty = field.ty,
+                    .initialization = field.default_value,
+                    .mutability = mutability,
+                });
+            }
+            const start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
+            try self.resolver.graph.binding_refs.appendSlice(self.resolver.allocator, bindings);
+            return .{ .start = start, .len = fields.len };
+        }
+
         fn instantiateBindingRange(self: *InstanceContext, range: primitives.Range(ir.ParameterizedBindingId)) !global_sg.BindingRange {
             // Defaults can instantiate other functions and append their binding
             // ranges. Publish this interface only after those dependencies.
@@ -2289,6 +2399,20 @@ pub const Resolver = struct {
             return .{ .start = start, .len = range.len };
         }
 
+        fn expectedBindingType(self: *InstanceContext, id: ir.ParameterizedBindingId) !?global_sg.GlobalTypeId {
+            const signature = self.expected_signature orelse return null;
+            const raw = @intFromEnum(id);
+            inline for (.{ "input", "output" }) |direction| {
+                const range = @field(self.parameterized, direction ++ "_bindings");
+                if (raw >= range.start and raw - range.start < range.len) {
+                    const fields = try self.resolver.interfaceFields(@field(signature, direction));
+                    if (fields.len != range.len) return error.ContextualSignatureMismatch;
+                    return self.resolver.graph.fields.items[fields.start + raw - range.start].ty;
+                }
+            }
+            return null;
+        }
+
         fn instantiateBinding(self: *InstanceContext, id: ir.ParameterizedBindingId) !global_sg.GlobalBindingId {
             if (self.binding_map.get(@intFromEnum(id))) |existing| return existing;
             const module = &self.resolver.modules[self.module_index];
@@ -2299,7 +2423,7 @@ pub const Resolver = struct {
             try self.resolver.graph.bindings.append(self.resolver.allocator, .{
                 .name = try self.resolver.graph.addString(self.resolver.allocator, module.text(source.name)),
                 .source = self.resolver.sourceFor(self.module_index, source.source),
-                .ty = if (source_ty) |ty|
+                .ty = if (try self.expectedBindingType(id)) |ty| ty else if (source_ty) |ty|
                     try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions)
                 else
                     @enumFromInt(0),
@@ -3833,6 +3957,13 @@ pub const Resolver = struct {
                 index -= 1;
                 const binding = self.conditional_bindings.items[index].global;
                 if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(binding).name), name)) return binding;
+            }
+            if (self.function) |function_id| {
+                const function = self.resolver.graph.function(function_id);
+                inline for (.{ function.input_bindings, function.output_bindings }) |range| {
+                    for (self.resolver.graph.binding_refs.items[range.start..][0..range.len]) |binding|
+                        if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(binding).name), name)) return binding;
+                }
             }
             // A specialization has the defining module's namespace, never
             // another function's locals or an unrelated module's globals.

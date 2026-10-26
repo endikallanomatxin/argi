@@ -1,3 +1,5 @@
+_FileInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 FileOpenMode: Type = (
     ..read
     ..write
@@ -14,13 +16,13 @@ File: Type = (
     .should_close   : Bool                       = 0 == 1
 )
 
-once _acquire_file := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: File) {
+once _acquire_file := (.args: _FileInitArgs) -> (.result: File) {
     ffi ::= args.ffi
 
     result = (._ffi = ffi, .stream_address = 0, .should_close = false)
 }
 
-implement Init#(File, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(File, _FileInitArgs) (
     .Result : Type = File
     .init   = _acquire_file
 )

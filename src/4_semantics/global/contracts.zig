@@ -88,7 +88,7 @@ pub const Resolver = struct {
 
     allocator: std.mem.Allocator,
     function_context: ?*anyopaque = null,
-    instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId)) anyerror!global_sg.GlobalFunctionId = null,
+    instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
 
     instantiate_alias: ?*const fn (*anyopaque, global_sg.GlobalDeclId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
 
@@ -1385,7 +1385,7 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const fields = storage.ir.representation(requirement.input).resolved.structural.fields;
         var virtual = false;
         var unresolved_actual = false;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
@@ -1633,7 +1633,7 @@ pub const Resolver = struct {
         const requirement = for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
             if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), name)) break requirement;
         } else return null;
-        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const fields = storage.ir.representation(requirement.input).resolved.structural.fields;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
             const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
             const pointer = pattern == .resolved and pattern.resolved == .pointer and
@@ -1918,15 +1918,16 @@ pub const Resolver = struct {
         if (self.graph.declaration(binding.declaration).function_id) |function| {
             return function;
         }
+        const located = self.findContractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, &bindings);
+        try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, &bindings);
+        const requirement = storage.contract_requirements.items[located.definition.requirements.start + index];
+        const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
+        const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings);
         if (!binding.instantiate_associated) {
-            const located = self.findContractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
-            const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
-            defer bindings.deinit(self.allocator);
-            try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, &bindings);
-            try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, &bindings);
-            const requirement = storage.contract_requirements.items[located.definition.requirements.start + index];
-            const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
             const instantiate_alias = self.instantiate_alias orelse return error.MissingOperationInstantiator;
             return instantiate_alias(self.function_context.?, binding.declaration, input) catch |err| {
                 if (err == error.OutOfMemory) return err;
@@ -1949,14 +1950,14 @@ pub const Resolver = struct {
         }
         const instantiate = self.instantiate_function orelse return error.MissingOperationInstantiator;
         if (conformance.implementation_arguments.len == 0)
-            return instantiate(self.function_context.?, binding.declaration, conformance.associated_arguments);
+            return instantiate(self.function_context.?, binding.declaration, conformance.associated_arguments, input, output);
         var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
         try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-        return instantiate(self.function_context.?, binding.declaration, .{ .start = start, .len = @intCast(arguments.items.len) });
+        return instantiate(self.function_context.?, binding.declaration, .{ .start = start, .len = @intCast(arguments.items.len) }, input, output);
     }
 
     pub fn validateParticipantConformances(self: *Resolver) !void {
@@ -2057,7 +2058,11 @@ pub const Resolver = struct {
                 const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
                 const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings);
                 const selected: MethodSelection = selected: {
-                    const method = try self.resolveOperationBinding(conformance, operation_index);
+                    const method = self.resolveOperationBinding(conformance, operation_index) catch |err| switch (err) {
+                        error.ContextualSignatureMismatch => break :selected .missing,
+                        error.ContextualOutputSignatureMismatch => break :selected .incompatible_output,
+                        else => return err,
+                    };
                     const function = self.graph.function(method);
                     const required_inputs = global_types.fields(self.graph, input).?;
                     const required_outputs = global_types.fields(self.graph, output).?;
@@ -2341,6 +2346,22 @@ pub const Resolver = struct {
     ) !bool {
         const ir_storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         switch (ir_storage.types.items[@intFromEnum(pattern)]) {
+            .definition => {
+                const arguments = self.generics.definitionArguments(module_index, pattern, actual) orelse return false;
+                for (0..arguments.pattern.len) |position| {
+                    const wanted = ir_storage.generic_arguments.items[arguments.pattern.start + position];
+                    const given = self.graph.generic_arguments.items[arguments.actual.start + position];
+                    switch (wanted.value) {
+                        .type => |ty| {
+                            if (given.value != .type or !try self.inferConstraintTypePattern(module_index, ty, given.value.type, bindings)) return false;
+                        },
+                        .comptime_int => |integer| {
+                            if (given.value != .comptime_int or !try self.inferConstraintIntPattern(module_index, integer, given.value.comptime_int, bindings)) return false;
+                        },
+                    }
+                }
+                return true;
+            },
             .parameter => |parameter| {
                 const slot = &bindings.types[@intFromEnum(parameter)];
                 if (slot.*) |previous|
@@ -2669,7 +2690,7 @@ pub const Resolver = struct {
         const use = ContractUse{ .declaration = contract_decl, .arguments = .{ .start = start, .len = located.definition.parameters.len } };
         const domains = if (located.definition.domains.len == 0) &.{} else (try self.resolveStorageDomains(use, concrete, located, source)) orelse return;
         var receiver: ?u32 = null;
-        const input = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const input = storage.ir.representation(requirement.input).resolved.structural.fields;
         for (storage.ir.fields.items[input.start..][0..input.len], 0..) |field, index| {
             const ty = storage.ir.types.items[@intFromEnum(field.ty)];
             if (ty == .resolved and ty.resolved == .pointer and

@@ -215,12 +215,14 @@ pub const GlobalSemanticGraph = struct {
         error_context_rewrites_len: usize,
         conformance_rewrites_len: usize,
         variant_rewrites_len: usize,
+        definition_rewrites_len: usize,
         error_propagation_rewrites_len: usize,
         safety_arena: ?*std.heap.ArenaAllocator,
     };
 
     const MutationFrontier = struct {
         types: usize,
+        type_definitions: usize,
         bindings: usize,
         virtual_registries: usize,
         nodes: usize,
@@ -268,6 +270,7 @@ pub const GlobalSemanticGraph = struct {
         const parent = self.mutation_frontier;
         const frontier: MutationFrontier = .{
             .types = self.types.items.len,
+            .type_definitions = self.type_definitions.items.len,
             .bindings = self.bindings.items.len,
             .virtual_registries = self.virtual_registries.items.len,
             .nodes = self.nodes.items.len,
@@ -295,6 +298,7 @@ pub const GlobalSemanticGraph = struct {
     const ConstructionState = struct {
         function_rewrites: std.ArrayList(struct { id: GlobalFunctionId, previous: Function }) = .empty,
         error_propagation_rewrites: std.ArrayList(struct { id: GlobalErrorPropagationId, previous: ErrorPropagation }) = .empty,
+        definition_rewrites: std.ArrayList(struct { id: GlobalTypeDefinitionId, previous: TypeDefinition }) = .empty,
         variant_rewrites: std.ArrayList(struct { id: GlobalVariantId, previous: ChoiceVariant }) = .empty,
         conformance_rewrites: std.ArrayList(struct { index: u32, previous: ContractConformance }) = .empty,
         error_context_rewrites: std.ArrayList(struct { id: GlobalErrorContextId, previous: ErrorContext }) = .empty,
@@ -321,6 +325,7 @@ pub const GlobalSemanticGraph = struct {
             self.block_rewrites.deinit(allocator);
             self.error_context_rewrites.deinit(allocator);
             self.conformance_rewrites.deinit(allocator);
+            self.definition_rewrites.deinit(allocator);
             self.variant_rewrites.deinit(allocator);
             self.error_propagation_rewrites.deinit(allocator);
             self.type_resolution.deinit(allocator);
@@ -533,6 +538,7 @@ pub const GlobalSemanticGraph = struct {
             .error_context_rewrites_len = self.construction.error_context_rewrites.items.len,
             .conformance_rewrites_len = self.construction.conformance_rewrites.items.len,
             .variant_rewrites_len = self.construction.variant_rewrites.items.len,
+            .definition_rewrites_len = self.construction.definition_rewrites.items.len,
             .error_propagation_rewrites_len = self.construction.error_propagation_rewrites.items.len,
             .safety_arena = self.safety_arena,
         };
@@ -569,6 +575,10 @@ pub const GlobalSemanticGraph = struct {
         while (self.construction.error_propagation_rewrites.items.len > saved.error_propagation_rewrites_len) {
             const rewrite = self.construction.error_propagation_rewrites.pop().?;
             self.error_propagations.items[@intFromEnum(rewrite.id)] = rewrite.previous;
+        }
+        while (self.construction.definition_rewrites.items.len > saved.definition_rewrites_len) {
+            const rewrite = self.construction.definition_rewrites.pop().?;
+            self.type_definitions.items[@intFromEnum(rewrite.id)] = rewrite.previous;
         }
         while (self.construction.variant_rewrites.items.len > saved.variant_rewrites_len) {
             const rewrite = self.construction.variant_rewrites.pop().?;
@@ -943,6 +953,8 @@ pub const GlobalSemanticGraph = struct {
         self.construction.error_context_rewrites = .empty;
         self.construction.conformance_rewrites.deinit(allocator);
         self.construction.conformance_rewrites = .empty;
+        self.construction.definition_rewrites.deinit(allocator);
+        self.construction.definition_rewrites = .empty;
         self.construction.variant_rewrites.deinit(allocator);
         self.construction.variant_rewrites = .empty;
         self.construction.error_propagation_rewrites.deinit(allocator);
@@ -1017,6 +1029,19 @@ pub const GlobalSemanticGraph = struct {
         if (self.mutation_frontier == null or index < self.mutation_frontier.?.contract_conformances)
             try self.construction.conformance_rewrites.append(allocator, .{ .index = index, .previous = self.contract_conformances.items[index] });
         self.contract_conformances.items[index] = value;
+    }
+
+    pub fn hasPendingTypeDefinitionCompletion(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) bool {
+        for (self.construction.definition_rewrites.items) |rewrite| if (rewrite.id == id) return true;
+        return false;
+    }
+
+    pub fn completeTypeDefinition(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalTypeDefinitionId, value: TypeDefinition) !void {
+        const raw = @intFromEnum(id);
+        std.debug.assert(self.type_definitions.items[raw].struct_fields == null and self.type_definitions.items[raw].choice_variants == null);
+        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.type_definitions)
+            try self.construction.definition_rewrites.append(allocator, .{ .id = id, .previous = self.type_definitions.items[raw] });
+        self.type_definitions.items[raw] = value;
     }
 
     pub fn setVariant(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalVariantId, value: ChoiceVariant) !void {
@@ -2201,4 +2226,22 @@ test "module ownership lookup preserves empty partitions fragments and rollback"
     try std.testing.expectEqual(null, graph.moduleForDeclaration(@enumFromInt(7)));
     graph.modules.clearRetainingCapacity();
     try std.testing.expectEqual(null, graph.moduleForDeclaration(@enumFromInt(0)));
+}
+
+test "nominal definition completion rolls back without changing identity" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const id: GlobalTypeDefinitionId = @enumFromInt(0);
+    try graph.type_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 7 } });
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    var complete = graph.typeDefinition(id);
+    complete.struct_fields = .{ .start = 0, .len = 0 };
+    try graph.completeTypeDefinition(a, id, complete);
+    try std.testing.expect(graph.typeDefinition(id).struct_fields != null);
+    transaction.rollback();
+    try std.testing.expectEqual(@as(usize, 1), graph.type_definitions.items.len);
+    try std.testing.expectEqual(null, graph.typeDefinition(id).struct_fields);
+    try std.testing.expectEqual(@as(u32, 7), graph.typeDefinition(id).source.offset);
 }

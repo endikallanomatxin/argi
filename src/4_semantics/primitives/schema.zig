@@ -289,6 +289,7 @@ pub fn TypeDefinition(comptime Ids: type) type {
     return struct {
         source: SourceRef,
         declaration: ?Ids.DeclId = null,
+        specialization: ?struct { origin: Ids.TypeDefinitionId, arguments: Range(Ids.GenericArgId) } = null,
         /// Checked C callback prototype; it provides representation and ABI,
         /// independently of the optional source-name association above.
         function_id: ?Ids.FunctionId = null,
@@ -391,6 +392,8 @@ pub fn Function(comptime Ids: type) type {
         declaration: Ids.DeclId,
         input: Range(Ids.FieldId),
         output: Range(Ids.FieldId),
+        input_type: ?Ids.TypeId = null,
+        output_type: ?Ids.TypeId = null,
         body: ?Ids.BlockId = null,
         input_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         output_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },

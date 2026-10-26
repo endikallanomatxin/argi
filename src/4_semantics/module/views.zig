@@ -72,6 +72,8 @@ pub fn functionView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Mo
         .declaration = function.declaration,
         .input = .{ .start = function.input.start, .len = function.input.len },
         .output = .{ .start = function.output.start, .len = function.output.len },
+        .input_type = function.input_type,
+        .output_type = function.output_type,
         .body = if (semantic) |value| value.body else null,
         .input_bindings = if (semantic) |value| value.input_bindings else .{ .start = 0, .len = 0 },
         .output_bindings = if (semantic) |value| value.output_bindings else .{ .start = 0, .len = 0 },

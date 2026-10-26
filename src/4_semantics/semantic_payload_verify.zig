@@ -57,6 +57,10 @@ pub fn familyDefinition(comptime Ids: type, value: primitives.FamilyDefinition(I
 }
 
 pub fn typeDefinition(comptime Ids: type, value: primitives.TypeDefinition(Ids), bounds: Bounds) !void {
+    if (value.specialization) |instance| {
+        try require(verify.idFits(instance.origin, bounds.type_definitions));
+        try require(verify.rangeFits(instance.arguments, bounds.generic_arguments));
+    }
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.declaration, bounds.declarations));
     try require(verify.optionalIdFits(value.function_id, bounds.functions));
@@ -118,6 +122,8 @@ pub fn function(comptime Ids: type, value: primitives.Function(Ids), bounds: Bou
     try require(verify.idFits(value.declaration, bounds.declarations));
     try require(verify.rangeFits(value.input, bounds.fields));
     try require(verify.rangeFits(value.output, bounds.fields));
+    try require(verify.optionalIdFits(value.input_type, bounds.types));
+    try require(verify.optionalIdFits(value.output_type, bounds.types));
     try require(verify.optionalIdFits(value.body, bounds.blocks));
     try require(verify.rangeFits(value.input_bindings, bounds.binding_refs));
     try require(verify.rangeFits(value.output_bindings, bounds.binding_refs));

@@ -1,3 +1,5 @@
+_ProcessManagerInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 -- The native adapter owns temporary argument copies and opaque child records.
 -- Addresses are private handles, never safe references or acquisition receipts.
 _process_builder() -> (.address: UIntNative): CFunction(.symbol = "_argi_process_builder")
@@ -45,15 +47,13 @@ _process_stream_write(.handle: UIntNative, .byte: UInt8) -> (.status: Int32): CF
 
 ProcessManager: Type = (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_process_manager := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : ProcessManager
-) {
+once _acquire_process_manager := (.args: _ProcessManagerInitArgs) -> (.result: ProcessManager) {
     ffi ::= args.ffi
 
     result = (._ffi = ffi)
 }
 
-implement Init#(ProcessManager, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(ProcessManager, _ProcessManagerInitArgs) (
     .Result : Type = ProcessManager
     .init   = _acquire_process_manager
 )

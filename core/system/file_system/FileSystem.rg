@@ -1,18 +1,18 @@
+_FileSystemInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 FileSystem: Type = (._ffi: $&ForeignFunctionInterface)
 
 ..path_open_failed
 ..path_remove_failed
 ..path_rename_failed
 
-once _acquire_file_system := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : FileSystem
-) {
+once _acquire_file_system := (.args: _FileSystemInitArgs) -> (.result: FileSystem) {
     ffi ::= args.ffi
 
     result._ffi = ffi
 }
 
-implement Init#(FileSystem, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(FileSystem, _FileSystemInitArgs) (
     .Result : Type = FileSystem
     .init   = _acquire_file_system
 )

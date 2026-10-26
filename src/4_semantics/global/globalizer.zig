@@ -232,6 +232,10 @@ fn appendFamilyDefinitions(allocator: std.mem.Allocator, result: *global_sg.Glob
 
 fn appendTypeDefinitions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
     for (module.semantic.type_definitions.items) |value| try result.type_definitions.append(allocator, .{
+        .specialization = if (value.specialization) |instance| .{
+            .origin = globalTypeDefinition(o, instance.origin),
+            .arguments = relocateEntityRange(global_sg.GlobalGenericArgId, o.generic_argument_base, instance.arguments),
+        } else null,
         .source = globalSource(o, value.source),
         .declaration = if (value.declaration) |id| globalDecl(o, id) else null,
         .function_id = if (value.function_id) |id| globalFunction(o, id) else null,
@@ -349,6 +353,8 @@ fn appendFunctions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemant
             .declaration = globalDecl(o, value.declaration),
             .input = relocateEntityRange(global_sg.GlobalFieldId, o.field_base, value.input),
             .output = relocateEntityRange(global_sg.GlobalFieldId, o.field_base, value.output),
+            .input_type = if (value.input_type) |id| globalType(o, id) else null,
+            .output_type = if (value.output_type) |id| globalType(o, id) else null,
             .body = if (value.body) |id| globalBlock(o, id) else null,
             .input_bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.input_bindings),
             .output_bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.output_bindings),

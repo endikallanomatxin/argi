@@ -97,15 +97,15 @@ implement TimeCompare#(UnixTimestamp) (.compare_value = _compare_UnixTimestamp)
 -- Clock carries permission to call the platform; pure time values carry none.
 Clock: Type = (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_clock := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : Clock
-) {
+_ClockInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
+once _acquire_clock := (.args: _ClockInitArgs) -> (.result: Clock) {
     ffi ::= args.ffi
 
     result = (._ffi = ffi)
 }
 
-implement Init#(Clock, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(Clock, _ClockInitArgs) (
     .Result : Type = Clock
     .init   = _acquire_clock
 )

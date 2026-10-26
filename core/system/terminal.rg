@@ -1,3 +1,5 @@
+_TerminalInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 -- Canonical endpoints do not allocate or choose a buffering policy.
 -- Programs borrow these files and wrap them in readers or writers as needed.
 Terminal: Type = (
@@ -6,9 +8,7 @@ Terminal: Type = (
     .stderr : File
 )
 
-once _acquire_terminal := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : Terminal
-) {
+once _acquire_terminal := (.args: _TerminalInitArgs) -> (.result: Terminal) {
     assume ffi := args.ffi
 
     init_stdin(.p = $&result.stdin)
@@ -16,7 +16,7 @@ once _acquire_terminal := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)
     init_stderr(.p = $&result.stderr)
 }
 
-implement Init#(Terminal, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(Terminal, _TerminalInitArgs) (
     .Result : Type = Terminal
     .init   = _acquire_terminal
 )

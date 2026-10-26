@@ -64,6 +64,16 @@ pub const Writer = struct {
         definition.parameter_count = parameter_count;
     }
 
+    pub fn typeDefinitionAt(self: *Writer, source: primitives.SourceRef) !entities.ModuleTypeDefinitionId {
+        for (self.graph.semantic.type_definitions.items, 0..) |definition, index| {
+            if (definition.source.file_index == source.file_index and definition.source.offset == source.offset)
+                return @enumFromInt(@as(u32, @intCast(index)));
+        }
+        const id = try directId(entities.ModuleTypeDefinitionId, self.graph.semantic.type_definitions.items.len);
+        try self.graph.semantic.type_definitions.append(self.allocator, .{ .source = source });
+        return id;
+    }
+
     pub fn addType(self: *Writer, ty: entities.ModuleType) !entities.ModuleTypeId {
         const id = try directId(
             entities.ModuleTypeId,

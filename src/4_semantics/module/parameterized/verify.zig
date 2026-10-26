@@ -97,8 +97,8 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.sourceFits(requirement.source, graph.file_offsets.items.len));
         if (requirement.safety_contract) |contract| {
             try require(verify.sourceFits(contract.source, graph.file_offsets.items.len));
-            const input = storage.ir.types.items[@intFromEnum(requirement.input)];
-            const output = storage.ir.types.items[@intFromEnum(requirement.output)];
+            const input = storage.ir.representation(requirement.input);
+            const output = storage.ir.representation(requirement.output);
             try require(input == .resolved and input.resolved == .structural);
             try require(output == .resolved and output.resolved == .structural);
             try require(contract.output_count == output.resolved.structural.fields.len);

@@ -1,6 +1,8 @@
+_EnvironmentVariablesInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 EnvironmentVariables: Type = (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_environment_variables := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+once _acquire_environment_variables := (.args: _EnvironmentVariablesInitArgs) -> (
     .result : EnvironmentVariables
 ) {
     ffi ::= args.ffi
@@ -8,7 +10,7 @@ once _acquire_environment_variables := (.args: (.ffi: $&ForeignFunctionInterface
     result._ffi = ffi
 }
 
-implement Init#(EnvironmentVariables, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(EnvironmentVariables, _EnvironmentVariablesInitArgs) (
     .Result : Type = EnvironmentVariables
     .init   = _acquire_environment_variables
 )

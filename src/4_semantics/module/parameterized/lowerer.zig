@@ -218,9 +218,9 @@ pub const Context = struct {
                     const params = try self.lowerParameters(payload.params, payload.params_struct);
                     const body = try self.lowerType(payload.value, false);
                     if (self.tree.tag(declaration_node) == .c_struct_declaration)
-                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_struct
+                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].definition.body)].resolved.structural.layout = .c_struct
                     else if (self.tree.tag(declaration_node) == .c_union_declaration)
-                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_union;
+                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].definition.body)].resolved.structural.layout = .c_union;
                     try self.writer.addParameterizedType(.{
                         .declaration = decl_id,
                         .parameters = params,
@@ -858,7 +858,7 @@ pub const Context = struct {
                 .member = try self.writer.addString(self.tree.tokenTextFromSource(self.source, value.member_token)),
                 .source = self.sourceRef(node),
             } }),
-            .struct_literal => |literal| self.lowerStructType(literal, allow_self),
+            .struct_literal => |literal| self.lowerStructDefinition(node, literal, allow_self),
             .choice_literal => |literal| self.lowerChoiceType(literal, allow_self),
         };
     }
@@ -977,6 +977,23 @@ pub const Context = struct {
             .base = parameterized_decl,
             .arguments = .{ .start = arg_start, .len = @intCast(literal.fields.len) },
         } } });
+    }
+
+    fn lowerStructDefinition(self: *Context, node: syn.NodeIndex, literal: syn.StructTypeLiteral, allow_self: bool) !ir.ParameterizedTypeId {
+        const origin = try self.writer.typeDefinitionAt(.{ .file_index = self.file_index, .offset = self.tree.location(node).offset });
+        const body = try self.lowerStructType(literal, allow_self);
+        var arguments: std.ArrayList(ir.GenericArgument) = .empty;
+        defer arguments.deinit(self.allocator);
+        for (self.parameters.items) |captured| try arguments.append(self.allocator, .{
+            .name = try self.writer.addString(captured.name),
+            .value = switch (captured.kind) {
+                .type => .{ .type = try self.addType(.{ .parameter = captured.id }) },
+                .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = captured.id }) },
+            },
+        });
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
+        try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
+        return self.addType(.{ .definition = .{ .origin = origin, .body = body, .arguments = .{ .start = start, .len = @intCast(arguments.items.len) } } });
     }
 
     fn lowerStructType(self: *Context, literal: syn.StructTypeLiteral, allow_self: bool) !ir.ParameterizedTypeId {

@@ -25,6 +25,12 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     };
 
     for (storage.types.items) |ty| switch (ty) {
+        .definition => |value| {
+            try require(verify.idFits(value.origin, graph.semantic.type_definitions.items.len));
+            try require(verify.idFits(value.body, storage.types.items.len));
+            try require(verify.rangeFits(value.arguments, storage.generic_arguments.items.len));
+        },
+
         .concrete => |id| try require(verify.idFits(id, views.typeCount(graph))),
         .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .projection => |value| {

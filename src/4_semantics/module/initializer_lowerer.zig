@@ -45,8 +45,12 @@ pub fn lowerAnonymousFieldDefaults(allocator: std.mem.Allocator, graph: *graph_m
     context.selectFile(file_index);
     if (context.tree.structTypeLiteral(syntax) == null) return;
     const semantic = try views.typeView(graph, ty);
-    if (semantic != .resolved or semantic.resolved != .structural) return;
-    const fields = semantic.resolved.structural.fields;
+    if (semantic != .resolved) return;
+    const fields = switch (semantic.resolved) {
+        .structural => |shape| shape.fields,
+        .nominal => |definition| graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields orelse return,
+        else => return,
+    };
     var stats: Stats = .{};
     try context.lowerDefaults(fields.start, fields.len, syntax, &stats);
 }
@@ -131,23 +135,35 @@ const Context = struct {
                 self.tree.functionDeclaration(declaration_node).?;
             if (function.contract_member or function.generic_params.len != 0 or function.generic_params_struct != null) continue;
 
-            const input = try self.lowerInterfaceFields(function.input);
-            const output = try self.lowerInterfaceFields(function.output);
+            const input = try self.lowerSignature(function.input);
+            const output = try self.lowerSignature(function.output);
             const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(self.graph.functions.items.len)));
             try self.graph.functions.append(self.allocator, .{
                 .declaration = @enumFromInt(@as(u32, @intCast(raw))),
-                .input = .{ .start = input.start, .len = input.len },
-                .output = .{ .start = output.start, .len = output.len },
+                .input = .{ .start = input.fields.start, .len = input.fields.len },
+                .output = .{ .start = output.fields.start, .len = output.fields.len },
+                .input_type = input.ty,
+                .output_type = output.ty,
             });
             self.graph.declarations.items[raw].function_id = function_id;
         }
     }
 
-    fn lowerInterfaceFields(self: *Context, struct_node: syn.NodeIndex) !entities.FieldRange {
-        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
+    const Signature = struct { ty: entities.ModuleTypeId, fields: entities.FieldRange };
+
+    fn lowerSignature(self: *Context, node: syn.NodeIndex) !Signature {
         var lowerer = self.typeContext();
-        const fields = try lowerer.lowerFields(literal);
-        return .{ .start = fields.start, .len = fields.len };
+        const ty = if (self.tree.structTypeLiteral(node)) |literal|
+            try lowerer.lowerRecordFields(node, literal)
+        else
+            try lowerer.lower(node);
+        const semantic = try views.typeView(self.graph, ty);
+        if (semantic != .resolved) return error.UnresolvedSignatureType;
+        const fields = switch (semantic.resolved) {
+            .nominal => |definition| self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields orelse return error.ExpectedRecordSignature,
+            else => return error.ExpectedRecordSignature,
+        };
+        return .{ .ty = ty, .fields = fields };
     }
 
     fn predeclareGlobals(self: *Context, stats: *Stats) !void {
@@ -246,7 +262,8 @@ const Context = struct {
     }
 
     fn lowerDefaults(self: *Context, range_start: u32, range_len: u32, struct_node: syn.NodeIndex, stats: *Stats) !void {
-        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
+        // Named signatures reuse defaults owned by their original definition.
+        const literal = self.tree.structTypeLiteral(struct_node) orelse return;
         if (literal.fields.len != range_len) return error.InterfaceFieldCountMismatch;
         for (literal.fields, 0..) |field_node, offset| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
