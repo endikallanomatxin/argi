@@ -74,8 +74,10 @@ implement<.t: Type: Writer<t>> Logger<FileLogger<.t: t>> (
 )
 
 flush := <.t: Type: Writer<t>> (.self: $&FileLogger<.t: t>) -> (
-    .result: Errable<Void, LogReasons>
-) { result = Writer<>.flush(.self = self&._writer) }
+    .result: Errable<Void, LogReasons> = ..ok Void()
+) {
+    Writer<>.flush(.self = self&._writer)!
+}
 
 StdLogger := <.out: Type: Writer<out>, .err: Type: Writer<err>> (
     ._out    : $&out,
