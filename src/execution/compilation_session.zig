@@ -38,9 +38,11 @@ const TemporalProof = struct {
         errdefer proof.once.deinit();
         if (parent) |previous| {
             if (previous.references == std.math.maxInt(usize)) return error.TemporalProofLimit;
-            try previous.state.fork(&proof.state, proof.arena.allocator());
             previous.references += 1;
-        } else proof.state.init(proof.arena.allocator());
+        }
+        // Fork directly into checking scratch, rather than copying all tables
+        // here only to relocate them immediately before analysis.
+        proof.state.init(proof.arena.allocator());
         return proof;
     }
     // Retain only the final state, independently of parents and scratch facts.
@@ -265,11 +267,7 @@ pub const CompilationSession = struct {
         }
         try candidate.advance();
         if (continuation) |function| try candidate.retainContinuationBindings(function);
-        const proof = fork_state: {
-            const measurement = if (candidate.resolvers.core.scan_profile) |collector| collector.begin(.continuation_fork) else null;
-            defer if (measurement) |m| m.finish(false);
-            break :fork_state if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
-        };
+        const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
         errdefer if (proof) |owned| owned.release();
         var checked = try checkUnit(candidate, self.allocator, diagnostics, continuation, proof, &self.summary_cache, &self.body_cache);
         errdefer checked.deinit(self.allocator);
@@ -346,8 +344,10 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
     if (proof) |owned| {
         // All mutable tables and namespace growth during checking use one
         // allocator. Immutable incoming facts remain borrowed until sealing.
+        const fork_measurement = if (semantic.resolvers.core.scan_profile) |collector| collector.begin(.continuation_fork) else null;
+        defer if (fork_measurement) |m| m.finish(false);
         var working: Safety.ContinuationState = undefined;
-        try owned.state.fork(&working, proof_allocator);
+        if (owned.parent) |previous| try previous.state.fork(&working, proof_allocator) else working.init(proof_allocator);
         owned.state.deinit();
         owned.state = working;
         owned.state.rebindAllocator(proof_allocator);
