@@ -671,7 +671,7 @@ pub const Context = struct {
             const fallible = switch (ty) {
                 .inferred_errable => true,
                 .generic => |generic| blk: {
-                    const base = self.tree.syntaxType(generic.base) orelse break :blk false;
+                    const base = self.tree.typeReference(generic.base) orelse break :blk false;
                     break :blk base == .name and std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Errable");
                 },
                 else => false,
@@ -897,7 +897,7 @@ pub const Context = struct {
             if (!type_arguments.isVirtualContractParameter(type_arguments.name(self.tree, self.source, field, "Virtual"))) return error.InvalidVirtualArguments;
             return self.addType(.{ .resolved = .{ .virtual = try self.lowerType(field.type_node orelse return error.InvalidVirtualArguments, allow_self) } });
         }
-        const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericParameterizedBase;
+        const base = self.tree.typeReference(generic.base) orelse return error.InvalidGenericParameterizedBase;
         if (base != .name) return error.InvalidGenericParameterizedBase;
         const name = base.name;
         const base_text = self.tree.tokenTextFromSource(self.source, name.name_token);

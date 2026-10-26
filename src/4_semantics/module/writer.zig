@@ -65,7 +65,9 @@ pub const Writer = struct {
     }
 
     pub fn addExternalType(self: *Writer, reference: entities.ExternalRefId) !entities.ModuleTypeId {
-        return self.addType(.{ .external = reference });
+        const destination = try self.addType(.{ .external = reference });
+        _ = try self.addPendingOperation(.{ .resolve_type = .{ .destination = destination, .external = reference } });
+        return destination;
     }
 
     pub fn addField(self: *Writer, field: entities.Field) !entities.ModuleFieldId {
@@ -250,4 +252,21 @@ test "module semantic writer rejects compatibility prefix growth after canonical
         error.ModuleSemanticConstructionPrefixMutated,
         writer.addResolvedType(.{ .builtin = .Float32 }),
     );
+}
+
+test "external type values register deferred resolution in the current owner" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "demo") };
+    defer graph.deinit(a);
+    var writer = Writer.init(a, &graph);
+    const reference = try writer.addExternalRef(.{ .kind = .type, .module_path = null, .name = try writer.addString("Alias"), .source = .{ .file_index = 0, .offset = 0 } });
+    const ty = try writer.addExternalType(reference);
+    try std.testing.expectEqual(@as(usize, 1), graph.semantic.pending_operations.items.len);
+    const operation = graph.semantic.pending_operations.items[0].resolve_type;
+    try std.testing.expectEqual(ty, operation.destination);
+    try std.testing.expectEqual(reference, operation.external);
+    try std.testing.expectEqual(@as(?entities.ModuleFunctionId, null), graph.semantic.pending_owner_functions.items[0]);
+    writer.pending_owner_function = @enumFromInt(3);
+    _ = try writer.addExternalType(reference);
+    try std.testing.expectEqual(@as(?entities.ModuleFunctionId, @enumFromInt(3)), graph.semantic.pending_owner_functions.items[1]);
 }

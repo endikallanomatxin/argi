@@ -694,7 +694,7 @@ pub fn isStringView(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
 /// Resolve compiler-owned type constants without introducing runtime type values.
 pub fn typeValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalTypeId {
     var node = initial;
-    for (0..64) |_| {
+    for (0..graph.nodes.items.len + 1) |_| {
         switch (graph.node(node).content) {
             .type_literal => |ty| return ty,
             .binding_use => |id| {
@@ -759,4 +759,24 @@ test "nominal underlying types retain identity and share only representation" {
     try std.testing.expectEqual(null, representationType(&graph, @enumFromInt(1)));
     try std.testing.expectEqual(null, fields(&graph, @enumFromInt(1)));
     try std.testing.expectError(error.UnmaterializedGlobalType, layoutOf(&graph, @enumFromInt(1)));
+}
+
+test "static type values preserve long alias chains and reject cycles or mutable bindings" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Type } });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .type_literal = @enumFromInt(0) } });
+    const name = try graph.addString(a, "alias");
+    for (0..128) |raw| {
+        try graph.bindings.append(a, .{ .source = source, .name = name, .ty = @enumFromInt(1), .initialization = @enumFromInt(@as(u32, @intCast(raw))), .mutability = .constant });
+        try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(@as(u32, @intCast(raw))) } });
+    }
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(0)), staticTypeBinding(&graph, @enumFromInt(127)));
+    graph.bindings.items[0].mutability = .variable;
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, null), staticTypeBinding(&graph, @enumFromInt(127)));
+    graph.bindings.items[0].mutability = .constant;
+    graph.bindings.items[0].initialization = @enumFromInt(128);
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, null), staticTypeBinding(&graph, @enumFromInt(127)));
 }

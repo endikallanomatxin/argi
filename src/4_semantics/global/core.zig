@@ -183,10 +183,9 @@ pub const Resolver = struct {
                 // Generic external references need parameterized substitution and are
                 // intentionally claimed by the generic resolver instead.
                 if (reference.generic_arguments != null) continue;
-                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch continue;
-                const target_type = self.graph.declarations.items[@intFromEnum(target)].type_id orelse continue;
-                try self.graph.resolveType(self.allocator, globalizer.globalType(o, local_id), .{ .declared = target });
-                _ = target_type;
+                const target_type = (try self.resolveTypeValue(module_index, reference)) orelse continue;
+                const semantic = self.graph.resolvedSemanticType(target_type) orelse continue;
+                try self.graph.resolveType(self.allocator, globalizer.globalType(o, local_id), semantic);
                 self.stats.external_types += 1;
             }
         }
@@ -498,6 +497,33 @@ pub const Resolver = struct {
         };
     }
 
+    /// Resolve a type name to its compile-time value. A binding forwards the
+    /// initializer's identity; it never acquires nominality from its own name.
+    pub fn declarationTypeValue(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalTypeId {
+        const declaration = self.graph.declaration(id);
+        if (declaration.type_id) |ty| return ty;
+        if (declaration.kind != .binding) return null;
+        const owner = self.graph.moduleForDeclaration(id) orelse return null;
+        const module_index = @intFromEnum(owner);
+        if (module_index >= self.modules.len) return null;
+        const offsets = self.offsets[module_index];
+        for (self.modules[module_index].semantic.declaration_bindings.items) |relation| {
+            if (globalizer.globalDecl(offsets, relation.declaration) != id) continue;
+            const binding = globalizer.globalBinding(offsets, relation.binding);
+            if (self.graph.isBindingTypeUnresolved(binding)) return null;
+            return types.staticTypeBinding(self.graph, binding);
+        }
+        return null;
+    }
+
+    pub fn resolveTypeValue(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?global_sg.GlobalTypeId {
+        const declaration = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type, .binding }) catch |err| switch (err) {
+            error.UnknownGlobalDeclaration => return null,
+            else => return err,
+        };
+        return self.declarationTypeValue(declaration);
+    }
+
     pub fn resolveDeclaration(
         self: *Resolver,
         current_module: usize,
@@ -735,10 +761,12 @@ pub const Resolver = struct {
     }
 
     fn resolveTypeHole(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        if (!self.graph.isTypeUnresolved(globalizer.globalType(o, value.destination))) return .resolved;
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
         if (reference.generic_arguments != null or (reference.projection_base != null or reference.computed_type != null)) return .not_applicable;
-        const target = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch return .deferred;
-        try self.graph.resolveType(self.allocator, globalizer.globalType(o, value.destination), .{ .declared = target });
+        const target = (try self.resolveTypeValue(module_index, reference)) orelse return .deferred;
+        const semantic = self.graph.resolvedSemanticType(target) orelse return .deferred;
+        try self.graph.resolveType(self.allocator, globalizer.globalType(o, value.destination), semantic);
         self.stats.external_types += 1;
         return .resolved;
     }

@@ -72,14 +72,15 @@ pub const Resolver = struct {
             ) catch return false;
             const target_index: usize = @intFromEnum(target);
             if (!self.graph.sameModuleNamespace(target, @enumFromInt(module_index)) and std.mem.startsWith(u8, name, "_")) return false;
-            const binding = name_lookup.bindingInNamespace(self.graph, self.modules, self.offsets, target_index, name) orelse return false;
-            return self.patchNameUse(o, value.node, binding, value.source);
+            if (name_lookup.bindingInNamespace(self.graph, self.modules, self.offsets, target_index, name)) |binding|
+                return self.patchNameUse(o, value.node, binding, value.source);
+            return self.patchTypeExpression(target_index, o, value.node, name, true);
         }
         if (self.sessionBindingForOwner(name, owner)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
         if (name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
-        return self.patchTypeExpression(module_index, o, value.node, name);
+        return self.patchTypeExpression(module_index, o, value.node, name, false);
     }
 
     fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype, owner: ?global_sg.GlobalFunctionId) !bool {
@@ -120,9 +121,9 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, node: module_entities.ModuleNodeId, name: []const u8) !bool {
+    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, node: module_entities.ModuleNodeId, name: []const u8, qualified: bool) !bool {
         var found: ?global_sg.GlobalTypeId = null;
-        for (self.graph.types.items, 0..) |item, raw| switch (item) {
+        if (!qualified) for (self.graph.types.items, 0..) |item, raw| switch (item) {
             .builtin => |builtin| if (std.mem.eql(u8, name, @tagName(builtin))) {
                 // Globalization preserves module-local type identities, so the
                 // same language builtin can legitimately occupy several global
@@ -136,7 +137,8 @@ pub const Resolver = struct {
             if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             const owner = self.graph.moduleForDeclaration(id) orelse continue;
-            if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
+            if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and
+                (qualified or !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core)) continue;
             if (found != null) return false;
             found = declaration.type_id orelse continue;
         }

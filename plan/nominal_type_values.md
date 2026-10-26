@@ -158,5 +158,9 @@ before adding implementation exceptions.
 - Angle syntax, syntactic disambiguation, named signature syntax, and formatter
   spacing are implemented. An integration fixture executes definition expressions
   through native code, VM, and `#run`.
-- Semantic nominal identity and family aliases are not migrated yet. Legacy
+- Concrete type values can be aliased across bindings and modules, used in
+  signatures and construction, and evaluated through `#run`. Deferred type uses
+  participate in the ordinary pending-work mechanism.
+- Definition-owned nominal identity and unspecialized family aliases are not
+  migrated yet. Legacy
   spellings still parse into the common definition representation during migration.

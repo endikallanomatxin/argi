@@ -16,7 +16,7 @@ pub const LexicalModuleAlias = struct {
 // argument describes a vtable contract, unlike an ordinary generic argument
 // whose type can be specialized from a concrete call input.
 pub fn isRuntimeVirtualType(tree: *const syn.FileSyntaxTree, source: []const u8, generic: syn.GenericType) bool {
-    const base = tree.syntaxType(generic.base) orelse return false;
+    const base = tree.typeReference(generic.base) orelse return false;
     return base == .name and base.name.qualifier_token == null and
         std.mem.eql(u8, tree.tokenTextFromSource(source, base.name.name_token), "Virtual");
 }
@@ -203,7 +203,7 @@ pub const Context = struct {
     }
 
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
-        const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
+        const base = self.tree.typeReference(generic.base) orelse return error.InvalidGenericBase;
         const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
         if (@import("type_arguments.zig").requiresResolution(self.tree, generic.arguments) or std.mem.eql(u8, base_name, "choice_union")) {
             return self.lowerComputedType(owner);

@@ -569,14 +569,13 @@ pub const Resolver = struct {
         _ = bindings;
         const module = &self.modules[module_index];
         const reference = module.semantic.external_refs.items[@intFromEnum(external)];
+        if (reference.generic_arguments == null)
+            return (try self.core.resolveTypeValue(module_index, reference)) orelse error.ComptimeExecutionPending;
         const decl = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type });
-        if (reference.generic_arguments) |args| {
-            const global_args = try self.relocateModuleArguments(module_index, args);
-            const id = try self.internType(.{ .generic = .{ .base = decl, .arguments = global_args } });
-            _ = try self.ensureGenericInstance(id);
-            return id;
-        }
-        return self.graph.declarations.items[@intFromEnum(decl)].type_id orelse self.internType(.{ .declared = decl });
+        const global_args = try self.relocateModuleArguments(module_index, reference.generic_arguments.?);
+        const id = try self.internType(.{ .generic = .{ .base = decl, .arguments = global_args } });
+        _ = try self.ensureGenericInstance(id);
+        return id;
     }
 
     fn instantiateResolvedParameterizedType(

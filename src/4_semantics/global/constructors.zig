@@ -43,11 +43,10 @@ pub const Resolver = struct {
         source: primitives.SourceRef,
     ) anyerror!?global_sg.Node {
         const self: *Resolver = @ptrCast(@alignCast(context_ptr));
-        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
+        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding }) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return null,
             else => return err,
         };
-        const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
         const generics = self.generics.?;
         const parameterized = generics.isParameterizedTypeDeclaration(declaration_id);
         const ty = if (parameterized) blk: {
@@ -72,7 +71,7 @@ pub const Resolver = struct {
             break :blk generic_ty;
         } else blk: {
             if (arguments.len != 0) return null;
-            break :blk declaration.type_id orelse return null;
+            break :blk self.core.declarationTypeValue(declaration_id) orelse return null;
         };
 
         if (try self.contractInitializer(module_index, ty, input, reach, source)) |call| return call;
@@ -283,23 +282,30 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         value: anytype,
     ) !resolution.Result {
-        if (value.callee_value != null) return .not_applicable;
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-        if (reference.generic_arguments != null or reference.computed_arguments != null)
+        if (reference.generic_arguments != null or reference.computed_arguments != null) {
+            if (value.callee_value != null) return .not_applicable;
             return self.resolveExplicitGenericCall(module_index, module, o, value, reference);
-
-        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
-            error.UnknownGlobalDeclaration => return .not_applicable,
-            else => return err,
-        };
-        const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
+        }
         const input = globalizer.globalNode(o, value.input);
-        const type_generics = self.generics.?;
-        if (type_generics.isParameterizedTypeDeclaration(declaration_id))
-            return self.resolveImplicitGenericCall(module_index, module, o, value, declaration_id, input);
-        const ty = declaration.type_id orelse return .deferred;
-        if (declaration.struct_layout == .c_function_pointer)
-            return self.resolveCallbackConstructor(module_index, module, o, value, declaration, ty, input);
+        const ty = if (value.callee_value) |callee| blk: {
+            const expression = globalizer.globalNode(o, callee);
+            break :blk types.typeValue(self.graph, expression) orelse return .not_applicable;
+        } else blk: {
+            const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding }) catch |err| switch (err) {
+                error.UnknownGlobalDeclaration => return .not_applicable,
+                else => return err,
+            };
+            const type_generics = self.generics.?;
+            if (type_generics.isParameterizedTypeDeclaration(declaration_id))
+                return self.resolveImplicitGenericCall(module_index, module, o, value, declaration_id, input);
+            break :blk self.core.declarationTypeValue(declaration_id) orelse return .deferred;
+        };
+        if (c_abi.isFunctionPointer(self.graph, ty)) {
+            const semantic = self.graph.resolvedSemanticType(ty) orelse return .deferred;
+            if (semantic != .declared) return .deferred;
+            return self.resolveCallbackConstructor(module_index, module, o, value, self.graph.declaration(semantic.declared), ty, input);
+        }
 
         if (self.contractInitializer(module_index, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
             if (err == error.DeferredContractInitializer) return .deferred;

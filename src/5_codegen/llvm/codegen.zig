@@ -767,7 +767,7 @@ pub const CodeGenerator = struct {
                 .binding_declaration => |id| id,
                 else => continue,
             };
-            if (self.global_bindings.contains(binding)) continue;
+            if (self.global_bindings.contains(binding) or types.staticTypeBinding(self.graph, binding) != null) continue;
             const record = self.graph.bindings.items[@intFromEnum(binding)];
             const type_ref = try self.toLLVMType(record.ty);
             const name_z = try self.dupZ(self.graph.text(record.name));

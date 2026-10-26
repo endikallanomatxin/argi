@@ -858,6 +858,20 @@ pub const FileSyntaxTree = struct {
         return .{ .name_token = tree.mainToken(node), .input = extra.input, .output = extra.output, .safety_contract = extra.safety_contract.unwrap() };
     }
 
+    /// Read a name in a type-use context without changing the expression node.
+    /// Specialization has one callee representation for values and type uses.
+    pub fn typeReference(tree: *const FileSyntaxTree, node: NodeIndex) ?Type {
+        if (tree.tag(node) == .identifier)
+            return .{ .name = .{ .name_token = tree.mainToken(node), .qualifier_token = null } };
+        if (tree.structFieldAccess(node)) |access| {
+            var root = access.value;
+            while (tree.structFieldAccess(root)) |parent| root = parent.value;
+            if (tree.tag(root) != .identifier) return null;
+            return .{ .name = .{ .name_token = access.field_token, .qualifier_token = tree.mainToken(root) } };
+        }
+        return tree.syntaxType(node);
+    }
+
     pub fn syntaxType(tree: *const FileSyntaxTree, node: NodeIndex) ?Type {
         return switch (tree.tag(node)) {
             .type_name => .{ .name = .{
