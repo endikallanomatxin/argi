@@ -374,7 +374,7 @@ before adding implementation exceptions.
   function signatures/bodies; family defaults use the same captured values.
   Retained definition references distinguish lexical family parameters from named
   declarations. Explicit binding checks remaining arity and parameter kinds;
-  universal compatibility of bounds and nested family signatures remains pending.
+  universal compatibility of bounds remains pending.
   Concrete call arguments now share the retained-IR lowering path, removing the
   separate literal-only evaluator. Scoped operation and virtual-evidence consumers
   resolve those arguments through the common resolver. Native, VM and `#run`
@@ -411,6 +411,13 @@ before adding implementation exceptions.
   interactive calls use the same selection path. Ordinary generic applicability
   reuses explicit selection without materializing bodies during probes. Native,
   VM, `#run` and REPL rollback tests cover explicit operation instances.
+
+- Family signature shape checking descends recursively through family-valued
+  parameters, with a bounded depth. Matching outer parameter kinds alone no longer
+  accepts incompatible nested arities. Positive nested application and negative
+  nested-signature fixtures complement the existing top-level arity checks.
+  Integer parameter types and bound implication still need full compatibility
+  checks; this shape check does not claim universal signature compatibility.
 
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate

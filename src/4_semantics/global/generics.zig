@@ -455,7 +455,7 @@ pub const Resolver = struct {
             if (parameter.kind == .definition and bindings.definitions[raw] == null) {
                 if (parameter.default_definition) |expression| {
                     const definition = try self.instantiateDefinitionValue(module_index, expression, bindings);
-                    if (!self.definitionParameterShapeMatches(module_index, parameter, definition)) return error.DefinitionParameterSignatureMismatch;
+                    if (!try self.definitionParameterShapeMatches(module_index, parameter, definition)) return error.DefinitionParameterSignatureMismatch;
                     bindings.definitions[raw] = definition;
                 }
             }
@@ -506,7 +506,7 @@ pub const Resolver = struct {
             switch (parameter.kind) {
                 .definition => switch (argument.value) {
                     .definition => |value| {
-                        if (!self.definitionParameterShapeMatches(module_index, parameter, value)) return error.DefinitionParameterSignatureMismatch;
+                        if (!try self.definitionParameterShapeMatches(module_index, parameter, value)) return error.DefinitionParameterSignatureMismatch;
                         bindings.definitions[param_raw] = value;
                     },
                     else => return error.GenericArgumentKindMismatch,
@@ -897,14 +897,30 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn definitionParameterShapeMatches(self: *Resolver, module_index: usize, parameter: parameterized_storage.ComptimeParameter, actual: global_sg.DefinitionValue) bool {
+    fn definitionParameterShapeMatches(self: *Resolver, module_index: usize, parameter: parameterized_storage.ComptimeParameter, actual: global_sg.DefinitionValue) !bool {
         const expected = parameter.family_parameters orelse return false;
         const located = self.findTypeParameterized(actual.origin) orelse return false;
         const parameters = located.parameterized.parameters;
-        if (actual.captures.len > parameters.len or parameters.len - actual.captures.len != expected.len) return false;
-        const wanted = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[expected.start..][0..expected.len];
-        const given = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[parameters.start + actual.captures.len ..][0..expected.len];
-        for (wanted, given) |left, right| if (left.kind != right.kind) return false;
+        if (actual.captures.len > parameters.len) return false;
+        return self.parameterShapesMatch(module_index, expected, located.module_index, .{
+            .start = parameters.start + actual.captures.len,
+            .len = parameters.len - actual.captures.len,
+        }, 0);
+    }
+
+    fn parameterShapesMatch(self: *Resolver, expected_module: usize, expected: primitives.Range(ir.ComptimeParameterId), actual_module: usize, actual: primitives.Range(ir.ComptimeParameterId), depth: usize) anyerror!bool {
+        if (depth > 128) return error.CompileTimeTypeDepthLimit;
+        if (expected.len != actual.len) return false;
+        const expected_storage = &self.modules[expected_module].semantic.parameterized_storage;
+        const actual_storage = &self.modules[actual_module].semantic.parameterized_storage;
+        for (0..expected.len) |position| {
+            const left = expected_storage.comptime_parameters.items[expected.start + position];
+            const right = actual_storage.comptime_parameters.items[actual.start + position];
+            if (left.kind != right.kind) return false;
+            if (left.kind == .definition) {
+                if (!try self.parameterShapesMatch(expected_module, left.family_parameters orelse return false, actual_module, right.family_parameters orelse return false, depth + 1)) return false;
+            }
+        }
         return true;
     }
 

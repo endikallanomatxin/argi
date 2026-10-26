@@ -15788,3 +15788,7 @@ test "feature_tests/types/329X_associated_family_capture_identity" {
 test "feature_tests/types/330X_explicit_operation_identity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/330X_explicit_operation_identity", "multiple applicable operation identities", "without a diagnostic");
 }
+
+test "feature_tests/types/331X_nested_family_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/331X_nested_family_signature", "type-family argument does not match its parameter signature", "without a diagnostic");
+}
