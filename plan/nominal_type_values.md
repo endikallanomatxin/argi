@@ -372,6 +372,14 @@ before adding implementation exceptions.
   resolve those arguments through the common resolver. Native, VM and `#run`
   fixtures cover application, forwarding, defaults and arity rejection.
 
+- Associated family implementations can provide a named parameterized type value
+  with a family signature annotation. Operations specialize that selected family
+  through their own parameters; captured associated-family signatures retain their
+  metadata without becoming operation defaults. Native/VM/`#run` cases exercise
+  multiple operation instances, and invalid family arity produces a conformance
+  diagnostic. Inline associated definitions, projection as a family value and
+  universal bound compatibility are still outstanding.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, explicit unqualified operation specialization, remaining generic-call inference parity,

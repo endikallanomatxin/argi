@@ -15765,3 +15765,14 @@ test "feature_tests/types/324_type_family_arguments" {
 test "feature_tests/types/325X_type_family_signature_mismatch" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/325X_type_family_signature_mismatch", "type-family argument does not match its parameter signature", "without a diagnostic");
 }
+
+test "feature_tests/types/326_associated_type_family" {
+    const path = "tests/feature_tests/types/326_associated_type_family";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/327X_associated_family_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/327X_associated_family_signature", "associated type-family argument does not match its parameter signature", "without a diagnostic");
+}

@@ -787,20 +787,21 @@ pub const Context = struct {
         const literal = self.tree.parameterList(struct_node) orelse return error.InvalidGenericParameters;
         const start = range.start;
         if (captured > literal.fields.len) return error.InvalidGenericParameters;
-        for (literal.fields[captured..], captured..) |field_node, offset| {
+        for (literal.fields, 0..) |field_node, offset| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
             const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
             const parameter_index = start + @as(u32, @intCast(offset));
             if (self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].kind == .definition) {
                 const signature = try self.lowerDefinitionParameterSignature(value_type_node);
                 self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].family_parameters = signature;
-                if (field.default_value) |value| {
+                if (offset >= captured) if (field.default_value) |value| {
                     const lowered = try self.lowerGenericValue(value, false);
                     if (lowered != .definition) return error.InvalidGenericArgumentKind;
                     self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].default_definition = lowered.definition;
-                }
+                };
                 continue;
             }
+            if (offset < captured) continue;
             const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index];
             switch (parameter_record.kind) {
                 .definition => unreachable,

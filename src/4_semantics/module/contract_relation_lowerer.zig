@@ -99,6 +99,14 @@ const Context = struct {
                 const member_name = self.tree.tokenTextFromSource(self.source, member.name_token);
                 const value = member.default_value orelse return error.InvalidContractArgument;
                 if (member.type_node) |annotation| {
+                    if (self.tree.parameterizedDefinition(annotation) != null) {
+                        var lowerer = self.parameterizedContext();
+                        defer lowerer.bindings.deinit();
+                        const argument = try lowerer.lowerGenericValue(value, false);
+                        if (argument != .definition) try self.conformanceError(member_node, "associated family implementations require a parameterized definition value");
+                        try arguments.append(self.allocator, .{ .name = try self.writer.addString(member_name), .value = argument });
+                        continue;
+                    }
                     const kind = self.tree.syntaxType(annotation) orelse return error.InvalidContractArgument;
                     if (kind != .name) try self.conformanceError(member_node, "associated implementation elements require Type or Int annotations");
                     const kind_name = self.tree.tokenTextFromSource(self.source, kind.name.name_token);

@@ -1266,6 +1266,7 @@ pub const Resolver = struct {
             error.DuplicateGenericArgument => "duplicate argument",
             error.MissingGenericArgument => "missing argument",
             error.GenericArgumentKindMismatch => "argument kind does not match its parameter",
+            error.DefinitionParameterSignatureMismatch => "associated type-family argument does not match its parameter signature",
             else => null,
         };
     }
@@ -1625,6 +1626,7 @@ pub const Resolver = struct {
                 error.UnknownGenericArgument => "unknown compile-time argument for contract operation",
                 error.DuplicateGenericArgument => "duplicate compile-time argument for contract operation",
                 error.GenericArgumentKindMismatch => "compile-time argument kind does not match the operation parameter",
+                error.DefinitionParameterSignatureMismatch => "type-family argument does not match the operation parameter signature",
                 else => return err,
             };
             self.participant_conformance_failure = failure;
