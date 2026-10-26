@@ -604,8 +604,10 @@ pub const Syntaxer = struct {
                     return SyntaxerError.ExpectedStructField;
                 }
                 self.advanceOne();
-                if (self.tokenIs(.open_parenthesis)) {
-                    try self.scratch.append(self.allocator, try self.parseContractRequirement(member));
+                const parameters = if (self.angleOpen()) try self.parseGenericParamsStruct() else null;
+                var member_type = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+                if (self.tokenIs(.arrow) or parameters != null) {
+                    try self.scratch.append(self.allocator, try self.parseContractRequirement(member, member_type, parameters));
                     self.skipNewLinesAndComments();
                     if (self.tokenIs(.comma)) {
                         self.advanceOne();
@@ -613,7 +615,6 @@ pub const Syntaxer = struct {
                     }
                     continue;
                 }
-                var member_type = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
                 if (self.tokenIs(.colon)) {
                     if (self.file.tag(member_type) != .type_name or !std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(member_type))).identifier), "Type")) {
                         try self.diags.add(self.tokenLocation(), .syntax, "associated type bounds use '.{s}: Type: Constraint'", .{member.text});
@@ -781,19 +782,18 @@ pub const Syntaxer = struct {
         return cursor < self.tokens.len and self.contentAt(cursor) == .colon;
     }
 
-    fn parseContractRequirement(self: *Syntaxer, name: ParsedName) SyntaxerError!syn.NodeIndex {
-        const input = try self.parseStructTypeLiteral();
+    fn parseContractRequirement(self: *Syntaxer, name: ParsedName, input: syn.NodeIndex, parameters: ?syn.NodeIndex) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
         self.advanceOne();
-        const output = try self.parseStructTypeLiteral();
+        const output = try self.parseFunctionOutputType();
         self.skipNewLinesAndComments();
         const safety: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
             self.advanceOne();
             self.skipNewLinesAndComments();
             break :blk if (self.tokenIs(.open_brace)) try self.parseSafetyContract() else try self.parseExpression();
         } else null;
-        const empty = try self.addNodeRange(&.{});
-        return self.functionBinding(.contract_function_requirement, name.token, empty, null, .{
+        const range = if (parameters) |node| self.file.data(node).extra_range else try self.addNodeRange(&.{});
+        return self.functionBinding(.contract_function_requirement, name.token, range, parameters, .{
             .contract_member = 1,
             .input = input,
             .output = output,

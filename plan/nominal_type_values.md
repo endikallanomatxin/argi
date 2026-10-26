@@ -123,6 +123,14 @@ rule does not equate the enclosing nominal signature records or permit conversio
 between independently defined field types. Generic aliases infer their parameters
 from the required inputs, including through named signature families, never outputs.
 
+Operation parameters belong to the signature expression, for example
+`.copy: <.Value: Type> (.value: Value) -> (.result: Value)`. Their lexical IDs are
+separate from participant and associated-element IDs. Each operation owns its
+parameter scope; sibling operations may reuse names, while shadowing contract
+parameters is rejected. These parameters specialize an already selected operation,
+not the conformance. Publishing a conformance must retain the operation definition,
+rather than require one prematurely instantiated body for all specializations.
+
 Before migrating those protocols, specify how contracts declare generic operation
 signatures, how associated families share their parameters, and how implementation
 compatibility is verified. Preserve static inference, explicit/reached capability
@@ -242,6 +250,13 @@ before adding implementation exceptions.
   Cyclic closed aliases are diagnosed after pending resolution stalls. Context
   cannot retag an already constructed nominal value; this is checked before
   record completion as well as during ordinary literal coercion.
+
+- Contract requirement syntax and ModuleSema retain operation-local compile-time
+  parameter ranges independently of participants and associated elements. Their
+  bounds and signature types are lowered in a scoped environment, and the module
+  verifier checks those ranges. This is representation support only: selection,
+  implementation binding, Safety evidence and execution of generic requirements
+  still need integration before the feature is usable.
 
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate

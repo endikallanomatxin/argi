@@ -1414,3 +1414,41 @@ test "payload choice definitions are nominal while option references compose set
     for (graph.semantic.variants.items[reasons.start..][0..reasons.len]) |variant|
         try std.testing.expect(variant.option_decl != null);
 }
+
+test "contract operation parameters have independent lexical scopes and do not select conformances" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Factory#(.Owner: Type): Contract = (
+        \\    .Result: Type
+        \\    .make: <.Value: Type> (.owner: &Owner, .value: Value) -> (.result: Result)
+        \\    .copy: <.Value: Type> (.value: Value) -> (.result: Value)
+        \\)
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "factory/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "factory", &inputs);
+    defer graph.deinit(allocator);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const storage = &graph.semantic.parameterized_storage;
+    const definition = storage.contract_definitions.items[0];
+    try std.testing.expectEqual(@as(u32, 1), definition.participants.len);
+    try std.testing.expectEqual(@as(u32, 1), definition.parameters.len);
+    try std.testing.expectEqual(@as(u32, 2), definition.requirements.len);
+    const make = storage.contract_requirements.items[definition.requirements.start];
+    const copy = storage.contract_requirements.items[definition.requirements.start + 1];
+    try std.testing.expectEqual(@as(u32, 1), make.parameters.len);
+    try std.testing.expectEqual(@as(u32, 1), copy.parameters.len);
+    try std.testing.expect(make.parameters.start != copy.parameters.start);
+    try std.testing.expect(make.parameters.start >= definition.participants.start + definition.participants.len);
+    const make_input = storage.ir.representation(make.input).resolved.structural.fields;
+    const make_value = storage.ir.fields.items[make_input.start + 1].ty;
+    try std.testing.expectEqual(make.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(make_value)].parameter));
+    const make_output = storage.ir.representation(make.output).resolved.structural.fields;
+    const make_result = storage.ir.fields.items[make_output.start].ty;
+    try std.testing.expectEqual(definition.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(make_result)].parameter));
+    const copy_output = storage.ir.representation(copy.output).resolved.structural.fields;
+    const copy_result = storage.ir.fields.items[copy_output.start].ty;
+    try std.testing.expectEqual(copy.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(copy_result)].parameter));
+    try @import("verify.zig").verifyModule(&graph);
+}

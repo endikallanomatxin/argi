@@ -325,7 +325,7 @@ pub const ContractDeclaration = struct {
     requires_functions: []const NodeIndex,
     domains: []const NodeIndex,
 };
-pub const ContractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex, safety_contract: ?NodeIndex = null };
+pub const ContractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex, generic_params: []const NodeIndex = &.{}, generic_params_struct: ?NodeIndex = null, safety_contract: ?NodeIndex = null };
 pub const GenericType = struct { base: NodeIndex, arguments: NodeIndex };
 pub const Type = union(enum) {
     name: struct { name_token: TokenIndex, qualifier_token: ?TokenIndex },
@@ -856,8 +856,17 @@ pub const FileSyntaxTree = struct {
 
     pub fn contractFunctionRequirement(tree: *const FileSyntaxTree, node: NodeIndex) ?ContractFunctionRequirement {
         if (tree.tag(node) != .contract_function_requirement) return null;
-        const extra = tree.functionDefinition(tree.data(node).token_and_node.node) orelse return null;
-        return .{ .name_token = tree.mainToken(node), .input = extra.input, .output = extra.output, .safety_contract = extra.safety_contract.unwrap() };
+        const value = tree.definitionValue(node) orelse return null;
+        const parameters = tree.parameterizedDefinition(value);
+        const extra = tree.functionDefinition(tree.definitionBody(value)) orelse return null;
+        return .{
+            .name_token = tree.mainToken(node),
+            .input = extra.input,
+            .output = extra.output,
+            .generic_params = if (parameters) |definition| definition.parameters else &.{},
+            .generic_params_struct = if (parameters) |definition| definition.parameters_struct else null,
+            .safety_contract = extra.safety_contract.unwrap(),
+        };
     }
 
     /// Read a name in a type-use context without changing the expression node.

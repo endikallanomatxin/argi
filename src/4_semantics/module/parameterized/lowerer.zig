@@ -329,10 +329,19 @@ pub const Context = struct {
                         }
                         for (self.parameters.items) |binding| if (std.mem.eql(u8, binding.name, self.graph.text(name)))
                             try self.contractError(requirement_node, "contract operations and associated elements require distinct names");
+                        const outer_parameters = self.parameters.items.len;
+                        defer self.parameters.shrinkRetainingCapacity(outer_parameters);
+                        const operation_parameters = try self.lowerParameters(requirement.generic_params, requirement.generic_params_struct);
+                        for (self.parameters.items[outer_parameters..], 0..) |operation_parameter, offset| {
+                            for (self.parameters.items[0 .. outer_parameters + offset]) |previous|
+                                if (std.mem.eql(u8, previous.name, operation_parameter.name))
+                                    try self.contractError(requirement_node, "operation parameters must have distinct names from contract parameters");
+                        }
                         const input = try self.lowerType(requirement.input, true);
                         const output = try self.lowerType(requirement.output, true);
                         const safety_contract = try self.lowerMethodSafetyContract(requirement, domains.items);
                         try self.graph.semantic.parameterized_storage.contract_requirements.append(self.allocator, .{
+                            .parameters = operation_parameters,
                             .source = .{ .file_index = self.sourceRef(requirement_node).file_index, .offset = self.tree.tokenLocation(requirement.name_token).offset },
                             .name = name,
                             .input = input,
