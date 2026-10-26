@@ -63,6 +63,61 @@ fn mib(value: usize) f64 {
     return @as(f64, @floatFromInt(value)) / (1024 * 1024);
 }
 
+// Diagnostic reachability only: inspect values held by live frames without
+// following storage references or treating dead IDs as reusable. Payload slices
+// can share backing, so these are visible cells, not reclaimable allocation bytes.
+fn reportBacking(session: *interactive.Interactive, commands: usize) !void {
+    const b = @import("5_codegen/bytecode/bytecode.zig");
+    const v = @import("5_codegen/bytecode/value.zig");
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const Key = struct { address: usize, length: usize, kind: enum { values, projections, virtual_ } };
+    var seen: std.AutoHashMapUnmanaged(Key, void) = .empty;
+    var pending: std.ArrayList(b.Value) = .empty;
+    var aggregate_cells: usize = 0;
+    var projection_cells: usize = 0;
+    var virtual_bytes: usize = 0;
+    for (session.runtime.context.storage.frames.items) |frame| {
+        if (!frame.alive) continue;
+        for (frame.values) |cell| if (cell) |value| try pending.append(a, value);
+        var partials = frame.partial_storage.valueIterator();
+        while (partials.next()) |partial| for (partial.values) |cell| if (cell) |value| try pending.append(a, value);
+    }
+    while (pending.pop()) |value| {
+        var elements: []const b.Value = &.{};
+        var path: []const v.Projection = &.{};
+        switch (value) {
+            .record => |fields| elements = fields,
+            .array => |items| elements = items,
+            .choice => |choice| if (choice.payload) |payload| {
+                elements = payload[0..1];
+            },
+            .reference => |reference| path = reference.path,
+            .virtual_ => |descriptor| {
+                const entry = try seen.getOrPut(a, .{ .address = @intFromPtr(descriptor), .length = 1, .kind = .virtual_ });
+                if (!entry.found_existing) {
+                    virtual_bytes += @sizeOf(v.Virtual);
+                    path = descriptor.receiver.path;
+                }
+            },
+            else => {},
+        }
+        if (elements.len != 0) {
+            const entry = try seen.getOrPut(a, .{ .address = @intFromPtr(elements.ptr), .length = elements.len, .kind = .values });
+            if (!entry.found_existing) {
+                aggregate_cells += elements.len;
+                try pending.appendSlice(a, elements);
+            }
+        }
+        if (path.len != 0) {
+            const entry = try seen.getOrPut(a, .{ .address = @intFromPtr(path.ptr), .length = path.len, .kind = .projections });
+            if (!entry.found_existing) projection_cells += path.len;
+        }
+    }
+    std.debug.print("# visible-backing,{d},{d},{d},{d}\n", .{ commands, aggregate_cells, projection_cells, virtual_bytes });
+}
+
 fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario, modules: Modules, commands: usize, total_ns: u64) !void {
     const stats = session.runtime.stats;
     const backend_ns = stats.lowering_ns + stats.verification_ns + stats.execution_ns;
@@ -127,6 +182,11 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
         mib(summary_arenas),                  stats.reused_functions,
     });
     std.debug.print(",{d},{d},{d},{d:.3}\n", .{ session.compiler.bodies_checked, session.compiler.bodies_reused, session.compiler.body_cache.entries.count(), mib(body_arenas) });
+    if (session.runtime.context.allocation_profile) |counts| {
+        std.debug.print("# transfers,{d},{d},{d},{d}\n", .{ commands, counts.call_input_cells, counts.nested_output_cells, counts.write_destination_cells });
+        std.debug.print("# backing,{d},{d},{d},{d},{d}\n", .{ commands, counts.aggregate_cells, counts.partial_cells, counts.projection_cells, counts.virtual_bytes });
+        if (session.runtime.context.state != .fresh) try reportBacking(session, commands);
+    }
     if (scenario == .branches and commands != 0) {
         const b = @import("5_codegen/bytecode/bytecode.zig");
         var program: ?*const b.Program = null;
@@ -207,6 +267,8 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
             try session.initPrepared(allocator, diagnostics.source_files, prepared, .{});
         } else try session.init(allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
         defer session.deinit();
+        var allocation_profile: @import("execution/vm.zig").AllocationProfile = .{};
+        session.runtime.context.allocation_profile = &allocation_profile;
         var unavailable: std.Io.Writer = .failing;
         var output: @import("execution/host_output.zig").Output = .{ .writer = &unavailable, .error_writer = &unavailable };
         const host_bindings = output.bindings();

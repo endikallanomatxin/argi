@@ -426,3 +426,103 @@ reference, ownership and cleanup cases. Changed Zig files and the new aggregate
 diagnostic fixture pass their official format checks. Logs:
 `.zig-cache/overnight-final-{internal,programs}.log` and
 `.zig-cache/retained-call-quota-internal.log`.
+
+### Scoped execution scratch and resizable bookkeeping
+
+The next investigation separated allocations by lifetime rather than introducing
+a collector or a second ownership model:
+
+| Data | Owner and recovery |
+|---|---|
+| Call input and nested-result envelopes | One reusable execution buffer; its live capacity is charged and released on exit |
+| Captured write destinations | Active frame; freed on return or trap |
+| Partial call cells and tables | Active frame; complete materialized values remain independently owned by the value arena |
+| Frame/region identity pools and lookup indexes | Context owner's allocator; old resized backing and teardown allocations can be reclaimed |
+| Public results, immutable aggregates, projections and virtual descriptors | Value arena; continue to survive until context reset |
+
+IDs and their meanings do not change when pool backing moves. Dead frame IDs
+remain dead; reusing buffers does not reuse identities or transfer cleanup flags.
+The VM reserves its frame-stack capacity before constructing a frame, so failure
+to append cannot strand separately allocated captures. Failure/trap paths retire
+all active frames without running additional language cleanup.
+
+An optional `AllocationProfile` observes payload requests and transfer traffic.
+The execution benchmark prints `# transfers` (commands, call-input cells,
+nested-result cells, write-destination entries), `# backing` (commands,
+aggregate cells, partial cells, projection cells, virtual descriptor bytes), and
+`# visible-backing` (commands, aggregate cells, projection cells, virtual bytes
+observed from live frame values). Traffic includes subsequently freed backing.
+The live-frame walk does not follow references, and its slice-based counts do
+not identify whole allocations or externally retained invocation results. These
+rows are diagnostics, not a proof that any specific buffer can be reclaimed.
+The observer's scratch is outside session allocation accounting and command
+execution timing.
+
+A Debug 100-resource run attributed 69,614 call-input cells, 14,410 nested-result
+cells and 6,804 write-destination entries. After scoping those allocations and
+moving resizable bookkeeping out of the value arena, arena capacity fell from
+44,564,726 to 6,802,606 bytes. Total tracked retained memory fell from 145.689 to
+115.840 MiB (peak 147.682 to 117.107 MiB); the reduction is real, rather than only
+moving allocations outside the arena counter. Compiled instructions, dead frame
+count, live acquisitions, acquired bytes and body reuse counters matched.
+
+The final diagnostic run requested 31,158 aggregate cells, 36,640 partial cells,
+10,109 projection cells and 17,952 virtual descriptor bytes. Live-frame payload
+inspection observed 5,719 aggregate cells, one projection cell and the same
+17,952 virtual bytes. This motivates a later investigation of unused immutable
+payloads, with explicit publication/escape rules rather than freeing them just
+because a frame returns.
+
+CLI VM execution now receives the command owner's allocator, and compile-time
+execution receives the evaluator's supplied allocator rather than its local
+lowering arena. Lowering/code metadata retain their own batch lifetime. Actual
+physical recycling follows the allocator supplied by the owner; an embedder
+that deliberately supplies an arena retains its usual arena behavior. There is
+no hidden global-heap fallback, preserving allocation-failure injection.
+
+Debug attribution logs:
+`.zig-cache/runtime-transfers-{before,after}-resources-100.csv`.
+
+Final ReleaseSafe runs used the same repository core, a 1,024 MiB tracked limit
+and the default VM quotas. The 100-resource milestone reproduces the Debug
+memory figures: 115.840 MiB retained and a 117.107 MiB peak, versus
+145.689/147.682 MiB before. One thousand resources now complete rather than
+stopping at the old 478-command quota boundary: 233.783 MiB retained,
+251.384 MiB peak, 1,000 live acquisitions and 40,000 acquired bytes. No quota was
+raised. The cumulative transfer counts are 696,014 input cells, 144,010 nested
+output cells and 68,004 write-destination entries.
+
+A 1,000-call control retains 16.273 MiB instead of 18.107 MiB. Its value arena
+falls from 2,212,396 to 1,780 bytes, while 2,001 dead frame identities remain dead
+and reuse counters match. One thousand binding commands retain 14.561 MiB;
+one thousand prelude rejections remain at 100.611 MiB and publish no bytecode.
+
+Short unprofiled A/B/B/A runs do not establish a general throughput gain:
+
+| Workload | Before samples ms | After samples ms | Mean VM execution before/after ms |
+|---|---:|---:|---:|
+| 1,000 minimal calls | 1,317.4 / 1,325.3 | 1,331.5 / 1,242.1 | 9.27 / 8.17 |
+| 100 prelude resources | 3,567.1 / 3,065.6 | 3,440.4 / 3,657.9 | 216.91 / 213.72 |
+
+Resource total means increased about 7% in this small series, with substantial
+frontend variation; VM execution means are close. Debug execution is slower
+with individually freed bookkeeping because its backing allocator performs
+additional checking. The demonstrated result is lower retained memory and a
+larger useful workload within the existing quota, not an across-the-board speed
+claim. The 1,000-resource run takes about 60.4 s, of which 52.3 s is frontend and
+publication and 1.91 s is VM execution; frontend scalability remains a separate
+measured follow-up.
+
+Validation after the final allocator routing: 272 focused Debug internal tests
+passed, including allocation-failure sweeps, retained results, partial records,
+virtual dispatch, reset and pool relocation. The complete ReleaseSafe program
+suite passed 2,362 cases with 11 optional skips, no failures and no leaks. This
+includes native/VM and compile-time cases. The new bounded call test performs
+128 calls from one outer invocation, allocating write-destination tables without
+retaining every transport envelope. It also checks that an earlier public result
+still survives another invocation. Scratch
+allocation failures leave no unpublished frame/capture backing behind.
+
+Logs: `.zig-cache/runtime-transfers-{before,after}-*-release.csv`,
+`.zig-cache/runtime-transfers-throughput-*.csv`, and
+`.zig-cache/runtime-transfers-final-{internal,programs}.log`.
