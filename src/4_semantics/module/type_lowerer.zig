@@ -21,6 +21,16 @@ pub fn isRuntimeVirtualType(tree: *const syn.FileSyntaxTree, source: []const u8,
         std.mem.eql(u8, tree.tokenTextFromSource(source, base.name.name_token), "Virtual");
 }
 
+/// Payload/value declarations define closed variants. Bare option references
+/// retain the compositional set representation used by error reasons.
+pub fn definesChoiceVariants(tree: *const syn.FileSyntaxTree, literal: syn.ChoiceTypeLiteral) bool {
+    for (literal.variants) |node| {
+        const variant = tree.choiceTypeVariant(node) orelse continue;
+        if (variant.payload_type != null or variant.value != null) return true;
+    }
+    return false;
+}
+
 pub const Context = struct {
     graph: *graph_mod.ModuleSemanticGraph,
     writer: *writer_mod.Writer,
@@ -154,7 +164,14 @@ pub const Context = struct {
     }
 
     fn lowerChoice(self: *Context, owner: syn.NodeIndex, literal: syn.ChoiceTypeLiteral) anyerror!entities.ModuleTypeId {
-        _ = owner;
+        if (definesChoiceVariants(self.tree, literal)) {
+            const definition = try self.writer.typeDefinitionAt(.{ .file_index = self.file_index, .offset = self.tree.location(owner).offset });
+            if (self.graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants == null) {
+                const variants = try self.lowerVariants(literal);
+                self.graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants = variants;
+            }
+            return self.internDerived(.{ .nominal = definition });
+        }
         return self.writer.addResolvedType(.{ .structural_choice = .{
             .variants = try self.lowerVariants(literal),
             .layout = .regular,

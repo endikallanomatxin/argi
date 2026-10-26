@@ -182,7 +182,8 @@ before adding implementation exceptions.
 
 ### Current aggregate migration boundary
 
-- Concrete and parameterized records retain their source definition identity.
+- Concrete and parameterized records and closed choices with payloads retain
+  their source definition identity.
   Dependent instances include captured compile-time arguments; repeated lowering
   reuses identities. Diagnostic source remapping does not affect identity.
 - Definition completion is journaled. Speculative type recipes preserve origin,
@@ -200,7 +201,7 @@ before adding implementation exceptions.
   A native/VM fixture covers named signatures, defaults and calls through #run.
 
 Still pending: deferred/imported signatures, inference through composed signature families,
-nominal choices versus structural option sets, general contextual aggregate
+uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
 Broad validation still exposes explicit argument-type identity and stale

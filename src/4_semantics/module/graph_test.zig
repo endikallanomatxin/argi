@@ -117,8 +117,8 @@ test "parameterized pools retain immediate children across recursive lowering" {
     const global_inner = relocation.graph.generic_arguments.items[global_generic.arguments.start].value.type;
     const global_inner_generic = relocation.graph.types.items[@intFromEnum(global_inner)].generic;
     try std.testing.expectEqual(int_type, relocation.graph.generic_arguments.items[global_inner_generic.arguments.start].value.type);
-    const global_choice = relocation.graph.types.items[@intFromEnum(relocation.graph.fields.items[global_fields.start + 2].ty)].structural_choice;
-    try std.testing.expectEqualStrings("outer", relocation.graph.text(relocation.graph.variants.items[global_choice.variants.start].name));
+    const global_choice = @import("../global/types.zig").variants(&relocation.graph, relocation.graph.fields.items[global_fields.start + 2].ty).?;
+    try std.testing.expectEqualStrings("outer", relocation.graph.text(relocation.graph.variants.items[global_choice.start].name));
 }
 
 test "parameterized bodies own call metadata and binding ranges during lowering" {
@@ -356,7 +356,8 @@ test "module callable interfaces preserve anonymous choice types" {
 
     const interface = graph.functions.items[0];
     const input = graph.semantic.fields.items[interface.input.start];
-    const shape = graph.semantic.types.items[@intFromEnum(input.ty)].resolved.structural_choice.variants;
+    const definition = graph.semantic.types.items[@intFromEnum(input.ty)].resolved.nominal;
+    const shape = graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants.?;
     try std.testing.expectEqual(@as(u32, 2), shape.len);
     const some = graph.semantic.variants.items[shape.start];
     try std.testing.expectEqualStrings("some", graph.text(some.name));
@@ -1335,13 +1336,15 @@ test "canonical choice construction keeps siblings contiguous across nested payl
     const named = graph.semantic.type_definitions.items[@intFromEnum(graph.definitionForDeclaration(@enumFromInt(0)).?)].choice_variants.?;
     try std.testing.expectEqualStrings("first", graph.text(graph.semantic.variants.items[named.start].name));
     try std.testing.expectEqualStrings("second", graph.text(graph.semantic.variants.items[named.start + 1].name));
-    const nested = graph.semantic.types.items[@intFromEnum(graph.semantic.variants.items[named.start].payload_type.?)].resolved.structural_choice.variants;
+    const nested_definition = graph.semantic.types.items[@intFromEnum(graph.semantic.variants.items[named.start].payload_type.?)].resolved.nominal;
+    const nested = graph.semantic.type_definitions.items[@intFromEnum(nested_definition)].choice_variants.?;
     try std.testing.expectEqualStrings("inner", graph.text(graph.semantic.variants.items[nested.start].name));
     try std.testing.expectEqualStrings("empty", graph.text(graph.semantic.variants.items[nested.start + 1].name));
     try std.testing.expect(nested.start + nested.len <= named.start);
     const function = graph.functions.items[0];
     const input = graph.semantic.fields.items[function.input.start].ty;
-    const anonymous = graph.semantic.types.items[@intFromEnum(input)].resolved.structural_choice.variants;
+    const anonymous_definition = graph.semantic.types.items[@intFromEnum(input)].resolved.nominal;
+    const anonymous = graph.semantic.type_definitions.items[@intFromEnum(anonymous_definition)].choice_variants.?;
     try std.testing.expectEqualStrings("left", graph.text(graph.semantic.variants.items[anonymous.start].name));
     try std.testing.expectEqualStrings("right", graph.text(graph.semantic.variants.items[anonymous.start + 1].name));
 }
@@ -1392,4 +1395,22 @@ test "named function signatures retain ordinary nominal types and their defaults
     const default_node = graph.semantic.fields.items[args.start].default_value.?;
     try std.testing.expectEqual(@as(i128, 11), graph.semantic.nodes.items[@intFromEnum(default_node)].resolved.content.int_literal);
     try std.testing.expect(function.body != null);
+}
+
+test "payload choice definitions are nominal while option references compose sets" {
+    const allocator = std.testing.allocator;
+    const source = "Holder := (.first: (..item Int32, ..none), .second: (..item Int32, ..none), .reasons: (..bad, ..missing))\n..bad\n..missing\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try buildInterfaces(allocator, "choice_identity", &.{.{ .path = "choice_identity/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+    const holder = graph.definitionForDeclaration(@enumFromInt(0)).?;
+    const fields = graph.semantic.type_definitions.items[@intFromEnum(holder)].struct_fields.?;
+    const first = graph.semantic.types.items[@intFromEnum(graph.semantic.fields.items[fields.start].ty)].resolved.nominal;
+    const second = graph.semantic.types.items[@intFromEnum(graph.semantic.fields.items[fields.start + 1].ty)].resolved.nominal;
+    try std.testing.expect(first != second);
+    try std.testing.expectEqual(null, graph.semantic.type_definitions.items[@intFromEnum(first)].declaration);
+    const reasons = graph.semantic.types.items[@intFromEnum(graph.semantic.fields.items[fields.start + 2].ty)].resolved.structural_choice.variants;
+    for (graph.semantic.variants.items[reasons.start..][0..reasons.len]) |variant|
+        try std.testing.expect(variant.option_decl != null);
 }

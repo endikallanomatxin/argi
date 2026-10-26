@@ -859,7 +859,10 @@ pub const Context = struct {
                 .source = self.sourceRef(node),
             } }),
             .struct_literal => |literal| self.lowerStructDefinition(node, literal, allow_self),
-            .choice_literal => |literal| self.lowerChoiceType(literal, allow_self),
+            .choice_literal => |literal| choice: {
+                const body = try self.lowerChoiceType(literal, allow_self);
+                break :choice if (type_lowerer.definesChoiceVariants(self.tree, literal)) self.lowerNominalDefinition(node, body) else body;
+            },
         };
     }
 
@@ -980,8 +983,12 @@ pub const Context = struct {
     }
 
     fn lowerStructDefinition(self: *Context, node: syn.NodeIndex, literal: syn.StructTypeLiteral, allow_self: bool) !ir.ParameterizedTypeId {
-        const origin = try self.writer.typeDefinitionAt(.{ .file_index = self.file_index, .offset = self.tree.location(node).offset });
         const body = try self.lowerStructType(literal, allow_self);
+        return self.lowerNominalDefinition(node, body);
+    }
+
+    fn lowerNominalDefinition(self: *Context, node: syn.NodeIndex, body: ir.ParameterizedTypeId) !ir.ParameterizedTypeId {
+        const origin = try self.writer.typeDefinitionAt(.{ .file_index = self.file_index, .offset = self.tree.location(node).offset });
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         // A compile-time entry inherits an ambient environment, not new own

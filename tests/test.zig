@@ -15661,3 +15661,10 @@ test "feature_tests/types/304_named_nominal_signatures" {
 test "feature_tests/types/305X_named_signature_conflicting_types" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/305X_named_signature_conflicting_types", "conflicting inferred generic parameters", "failed without a diagnostic");
 }
+
+test "feature_tests/types/306_nested_nominal_choices" {
+    const path = "tests/feature_tests/types/306_nested_nominal_choices";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
