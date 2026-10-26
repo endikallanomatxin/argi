@@ -339,6 +339,13 @@ before adding implementation exceptions.
   patterns alongside bound filtering and genuine identity ambiguities. Universal
   compatibility of generic definitions remains separate from per-instance checks.
 
+- Nominal specialization lookup shares the existing generic identity index,
+  distinguishing nominal-definition and family origins in its keys. Validated
+  hits avoid the definition-pool scan; semantic equality remains the fallback for
+  recursively equivalent arguments and spelling differences. Existing cache
+  checkpoints cover rollback, with tests for repeated hits, ID reuse and wrong
+  entries. This reduces repeated lookup work without another persistent cache.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, explicit unqualified operation specialization, remaining generic-call inference parity,

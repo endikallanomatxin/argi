@@ -16,6 +16,8 @@ pub const Stats = struct {
     const tag_count = @typeInfo(GlobalTypeTag).@"enum".fields.len;
 
     type_instances: u32 = 0,
+    definition_lookup_candidates: u64 = 0,
+    definition_lookup_hits: u64 = 0,
     type_holes: u32 = 0,
     type_intern_calls: u64 = 0,
     type_intern_candidates: u64 = 0,
@@ -38,7 +40,8 @@ pub const Resolver = struct {
         child: global_sg.GlobalTypeId,
         mutability: primitives.PointerMutability,
     };
-    const GenericKey = struct { base: global_sg.GlobalFamilyDefinitionId, arity: u32, values: u64 };
+    const GenericOrigin = union(enum) { family: global_sg.GlobalFamilyDefinitionId, nominal: global_sg.GlobalTypeDefinitionId };
+    const GenericKey = struct { origin: GenericOrigin, arity: u32, values: u64 };
 
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -649,10 +652,33 @@ pub const Resolver = struct {
             const definition = self.graph.typeDefinition(origin);
             if (definition.struct_fields != null or definition.choice_variants != null)
                 return try self.internType(.{ .nominal = origin });
-        } else for (self.graph.type_definitions.items, 0..) |definition, raw| {
-            const instance = definition.specialization orelse continue;
-            if (instance.origin == origin and global_types.genericArgumentsEqual(self.graph, instance.arguments, arguments))
-                return try self.internType(.{ .nominal = @enumFromInt(@as(u32, @intCast(raw))) });
+        } else {
+            const key = self.applicationKey(.{ .nominal = origin }, arguments);
+            if (self.generic_types.get(key)) |candidate| {
+                const raw = @intFromEnum(candidate);
+                if (raw < self.graph.types.items.len and !self.graph.isTypeUnresolved(candidate)) {
+                    const value = self.graph.semanticType(candidate);
+                    if (value == .nominal and @intFromEnum(value.nominal) < self.graph.type_definitions.items.len) {
+                        if (self.graph.typeDefinition(value.nominal).specialization) |instance| {
+                            if (instance.origin == origin and global_types.genericArgumentsEqual(self.graph, instance.arguments, arguments)) {
+                                self.stats.definition_lookup_hits += 1;
+                                return candidate;
+                            }
+                        }
+                    }
+                }
+            }
+            // Recursive equality and positional spellings can have different
+            // fast keys. Keep semantic matching authoritative on a miss.
+            for (self.graph.type_definitions.items, 0..) |definition, raw| {
+                self.stats.definition_lookup_candidates += 1;
+                const instance = definition.specialization orelse continue;
+                if (instance.origin == origin and global_types.genericArgumentsEqual(self.graph, instance.arguments, arguments)) {
+                    const id = try self.internType(.{ .nominal = @enumFromInt(@as(u32, @intCast(raw))) });
+                    self.generic_types.put(self.allocator, key, id) catch {};
+                    return id;
+                }
+            }
         }
         return null;
     }
@@ -1121,8 +1147,12 @@ pub const Resolver = struct {
     }
 
     fn genericKey(self: *const Resolver, generic: anytype) GenericKey {
+        return self.applicationKey(.{ .family = generic.base }, generic.arguments);
+    }
+
+    fn applicationKey(self: *const Resolver, origin: GenericOrigin, arguments: primitives.Range(global_sg.GlobalGenericArgId)) GenericKey {
         var hash = std.hash.Wyhash.init(0);
-        for (self.graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
+        for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
             // Matching accepts positional spelling as a wildcard. Index each
             // spelling separately so a later named instance cannot change the
             // first match previously found for a positional argument list.
@@ -1137,13 +1167,16 @@ pub const Resolver = struct {
             }
         }
         // Recursively equivalent types still use the original search on a miss.
-        return .{ .base = generic.base, .arity = generic.arguments.len, .values = hash.final() };
+        return .{ .origin = origin, .arity = arguments.len, .values = hash.final() };
     }
 
     fn cacheType(self: *Resolver, value: global_sg.GlobalType, id: global_sg.GlobalTypeId) void {
         switch (value) {
             .pointer => |pointer| self.cachePointer(pointer, id),
             .generic => |generic| self.generic_types.put(self.allocator, self.genericKey(generic), id) catch {},
+            .nominal => |definition| if (self.graph.typeDefinition(definition).specialization) |instance| {
+                self.generic_types.put(self.allocator, self.applicationKey(.{ .nominal = instance.origin }, instance.arguments), id) catch {};
+            },
             else => {},
         }
     }
@@ -1448,4 +1481,47 @@ test "definition captures bind the lexical prefix before explicit specialization
     try graph.generic_arguments.append(a, .{ .name = try graph.addString(a, "Captured"), .value = .{ .type = @enumFromInt(1) } });
     try std.testing.expectError(error.UnknownGenericArgument, resolver.bindGlobalArgumentsPartial(0, remaining, .{ .start = @intCast(graph.generic_arguments.items.len - 1), .len = 1 }, &bindings));
     try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(0)), bindings.types[0]);
+}
+
+test "nominal specializations share the generic identity index and survive speculative ID reuse" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .builtin = .Int32 }, .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
+    try graph.type_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.generic_arguments.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } },
+        .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } },
+    });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    const arguments = primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 1 };
+    const retained = try resolver.publishDefinitionInstance(@enumFromInt(0), arguments, @enumFromInt(2));
+    const scanned = resolver.stats.definition_lookup_candidates;
+    for (0..100) |_| try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), arguments)).?);
+    try std.testing.expectEqual(scanned, resolver.stats.definition_lookup_candidates);
+    try std.testing.expectEqual(@as(u64, 100), resolver.stats.definition_lookup_hits);
+    resolver.commitCaches();
+    const saved = resolver.checkpointCaches();
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    const other_arguments = primitives.Range(global_sg.GlobalGenericArgId){ .start = 1, .len = 1 };
+    const rejected = try resolver.publishDefinitionInstance(@enumFromInt(0), other_arguments, @enumFromInt(2));
+    try std.testing.expect(rejected != retained);
+    transaction.rollback();
+    resolver.rollbackCaches(saved);
+    try graph.types.append(a, .{ .builtin = .UInt8 });
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, null), try resolver.findDefinitionInstance(@enumFromInt(0), other_arguments));
+    try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), arguments)).?);
+    const duplicate: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(a, .{ .builtin = .Bool });
+    const equivalent_arguments = primitives.Range(global_sg.GlobalGenericArgId){ .start = @intCast(graph.generic_arguments.items.len), .len = 1 };
+    try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = duplicate } });
+    try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), equivalent_arguments)).?);
+    const equivalent_scanned = resolver.stats.definition_lookup_candidates;
+    try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), equivalent_arguments)).?);
+    try std.testing.expectEqual(equivalent_scanned, resolver.stats.definition_lookup_candidates);
+    // A wrong/colliding cache entry cannot become semantic evidence.
+    try resolver.generic_types.put(a, resolver.applicationKey(.{ .nominal = @enumFromInt(0) }, arguments), @enumFromInt(0));
+    try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), arguments)).?);
 }
