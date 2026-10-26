@@ -723,9 +723,6 @@ pub const Resolver = struct {
         const family = try self.generics.resolveParameterizedFamily(module_index, application.base);
         const located = self.generics.findTypeParameterized(family) orelse return false;
         const module = &self.modules[located.module_index];
-        const body = module.semantic.parameterized_storage.ir.representation(located.parameterized.body);
-        if (body != .resolved or body.resolved != .structural)
-            return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset);
         const parameters = located.parameterized.parameters;
         var local = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
         defer local.deinit(self.allocator);

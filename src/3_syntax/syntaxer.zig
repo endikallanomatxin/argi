@@ -2530,7 +2530,9 @@ pub const Syntaxer = struct {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else if (std.mem.eql(u8, type_name, "CStruct")) .c_struct_declaration else .type_declaration;
-                    const lit_node = if (tag == .type_declaration and !self.tokenIs(.open_parenthesis))
+                    const lit_node = if (tag == .type_declaration and self.angleOpen())
+                        try self.parsePrimary()
+                    else if (tag == .type_declaration and !self.tokenIs(.open_parenthesis))
                         (try self.parseType()) orelse return SyntaxerError.ExpectedType
                     else if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
                         try self.parseChoiceTypeLiteral(tag == .c_enum_declaration)

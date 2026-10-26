@@ -14,6 +14,12 @@ identity := <.T: Type> GenericArgs<T> -> GenericResult<T> {
     result = value
 }
 
+ForwardArgs: Type = <.T: Type> GenericArgs<T>
+
+forward_identity := <.T: Type> ForwardArgs<T> -> GenericResult<T> {
+    result = value
+}
+
 Provider := (.flag: Bool)
 
 ReachedArgs := <.P: Type> (.provider: &P = reach provider)
@@ -23,7 +29,7 @@ read_provider := <.P: Type> ReachedArgs<P> -> Result {
 }
 
 computed ::= #run () -> (.result: Bool) {
-    result = identity(.value = read().result).result
+    result = forward_identity(.value = identity(.value = read().result).result).result
 }
 
 computed_provider ::= #run () -> (.result: Bool) {
@@ -42,4 +48,5 @@ main() -> () := {
     if read(.value = false).result { abort }
     if identity<Bool>(.value = true).result {} else { abort }
     if identity(.value = true).result {} else { abort }
+    if forward_identity(.value = true).result {} else { abort }
 }

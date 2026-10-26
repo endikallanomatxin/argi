@@ -206,7 +206,11 @@ before adding implementation exceptions.
   path. Non-record signatures receive semantic diagnostics. Integration coverage
   exercises native execution, VM and `#run`.
 
-Still pending: inference through composed signature families,
+- Input inference traverses composed signature families and carries inferred
+  bindings back through each lexical parameter list. Explicit type declarations
+  accept parameterized definition expressions as their value.
+
+Still pending: transparent identity for parameterized type aliases,
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.

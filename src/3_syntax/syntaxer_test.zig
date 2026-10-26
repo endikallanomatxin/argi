@@ -125,6 +125,14 @@ test "compact syntaxing permits ordinary named input and output types on functio
     }
 }
 
+test "compact syntaxing permits parameterized values in explicit type declarations" {
+    var tree = try parseTestSource("families.rg", "Forward: Type = <.T: Type> Original<T>");
+    defer tree.deinit(std.testing.allocator);
+    const declaration = tree.typeDeclaration(tree.roots[0]).?;
+    try std.testing.expectEqual(@as(usize, 1), declaration.generic_params.len);
+    try std.testing.expect(tree.typeReference(declaration.value) != null);
+}
+
 test "compact syntaxing reports missing angle delimiters and positional separators" {
     try std.testing.expectError(error.ExpectedRightAngle, parseTestSource("missing.rg", "value: Box<Int32 = zeroed()"));
     try std.testing.expectError(error.ExpectedComma, parseTestSource("separator.rg", "value: Pair<Int32 Int64>"));
