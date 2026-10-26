@@ -15819,3 +15819,11 @@ test "feature_tests/types/332_contextual_text_literal" {
 test "feature_tests/types/333X_text_value_nominal_identity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/333X_text_value_nominal_identity", "no function named 'accept_c_text' accepts arguments", "without a diagnostic");
 }
+
+
+test "feature_tests/types/334_associated_argument_family_inference" {
+    const path = "tests/feature_tests/types/334_associated_argument_family_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
