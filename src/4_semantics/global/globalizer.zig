@@ -14,6 +14,7 @@ pub const Offsets = struct {
     declaration_base: u32,
     type_base: u32,
     type_definition_base: u32 = 0,
+    family_definition_base: u32 = 0,
     function_base: u32,
     field_base: u32,
     variant_base: u32,
@@ -144,6 +145,7 @@ fn appendModule(
         .declaration_base = try baseFor(result.declarations.items.len, module.declarations.items.len),
         .type_base = try baseFor(result.types.items.len, module_views.typeCount(module)),
         .type_definition_base = try baseFor(result.type_definitions.items.len, module.semantic.type_definitions.items.len),
+        .family_definition_base = try baseFor(result.family_definitions.items.len, module.semantic.family_definitions.items.len),
         .function_base = try baseFor(result.functions.items.len, module.functions.items.len),
         .field_base = try baseFor(result.fields.items.len, module_views.fieldCount(module)),
         .variant_base = try baseFor(result.variants.items.len, module_views.variantCount(module)),
@@ -183,6 +185,7 @@ fn appendModule(
 
     try appendDeclarations(allocator, result, module, o);
     try appendTypeDefinitions(allocator, result, module, o);
+    try appendFamilyDefinitions(allocator, result, module, o);
     try appendFields(allocator, result, module, o);
     try appendVariants(allocator, result, module, o);
     try appendGenericArguments(allocator, result, module, o);
@@ -211,10 +214,20 @@ fn appendDeclarations(allocator: std.mem.Allocator, result: *global_sg.GlobalSem
             .source = globalSource(o, value.source),
             .type_id = if (value.type_id) |id| globalType(o, id) else null,
             .function_id = if (value.function_id) |id| globalFunction(o, id) else null,
-            .generic_parameter_count = value.generic_parameter_count,
-            .contract_domain_count = value.contract_domain_count,
+            .family_definition = if (value.family_definition) |id| globalFamilyDefinition(o, id) else null,
         });
     }
+}
+
+fn appendFamilyDefinitions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
+    for (module.semantic.family_definitions.items) |value| try result.family_definitions.append(allocator, .{
+        .source = globalSource(o, value.source),
+        .declaration = if (value.declaration) |id| globalDecl(o, id) else null,
+        .kind = value.kind,
+        .parameter_count = value.parameter_count,
+        .domain_count = value.domain_count,
+        .template_index = value.template_index,
+    });
 }
 
 fn appendTypeDefinitions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
@@ -303,7 +316,7 @@ fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.Globa
     return switch (value) {
         .builtin => |item| .{ .builtin = item },
         .nominal => |id| .{ .nominal = globalTypeDefinition(o, id) },
-        .definition => |id| .{ .definition = globalDecl(o, id) },
+        .definition => |id| .{ .definition = globalFamilyDefinition(o, id) },
         .pointer => |item| .{ .pointer = .{ .child = globalType(o, item.child), .mutability = item.mutability } },
         .array => |item| .{ .array = .{ .length = item.length, .element = globalType(o, item.element) } },
         .nullable => |id| .{ .nullable = globalType(o, id) },
@@ -322,7 +335,7 @@ fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.Globa
             .layout = item.layout,
         } },
         .generic => |item| .{ .generic = .{
-            .base = globalDecl(o, item.base),
+            .base = globalFamilyDefinition(o, item.base),
             .arguments = relocateEntityRange(global_sg.GlobalGenericArgId, o.generic_argument_base, item.arguments),
         } },
         .virtual => |contract_type| .{ .virtual = globalType(o, contract_type) },
@@ -440,7 +453,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     for (storage.virtualizes.items) |value| try result.virtualizes.append(allocator, .{
         .value = globalNode(o, value.value),
         .concrete_type = globalType(o, value.concrete_type),
-        .contract_decl = globalDecl(o, value.contract_decl),
+        .contract_decl = globalFamilyDefinition(o, value.contract_decl),
         .virtual_type = globalType(o, value.virtual_type),
         .domains = value.domains,
         .methods = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.methods),
@@ -653,7 +666,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value), .cleanup_target = if (value.cleanup_target) |id| globalNode(o, id) else null } },
 
             .type_literal => |id| .{ .type_literal = globalType(o, id) },
-            .definition_literal => |id| .{ .definition_literal = globalDecl(o, id) },
+            .definition_literal => |id| .{ .definition_literal = globalFamilyDefinition(o, id) },
             .explicit_cast => |value| .{ .explicit_cast = .{ .value = globalNode(o, value.value), .target_type = globalType(o, value.target_type) } },
         },
     };
@@ -673,6 +686,10 @@ fn relocateEntityRange(comptime GlobalId: type, base: u32, range: anytype) primi
 }
 fn relocatePoolRange(comptime GlobalId: type, pool_base: u32, range: anytype) primitives.Range(GlobalId) {
     return .{ .start = pool_base + range.start, .len = range.len };
+}
+
+pub fn globalFamilyDefinition(o: Offsets, id: module_entities.ModuleFamilyDefinitionId) global_sg.GlobalFamilyDefinitionId {
+    return @enumFromInt(o.family_definition_base + @intFromEnum(id));
 }
 
 pub fn globalTypeDefinition(o: Offsets, id: module_entities.ModuleTypeDefinitionId) global_sg.GlobalTypeDefinitionId {

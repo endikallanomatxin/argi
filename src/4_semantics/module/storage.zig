@@ -20,6 +20,7 @@ pub const Storage = struct {
     generic_arguments: std.ArrayList(entities.GenericArgument) = .empty,
     types: std.ArrayList(entities.ModuleType) = .empty,
     type_definitions: std.ArrayList(entities.TypeDefinition) = .empty,
+    family_definitions: std.ArrayList(entities.FamilyDefinition) = .empty,
 
     generic_instances: std.ArrayList(type_shapes.GenericInstance(entities.Ids)) = .empty,
 
@@ -72,6 +73,7 @@ pub const Storage = struct {
         self.generic_arguments.deinit(allocator);
         self.types.deinit(allocator);
         self.type_definitions.deinit(allocator);
+        self.family_definitions.deinit(allocator);
         self.generic_instances.deinit(allocator);
         self.bindings.deinit(allocator);
         self.unresolved_binding_types.deinit(allocator);
@@ -118,6 +120,7 @@ pub const Storage = struct {
             self.generic_arguments.items.len * @sizeOf(entities.GenericArgument) +
             self.types.items.len * @sizeOf(entities.ModuleType) +
             self.type_definitions.items.len * @sizeOf(entities.TypeDefinition) +
+            self.family_definitions.items.len * @sizeOf(entities.FamilyDefinition) +
             self.generic_instances.items.len * @sizeOf(type_shapes.GenericInstance(entities.Ids)) +
             self.bindings.items.len * @sizeOf(entities.Binding) +
             self.unresolved_binding_types.items.len * @sizeOf(entities.ModuleBindingId) +

@@ -67,9 +67,9 @@ pub fn isErrable(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     return switch (semantic) {
         .inferred_choice => |choice| choice.kind == .errable,
         .generic => |generic| blk: {
-            const owner = graph.moduleForDeclaration(generic.base) orelse break :blk false;
+            const owner = graph.moduleForFamilyDefinition(generic.base) orelse break :blk false;
             break :blk graph.modules.items[@intFromEnum(owner)].is_bundled_core and
-                std.mem.eql(u8, graph.text(graph.declaration(generic.base).name), "Errable");
+                std.mem.eql(u8, graph.familyDefinitionName(generic.base), "Errable");
         },
         else => false,
     };
@@ -236,7 +236,7 @@ pub fn nullableChild(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.
 /// never the value whose lifetime that destructor closes.
 pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {
     if (graph.semanticType(ty) == .pointer) return null;
-    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
+    const contract = standard_contracts.standardDefinition(graph, "Deinit") orelse return null;
     var operations = contract_evidence.materializedOperations(graph, contract);
     var found: ?graph_mod.GlobalFunctionId = null;
     while (operations.next()) |selected| {
@@ -578,8 +578,9 @@ test "cleanup queries require selected Deinit evidence" {
         .files = .{ .start = 0, .len = 0 },
         .declarations = .{ .start = 0, .len = 2 },
     });
+    try graph.family_definitions.append(allocator, .{ .source = source, .declaration = @enumFromInt(0), .kind = .contract, .parameter_count = 1 });
     try graph.declarations.appendSlice(allocator, &.{
-        .{ .kind = .contract_type, .name = name, .source = source },
+        .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) },
         .{ .kind = .function, .name = name, .source = source },
     });
     try graph.types.appendSlice(allocator, &.{
@@ -598,7 +599,7 @@ test "cleanup queries require selected Deinit evidence" {
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
     try graph.function_refs.append(allocator, @enumFromInt(0));
     try graph.contract_operation_bindings.append(allocator, .{
-        .contract_declaration = @enumFromInt(0),
+        .contract_definition = @enumFromInt(0),
         .requirement_index = 0,
         .requirement_source = source,
         .implementation_source = source,
@@ -664,7 +665,7 @@ pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: gr
 /// while retaining the caller's lexical context for reached arguments.
 pub fn nominalTypeOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
-    if (semantic == .generic) return graph.moduleForDeclaration(semantic.generic.base);
+    if (semantic == .generic) return graph.moduleForFamilyDefinition(semantic.generic.base);
     if (semantic != .nominal) return null;
     return graph.moduleForTypeDefinition(semantic.nominal);
 }
@@ -694,7 +695,7 @@ pub fn isStringView(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
 /// preserves the value, including its precise classification and identity.
 pub const EntityValue = union(enum) {
     type: graph_mod.GlobalTypeId,
-    definition: graph_mod.GlobalDeclId,
+    definition: graph_mod.GlobalFamilyDefinitionId,
 };
 
 pub fn entityValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?EntityValue {
@@ -719,7 +720,7 @@ pub fn typeValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod
     return if (value == .type) value.type else null;
 }
 
-pub fn definitionClass(allocator: std.mem.Allocator, graph: *graph_mod.GlobalSemanticGraph, definition: graph_mod.GlobalDeclId) !graph_mod.GlobalTypeId {
+pub fn definitionClass(allocator: std.mem.Allocator, graph: *graph_mod.GlobalSemanticGraph, definition: graph_mod.GlobalFamilyDefinitionId) !graph_mod.GlobalTypeId {
     for (graph.types.items, 0..) |ty, raw| {
         if (ty == .definition and ty.definition == definition) return @enumFromInt(@as(u32, @intCast(raw)));
     }
@@ -730,12 +731,12 @@ pub fn definitionClass(allocator: std.mem.Allocator, graph: *graph_mod.GlobalSem
 
 /// Definition values are distinct from concrete types. Aliases preserve the
 /// producer identity and never allocate another template or specialization.
-pub fn definitionValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalDeclId {
+pub fn definitionValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalFamilyDefinitionId {
     const value = entityValue(graph, initial) orelse return null;
     return if (value == .definition) value.definition else null;
 }
 
-pub fn staticDefinitionBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.GlobalDeclId {
+pub fn staticDefinitionBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.GlobalFamilyDefinitionId {
     const binding = graph.binding(id);
     if (binding.mutability != .constant or binding.deferred_initialization) return null;
     const semantic = graph.resolvedSemanticType(binding.ty) orelse return null;
@@ -821,9 +822,9 @@ test "definition values preserve classification and aliases without runtime layo
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
     const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
-    const declaration: graph_mod.GlobalDeclId = @enumFromInt(0);
+    const declaration: graph_mod.GlobalFamilyDefinitionId = @enumFromInt(0);
     const name = try graph.addString(a, "family");
-    try graph.declarations.append(a, .{ .kind = .type, .name = name, .source = source, .generic_parameter_count = 1 });
+    try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 1 });
     const classification = try definitionClass(a, &graph, declaration);
     try std.testing.expectEqual(classification, try definitionClass(a, &graph, declaration));
     try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .definition_literal = declaration } });
@@ -832,7 +833,7 @@ test "definition values preserve classification and aliases without runtime layo
         try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .binding_use = @enumFromInt(@as(u32, @intCast(raw))) } });
     }
     const last: graph_mod.GlobalBindingId = @enumFromInt(127);
-    try std.testing.expectEqual(@as(?graph_mod.GlobalDeclId, declaration), staticDefinitionBinding(&graph, last));
+    try std.testing.expectEqual(@as(?graph_mod.GlobalFamilyDefinitionId, declaration), staticDefinitionBinding(&graph, last));
     try std.testing.expectEqual(null, staticTypeBinding(&graph, last));
     try std.testing.expect(isStaticBinding(&graph, last));
     try std.testing.expectError(error.TypeHasNoRuntimeLayout, layoutOf(&graph, classification));
@@ -865,4 +866,27 @@ test "nominal identity survives binding aliases pool growth and rejected definit
     try graph.types.append(a, .{ .nominal = @enumFromInt(0) });
     try std.testing.expect(equal(&graph, @enumFromInt(1), @enumFromInt(2)));
     try std.testing.expectEqual(Layout{ .size = 4, .alignment = 4 }, try layoutOf(&graph, @enumFromInt(2)));
+}
+
+test "family identity survives aliases pool growth and rejected definitions" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const family: graph_mod.GlobalFamilyDefinitionId = @enumFromInt(0);
+    try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 1 });
+    const classification = try definitionClass(a, &graph, family);
+    const retained = graph.checkpoint();
+    const name = try graph.addString(a, "Alias");
+    for (0..128) |_| {
+        try graph.declarations.append(a, .{ .kind = .binding, .name = name, .source = source });
+        try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 1 });
+    }
+    const other = try definitionClass(a, &graph, @enumFromInt(128));
+    try std.testing.expect(!equal(&graph, classification, other));
+    try std.testing.expectEqual(classification, try definitionClass(a, &graph, family));
+    graph.rollback(a, retained);
+    try std.testing.expectEqual(@as(usize, 1), graph.family_definitions.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.declarations.items.len);
+    try std.testing.expectEqual(classification, try definitionClass(a, &graph, family));
 }

@@ -5,7 +5,7 @@ const primitives = @import("../primitives/schema.zig");
 
 /// Stable operation identity, independent of specialization and body aliases.
 pub const Operation = struct {
-    contract: graph_mod.GlobalDeclId,
+    contract: graph_mod.GlobalFamilyDefinitionId,
     index: u32,
 };
 
@@ -41,13 +41,13 @@ pub fn operationInConformance(graph: *const graph_mod.GlobalSemanticGraph, confo
     };
 }
 
-pub fn contractDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
+pub fn contractDefinition(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFamilyDefinitionId {
     const declaration = switch (graph.semanticType(ty)) {
         .definition => |declaration| declaration,
         .generic => |identity| identity.base,
         else => return null,
     };
-    return if (graph.declaration(declaration).kind == .contract_type) declaration else null;
+    return if (graph.familyDefinition(declaration).kind == .contract) declaration else null;
 }
 
 pub fn virtualContractType(graph: *const graph_mod.GlobalSemanticGraph, call: graph_mod.VirtualCall) ?graph_mod.GlobalTypeId {
@@ -58,7 +58,7 @@ pub fn virtualContractType(graph: *const graph_mod.GlobalSemanticGraph, call: gr
     };
     const handle = graph.semanticType(referent);
     if (handle == .virtual) return handle.virtual;
-    if (contractDeclaration(graph, referent) != null) return referent;
+    if (contractDefinition(graph, referent) != null) return referent;
     // The fixed erased signature remains authoritative if the handle's
     // expression has been adapted during call materialization.
     const fields = @import("types.zig").fields(graph, call.input_type) orelse return null;
@@ -68,12 +68,12 @@ pub fn virtualContractType(graph: *const graph_mod.GlobalSemanticGraph, call: gr
         .pointer => |pointer| pointer.child,
         else => receiver,
     };
-    return if (contractDeclaration(graph, child) != null) child else null;
+    return if (contractDefinition(graph, child) != null) child else null;
 }
 
 pub fn virtualOperation(graph: *const graph_mod.GlobalSemanticGraph, call: graph_mod.VirtualCall) ?Operation {
     const ty = virtualContractType(graph, call) orelse return null;
-    const contract = contractDeclaration(graph, ty) orelse return null;
+    const contract = contractDefinition(graph, ty) orelse return null;
     return .{ .contract = contract, .index = call.method_index };
 }
 
@@ -86,7 +86,7 @@ pub fn associatedElement(graph: *const graph_mod.GlobalSemanticGraph, conformanc
 /// cache and therefore needs no independent invalidation or rollback.
 pub const MaterializedOperations = struct {
     graph: *const graph_mod.GlobalSemanticGraph,
-    contract: graph_mod.GlobalDeclId,
+    contract: graph_mod.GlobalFamilyDefinitionId,
     conformance_index: usize = 0,
     operation_index: u32 = 0,
 
@@ -107,11 +107,11 @@ pub const MaterializedOperations = struct {
     }
 };
 
-pub fn materializedOperations(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalDeclId) MaterializedOperations {
+pub fn materializedOperations(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalFamilyDefinitionId) MaterializedOperations {
     return .{ .graph = graph, .contract = contract };
 }
 
-pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalDeclId, function: graph_mod.GlobalFunctionId) ?SelectedOperation {
+pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalFamilyDefinitionId, function: graph_mod.GlobalFunctionId) ?SelectedOperation {
     var operations = materializedOperations(graph, contract);
     while (operations.next()) |selected| {
         if (selected.materializedFunction(graph) == function) return selected;

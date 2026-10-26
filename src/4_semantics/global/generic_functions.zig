@@ -48,7 +48,7 @@ const ReachInferenceContext = reach_context_mod.Context;
 
 pub const ConstraintFailure = struct {
     function: global_sg.GlobalDeclId,
-    contract_decl: global_sg.GlobalDeclId,
+    contract_decl: global_sg.GlobalFamilyDefinitionId,
     actual: global_sg.GlobalTypeId,
     parameter_name: []const u8,
 };
@@ -74,7 +74,7 @@ pub const Resolver = struct {
     constraint_diagnostics: ?*std.ArrayList(ConstraintFailure) = null,
     reach_diagnostics: ?*std.array_list.Managed(u8) = null,
     failed_constraint: ?struct {
-        contract_decl: global_sg.GlobalDeclId,
+        contract_decl: global_sg.GlobalFamilyDefinitionId,
         actual: global_sg.GlobalTypeId,
         parameter_name: []const u8,
     } = null,
@@ -290,7 +290,7 @@ pub const Resolver = struct {
         const identity = standard_contracts.comparisonOperation(operator);
         if (operator == .equal or operator == .not_equal)
             return self.makeContractOperator(module_index, identity.contract, identity.operation, operands, reach, assumed);
-        const declaration = standard_contracts.standardDeclaration(self.graph, identity.contract) orelse return null;
+        const declaration = standard_contracts.standardDefinition(self.graph, identity.contract) orelse return null;
         const contracts = self.nested_call_context orelse return null;
         for (operands) |operand| {
             const ty = self.graph.node(operand).ty orelse return null;
@@ -338,7 +338,7 @@ pub const Resolver = struct {
             const ty = self.graph.node(operand).ty orelse return null;
             if (self.graph.isTypeUnresolved(ty)) return null;
         }
-        const declaration = standard_contracts.standardDeclaration(self.graph, contract_name) orelse return null;
+        const declaration = standard_contracts.standardDefinition(self.graph, contract_name) orelse return null;
         const contracts = self.nested_call_context orelse return null;
         var speculation = self.beginSpeculation();
         var failure: ?contract_mod.ParticipantConformanceFailure = null;
@@ -541,7 +541,7 @@ pub const Resolver = struct {
         else
             null;
         const selected_definition = try self.core.resolveDefinitionAlias(current_module, reference);
-        const name = if (selected_definition) |id| self.graph.text(self.graph.declaration(id).name) else module.text(reference.name);
+        const name = if (selected_definition) |id| self.graph.familyDefinitionName(id) else module.text(reference.name);
         var selected: ?global_sg.GlobalDeclId = null;
         var selected_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var tied = false;
@@ -564,7 +564,7 @@ pub const Resolver = struct {
             const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
             const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
             if (selected_definition) |id| {
-                if (declaration != id) continue;
+                if (self.graph.familyForDeclaration(declaration) != id) continue;
             } else if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
@@ -903,7 +903,7 @@ pub const Resolver = struct {
                 if (!constraint_ok) {
                     if (self.constraint_diagnostics != null and
                         try contracts.constraintArgumentsKnown(module_index, constraint_id, bindings)) self.failed_constraint = .{
-                        .contract_decl = try contracts.constraintDeclaration(module_index, constraint_id),
+                        .contract_decl = try contracts.constraintDefinition(module_index, constraint_id),
                         .actual = concrete,
                         .parameter_name = self.modules[module_index].text(parameter.name),
                     };
@@ -991,7 +991,7 @@ pub const Resolver = struct {
         const selected_definition = try self.core.resolveDefinitionAlias(current_module, reference);
         return self.resolveImplicitGenericFunctionFiltered(
             current_module,
-            if (selected_definition) |id| self.graph.text(self.graph.declaration(id).name) else module.text(reference.name),
+            if (selected_definition) |id| self.graph.familyDefinitionName(id) else module.text(reference.name),
             module_filter,
             input,
             reach_context,
@@ -1063,7 +1063,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
-        selected_definition: ?global_sg.GlobalDeclId,
+        selected_definition: ?global_sg.GlobalFamilyDefinitionId,
     ) !global_sg.GlobalFunctionId {
         const selected = try self.selectImplicitGenericFunctionFiltered(current_module, name, module_filter, input, reach, ambiguity_candidates, selected_definition);
         const started = self.profileTimestamp();
@@ -1117,7 +1117,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach_context: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
-        selected_definition: ?global_sg.GlobalDeclId,
+        selected_definition: ?global_sg.GlobalFamilyDefinitionId,
     ) !ImplicitGenericSelection {
         if (self.profile_io != null) self.selection_profile.implicit_calls += 1;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
@@ -1152,7 +1152,7 @@ pub const Resolver = struct {
             const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
             const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
             if (selected_definition) |id| {
-                if (declaration != id) continue;
+                if (self.graph.familyForDeclaration(declaration) != id) continue;
             } else if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
             candidate_count += 1;
             const parameter_count = candidate_module.semantic.parameterized_storage.comptime_parameters.items.len;
@@ -1299,12 +1299,12 @@ pub const Resolver = struct {
             else => return false,
         };
         if (self.graph.isTypeUnresolved(actual_pointer.child)) return false;
-        const actual_base = switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
-            .nominal => |definition| self.graph.typeDefinition(definition).declaration orelse return false,
-            .generic => |generic| generic.base,
+        const Base = union(enum) { nominal: global_sg.GlobalTypeDefinitionId, family: global_sg.GlobalFamilyDefinitionId };
+        const actual_base: Base = switch (self.graph.semanticType(actual_pointer.child)) {
+            .nominal => |definition| .{ .nominal = definition },
+            .generic => |generic| .{ .family = generic.base },
             else => return false,
         };
-
         const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         const expected_pointer = switch (storage.types.items[@intFromEnum(pattern)]) {
             .resolved => |ty| switch (ty) {
@@ -1313,17 +1313,18 @@ pub const Resolver = struct {
             },
             else => return false,
         };
-        const expected_base = switch (storage.types.items[@intFromEnum(expected_pointer.child)]) {
+        const expected_base: Base = switch (storage.types.items[@intFromEnum(expected_pointer.child)]) {
             .resolved => |ty| switch (ty) {
-                .nominal => |definition| self.graph.typeDefinition(globalizer.globalTypeDefinition(self.offsets[module_index], definition)).declaration orelse return false,
-                .generic => |generic| self.generics.resolveParameterizedDeclaration(module_index, generic.base) catch return false,
+                .nominal => |definition| .{ .nominal = globalizer.globalTypeDefinition(self.offsets[module_index], definition) },
+                .generic => |generic| .{ .family = self.generics.resolveParameterizedFamily(module_index, generic.base) catch return false },
                 else => return false,
             },
             else => return false,
         };
-        // A different concrete nominal base cannot be supplied by reach or
-        // pointer compatibility. Contract participants keep the full matcher.
-        return self.graph.declarations.items[@intFromEnum(expected_base)].kind == .type and actual_base != expected_base;
+        // Contract participants require conformance matching. Concrete nominal
+        // definitions and type families can be rejected by identity alone.
+        if (expected_base == .family and self.graph.familyDefinition(expected_base.family).kind == .contract) return false;
+        return !std.meta.eql(actual_base, expected_base);
     }
 
     fn recordConstraintFailure(
@@ -1560,7 +1561,7 @@ pub const Resolver = struct {
                 // type while a caller is still unspecialized. Only an
                 // implementer's type may bind its constrained parameter.
                 if (comptime_parameter.constraint != null) switch (self.graph.types.items[@intFromEnum(actual)]) {
-                    .definition => |declaration| if (self.graph.declarations.items[@intFromEnum(declaration)].kind == .contract_type) return false,
+                    .definition => |declaration| if (self.graph.familyDefinition(declaration).kind == .contract) return false,
                     else => {},
                 };
                 const slot = &bindings.types[@intFromEnum(parameter)];
@@ -1625,7 +1626,7 @@ pub const Resolver = struct {
                         .generic => |value| value,
                         else => return false,
                     };
-                    const declaration = try self.generics.resolveParameterizedDeclaration(module_index, generic.base);
+                    const declaration = try self.generics.resolveParameterizedFamily(module_index, generic.base);
                     if (declaration != value.base) return false;
                     const located = self.generics.findTypeParameterized(declaration) orelse return false;
                     if (generic.arguments.len != located.parameterized.parameters.len or value.arguments.len != generic.arguments.len) return false;
@@ -1980,7 +1981,7 @@ pub const Resolver = struct {
         });
         try self.graph.generic_function_instances.append(self.allocator, .{
             .function = function_id,
-            .parameterized_declaration = declaration,
+            .parameterized_definition = self.graph.familyForDeclaration(declaration).?,
             .arguments = arguments,
         });
 
@@ -2016,7 +2017,7 @@ pub const Resolver = struct {
             const function = self.graph.function(instance.function);
             if (function.body != null or !function.flags.has_declared_body) continue;
             if (reachable) |set| if (!set.contains(instance.function)) continue;
-            const located = self.findParameterized(instance.parameterized_declaration) orelse return error.GenericFunctionParameterizedNotFound;
+            const located = self.findParameterizedFamily(instance.parameterized_definition) orelse return error.GenericFunctionParameterizedNotFound;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
             var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer substitutions.deinit(self.allocator);
@@ -2120,16 +2121,17 @@ pub const Resolver = struct {
     };
 
     fn findParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedParameterized {
-        const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
-        const module_index: usize = @intFromEnum(owner);
-        const base = self.offsets[module_index].declaration_base;
-        const raw = @intFromEnum(declaration);
-        if (raw < base) return null;
-        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-            if (parameterized.declaration == local) return .{ .module_index = module_index, .parameterized = parameterized };
-        }
-        return null;
+        return self.findParameterizedFamily(self.graph.familyForDeclaration(declaration) orelse return null);
+    }
+
+    fn findParameterizedFamily(self: *Resolver, definition: global_sg.GlobalFamilyDefinitionId) ?LocatedParameterized {
+        const family = self.graph.familyDefinition(definition);
+        if (family.kind != .function) return null;
+        const module_index = @intFromEnum(self.graph.moduleForFamilyDefinition(definition) orelse return null);
+        const index = family.template_index orelse return null;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        if (index >= storage.parameterized_functions.items.len) return null;
+        return .{ .module_index = module_index, .parameterized = storage.parameterized_functions.items[index] };
     }
 
     fn findExisting(
@@ -2138,7 +2140,7 @@ pub const Resolver = struct {
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
     ) ?global_sg.GlobalFunctionId {
         for (self.graph.generic_function_instances.items) |instance| {
-            if (instance.parameterized_declaration != declaration) continue;
+            if (instance.parameterized_definition != self.graph.familyForDeclaration(declaration)) continue;
             if (global_types.genericArgumentsEqual(self.graph, instance.arguments, arguments)) return instance.function;
         }
         return null;
@@ -2715,7 +2717,7 @@ pub const Resolver = struct {
                     .bool_literal => |value| .{ .bool_literal = value },
                     .string_literal => |value| .{ .string_literal = try self.copyString(value) },
                     .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions) },
-                    .definition_literal => |value| .{ .definition_literal = try self.resolver.generics.resolveParameterizedDeclaration(self.module_index, value) },
+                    .definition_literal => |value| .{ .definition_literal = try self.resolver.generics.resolveParameterizedFamily(self.module_index, value) },
                     .move_value => |value| .{ .move_value = try self.instantiateNode(value) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,

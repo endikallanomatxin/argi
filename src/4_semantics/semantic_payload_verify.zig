@@ -7,6 +7,7 @@ pub const Bounds = struct {
     files: usize = 0,
     declarations: usize = 0,
     type_definitions: usize = 0,
+    family_definitions: usize = 0,
     types: usize = 0,
     functions: usize = 0,
     bindings: usize = 0,
@@ -47,6 +48,12 @@ pub fn declaration(comptime Ids: type, value: primitives.Declaration(Ids), bound
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.type_id, bounds.types));
     try require(verify.optionalIdFits(value.function_id, bounds.functions));
+    try require(verify.optionalIdFits(value.family_definition, bounds.family_definitions));
+}
+
+pub fn familyDefinition(comptime Ids: type, value: primitives.FamilyDefinition(Ids), bounds: Bounds) !void {
+    try require(verify.sourceFits(value.source, bounds.files));
+    try require(verify.optionalIdFits(value.declaration, bounds.declarations));
 }
 
 pub fn typeDefinition(comptime Ids: type, value: primitives.TypeDefinition(Ids), bounds: Bounds) !void {
@@ -69,7 +76,7 @@ pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bou
     switch (value) {
         .builtin => {},
         .nominal => |id| try require(verify.idFits(id, bounds.type_definitions)),
-        .definition => |id| try require(verify.idFits(id, bounds.declarations)),
+        .definition => |id| try require(verify.idFits(id, bounds.family_definitions)),
         .pointer => |item| try require(verify.idFits(item.child, bounds.types)),
         .array => |item| try require(verify.idFits(item.element, bounds.types)),
         .nullable, .inferred_errable => |id| try require(verify.idFits(id, bounds.types)),
@@ -77,7 +84,7 @@ pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bou
         .structural => |item| try require(verify.rangeFits(item.fields, bounds.fields)),
         .structural_choice => |item| try require(verify.rangeFits(item.variants, bounds.variants)),
         .generic => |item| {
-            try require(verify.idFits(item.base, bounds.declarations));
+            try require(verify.idFits(item.base, bounds.family_definitions));
             try require(verify.rangeFits(item.arguments, bounds.generic_arguments));
         },
         .virtual => |contract_type| try require(verify.idFits(contract_type, bounds.types)),
@@ -179,7 +186,7 @@ pub fn virtualRegistry(comptime Ids: type, value: primitives.VirtualMethodRegist
 pub fn virtualize(comptime Ids: type, value: primitives.Virtualize(Ids), bounds: Bounds) !void {
     try require(verify.idFits(value.value, bounds.nodes));
     try require(verify.idFits(value.concrete_type, bounds.types));
-    try require(verify.idFits(value.contract_decl, bounds.declarations));
+    try require(verify.idFits(value.contract_decl, bounds.family_definitions));
     try require(verify.idFits(value.virtual_type, bounds.types));
     try require(verify.rangeFits(value.methods, bounds.function_refs));
     try require(verify.rangeFits(value.safety_methods, bounds.virtual_registry_refs));
@@ -374,7 +381,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
         },
 
         .type_literal => |id| try require(verify.idFits(id, bounds.types)),
-        .definition_literal => |id| try require(verify.idFits(id, bounds.declarations)),
+        .definition_literal => |id| try require(verify.idFits(id, bounds.family_definitions)),
         .denied_implicit_copy => |id| try require(verify.idFits(id, bounds.nodes)),
         .explicit_cast => |item| {
             try require(verify.idFits(item.value, bounds.nodes));
@@ -387,6 +394,7 @@ test "shared payload verifier covers declarations and inferred choices" {
     const Ids = struct {
         pub const DeclId = enum(u32) { _ };
         pub const TypeDefinitionId = enum(u32) { _ };
+        pub const FamilyDefinitionId = enum(u32) { _ };
         pub const TypeId = enum(u32) { _ };
         pub const FunctionId = enum(u32) { _ };
         pub const BindingId = enum(u32) { _ };

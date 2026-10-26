@@ -33,6 +33,7 @@ pub const ParameterizedMatchCaseId = enum(u32) { _ };
 
 pub const Ids = struct {
     pub const DeclId = ParameterizedDeclId;
+    pub const FamilyDefinitionId = ParameterizedDeclId;
     pub const TypeId = ParameterizedTypeId;
     pub const TypeDefinitionId = entities.ModuleTypeDefinitionId;
     pub const FunctionId = ParameterizedFunctionId;

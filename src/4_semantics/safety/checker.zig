@@ -692,7 +692,7 @@ pub const SafetyChecker = struct {
                 else => continue,
             };
             if (shape.layout != .c_struct) continue;
-            if (shape.fields.len == 0) try self.report(self.graph.declaration(self.graph.types.items[@intFromEnum(instance.type_id)].generic.base).source, "CStruct must contain at least one field", .{});
+            if (shape.fields.len == 0) try self.report(self.graph.familyDefinition(self.graph.types.items[@intFromEnum(instance.type_id)].generic.base).source, "CStruct must contain at least one field", .{});
             for (self.graph.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
                 if (!c_abi.supportsRepresentation(self.graph, field.ty))
                     try self.report(field.source, "CStruct field '{s}' has no supported C representation", .{self.graph.text(field.name)});
@@ -836,9 +836,9 @@ pub const SafetyChecker = struct {
             const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
             if (self.graph.semanticType(ty) == .virtual) {
                 const contract_type = self.graph.semanticType(ty).virtual;
-                const declaration = @import("../global/contract_evidence.zig").contractDeclaration(self.graph, contract_type) orelse
+                const declaration = @import("../global/contract_evidence.zig").contractDefinition(self.graph, contract_type) orelse
                     return error.InvalidVirtualContractType;
-                const count = self.graph.declaration(declaration).contract_domain_count;
+                const count = self.graph.familyDefinition(declaration).domain_count;
                 const domains = try self.allocator.alloc(facts.DomainFacts, count);
                 for (domains, 0..) |*domain, domain_index| {
                     const storage = try self.project(.{ .root = binding }, .{ .field = @intCast(domain_index) });
@@ -8274,7 +8274,7 @@ fn appendSafetyTypeName(buffer: *std.array_list.Managed(u8), graph: *const graph
     switch (graph.semanticType(ty)) {
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
         .nominal => |decl| try buffer.appendSlice(graph.typeDefinitionName(decl)),
-        .generic => |generic| try buffer.appendSlice(graph.text(graph.declaration(generic.base).name)),
+        .generic => |generic| try buffer.appendSlice(graph.familyDefinitionName(generic.base)),
         .pointer => |pointer| {
             try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
             try appendSafetyTypeName(buffer, graph, pointer.child);
@@ -10942,7 +10942,8 @@ test "virtual input storage domains exist before concrete handles" {
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
     const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
-    try graph.declarations.append(a, .{ .kind = .contract_type, .name = .{ .start = 0, .len = 0 }, .source = source, .contract_domain_count = 2 });
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = .{ .start = 0, .len = 0 }, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.family_definitions.append(a, .{ .source = source, .kind = .contract, .parameter_count = 1, .domain_count = 2 });
     try graph.types.appendSlice(a, &.{
         .{ .definition = @enumFromInt(0) },
         .{ .virtual = @enumFromInt(0) },

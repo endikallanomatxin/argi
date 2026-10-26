@@ -577,7 +577,7 @@ test "explicit contract bounds specialize one body per concrete participant" {
     defer result.deinit(allocator);
     var instances: usize = 0;
     for (result.graph.generic_function_instances.items) |instance| {
-        const declaration = result.graph.declaration(instance.parameterized_declaration);
+        const declaration = result.graph.declaration(result.graph.familyDeclaration(instance.parameterized_definition));
         if (std.mem.eql(u8, result.graph.text(declaration.name), "use")) instances += 1;
     }
     try std.testing.expectEqual(@as(usize, 2), instances);
@@ -974,9 +974,9 @@ test "unary and tuple conformances publish canonical static evidence" {
     defer result.deinit(allocator);
     var evidence: usize = 0;
     for (result.graph.contract_conformances.items) |conformance| {
-        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?)].is_bundled_core) continue;
+        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?)].is_bundled_core) continue;
         evidence += 1;
-        const name = result.graph.text(result.graph.declaration(conformance.declaration).name);
+        const name = result.graph.familyDefinitionName(conformance.declaration);
         const unary = std.mem.eql(u8, name, "Readable");
         try std.testing.expectEqual(@as(u32, if (unary) 1 else 2), conformance.participants.len);
         try std.testing.expectEqual(@as(u32, if (unary) 2 else 1), conformance.associated_arguments.len);
@@ -1043,7 +1043,7 @@ test "scoped implementation evidence retains call and source identities" {
     var evidence: usize = 0;
     var operation_bindings: usize = 0;
     for (result.graph.contract_conformances.items) |conformance| {
-        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?)].is_bundled_core) continue;
+        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?)].is_bundled_core) continue;
         evidence += 1;
         operation_bindings += conformance.operation_bindings.len;
         try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
@@ -1059,7 +1059,7 @@ test "scoped implementation evidence retains call and source identities" {
         const call = node.content.function_call;
         const identity = result.graph.callOperation(call) orelse continue;
         const contract = result.graph.contract_conformances.items[identity.conformance].declaration;
-        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(contract).?)].is_bundled_core) continue;
+        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForFamilyDefinition(contract).?)].is_bundled_core) continue;
         try std.testing.expectEqualStrings("multiply", result.graph.text(result.graph.callSourceName(call)));
         calls += 1;
     }
@@ -1127,11 +1127,11 @@ test "generic implementation selection binds associated results and operation bo
     try @import("../global/verify.zig").verifyGlobal(&result.graph);
     var subject_count: usize = 0;
     for (result.graph.contract_conformances.items) |conformance| {
-        if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) == 0) subject_count += 1;
+        if (@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?) == 0) subject_count += 1;
     }
     try std.testing.expectEqual(@as(usize, 2), subject_count);
     for (result.graph.contract_conformances.items) |conformance| {
-        if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
+        if (@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?) != 0) continue;
         try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
         try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
     }
@@ -1157,12 +1157,12 @@ test "repeated participant specificity is independent of declaration order" {
         defer result.deinit(allocator);
         var subject_count: usize = 0;
         for (result.graph.contract_conformances.items) |conformance| {
-            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) == 0) subject_count += 1;
+            if (@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?) == 0) subject_count += 1;
         }
         try std.testing.expectEqual(@as(usize, 2), subject_count);
         var specialized: usize = 0;
         for (result.graph.contract_conformances.items) |conformance| {
-            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
+            if (@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?) != 0) continue;
             const arguments = result.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len];
             if (@import("../global/types.zig").equal(&result.graph, arguments[0].value.type, arguments[1].value.type)) {
                 try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
@@ -1194,7 +1194,7 @@ test "nested reference array specificity selects the element parameter" {
         defer result.deinit(allocator);
         var subject: ?@TypeOf(result.graph.contract_conformances.items[0]) = null;
         for (result.graph.contract_conformances.items) |conformance| {
-            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
+            if (@intFromEnum(result.graph.moduleForFamilyDefinition(conformance.declaration).?) != 0) continue;
             try std.testing.expect(subject == null);
             subject = conformance;
         }

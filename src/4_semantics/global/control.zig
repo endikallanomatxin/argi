@@ -166,9 +166,9 @@ pub const Resolver = struct {
     }
 
     fn errorTracerType(self: *Resolver) !global_sg.GlobalTypeId {
-        for (self.graph.declarations.items, 0..) |declaration, index| {
+        for (self.graph.declarations.items) |declaration| {
             if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTracer")) continue;
-            const contract = try types.definitionClass(self.allocator, self.graph, @enumFromInt(@as(u32, @intCast(index))));
+            const contract = try types.definitionClass(self.allocator, self.graph, declaration.family_definition orelse continue);
             const handle: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
             try self.graph.types.append(self.allocator, .{ .virtual = contract });
             const reference: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
@@ -730,15 +730,15 @@ pub const Resolver = struct {
         return input;
     }
 
-    fn visibleContract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalDeclId {
+    fn visibleContract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalFamilyDefinitionId {
         const core = self.core orelse return null;
-        var found: ?global_sg.GlobalDeclId = null;
+        var found: ?global_sg.GlobalFamilyDefinitionId = null;
         for (self.graph.declarations.items, 0..) |declaration, raw| {
             if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             if (!core.declarationVisible(module_index, id, null)) continue;
             if (found != null) return null;
-            found = id;
+            found = declaration.family_definition;
         }
         return found;
     }
@@ -868,7 +868,9 @@ test "inferred errable keeps an open reason choice and direct tracer reference" 
         .name = try graph.addString(allocator, "ErrorTracer"),
         .source = source,
         .type_id = @enumFromInt(1),
+        .family_definition = @enumFromInt(0),
     });
+    try graph.family_definitions.append(allocator, .{ .source = source, .kind = .contract, .parameter_count = 1, .declaration = @enumFromInt(0) });
     var resolver = Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     _ = try resolver.materializeSugarTypes();
     const error_variant = types.findVariant(&graph, @enumFromInt(2), "error").?;

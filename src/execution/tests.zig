@@ -3726,7 +3726,7 @@ test "virtual contract declarations retain domains without concrete implementati
     const declaration = for (graph.declarations.items) |decl| {
         if (std.mem.eql(u8, graph.text(decl.name), "Storage")) break decl;
     } else return error.MissingStorageContract;
-    try std.testing.expectEqual(@as(u32, 2), declaration.contract_domain_count);
+    try std.testing.expectEqual(@as(u32, 2), graph.familyDefinition(declaration.family_definition.?).domain_count);
 }
 
 fn transientCallAllocationFailures(a: std.mem.Allocator) !void {

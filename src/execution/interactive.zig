@@ -1584,7 +1584,7 @@ test "interactive generic specializations retain completed evidence while new ty
     try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("dispatch#(First)(.value = First(.value = 0))")).?.value.runtime.integer);
     const graph = &session.compiler.semantic.relocation.graph;
     const first = for (graph.generic_function_instances.items) |instance| {
-        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(instance.parameterized_declaration)), "dispatch")) break instance.function;
+        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(graph.familyDeclaration(instance.parameterized_definition))), "dispatch")) break instance.function;
     } else return error.MissingDispatchSpecialization;
     const body = graph.function(first).body;
     const proof = session.compiler.body_cache.entries.get(first);
@@ -1604,7 +1604,7 @@ test "interactive dormant operation signatures complete at first selected use wi
     try session.submitDefinitions("implement Echo#(Box) (.echo = forward)");
     const graph = &session.compiler.semantic.relocation.graph;
     const method = for (graph.generic_function_instances.items) |instance| {
-        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(instance.parameterized_declaration)), "forward")) break instance.function;
+        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(graph.familyDeclaration(instance.parameterized_definition))), "forward")) break instance.function;
     } else return error.MissingForwardSignature;
     try std.testing.expect(graph.function(method).body == null);
     try std.testing.expect(!session.compiler.body_cache.entries.contains(method));

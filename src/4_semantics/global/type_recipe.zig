@@ -6,6 +6,7 @@ const Generics = @import("generics.zig").Resolver;
 const Ids = struct {
     pub const TypeId = enum(u32) { _ };
     pub const TypeDefinitionId = g.GlobalTypeDefinitionId;
+    pub const FamilyDefinitionId = g.GlobalFamilyDefinitionId;
     pub const FieldId = enum(u32) { _ };
     pub const VariantId = enum(u32) { _ };
     pub const GenericArgId = enum(u32) { _ };
@@ -44,7 +45,7 @@ const Default = union(enum) {
 /// Only identities preceding the resolution pass can remain graph references.
 /// Pools retain sharing within the captured type DAG, without copying the graph.
 pub const Recipe = struct {
-    pub const Boundary = struct { types: usize, declarations: usize, nodes: usize, type_definitions: usize = 0 };
+    pub const Boundary = struct { types: usize, declarations: usize, nodes: usize, type_definitions: usize = 0, family_definitions: usize = 0 };
     nodes: std.ArrayList(Node) = .empty,
     defaults: std.ArrayList(Default) = .empty,
     default_bindings: std.ArrayList(DefaultBinding) = .empty,
@@ -267,6 +268,10 @@ pub const Recipe = struct {
             if (@intFromEnum(id) >= self.boundary.declarations) return error.ComptimeTypeRecipePending;
             return id;
         }
+        fn familyDefinition(self: *Capture, id: g.GlobalFamilyDefinitionId) !g.GlobalFamilyDefinitionId {
+            if (@intFromEnum(id) >= self.boundary.family_definitions) return error.ComptimeTypeRecipePending;
+            return id;
+        }
         fn typeId(self: *Capture, id: g.GlobalTypeId, depth: usize) anyerror!Ids.TypeId {
             if (depth > 256) return error.CompileTimeTypeDepthLimit;
             if (self.seen.get(id)) |previous| return previous orelse error.CyclicCompileTimeType;
@@ -278,7 +283,7 @@ pub const Recipe = struct {
                 const description: p.SemanticType(Ids) = switch (shape) {
                     .builtin => |v| .{ .builtin = v },
                     .nominal => |v| .{ .nominal = if (@intFromEnum(v) < self.boundary.type_definitions) v else return error.ComptimeTypeRecipePending },
-                    .definition => |v| .{ .definition = try self.declaration(v) },
+                    .definition => |v| .{ .definition = try self.familyDefinition(v) },
                     .pointer => |v| .{ .pointer = .{ .child = try self.typeId(v.child, depth + 1), .mutability = v.mutability } },
                     .array => |v| .{ .array = .{ .element = try self.typeId(v.element, depth + 1), .length = v.length } },
                     .nullable => |v| .{ .nullable = try self.typeId(v, depth + 1) },
@@ -291,7 +296,7 @@ pub const Recipe = struct {
                     // Open choice identities may themselves name a speculative
                     // type slot. They need an origin recipe before transport.
                     .inferred_choice => return error.ComptimeTypeRecipePending,
-                    .generic => |v| .{ .generic = .{ .base = try self.declaration(v.base), .arguments = try self.captureArguments(v.arguments, depth + 1) } },
+                    .generic => |v| .{ .generic = .{ .base = try self.familyDefinition(v.base), .arguments = try self.captureArguments(v.arguments, depth + 1) } },
                 };
                 break :blk Node{ .shape = description };
             };

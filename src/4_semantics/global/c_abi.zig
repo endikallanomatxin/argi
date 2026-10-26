@@ -155,9 +155,9 @@ fn rawPointerDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     switch (instance.shape) {
         .alias => |target| return rawPointerDepth(graph, target, depth + 1),
         .structure => |shape| {
-            const declaration = graph.declaration(generic.base);
+            const declaration = graph.declaration(graph.familyDeclaration(generic.base));
             if (!std.mem.eql(u8, graph.text(declaration.name), "RawPointer")) return false;
-            const module = graph.moduleForDeclaration(generic.base) orelse return false;
+            const module = graph.moduleForFamilyDefinition(generic.base) orelse return false;
             if (!graph.modules.items[@intFromEnum(module)].is_bundled_core or shape.fields.len != 1) return false;
             const field = graph.fields.items[shape.fields.start];
             return std.mem.eql(u8, graph.text(field.name), "address") and types.isBuiltin(graph, field.ty, .UIntNative);

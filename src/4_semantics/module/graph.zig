@@ -42,7 +42,7 @@ pub const Declaration = struct {
     // Construction-time syntax provenance used while lowering declaration bodies.
     type_id: ?ModuleTypeId = null,
     function_id: ?ModuleFunctionId = null,
-    generic_parameter_count: ?u32 = null,
+    family_definition: ?module_entities.ModuleFamilyDefinitionId = null,
 };
 
 pub const FileOffsets = struct {
@@ -242,6 +242,7 @@ pub const ModuleSemanticGraphBuilder = struct {
             });
         }
         try buildSymbolIndex(self.allocator, &self.graph);
+        try predeclareFamilies(self.allocator, &self.graph, files);
         try predeclareTypes(self.allocator, &self.graph, files);
         resolveModuleTypeReferences(&self.graph);
         const result = self.graph;
@@ -306,14 +307,42 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
     }
 }
 
+fn predeclareFamilies(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, files: []const FileInput) !void {
+    for (graph.declarations.items, 0..) |*declaration, raw| {
+        const file = files[declaration.module_file_index];
+        const node = declarationSyntaxNode(files, declaration.*) orelse continue;
+        const count = if (file.tree.contractDeclaration(node)) |contract|
+            @as(?u32, @intCast(contract.generic_params.len))
+        else if (file.tree.functionDeclaration(node)) |function|
+            genericParameterCount(file.tree, node) orelse if (function.contract_member) @as(?u32, 0) else null
+        else
+            genericParameterCount(file.tree, node);
+        const parameter_count = count orelse continue;
+        const kind: primitives.FamilyKind = switch (declaration.kind) {
+            .type => .type,
+            .contract_type => .contract,
+            .function => .function,
+            else => continue,
+        };
+        const id: module_entities.ModuleFamilyDefinitionId = @enumFromInt(@as(u32, @intCast(graph.semantic.family_definitions.items.len)));
+        try graph.semantic.family_definitions.append(allocator, .{
+            .source = .{ .file_index = declaration.module_file_index, .offset = file.tree.location(file.tree.definitionValue(node) orelse node).offset },
+            .declaration = @enumFromInt(@as(u32, @intCast(raw))),
+            .kind = kind,
+            .parameter_count = parameter_count,
+        });
+        declaration.family_definition = id;
+    }
+}
+
 fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, files: []const FileInput) !void {
     for (graph.declarations.items, 0..) |*declaration, index| switch (declaration.kind) {
         .type, .contract_type => {
             if (graph.semantic.types.items.len >= std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
             declaration.type_id = @enumFromInt(@as(u32, @intCast(graph.semantic.types.items.len)));
             const id: ModuleDeclId = @enumFromInt(@as(u32, @intCast(index)));
-            try graph.semantic.types.append(allocator, .{ .resolved = if (declaration.kind == .contract_type or declaration.generic_parameter_count != null)
-                .{ .definition = id }
+            try graph.semantic.types.append(allocator, .{ .resolved = if (declaration.family_definition != null)
+                .{ .definition = declaration.family_definition.? }
             else concrete: {
                 const definition: module_entities.ModuleTypeDefinitionId = @enumFromInt(@as(u32, @intCast(graph.semantic.type_definitions.items.len)));
                 try graph.semantic.type_definitions.append(allocator, .{
@@ -379,7 +408,6 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .name = range,
             .source_offset = tree.location(node).offset,
             .module_file_index = module_file_index,
-            .generic_parameter_count = genericParameterCount(tree, node),
         });
     }
     for (tree.roots) |root| {
@@ -397,7 +425,6 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
                 .name = try graph.addString(allocator, name),
                 .source_offset = tree.location(value).offset,
                 .module_file_index = module_file_index,
-                .generic_parameter_count = genericParameterCount(tree, value),
             });
         }
     }

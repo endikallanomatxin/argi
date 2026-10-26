@@ -172,6 +172,9 @@ before adding implementation exceptions.
 - Concrete nominal types reference independent type-definition IDs. Definitions
   own layouts, fields, variants and callback prototypes; declarations bind their
   type values. Source-name associations are optional and do not determine equality
-  or module ownership. Generic family identities and anonymous type definitions
-  still need migration. Legacy spellings still parse into the common definition
-  representation during migration.
+  or module ownership.
+- Generic types, function specializations, contracts, operations, and selected
+  evidence use independent family-definition IDs. Definitions locate their
+  templates directly; declaration associations provide names and navigation.
+  Anonymous type definitions still need migration. Legacy spellings still parse
+  into the common definition representation during migration.

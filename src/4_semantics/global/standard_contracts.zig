@@ -5,15 +5,15 @@ const graph_mod = @import("graph.zig");
 
 /// Standard contract identities belong to bundled core. A same-named user
 /// contract cannot change construction, cleanup or conversion guarantees.
-pub fn standardDeclaration(graph: *const graph_mod.GlobalSemanticGraph, name: []const u8) ?graph_mod.GlobalDeclId {
+pub fn standardDefinition(graph: *const graph_mod.GlobalSemanticGraph, name: []const u8) ?graph_mod.GlobalFamilyDefinitionId {
     if (graph.indexedDeclarationsNamed(name)) |declarations| {
-        for (declarations) |id| if (isBundledContract(graph, id)) return id;
+        for (declarations) |id| if (isBundledContract(graph, id)) return graph.familyForDeclaration(id);
         return null;
     }
     for (graph.declarations.items, 0..) |declaration, index| {
         if (declaration.kind != .contract_type or !std.mem.eql(u8, graph.text(declaration.name), name)) continue;
         const id: graph_mod.GlobalDeclId = @enumFromInt(@as(u32, @intCast(index)));
-        if (isBundledContract(graph, id)) return id;
+        if (isBundledContract(graph, id)) return graph.familyForDeclaration(id);
     }
     return null;
 }
@@ -34,18 +34,23 @@ test "standard contract lookup preserves ownership with complete and stale index
     try graph.declarations.append(allocator, .{ .kind = .contract_type, .name = name, .source = source });
     try graph.modules.append(allocator, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 1 } });
     try graph.modules.append(allocator, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 1, .len = 1 }, .is_bundled_core = true });
-    const expected: graph_mod.GlobalDeclId = @enumFromInt(1);
-    try std.testing.expectEqual(expected, standardDeclaration(&graph, "Init").?);
+    for (0..2) |raw| {
+        const definition: graph_mod.GlobalFamilyDefinitionId = @enumFromInt(@as(u32, @intCast(raw)));
+        try graph.family_definitions.append(allocator, .{ .source = source, .kind = .contract, .parameter_count = 1, .declaration = @enumFromInt(@as(u32, @intCast(raw))) });
+        graph.declarations.items[raw].family_definition = definition;
+    }
+    const expected: graph_mod.GlobalFamilyDefinitionId = @enumFromInt(1);
+    try std.testing.expectEqual(expected, standardDefinition(&graph, "Init").?);
     _ = try graph.declarationsNamed(allocator, "Init");
-    try std.testing.expectEqual(expected, standardDeclaration(&graph, "Init").?);
-    try std.testing.expect(standardDeclaration(&graph, "Deinit") == null);
+    try std.testing.expectEqual(expected, standardDefinition(&graph, "Init").?);
+    try std.testing.expect(standardDefinition(&graph, "Deinit") == null);
     const saved = graph.checkpoint();
     try graph.declarations.append(allocator, .{ .kind = .function, .name = name, .source = source });
     try std.testing.expect(graph.indexedDeclarationsNamed("Init") == null);
-    try std.testing.expectEqual(expected, standardDeclaration(&graph, "Init").?);
+    try std.testing.expectEqual(expected, standardDefinition(&graph, "Init").?);
     _ = try graph.declarationsNamed(allocator, "Init");
     graph.rollback(allocator, saved);
-    try std.testing.expectEqual(expected, standardDeclaration(&graph, "Init").?);
+    try std.testing.expectEqual(expected, standardDefinition(&graph, "Init").?);
 }
 
 pub fn initializedType(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId) ?graph_mod.GlobalTypeId {
@@ -57,7 +62,7 @@ pub fn deinitializedType(graph: *const graph_mod.GlobalSemanticGraph, function: 
 }
 
 fn participantOfOperation(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId, name: []const u8) ?graph_mod.GlobalTypeId {
-    const declaration = standardDeclaration(graph, name) orelse return null;
+    const declaration = standardDefinition(graph, name) orelse return null;
     const selected = evidence.operationForFunction(graph, declaration, function) orelse return null;
     return selected.participant(graph, 0);
 }

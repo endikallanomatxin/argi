@@ -18,6 +18,52 @@ pub const Writer = struct {
         return strings.append(&self.graph.strings, self.allocator, text);
     }
 
+    pub fn ensureFamilyDefinition(self: *Writer, declaration: entities.ModuleDeclId, kind: primitives.FamilyKind, parameter_count: u32) !entities.ModuleFamilyDefinitionId {
+        const record = self.graph.declaration(declaration);
+        if (record.family_definition) |id| {
+            std.debug.assert(self.graph.semantic.family_definitions.items[@intFromEnum(id)].kind == kind);
+            return id;
+        }
+        const id = try directId(entities.ModuleFamilyDefinitionId, self.graph.semantic.family_definitions.items.len);
+        try self.graph.semantic.family_definitions.append(self.allocator, .{
+            .source = .{ .file_index = record.module_file_index, .offset = record.source_offset },
+            .declaration = declaration,
+            .kind = kind,
+            .parameter_count = parameter_count,
+        });
+        self.graph.declarations.items[@intFromEnum(declaration)].family_definition = id;
+        return id;
+    }
+
+    pub fn addParameterizedType(self: *Writer, value: @import("parameterized/storage.zig").ParameterizedType) !void {
+        const family = try self.ensureFamilyDefinition(value.declaration, .type, value.parameters.len);
+        const index = try index32(self.graph.semantic.parameterized_storage.parameterized_types.items.len);
+        try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, value);
+        self.completeFamilyDefinition(family, index, value.parameters.len);
+    }
+
+    pub fn addParameterizedFunction(self: *Writer, value: @import("parameterized/storage.zig").ParameterizedFunction) !void {
+        const family = if (value.concrete_function == null) try self.ensureFamilyDefinition(value.declaration, .function, value.parameters.len) else null;
+        const index = try index32(self.graph.semantic.parameterized_storage.parameterized_functions.items.len);
+        try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, value);
+        if (family) |id| self.completeFamilyDefinition(id, index, value.parameters.len);
+    }
+
+    pub fn addContractDefinition(self: *Writer, value: @import("parameterized/storage.zig").ContractDefinition) !void {
+        const family = try self.ensureFamilyDefinition(value.declaration, .contract, value.parameters.len);
+        const index = try index32(self.graph.semantic.parameterized_storage.contract_definitions.items.len);
+        try self.graph.semantic.parameterized_storage.contract_definitions.append(self.allocator, value);
+        self.completeFamilyDefinition(family, index, value.parameters.len);
+        self.graph.semantic.family_definitions.items[@intFromEnum(family)].domain_count = @intCast(value.domains.len);
+    }
+
+    fn completeFamilyDefinition(self: *Writer, id: entities.ModuleFamilyDefinitionId, index: u32, parameter_count: u32) void {
+        const definition = &self.graph.semantic.family_definitions.items[@intFromEnum(id)];
+        std.debug.assert(definition.template_index == null);
+        definition.template_index = index;
+        definition.parameter_count = parameter_count;
+    }
+
     pub fn addType(self: *Writer, ty: entities.ModuleType) !entities.ModuleTypeId {
         const id = try directId(
             entities.ModuleTypeId,

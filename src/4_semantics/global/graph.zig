@@ -7,6 +7,7 @@ const module_sg = @import("../module/graph.zig");
 pub const GlobalDeclId = enum(u32) { _ };
 pub const GlobalTypeId = enum(u32) { _ };
 pub const GlobalTypeDefinitionId = enum(u32) { _ };
+pub const GlobalFamilyDefinitionId = enum(u32) { _ };
 pub const GlobalFunctionId = enum(u32) { _ };
 pub const GlobalBindingId = enum(u32) { _ };
 pub const GlobalNodeId = enum(u32) { _ };
@@ -36,6 +37,7 @@ pub const Ids = struct {
     pub const DeclId = GlobalDeclId;
     pub const TypeId = GlobalTypeId;
     pub const TypeDefinitionId = GlobalTypeDefinitionId;
+    pub const FamilyDefinitionId = GlobalFamilyDefinitionId;
     pub const FunctionId = GlobalFunctionId;
     pub const BindingId = GlobalBindingId;
     pub const NodeId = GlobalNodeId;
@@ -69,6 +71,7 @@ pub const VariantRange = primitives.Range(GlobalVariantId);
 
 pub const Declaration = primitives.Declaration(Ids);
 pub const TypeDefinition = primitives.TypeDefinition(Ids);
+pub const FamilyDefinition = primitives.FamilyDefinition(Ids);
 pub const GlobalType = primitives.SemanticType(Ids);
 pub const GenericInstance = type_shapes.GenericInstance(Ids);
 pub const Field = primitives.Field(Ids);
@@ -101,7 +104,7 @@ pub const ContractSafetyConformance = struct {
 // erased receiver and participates in the ordinary append-only checkpoints.
 pub const ContractOperationBindingId = enum(u32) { _ };
 pub const ContractOperationBinding = struct {
-    contract_declaration: GlobalDeclId,
+    contract_definition: GlobalFamilyDefinitionId,
     requirement_index: u32,
     requirement_source: primitives.SourceRef,
     implementation_source: primitives.SourceRef,
@@ -116,7 +119,7 @@ pub const ContractConformance = struct {
     implementation_arguments: primitives.Range(GlobalGenericArgId) = .{ .start = 0, .len = 0 },
     operation_bindings: primitives.Range(ContractOperationBindingId) = .{ .start = 0, .len = 0 },
     context: GlobalModuleId = @enumFromInt(0),
-    declaration: GlobalDeclId,
+    declaration: GlobalFamilyDefinitionId,
     participants: primitives.Range(GlobalGenericArgId),
     associated_arguments: primitives.Range(GlobalGenericArgId),
     operations: primitives.Range(GlobalFunctionId) = .{ .start = 0, .len = 0 },
@@ -165,7 +168,7 @@ pub const Symbol = struct {
 /// with identical runtime signatures from being merged accidentally.
 pub const GenericFunctionInstance = struct {
     function: GlobalFunctionId,
-    parameterized_declaration: GlobalDeclId,
+    parameterized_definition: GlobalFamilyDefinitionId,
     arguments: primitives.Range(GlobalGenericArgId),
 };
 
@@ -370,6 +373,7 @@ pub const GlobalSemanticGraph = struct {
     symbol_declarations: std.ArrayList(GlobalDeclId) = .empty,
     types: std.ArrayList(GlobalType) = .empty,
     type_definitions: std.ArrayList(TypeDefinition) = .empty,
+    family_definitions: std.ArrayList(FamilyDefinition) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
     generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
@@ -625,18 +629,18 @@ pub const GlobalSemanticGraph = struct {
         }
         self.safety_batches.deinit(allocator);
         inline for (.{
-            &self.modules,                   &self.module_aliases,              &self.files,                      &self.declarations,
-            &self.symbols,                   &self.symbol_declarations,         &self.types,                      &self.type_definitions,
-            &self.generic_instances,         &self.functions,                   &self.generic_function_instances, &self.bindings,
-            &self.nodes,                     &self.blocks,                      &self.fields,                     &self.variants,
-            &self.generic_arguments,         &self.value_fields,                &self.switch_cases,               &self.switches,
-            &self.auto_deinit_fields,        &self.auto_deinits,                &self.virtual_registries,         &self.virtualizes,
-            &self.virtual_calls,             &self.reach_segments,              &self.reach_alternatives,         &self.reaches,
-            &self.nullable_unwraps,          &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,
-            &self.node_refs,                 &self.type_refs,                   &self.binding_refs,               &self.function_refs,
-            &self.virtual_registry_refs,     &self.strings,                     &self.roots,                      &self.contract_safety_conformances,
-            &self.contract_conformances,     &self.contract_operation_bindings, &self.argument_defaults,          &self.argument_default_temporaries,
-            &self.argument_default_bindings, &self.comptime_requests,           &self.block_assumptions,
+            &self.modules,                      &self.module_aliases,            &self.files,                       &self.declarations,
+            &self.symbols,                      &self.symbol_declarations,       &self.types,                       &self.type_definitions,
+            &self.family_definitions,           &self.generic_instances,         &self.functions,                   &self.generic_function_instances,
+            &self.bindings,                     &self.nodes,                     &self.blocks,                      &self.fields,
+            &self.variants,                     &self.generic_arguments,         &self.value_fields,                &self.switch_cases,
+            &self.switches,                     &self.auto_deinit_fields,        &self.auto_deinits,                &self.virtual_registries,
+            &self.virtualizes,                  &self.virtual_calls,             &self.reach_segments,              &self.reach_alternatives,
+            &self.reaches,                      &self.nullable_unwraps,          &self.testing_expect_errors,       &self.error_propagations,
+            &self.error_contexts,               &self.node_refs,                 &self.type_refs,                   &self.binding_refs,
+            &self.function_refs,                &self.virtual_registry_refs,     &self.strings,                     &self.roots,
+            &self.contract_safety_conformances, &self.contract_conformances,     &self.contract_operation_bindings, &self.argument_defaults,
+            &self.argument_default_temporaries, &self.argument_default_bindings, &self.comptime_requests,           &self.block_assumptions,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -795,6 +799,26 @@ pub const GlobalSemanticGraph = struct {
             self.lookup.indexed_module_functions = 0;
         }
         return if (self.lookup.parameterized_function_names.get(name)) |matches| matches.items else &.{};
+    }
+
+    pub fn familyDefinition(self: *const GlobalSemanticGraph, id: GlobalFamilyDefinitionId) FamilyDefinition {
+        return self.family_definitions.items[@intFromEnum(id)];
+    }
+
+    pub fn familyDeclaration(self: *const GlobalSemanticGraph, id: GlobalFamilyDefinitionId) GlobalDeclId {
+        return self.familyDefinition(id).declaration.?;
+    }
+
+    pub fn familyForDeclaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) ?GlobalFamilyDefinitionId {
+        return self.declaration(id).family_definition;
+    }
+
+    pub fn familyDefinitionName(self: *const GlobalSemanticGraph, id: GlobalFamilyDefinitionId) []const u8 {
+        return if (self.familyDefinition(id).declaration) |declaration_id| self.text(self.declaration(declaration_id).name) else "<anonymous>";
+    }
+
+    pub fn moduleForFamilyDefinition(self: *const GlobalSemanticGraph, id: GlobalFamilyDefinitionId) ?GlobalModuleId {
+        return self.moduleForPartition("files", self.familyDefinition(id).source.file_index);
     }
 
     pub fn typeDefinitionName(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) []const u8 {

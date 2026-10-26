@@ -37,6 +37,7 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
         try require(graph.declarations.items[@intFromEnum(alias.declaration)].kind == .import_alias);
     }
 
+    for (graph.family_definitions.items) |definition| try payload.familyDefinition(graph_mod.Ids, definition, bounds);
     for (graph.type_definitions.items) |definition| try payload.typeDefinition(graph_mod.Ids, definition, bounds);
     for (graph.declarations.items) |declaration| try payload.declaration(graph_mod.Ids, declaration, bounds);
     try verifySymbols(graph);
@@ -86,8 +87,8 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
     }
     for (graph.contract_conformances.items) |value| {
         try require(verify.idFits(value.context, graph.modules.items.len));
-        try require(verify.idFits(value.declaration, graph.declarations.items.len));
-        try require(graph.declarations.items[@intFromEnum(value.declaration)].kind == .contract_type);
+        try require(verify.idFits(value.declaration, graph.family_definitions.items.len));
+        try require(graph.familyDefinition(value.declaration).kind == .contract);
         try require(verify.rangeFits(value.participants, graph.generic_arguments.items.len));
         try require(value.participants.len != 0);
         try require(verify.rangeFits(value.operations, graph.function_refs.items.len));
@@ -241,12 +242,12 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
     var materialized_generic_count: usize = 0;
     for (graph.types.items) |ty| switch (ty) {
         .generic => |generic| {
-            try require(verify.idFits(generic.base, graph.declarations.items.len));
-            switch (graph.declaration(generic.base).kind) {
+            try require(verify.idFits(generic.base, graph.family_definitions.items.len));
+            switch (graph.familyDefinition(generic.base).kind) {
                 .type => materialized_generic_count += 1,
                 // Parameterized contract identities are semantic contracts, not
                 // runtime layouts. They intentionally have no GenericInstance.
-                .contract_type => {},
+                .contract => {},
                 else => return error.InvalidGlobalSemanticGraph,
             }
         },
@@ -260,7 +261,7 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
             .generic => |value| value,
             else => return error.InvalidGlobalSemanticGraph,
         };
-        try require(graph.declaration(generic.base).kind == .type);
+        try require(graph.familyDefinition(generic.base).kind == .type);
         for (graph.generic_instances.items[0..index]) |previous|
             try require(previous.type_id != instance.type_id);
         switch (instance.shape) {
@@ -283,6 +284,7 @@ test "parameterized contract identities do not require runtime generic instances
         .name = name,
         .source = .{ .file_index = 0, .offset = 0 },
     });
+    try graph.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .contract, .parameter_count = 1 });
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     const arg_name = try graph.addString(allocator, "t");
     try graph.generic_arguments.append(allocator, .{
@@ -300,13 +302,13 @@ test "parameterized contract identities do not require runtime generic instances
 fn verifyGenericFunctionInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.generic_function_instances.items, 0..) |instance, index| {
         try require(verify.idFits(instance.function, graph.functions.items.len));
-        try require(verify.idFits(instance.parameterized_declaration, graph.declarations.items.len));
+        try require(verify.idFits(instance.parameterized_definition, graph.family_definitions.items.len));
         try require(verify.rangeFits(instance.arguments, graph.generic_arguments.items.len));
         const function = graph.functions.items[@intFromEnum(instance.function)];
         try require(function.flags.is_generic_instantiation);
-        try require(function.declaration == instance.parameterized_declaration);
+        try require(function.declaration == graph.familyDefinition(instance.parameterized_definition).declaration);
         for (graph.generic_function_instances.items[0..index]) |previous| {
-            if (previous.parameterized_declaration != instance.parameterized_declaration) continue;
+            if (previous.parameterized_definition != instance.parameterized_definition) continue;
             try require(!genericArgumentRangesEqual(graph, previous.arguments, instance.arguments));
         }
     }
@@ -369,6 +371,7 @@ fn makeBounds(graph: *const graph_mod.GlobalSemanticGraph) payload.Bounds {
         .files = graph.files.items.len,
         .declarations = graph.declarations.items.len,
         .type_definitions = graph.type_definitions.items.len,
+        .family_definitions = graph.family_definitions.items.len,
         .types = graph.types.items.len,
         .functions = graph.functions.items.len,
         .bindings = graph.bindings.items.len,

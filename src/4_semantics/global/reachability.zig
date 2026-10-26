@@ -56,7 +56,7 @@ pub const FunctionSet = struct {
         if (self.operations.contains(proof.selection)) return true;
         if (!self.cleanup_functions.contains(proof.method)) return false;
         const conformance = graph.contract_conformances.items[proof.selection.conformance];
-        return @import("standard_contracts.zig").standardDeclaration(graph, "Deinit") == conformance.declaration;
+        return @import("standard_contracts.zig").standardDefinition(graph, "Deinit") == conformance.declaration;
     }
 
     pub fn containsBinding(self: *const FunctionSet, binding: graph_mod.GlobalBindingId) bool {

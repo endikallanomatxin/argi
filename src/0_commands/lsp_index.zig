@@ -94,7 +94,7 @@ pub const Index = struct {
                 .len = @intCast(graph.text(graph.declarationSourceName(operation.declaration)).len),
                 .target = target,
             });
-            const identity: OperationIdentity = .{ .contract = operation.contract_declaration, .index = operation.requirement_index };
+            const identity: OperationIdentity = .{ .contract = operation.contract_definition, .index = operation.requirement_index };
             for ([_]primitives.SourceRef{ operation.requirement_source, operation.implementation_source }) |source| {
                 try result.add(allocator, .{
                     .source = source,
@@ -112,7 +112,7 @@ pub const Index = struct {
                 if (call.callee_value != null) continue;
                 const initialized = if (standard_contracts.initializedType(graph, call.callee)) |ty| switch (graph.resolvedSemanticType(ty) orelse continue) {
                     .nominal => |owner| graph.typeDefinition(owner).declaration,
-                    .generic => |identity| identity.base,
+                    .generic => |identity| graph.familyDeclaration(identity.base),
                     else => null,
                 } else null;
                 const name = if (initialized) |owner| graph.declaration(owner).name else graph.callSourceName(call);
@@ -131,7 +131,7 @@ pub const Index = struct {
                 try result.add(allocator, .{
                     .source = node.source,
                     .len = call.method_name.len,
-                    .target = .{ .declaration = operation.contract },
+                    .target = .{ .declaration = graph.familyDeclaration(operation.contract) },
                     .operation = operation,
                     .operation_name_start = call.method_name.start,
                 });
@@ -140,7 +140,7 @@ pub const Index = struct {
                 const ty = node.ty orelse continue;
                 const owner = switch (graph.types.items[@intFromEnum(ty)]) {
                     .nominal => |id| graph.typeDefinition(id).declaration orelse continue,
-                    .generic => |value| value.base,
+                    .generic => |value| graph.familyDeclaration(value.base),
                     else => continue,
                 };
                 // Default record construction has no init body; its declaration
@@ -300,7 +300,7 @@ pub fn occurrence_matches_source(graph: *const graph_mod.GlobalSemanticGraph, db
             const ty = standard_contracts.initializedType(graph, occurrence.target.function) orelse return false;
             const owner = switch (graph.resolvedSemanticType(ty) orelse return false) {
                 .nominal => |id| graph.typeDefinition(id).declaration orelse return false,
-                .generic => |identity| identity.base,
+                .generic => |identity| graph.familyDeclaration(identity.base),
                 else => return false,
             };
             break :blk graph.text(graph.declaration(owner).name);

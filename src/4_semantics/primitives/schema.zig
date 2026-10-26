@@ -279,8 +279,7 @@ pub fn Declaration(comptime Ids: type) type {
         source: SourceRef,
         type_id: ?Ids.TypeId = null,
         function_id: ?Ids.FunctionId = null,
-        generic_parameter_count: ?u32 = null,
-        contract_domain_count: u32 = 0,
+        family_definition: ?Ids.FamilyDefinitionId = null,
     };
 }
 
@@ -301,6 +300,20 @@ pub fn TypeDefinition(comptime Ids: type) type {
     };
 }
 
+/// Identity and body locator of a compile-time parameterized definition.
+/// Template indices address the owning module's corresponding immutable pool.
+pub const FamilyKind = enum { type, function, contract };
+pub fn FamilyDefinition(comptime Ids: type) type {
+    return struct {
+        source: SourceRef,
+        declaration: ?Ids.DeclId = null,
+        kind: FamilyKind,
+        parameter_count: u32,
+        domain_count: u32 = 0,
+        template_index: ?u32 = null,
+    };
+}
+
 /// `Ids` is a namespace containing the graph-specific identity types. ModuleSG
 /// and GlobalSG instantiate the same resolved semantic shapes with different
 /// enum IDs.
@@ -310,7 +323,7 @@ pub fn SemanticType(comptime Ids: type) type {
         nominal: Ids.TypeDefinitionId,
         /// Compile-time classification of an unspecialized definition value.
         /// It has no runtime storage layout and is not a concrete Type value.
-        definition: Ids.DeclId,
+        definition: Ids.FamilyDefinitionId,
         pointer: struct { child: Ids.TypeId, mutability: PointerMutability },
         array: struct { length: u64, element: Ids.TypeId },
         nullable: Ids.TypeId,
@@ -331,7 +344,7 @@ pub fn SemanticType(comptime Ids: type) type {
             layout: ChoiceLayout = .regular,
         },
         generic: struct {
-            base: Ids.DeclId,
+            base: Ids.FamilyDefinitionId,
             arguments: Range(Ids.GenericArgId),
         },
         /// Runtime pair (data pointer, vtable pointer) carrying contract evidence.
@@ -528,7 +541,7 @@ pub fn Virtualize(comptime Ids: type) type {
     return struct {
         value: Ids.NodeId,
         concrete_type: Ids.TypeId,
-        contract_decl: Ids.DeclId,
+        contract_decl: Ids.FamilyDefinitionId,
         virtual_type: Ids.TypeId,
         methods: Range(Ids.FunctionId),
         safety_methods: Range(Ids.VirtualRegistryId),
@@ -783,7 +796,7 @@ pub fn Node(comptime Ids: type) type {
                 cleanup_target: ?Ids.NodeId = null,
             },
             type_literal: Ids.TypeId,
-            definition_literal: Ids.DeclId,
+            definition_literal: Ids.FamilyDefinitionId,
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };
     };
@@ -793,6 +806,7 @@ test "semantic primitives instantiate with isolated id namespaces" {
     const Ids = struct {
         pub const DeclId = enum(u32) { _ };
         pub const TypeDefinitionId = enum(u32) { _ };
+        pub const FamilyDefinitionId = enum(u32) { _ };
         pub const TypeId = enum(u32) { _ };
         pub const FunctionId = enum(u32) { _ };
         pub const BindingId = enum(u32) { _ };

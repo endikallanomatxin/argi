@@ -294,7 +294,7 @@ pub fn owningTypes(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticG
     var selected: std.HashMapUnmanaged(g.GlobalTypeId, void, SelectedCleanupContext, 80) = .empty;
     defer selected.deinit(allocator);
     const context: SelectedCleanupContext = .{ .graph = graph };
-    if (standard_contracts.standardDeclaration(graph, "Deinit")) |deinit| {
+    if (standard_contracts.standardDefinition(graph, "Deinit")) |deinit| {
         for (graph.contract_conformances.items) |conformance| {
             if (conformance.declaration != deinit or conformance.participants.len == 0) continue;
             const participant = graph.generic_arguments.items[conformance.participants.start].value;
@@ -495,7 +495,8 @@ test "selected cleanup evidence covers every slot of one nominal declaration" {
     defer graph.deinit(a);
     const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
     const name = try graph.addString(a, "Deinit");
-    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source });
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.family_definitions.append(a, .{ .source = source, .declaration = @enumFromInt(0), .kind = .contract, .parameter_count = 1 });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Resource"), .source = source });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Other"), .source = source });
     try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 3 }, .is_bundled_core = true });
@@ -522,7 +523,8 @@ test "selected cleanup evidence covers equivalent generic argument slots" {
     defer graph.deinit(a);
     const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
     const name = try graph.addString(a, "Deinit");
-    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source });
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.family_definitions.append(a, .{ .source = source, .declaration = @enumFromInt(0), .kind = .contract, .parameter_count = 1 });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Box"), .source = source });
     try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 2 }, .is_bundled_core = true });
     try graph.types.appendSlice(a, &.{
@@ -550,7 +552,8 @@ test "cleanup ownership follows late aggregate children and generic aliases with
     defer graph.deinit(a);
     const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
     const name = try graph.addString(a, "Deinit");
-    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source });
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.family_definitions.append(a, .{ .source = source, .declaration = @enumFromInt(0), .kind = .contract, .parameter_count = 1 });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Resource"), .source = source });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Alias"), .source = source });
     try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 3 }, .is_bundled_core = true });

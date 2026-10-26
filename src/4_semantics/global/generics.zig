@@ -38,7 +38,7 @@ pub const Resolver = struct {
         child: global_sg.GlobalTypeId,
         mutability: primitives.PointerMutability,
     };
-    const GenericKey = struct { base: global_sg.GlobalDeclId, arity: u32, values: u64 };
+    const GenericKey = struct { base: global_sg.GlobalFamilyDefinitionId, arity: u32, values: u64 };
 
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -53,7 +53,7 @@ pub const Resolver = struct {
     rollback_execution: ?*const fn (*anyopaque, usize) void = null,
     execute_integer: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!i64 = null,
     execute_boolean: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!bool = null,
-    argument_failure: ?struct { declaration: global_sg.GlobalDeclId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
+    argument_failure: ?struct { declaration: global_sg.GlobalFamilyDefinitionId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
     constant_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!i64 = null,
@@ -324,20 +324,19 @@ pub const Resolver = struct {
         parameterized: parameterized_storage.ParameterizedType,
     };
 
-    pub fn isParameterizedTypeDeclaration(self: *Resolver, declaration: global_sg.GlobalDeclId) bool {
-        return self.findTypeParameterized(declaration) != null;
+    pub fn isParameterizedTypeDeclaration(self: *Resolver, definition: global_sg.GlobalFamilyDefinitionId) bool {
+        return self.findTypeParameterized(definition) != null;
     }
 
-    pub fn findTypeParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedTypeParameterized {
-        const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
+    pub fn findTypeParameterized(self: *Resolver, definition: global_sg.GlobalFamilyDefinitionId) ?LocatedTypeParameterized {
+        const family = self.graph.familyDefinition(definition);
+        if (family.kind != .type) return null;
+        const owner = self.graph.moduleForFamilyDefinition(definition) orelse return null;
         const module_index: usize = @intFromEnum(owner);
-        const base = self.offsets[module_index].declaration_base;
-        const raw = @intFromEnum(declaration);
-        if (raw < base) return null;
-        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.parameterized_storage.parameterized_types.items) |parameterized|
-            if (parameterized.declaration == local) return .{ .module_index = module_index, .parameterized = parameterized };
-        return null;
+        const index = family.template_index orelse return null;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        if (index >= storage.parameterized_types.items.len) return null;
+        return .{ .module_index = module_index, .parameterized = storage.parameterized_types.items[index] };
     }
 
     pub const Bindings = struct {
@@ -569,9 +568,12 @@ pub const Resolver = struct {
         _ = bindings;
         const module = &self.modules[module_index];
         const reference = module.semantic.external_refs.items[@intFromEnum(external)];
-        if (reference.generic_arguments == null)
-            return (try self.core.resolveTypeValue(module_index, reference)) orelse error.ComptimeExecutionPending;
-        const decl = (try self.core.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type })) orelse return error.ComptimeExecutionPending;
+        if (reference.generic_arguments == null) {
+            if (try self.core.resolveTypeValue(module_index, reference)) |ty| return ty;
+            _ = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding });
+            return error.ComptimeExecutionPending;
+        }
+        const decl = try self.resolveExternalFamily(module_index, reference, &.{ .type, .contract_type });
         const global_args = try self.relocateModuleArguments(module_index, reference.generic_arguments.?);
         const id = try self.internType(.{ .generic = .{ .base = decl, .arguments = global_args } });
         _ = try self.ensureGenericInstance(id);
@@ -587,7 +589,7 @@ pub const Resolver = struct {
         return switch (value) {
             .builtin => |builtin| self.internType(.{ .builtin = builtin }),
             .nominal => |definition| self.internType(.{ .nominal = globalizer.globalTypeDefinition(self.offsets[module_index], definition) }),
-            .definition => |decl| self.internType(.{ .definition = try self.resolveParameterizedDeclaration(module_index, decl) }),
+            .definition => |decl| self.internType(.{ .definition = try self.resolveParameterizedFamily(module_index, decl) }),
             .pointer => |pointer| self.internType(.{ .pointer = .{
                 .child = try self.instantiateParameterizedType(module_index, pointer.child, bindings),
                 .mutability = pointer.mutability,
@@ -617,7 +619,7 @@ pub const Resolver = struct {
                 .layout = shape.layout,
             } }),
             .generic => |generic| blk: {
-                const base = try self.resolveParameterizedDeclaration(module_index, generic.base);
+                const base = try self.resolveParameterizedFamily(module_index, generic.base);
                 const args = try self.instantiateParameterizedArguments(module_index, generic.arguments, bindings);
                 const id = try self.internType(.{ .generic = .{ .base = base, .arguments = args } });
                 _ = try self.ensureGenericInstance(id);
@@ -627,15 +629,31 @@ pub const Resolver = struct {
         };
     }
 
+    fn resolveExternalFamily(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, kinds: []const primitives.DeclarationKind) !global_sg.GlobalFamilyDefinitionId {
+        if (try self.core.resolveDefinitionReference(module_index, reference, kinds)) |family| return family;
+        // An existing binding may still need its initializer resolved. A missing
+        // name is an error, not work that another resolution pass can complete.
+        _ = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type, .function, .binding });
+        return error.ComptimeExecutionPending;
+    }
+
+    pub fn resolveParameterizedFamily(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.GlobalFamilyDefinitionId {
+        const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
+        return switch (target) {
+            .module => |local| self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse error.ExpectedParameterizedDefinition,
+            .external => |external| self.resolveExternalFamily(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{ .type, .contract_type, .function }),
+        };
+    }
+
     pub fn resolveParameterizedDeclaration(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.GlobalDeclId {
         const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
-            .external => |external| (try self.core.resolveDefinitionReference(
+            .external => |external| self.core.resolveDeclaration(
                 module_index,
                 self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
                 &.{ .type, .contract_type, .function },
-            )) orelse error.ComptimeExecutionPending,
+            ),
         };
     }
 
@@ -1041,7 +1059,7 @@ test "generic type identity is independent of argument pool position" {
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
 
-    const base: global_sg.GlobalDeclId = @enumFromInt(7);
+    const base: global_sg.GlobalFamilyDefinitionId = @enumFromInt(7);
     try graph.types.append(allocator, .{ .generic = .{
         .base = base,
         .arguments = .{ .start = 0, .len = 1 },

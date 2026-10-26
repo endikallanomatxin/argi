@@ -90,7 +90,7 @@ pub const Context = struct {
         if (qualifier_token == null) {
             if (self.localTypeDeclaration(name_text)) |declaration| {
                 if (generic_arguments) |arguments| {
-                    return self.writer.addResolvedType(.{ .generic = .{ .base = declaration, .arguments = arguments } });
+                    return self.writer.addResolvedType(.{ .generic = .{ .base = self.graph.declaration(declaration).family_definition orelse return error.ExpectedParameterizedDefinition, .arguments = arguments } });
                 }
                 return self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse error.LocalTypeNotPredeclared;
             }

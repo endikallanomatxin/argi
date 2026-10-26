@@ -427,7 +427,7 @@ pub const LanguageService = struct {
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
         if (occurrence.operation != null and occurrence.target == .declaration and
-            occurrence.target.declaration == occurrence.operation.?.contract)
+            occurrence.target.declaration == analysis.graph.familyDefinition(occurrence.operation.?.contract).declaration)
         {
             for (analysis.index.occurrences.items) |candidate| {
                 if (candidate.declaration and editor_index.referencesEqual(candidate, occurrence))
@@ -741,7 +741,7 @@ fn augmentTypeOccurrences(
                         .len = @intCast(spelling.len),
                         .target = .{ .declaration = owner },
                         .declaration = true,
-                        .operation = .{ .contract = owner, .index = @intCast(operation_index) },
+                        .operation = .{ .contract = graph.familyForDeclaration(owner) orelse continue, .index = @intCast(operation_index) },
                         .operation_name_start = @intCast(name_start),
                     });
                 }
@@ -900,7 +900,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
     switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |value| try writer.writeAll(@tagName(value)),
         .nominal => |definition| try writer.writeAll(graph.typeDefinitionName(definition)),
-        .definition => |decl| try writer.print("definition({s})", .{graph.text(graph.declaration(decl).name)}),
+        .definition => |decl| try writer.print("definition({s})", .{graph.familyDefinitionName(decl)}),
         .pointer => |pointer| {
             try writer.writeAll(if (pointer.mutability == .read_write) "$&" else "&");
             try writeType(writer, graph, pointer.child);
@@ -927,7 +927,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
         },
         .structural_choice => |shape| try writeVariants(writer, graph, shape.variants),
         .generic => |generic| {
-            try writer.writeAll(graph.text(graph.declarations.items[@intFromEnum(generic.base)].name));
+            try writer.writeAll(graph.familyDefinitionName(generic.base));
             try writer.writeAll("#(");
             for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, index| {
                 if (index != 0) try writer.writeAll(", ");

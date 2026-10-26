@@ -91,7 +91,7 @@ pub fn lowerConcreteEntry(graph: *graph_mod.ModuleSemanticGraph, writer: *writer
     const output = if (entry.output) |syntax| try context.lowerType(syntax, false) else empty;
     const output_bindings: primitives.Range(ir.ParameterizedBindingId) = if (entry.output) |syntax| try context.seedFunctionBindings(syntax, .variable) else .{ .start = 0, .len = 0 };
     const body = try context.lowerBlock(entry.body);
-    try graph.semantic.parameterized_storage.parameterized_functions.append(writer.allocator, .{
+    try writer.addParameterizedFunction(.{
         .declaration = declaration,
         .is_comptime_entry = true,
         .concrete_function = function,
@@ -221,7 +221,7 @@ pub const Context = struct {
                         self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_struct
                     else if (self.tree.tag(declaration_node) == .c_union_declaration)
                         self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_union;
-                    try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, .{
+                    try self.writer.addParameterizedType(.{
                         .declaration = decl_id,
                         .parameters = params,
                         .body = body,
@@ -251,7 +251,7 @@ pub const Context = struct {
                     const input_bindings = try self.seedFunctionBindings(function.input, .constant);
                     const output_bindings = try self.seedFunctionBindings(function.output, .variable);
                     const body = if (function.body) |node| try self.lowerBlock(node) else null;
-                    try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
+                    try self.writer.addParameterizedFunction(.{
                         .declaration = decl_id,
                         .concrete_function = if (params.len == 0 and staged_body) declaration.function_id else null,
                         .parameters = params,
@@ -335,7 +335,7 @@ pub const Context = struct {
                         });
                     }
                     try self.graph.semantic.parameterized_storage.contract_definitions.ensureUnusedCapacity(self.allocator, 1);
-                    self.graph.semantic.parameterized_storage.contract_definitions.appendAssumeCapacity(.{
+                    try self.writer.addContractDefinition(.{
                         .declaration = decl_id,
                         .parameters = params,
                         .participants = participants,
@@ -1063,7 +1063,6 @@ pub const Context = struct {
             .name = name,
             .source_offset = self.sourceRef(node).offset,
             .module_file_index = self.file_index,
-            .generic_parameter_count = @intCast(self.parameters.items.len),
         });
         self.graph.generated_declaration_count += 1;
         var child = Context{
@@ -1098,12 +1097,11 @@ pub const Context = struct {
         if (child.entry_captures.items.len != 0) child.referenced_parameter_prefix = self.parameters.items.len;
         const captured = self.parameters.items[0..child.referenced_parameter_prefix];
         self.referenced_parameter_prefix = @max(self.referenced_parameter_prefix, child.referenced_parameter_prefix);
-        self.graph.declarations.items[@intFromEnum(declaration)].generic_parameter_count = @intCast(captured.len);
         const parameters: primitives.Range(ir.ComptimeParameterId) = .{
             .start = if (captured.len == 0) 0 else @intFromEnum(captured[0].id),
             .len = @intCast(captured.len),
         };
-        try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
+        try self.writer.addParameterizedFunction(.{
             .is_comptime_entry = true,
             .declaration = declaration,
             .parameters = parameters,
@@ -1141,7 +1139,7 @@ pub const Context = struct {
         defer self.allocator.free(spelling);
         const name = try self.writer.addString(spelling);
         const declaration: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
-        try self.graph.declarations.append(self.allocator, .{ .kind = .function, .name = name, .source_offset = source.offset, .module_file_index = self.file_index, .generic_parameter_count = parameters.len });
+        try self.graph.declarations.append(self.allocator, .{ .kind = .function, .name = name, .source_offset = source.offset, .module_file_index = self.file_index });
         self.graph.generated_declaration_count += 1;
         const text = entry_interface.bootstrap_source;
         var tree = try entry_interface.parseSystemScope(self.allocator);
@@ -1209,7 +1207,7 @@ pub const Context = struct {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.node_refs.items.len);
         try self.graph.semantic.parameterized_storage.ir.node_refs.appendSlice(self.allocator, nodes.items);
         self.graph.semantic.parameterized_storage.ir.blocks.items[@intFromEnum(block)] = .{ .nodes = .{ .start = start, .len = @intCast(nodes.items.len) } };
-        try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
+        try self.writer.addParameterizedFunction(.{
             .is_comptime_entry = true,
             .is_comptime_host_entry = true,
             .declaration = declaration,

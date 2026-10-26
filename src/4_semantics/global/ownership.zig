@@ -387,7 +387,7 @@ pub const Resolver = struct {
         const declarations = self.graph.declarationsNamed(self.allocator, name) catch return false;
         for (declarations) |contract_decl| {
             if (self.graph.declaration(contract_decl).kind != .contract_type) continue;
-            if (dispatch.contracts.implements(concrete, contract_decl) catch false) return true;
+            if (dispatch.contracts.implements(concrete, self.graph.familyForDeclaration(contract_decl) orelse continue) catch false) return true;
         }
         return false;
     }
@@ -1390,7 +1390,7 @@ pub const Resolver = struct {
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
         const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
 
-        if (standard_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
+        if (standard_contracts.standardDefinition(self.graph, "Deinit")) |declaration| {
             if (try dispatch.contracts.implements(target_ty, declaration)) {
                 const input = try self.singleNamedInput("self", address, source);
                 if (context == .global) {

@@ -15,6 +15,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try payload.declaration(entities.Ids, declaration, bounds);
     }
 
+    for (graph.semantic.family_definitions.items) |definition| try payload.familyDefinition(entities.Ids, definition, bounds);
     for (graph.semantic.type_definitions.items) |definition| try payload.typeDefinition(entities.Ids, definition, bounds);
     for (graph.symbols.items) |symbol| {
         try require(verify.stringFits(symbol.name, graph.strings.items));
@@ -340,6 +341,7 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .files = graph.file_offsets.items.len,
         .declarations = graph.declarations.items.len,
         .type_definitions = graph.semantic.type_definitions.items.len,
+        .family_definitions = graph.semantic.family_definitions.items.len,
         .types = views.typeCount(graph),
         .functions = graph.functions.items.len,
         .bindings = semantic.bindings.items.len,

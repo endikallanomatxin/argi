@@ -3838,7 +3838,7 @@ test "native and bytecode metadata primitives share selected type geometry" {
     try graph.bindings.append(a, .{ .name = graph.fields.items[5].name, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
     try graph.binding_refs.append(a, @enumFromInt(0));
     try graph.generic_arguments.append(a, .{ .name = try graph.addString(a, "t"), .value = .{ .type = @enumFromInt(3) } });
-    try graph.generic_function_instances.append(a, .{ .function = @enumFromInt(0), .parameterized_declaration = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } });
+    try graph.generic_function_instances.append(a, .{ .function = @enumFromInt(0), .parameterized_definition = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } });
     var diagnostics = diagnostic.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var generator = try CodeGenerator.init(a, std.testing.io, &graph, &diagnostics, .{});

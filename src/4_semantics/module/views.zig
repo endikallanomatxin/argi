@@ -29,20 +29,13 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     if (raw >= graph.declarations.items.len) return error.InvalidModuleDeclarationId;
     const declaration = graph.declarations.items[raw];
     if (declaration.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
-    const domain_count: u32 = if (declaration.kind == .contract_type) count: {
-        for (graph.semantic.parameterized_storage.contract_definitions.items) |definition|
-            if (definition.declaration == id) break :count @intCast(definition.domains.len);
-        break :count 0;
-    } else 0;
-
     return .{
         .kind = declaration.kind,
         .name = declaration.name,
         .source = .{ .file_index = declaration.module_file_index, .offset = declaration.source_offset },
         .type_id = declaration.type_id,
         .function_id = declaration.function_id,
-        .generic_parameter_count = declaration.generic_parameter_count,
-        .contract_domain_count = domain_count,
+        .family_definition = declaration.family_definition,
     };
 }
 

@@ -28,7 +28,7 @@ pub const Stats = struct {
 };
 
 pub const ContractUse = struct {
-    declaration: global_sg.GlobalDeclId,
+    declaration: global_sg.GlobalFamilyDefinitionId,
     arguments: primitives.Range(global_sg.GlobalGenericArgId),
 };
 
@@ -44,8 +44,8 @@ pub const ParticipantConformanceFailure = struct {
 };
 
 pub const GenericTypeConstraintFailure = struct {
-    generic_decl: global_sg.GlobalDeclId,
-    contract_decl: global_sg.GlobalDeclId,
+    generic_decl: global_sg.GlobalFamilyDefinitionId,
+    contract_decl: global_sg.GlobalFamilyDefinitionId,
     actual: global_sg.GlobalTypeId,
     parameter_name: []const u8,
     source: primitives.SourceRef,
@@ -75,7 +75,7 @@ pub const Resolver = struct {
         external: module_entities.ExternalRefId,
         kind: primitives.DeclarationKind,
     };
-    const TemplateGroup = struct { declaration: global_sg.GlobalDeclId, arity: usize };
+    const TemplateGroup = struct { declaration: global_sg.GlobalFamilyDefinitionId, arity: usize };
     const ImplementationTemplate = struct { module: usize, index: usize };
     const TemplateRewrite = struct {
         key: TemplateGroup,
@@ -103,8 +103,8 @@ pub const Resolver = struct {
     stats: Stats = .{},
     profile_implementation_scans: bool = false,
     profile_io: ?std.Io = null,
-    constraint_declarations: @import("identity_cache.zig").IdentityCache(ConstraintKey, global_sg.GlobalDeclId) = .empty,
-    resolved_contract_refs: @import("identity_cache.zig").IdentityCache(ContractRefKey, global_sg.GlobalDeclId) = .empty,
+    constraint_declarations: @import("identity_cache.zig").IdentityCache(ConstraintKey, global_sg.GlobalFamilyDefinitionId) = .empty,
+    resolved_contract_refs: @import("identity_cache.zig").IdentityCache(ContractRefKey, global_sg.GlobalFamilyDefinitionId) = .empty,
     implementation_templates: std.AutoHashMapUnmanaged(TemplateGroup, TemplateIndex) = .empty,
     template_rewrites: std.ArrayList(TemplateRewrite) = .empty,
     pub fn deinit(self: *Resolver) void {
@@ -485,8 +485,8 @@ pub const Resolver = struct {
         return self.makeVirtualCall(module_index, reference, input, source, reach);
     }
 
-    pub fn contractDeclarationForType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {
-        return self.contractDeclFromType(ty);
+    pub fn contractDefinitionForType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFamilyDefinitionId {
+        return self.contractDefinitionFromType(ty);
     }
 
     pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, contract_type: global_sg.GlobalTypeId) bool {
@@ -584,7 +584,7 @@ pub const Resolver = struct {
     fn makeVirtualOperationCall(
         self: *Resolver,
         method_name: []const u8,
-        contract: ?global_sg.GlobalDeclId,
+        contract: ?global_sg.GlobalFamilyDefinitionId,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
         reach: reach_context.Context,
@@ -688,7 +688,7 @@ pub const Resolver = struct {
     };
 
     const RequirementInstance = struct {
-        declaration: global_sg.GlobalDeclId,
+        declaration: global_sg.GlobalFamilyDefinitionId,
         method_index: u32,
         input: global_sg.GlobalTypeId,
         output: global_sg.GlobalTypeId,
@@ -774,23 +774,21 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn findContractDefinition(self: *const Resolver, declaration: global_sg.GlobalDeclId) ?LocatedContractDefinition {
-        const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
-        const module_index: usize = @intFromEnum(owner);
-        const base = self.offsets[module_index].declaration_base;
-        const raw = @intFromEnum(declaration);
-        if (raw < base) return null;
-        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.parameterized_storage.contract_definitions.items) |definition|
-            if (definition.declaration == local) return .{ .module_index = module_index, .definition = definition };
-        return null;
+    pub fn findContractDefinition(self: *const Resolver, definition: global_sg.GlobalFamilyDefinitionId) ?LocatedContractDefinition {
+        const family = self.graph.familyDefinition(definition);
+        if (family.kind != .contract) return null;
+        const module_index = @intFromEnum(self.graph.moduleForFamilyDefinition(definition) orelse return null);
+        const index = family.template_index orelse return null;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        if (index >= storage.contract_definitions.items.len) return null;
+        return .{ .module_index = module_index, .definition = storage.contract_definitions.items[index] };
     }
 
     pub const ConformanceSelection = struct { tuple: usize };
 
     /// Source-template indexes extend with module fragments. Their entries
     /// retain source identities, while the resolver checkpoint owns each tail.
-    fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalDeclId, arity: usize) ![]const ImplementationTemplate {
+    fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, arity: usize) ![]const ImplementationTemplate {
         const key: TemplateGroup = .{ .declaration = declaration, .arity = arity };
         if (self.implementation_templates.get(key)) |group| {
             if (self.modules.len < group.module_count) return error.InvalidContractModulePrefix;
@@ -823,7 +821,7 @@ pub const Resolver = struct {
 
     /// Source forms differ only while matching candidates. A selected conformance
     /// binds every participant and associated element as ordinary parameters.
-    pub fn selectConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, bindings: ?*generic_mod.Resolver.Bindings, depth: u8, deferred: ?*bool) anyerror!?ConformanceSelection {
+    pub fn selectConformance(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participants: []const global_sg.GlobalTypeId, bindings: ?*generic_mod.Resolver.Bindings, depth: u8, deferred: ?*bool) anyerror!?ConformanceSelection {
         const scan_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         defer if (self.profile_io) |io| {
             self.stats.implementation_scan_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - scan_start);
@@ -860,11 +858,11 @@ pub const Resolver = struct {
         // user contracts and implementations still match nominal identities.
         if (participants.len == 1 and located.definition.requirements.len == 0 and located.definition.parameters.len == 0) {
             const represented = global_types.representationType(self.graph, participants[0]);
-            const name = self.graph.text(self.graph.declaration(declaration).name);
+            const name = self.graph.familyDefinitionName(declaration);
             const fact = std.mem.eql(u8, name, "Int") or std.mem.eql(u8, name, "UInt") or std.mem.eql(u8, name, "Float") or
                 std.mem.eql(u8, name, "_BuiltinArithmetic") or std.mem.eql(u8, name, "_BuiltinEquality") or std.mem.eql(u8, name, "_BuiltinOrdering") or
                 std.mem.eql(u8, name, "_BuiltinInteger") or std.mem.startsWith(u8, name, "_IntegerFits");
-            if (fact and standard_contracts.standardDeclaration(self.graph, name) == declaration and
+            if (fact and standard_contracts.standardDefinition(self.graph, name) == declaration and
                 represented != null and !global_types.equal(self.graph, represented.?, participants[0]) and
                 self.graph.semanticType(represented.?) == .builtin and
                 try self.selectConformance(declaration, &.{represented.?}, null, depth + 1, deferred) != null)
@@ -874,7 +872,7 @@ pub const Resolver = struct {
                 try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, self.modules[located.module_index].text(parameter.name)), .value = .{ .type = participants[0] } });
                 const arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = start, .len = 1 };
                 const index = self.graph.contract_conformances.items.len;
-                try self.graph.contract_conformances.append(self.allocator, .{ .declaration = declaration, .context = @enumFromInt(located.module_index), .participants = arguments, .associated_arguments = .{ .start = start, .len = 0 }, .source = self.graph.declaration(declaration).source, .declaration_validated = true });
+                try self.graph.contract_conformances.append(self.allocator, .{ .declaration = declaration, .context = @enumFromInt(located.module_index), .participants = arguments, .associated_arguments = .{ .start = start, .len = 0 }, .source = self.graph.familyDefinition(declaration).source, .declaration_validated = true });
                 if (bindings) |target| try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, arguments, target);
                 return .{ .tuple = index };
             }
@@ -883,10 +881,10 @@ pub const Resolver = struct {
         // Publish only their checked, operation-free representation fact; Equal
         // still selects its ordinary generic implementation and operation.
         if (participants.len == 1 and located.definition.requirements.len == 0 and located.definition.parameters.len == 0 and
-            standard_contracts.standardDeclaration(self.graph, "_BuiltinEquality") == declaration and
+            standard_contracts.standardDefinition(self.graph, "_BuiltinEquality") == declaration and
             self.core.isForeignEqualityRepresentation(participants[0], participants[0]))
         {
-            const definition = self.graph.declaration(declaration);
+            const definition = self.graph.familyDefinition(declaration);
             const file = self.graph.files.items[definition.source.file_index];
             if (std.mem.eql(u8, std.fs.path.basename(self.graph.text(file.path)), "scalar_arithmetic.rg")) {
                 const start: u32 = @intCast(self.graph.generic_arguments.items.len);
@@ -906,7 +904,7 @@ pub const Resolver = struct {
     /// provider never establishes conformance or selects an operation.
     pub fn mayImplementFirstParticipant(self: *Resolver, name: []const u8, concrete: global_sg.GlobalTypeId) anyerror!bool {
         for (self.graph.contract_conformances.items) |conformance| {
-            if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(conformance.declaration)].name), name)) continue;
+            if (!std.mem.eql(u8, self.graph.familyDefinitionName(conformance.declaration), name)) continue;
             if (conformance.participants.len == 0) continue;
             const first = self.graph.generic_arguments.items[conformance.participants.start].value;
             if (first == .type and global_types.equal(self.graph, first.type, concrete)) return true;
@@ -916,7 +914,7 @@ pub const Resolver = struct {
             for (storage.contract_conformances.items) |template| {
                 if (template.participants.len == 0) continue;
                 const declaration = try self.resolveDeclarationRef(module_index, template.contract_ref, .contract_type);
-                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
+                if (!std.mem.eql(u8, self.graph.familyDefinitionName(declaration), name)) continue;
                 const first = storage.ir.generic_arguments.items[template.participants.start].value;
                 if (first != .type or !try self.typePatternMayMatch(module_index, first.type, concrete)) continue;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
@@ -946,7 +944,7 @@ pub const Resolver = struct {
         return false;
     }
 
-    fn selectGenericParticipantConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, target: ?*generic_mod.Resolver.Bindings) anyerror!?ConformanceSelection {
+    fn selectGenericParticipantConformance(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participants: []const global_sg.GlobalTypeId, target: ?*generic_mod.Resolver.Bindings) anyerror!?ConformanceSelection {
         const located = self.findContractDefinition(declaration) orelse return null;
         const Candidate = struct { module: usize, template: parameterized_storage.ContractConformance, bindings: generic_mod.Resolver.Bindings };
         var candidates: std.ArrayList(Candidate) = .empty;
@@ -1014,7 +1012,7 @@ pub const Resolver = struct {
         defer contract_bindings.deinit(self.allocator);
         try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, actual, &contract_bindings);
         try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, &contract_bindings);
-        var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, selected_template.source), .contract_name = self.graph.text(self.graph.declaration(declaration).name), .reason = "" };
+        var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, selected_template.source), .contract_name = self.graph.familyDefinitionName(declaration), .reason = "" };
         const operations = try self.prepareOperationBindings(module_index, located, selected_template, &failure);
         const implementation = try self.publishImplementationArguments(module_index, selected_template.parameters, bindings);
         const index = self.graph.contract_conformances.items.len;
@@ -1080,8 +1078,8 @@ pub const Resolver = struct {
     fn nominalPatternsCover(self: *Resolver, a: SymbolicPattern, b: SymbolicPattern, substitutions: ?*PatternSubstitutions) !bool {
         const left = self.modules[a.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(a.ty)].resolved.generic;
         const right = self.modules[b.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(b.ty)].resolved.generic;
-        const declaration = try self.generics.resolveParameterizedDeclaration(a.module, left.base);
-        if (declaration != try self.generics.resolveParameterizedDeclaration(b.module, right.base)) return false;
+        const declaration = try self.generics.resolveParameterizedFamily(a.module, left.base);
+        if (declaration != try self.generics.resolveParameterizedFamily(b.module, right.base)) return false;
         const located = self.generics.findTypeParameterized(declaration) orelse return false;
         if (left.arguments.len != located.parameterized.parameters.len or right.arguments.len != left.arguments.len) return false;
         for (0..located.parameterized.parameters.len) |position| {
@@ -1203,7 +1201,7 @@ pub const Resolver = struct {
     fn implementsDepth(
         self: *Resolver,
         concrete: global_sg.GlobalTypeId,
-        contract_decl: global_sg.GlobalDeclId,
+        contract_decl: global_sg.GlobalFamilyDefinitionId,
         depth: u8,
     ) !bool {
         if (depth >= 64) return false;
@@ -1310,7 +1308,7 @@ pub const Resolver = struct {
     }
 
     pub const OperationCandidate = struct {
-        declaration: global_sg.GlobalDeclId,
+        declaration: global_sg.GlobalFamilyDefinitionId,
         participants: []global_sg.GlobalTypeId,
         virtual: bool = false,
     };
@@ -1340,8 +1338,8 @@ pub const Resolver = struct {
         for (self.modules, 0..) |module, owner| {
             for (module.semantic.parameterized_storage.contract_definitions.items) |definition| {
                 if (!definition.hasExplicitParticipants()) continue;
-                const declaration = globalizer.globalDecl(self.offsets[owner], definition.declaration);
-                if (!self.core.declarationVisible(module_index, declaration, module_filter)) continue;
+                const declaration = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[owner], definition.declaration)).?;
+                if (!self.core.familyVisible(module_index, declaration, module_filter)) continue;
                 const storage = &module.semantic.parameterized_storage;
                 for (storage.contract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
                     if (!std.mem.eql(u8, module.text(requirement.name), name)) continue;
@@ -1366,7 +1364,7 @@ pub const Resolver = struct {
         return self.inferConstraintTypePattern(module_index, pattern, actual, bindings);
     }
 
-    fn probeOperationCandidate(self: *Resolver, located: LocatedContractDefinition, declaration: global_sg.GlobalDeclId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
+    fn probeOperationCandidate(self: *Resolver, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -1665,20 +1663,21 @@ pub const Resolver = struct {
         const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         const declaration = switch (storage.types.items[@intFromEnum(pattern)]) {
             .concrete => |local| return global_types.conformanceParticipantOwner(self.graph, globalizer.globalType(self.offsets[module_index], local)),
-            .external => |external| try self.core.resolveDeclaration(
-                module_index,
-                self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
-                &.{.type},
-            ),
+            .external => |external| blk: {
+                const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)];
+                if (try self.core.resolveDefinitionReference(module_index, reference, &.{.type})) |family| break :blk family;
+                const concrete = (try self.core.resolveTypeValue(module_index, reference)) orelse return null;
+                return global_types.conformanceParticipantOwner(self.graph, concrete);
+            },
             .resolved => |resolved| switch (resolved) {
                 .pointer => |pointer| return self.templateParticipantOwner(module_index, pointer.child),
-                .generic => |nominal| try self.generics.resolveParameterizedDeclaration(module_index, nominal.base),
+                .generic => |nominal| try self.generics.resolveParameterizedFamily(module_index, nominal.base),
                 .nominal => |reference| return self.graph.moduleForTypeDefinition(globalizer.globalTypeDefinition(self.offsets[module_index], reference)),
                 else => return null,
             },
             else => return null,
         };
-        return self.graph.moduleForDeclaration(declaration);
+        return self.graph.moduleForFamilyDefinition(declaration);
     }
 
     fn templateOwnsParticipant(self: *Resolver, module_index: usize, conformance: parameterized_storage.ContractConformance) !bool {
@@ -1711,7 +1710,7 @@ pub const Resolver = struct {
                 if (!located.definition.hasExplicitParticipants()) continue;
                 var failure: ParticipantConformanceFailure = .{
                     .source = self.sourceFor(module_index, conformance.source),
-                    .contract_name = self.graph.text(self.graph.declaration(declaration).name),
+                    .contract_name = self.graph.familyDefinitionName(declaration),
                     .reason = "",
                 };
                 if (conformance.parameters.len != 0 and !self.core.sameDeclarationNamespace(located.module_index, module_index) and
@@ -1876,7 +1875,7 @@ pub const Resolver = struct {
                 return error.InvalidContractConformance;
             };
             failure.operation = name;
-            const declaration = self.resolveDeclarationRef(module_index, operation.function, .function) catch |err| {
+            const declaration = self.resolveFunctionRef(module_index, operation.function) catch |err| {
                 failure.source = self.sourceFor(module_index, operation.source);
                 failure.reason = switch (err) {
                     error.UnknownGlobalDeclaration => "unknown or inaccessible implementation function",
@@ -1886,7 +1885,7 @@ pub const Resolver = struct {
                 return error.InvalidContractConformance;
             };
             try functions.append(self.allocator, .{
-                .contract_declaration = globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration),
+                .contract_definition = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)).?,
                 .requirement_index = @intCast(requirement_index),
                 .requirement_source = self.sourceFor(located.module_index, requirement.source),
                 .implementation_source = self.sourceFor(module_index, operation.source),
@@ -1908,7 +1907,7 @@ pub const Resolver = struct {
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(index)) orelse return error.InvalidContractOperation;
         if (evidence.materializedFunction(self.graph)) |function| return function;
         const method = try self.resolveOperationBody(conformance, index);
-        if (standard_contracts.standardDeclaration(self.graph, "Deinit") == conformance.declaration)
+        if (standard_contracts.standardDefinition(self.graph, "Deinit") == conformance.declaration)
             return self.makeDestructorOperation(method, try self.core.functionOutputType(method), conformance.source);
         return method;
     }
@@ -2081,13 +2080,13 @@ pub const Resolver = struct {
                     failure.reason = switch (selected) {
                         .missing => "implementation operation has an incompatible input signature",
                         .ambiguous => "ambiguous operation",
-                        .incompatible_output => if (standard_contracts.standardDeclaration(self.graph, "Equal") == conformance.declaration) "Equal.equal must return exactly (.ok: Bool)" else "operation returns an incompatible associated result",
+                        .incompatible_output => if (standard_contracts.standardDefinition(self.graph, "Equal") == conformance.declaration) "Equal.equal must return exactly (.ok: Bool)" else "operation returns an incompatible associated result",
                         .function => unreachable,
                     };
                     self.participant_conformance_failure = failure;
                     return;
                 }
-                if (standard_contracts.standardDeclaration(self.graph, "Init") == conformance.declaration) {
+                if (standard_contracts.standardDefinition(self.graph, "Init") == conformance.declaration) {
                     const required_inputs = global_types.fields(self.graph, input).?;
                     const required_outputs = global_types.fields(self.graph, output).?;
                     const arguments = self.graph.fields.items[required_inputs.start].ty;
@@ -2105,7 +2104,7 @@ pub const Resolver = struct {
                     }
                 }
 
-                if (standard_contracts.standardDeclaration(self.graph, "Convert") == conformance.declaration) {
+                if (standard_contracts.standardDefinition(self.graph, "Convert") == conformance.declaration) {
                     const required_outputs = global_types.fields(self.graph, output).?;
                     const result = self.graph.fields.items[required_outputs.start].ty;
                     const target = self.graph.generic_arguments.items[conformance.participants.start + 1].value.type;
@@ -2209,11 +2208,11 @@ pub const Resolver = struct {
         return contract_projections.resolveAssociatedTypes(self);
     }
 
-    pub fn constraintDeclaration(
+    pub fn constraintDefinition(
         self: *Resolver,
         module_index: usize,
         constraint_id: parameterized_storage.ContractConstraintId,
-    ) !global_sg.GlobalDeclId {
+    ) !global_sg.GlobalFamilyDefinitionId {
         const storage = &self.modules[module_index].semantic.parameterized_storage;
         const constraint = storage.contract_constraints.items[@intFromEnum(constraint_id)];
         const key = ConstraintKey{ .module_index = @intCast(module_index), .constraint = constraint_id };
@@ -2226,7 +2225,7 @@ pub const Resolver = struct {
 
     pub fn constraintArgumentsKnown(self: *Resolver, module_index: usize, constraint_id: parameterized_storage.ContractConstraintId, bindings: *generic_mod.Resolver.Bindings) !bool {
         const constraint = self.modules[module_index].semantic.parameterized_storage.contract_constraints.items[@intFromEnum(constraint_id)];
-        const definition = self.findContractDefinition(try self.constraintDeclaration(module_index, constraint_id)) orelse return false;
+        const definition = self.findContractDefinition(try self.constraintDefinition(module_index, constraint_id)) orelse return false;
         if (!definition.definition.hasExplicitParticipants()) return false;
         _ = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, bindings) catch |err| {
             if (err == error.OutOfMemory) return err;
@@ -2245,7 +2244,7 @@ pub const Resolver = struct {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage;
         const constraint = storage.contract_constraints.items[@intFromEnum(constraint_id)];
-        const contract_decl = try self.constraintDeclaration(module_index, constraint_id);
+        const contract_decl = try self.constraintDefinition(module_index, constraint_id);
         const definition = self.findContractDefinition(contract_decl) orelse return false;
         if (!definition.definition.hasExplicitParticipants()) return false;
         if (constraint.arguments.len == 0 and definition.definition.participants.len == 1)
@@ -2255,7 +2254,7 @@ pub const Resolver = struct {
 
     // Participants select evidence first. Named associated restrictions compare
     // against that evidence; they never participate in choosing an implementation.
-    fn inferParticipantConstraint(self: *Resolver, module_index: usize, constraint: parameterized_storage.ContractConstraint, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, declaration: global_sg.GlobalDeclId, bindings: *generic_mod.Resolver.Bindings) !bool {
+    fn inferParticipantConstraint(self: *Resolver, module_index: usize, constraint: parameterized_storage.ContractConstraint, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, bindings: *generic_mod.Resolver.Bindings) !bool {
         const module = &self.modules[module_index];
         const target_module = &self.modules[located.module_index];
         const parameters = target_module.semantic.parameterized_storage.comptime_parameters.items;
@@ -2324,7 +2323,7 @@ pub const Resolver = struct {
                     if (supplied != .generic) break :blk false;
                     // Full matching owns diagnostics and ordered inference;
                     // this filter must not report a losing candidate's error.
-                    const declaration = self.generics.resolveParameterizedDeclaration(module_index, nominal.base) catch break :blk true;
+                    const declaration = self.generics.resolveParameterizedFamily(module_index, nominal.base) catch break :blk true;
                     break :blk declaration == supplied.generic.base;
                 },
                 else => true,
@@ -2375,7 +2374,7 @@ pub const Resolver = struct {
                         .generic => |value| value,
                         else => return false,
                     };
-                    const declaration = try self.generics.resolveParameterizedDeclaration(module_index, nominal.base);
+                    const declaration = try self.generics.resolveParameterizedFamily(module_index, nominal.base);
                     if (declaration != concrete.base) return false;
                     const located = self.generics.findTypeParameterized(declaration) orelse return false;
                     if (nominal.arguments.len != located.parameterized.parameters.len or concrete.arguments.len != nominal.arguments.len) return false;
@@ -2440,13 +2439,13 @@ pub const Resolver = struct {
     // even when no value of the participant has been constructed yet. This
     // selects evidence only; operation bodies keep their ordinary lazy checks.
     pub fn prepareStorageCleanupEvidence(self: *Resolver, ty: global_sg.GlobalTypeId) !void {
-        const declaration = @import("standard_contracts.zig").standardDeclaration(self.graph, "Deinit") orelse return;
+        const declaration = @import("standard_contracts.zig").standardDefinition(self.graph, "Deinit") orelse return;
         var seen: std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void) = .empty;
         defer seen.deinit(self.allocator);
         try self.prepareStorageCleanupType(ty, declaration, &seen, 0);
     }
 
-    fn prepareStorageCleanupType(self: *Resolver, ty: global_sg.GlobalTypeId, declaration: global_sg.GlobalDeclId, seen: *std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void), depth: usize) anyerror!void {
+    fn prepareStorageCleanupType(self: *Resolver, ty: global_sg.GlobalTypeId, declaration: global_sg.GlobalFamilyDefinitionId, seen: *std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void), depth: usize) anyerror!void {
         if (depth > 256) return error.InvalidStorageCleanupType;
         if (seen.contains(ty)) return;
         try seen.put(self.allocator, ty, {});
@@ -2472,7 +2471,7 @@ pub const Resolver = struct {
     pub fn implements(
         self: *Resolver,
         concrete: global_sg.GlobalTypeId,
-        contract_decl: global_sg.GlobalDeclId,
+        contract_decl: global_sg.GlobalFamilyDefinitionId,
     ) !bool {
         self.stats.checks += 1;
         return self.implementsDepth(concrete, contract_decl, 0);
@@ -2521,9 +2520,9 @@ pub const Resolver = struct {
         const measurement = if (self.core.scan_profile) |profile| profile.begin(.generic_function_constraints) else null;
         defer if (measurement) |m| m.finish(false);
         for (self.graph.generic_function_instances.items) |instance| {
-            const owner = self.graph.moduleForDeclaration(instance.parameterized_declaration) orelse return error.InvalidGenericFunctionOwner;
+            const owner = self.graph.moduleForFamilyDefinition(instance.parameterized_definition) orelse return error.InvalidGenericFunctionOwner;
             const module_index: usize = @intFromEnum(owner);
-            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_declaration) orelse {
+            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_definition) orelse {
                 continue;
             };
             const module = &self.modules[module_index];
@@ -2666,7 +2665,7 @@ pub const Resolver = struct {
                 },
             });
         }
-        const contract_decl = globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration);
+        const contract_decl = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)).?;
         const use = ContractUse{ .declaration = contract_decl, .arguments = .{ .start = start, .len = located.definition.parameters.len } };
         const domains = if (located.definition.domains.len == 0) &.{} else (try self.resolveStorageDomains(use, concrete, located, source)) orelse return;
         var receiver: ?u32 = null;
@@ -2683,7 +2682,7 @@ pub const Resolver = struct {
         try self.graph.contract_safety_conformances.append(self.allocator, .{ .selection = selection, .method = method, .contract = contract, .receiver_input_index = receiver, .domains = domains, .source = source });
     }
 
-    fn contractDeclFromType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {
+    fn contractDefinitionFromType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFamilyDefinitionId {
         const contract_ty = switch (self.graph.types.items[@intFromEnum(ty)]) {
             .virtual => |contract_type| contract_type,
             else => ty,
@@ -2743,32 +2742,28 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn resolveExternalContract(self: *Resolver, module_index: usize, id: module_entities.ExternalRefId) !global_sg.GlobalDeclId {
+    fn resolveExternalContract(self: *Resolver, module_index: usize, id: module_entities.ExternalRefId) !global_sg.GlobalFamilyDefinitionId {
         const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(id)];
-        return self.core.resolveDeclaration(module_index, reference, &.{.contract_type});
+        return (try self.core.resolveDefinitionReference(module_index, reference, &.{.contract_type})) orelse error.UnknownGlobalDeclaration;
     }
 
-    pub fn resolveDeclarationRef(
-        self: *Resolver,
-        module_index: usize,
-        reference: ir.DeclarationRef,
-        kind: primitives.DeclarationKind,
-    ) !global_sg.GlobalDeclId {
+    pub fn resolveDeclarationRef(self: *Resolver, module_index: usize, reference: ir.DeclarationRef, kind: primitives.DeclarationKind) !global_sg.GlobalFamilyDefinitionId {
         return switch (reference) {
-            .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
+            .module => |local| self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse error.ExpectedParameterizedDefinition,
             .external => |external| blk: {
                 const key = ContractRefKey{ .module_index = @intCast(module_index), .external = external, .kind = kind };
-                if (self.resolved_contract_refs.get(key)) |declaration| break :blk declaration;
-                // Module declarations are fixed after relocation. Cache only
-                // successful lookups so an unresolved reference can be retried.
-                const declaration = try self.core.resolveDeclaration(
-                    module_index,
-                    self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
-                    &.{kind},
-                );
-                try self.resolved_contract_refs.put(self.allocator, key, declaration);
-                break :blk declaration;
+                if (self.resolved_contract_refs.get(key)) |definition| break :blk definition;
+                const definition = (try self.core.resolveDefinitionReference(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{kind})) orelse return error.UnknownGlobalDeclaration;
+                try self.resolved_contract_refs.put(self.allocator, key, definition);
+                break :blk definition;
             },
+        };
+    }
+
+    fn resolveFunctionRef(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !global_sg.GlobalDeclId {
+        return switch (reference) {
+            .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
+            .external => |external| self.core.resolveDeclaration(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{.function}),
         };
     }
 
@@ -2776,24 +2771,19 @@ pub const Resolver = struct {
         return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
 
-    fn findFunctionParameterized(
-        self: *Resolver,
-        module_index: usize,
-        declaration: global_sg.GlobalDeclId,
-    ) ?parameterized_storage.ParameterizedFunction {
-        const base = self.offsets[module_index].declaration_base;
-        const raw = @intFromEnum(declaration);
-        if (raw < base) return null;
-        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.parameterized_storage.parameterized_functions.items) |parameterized|
-            if (parameterized.concrete_function == null and parameterized.declaration == local) return parameterized;
-        return null;
+    fn findFunctionParameterized(self: *Resolver, module_index: usize, definition: global_sg.GlobalFamilyDefinitionId) ?parameterized_storage.ParameterizedFunction {
+        const family = self.graph.familyDefinition(definition);
+        if (family.kind != .function) return null;
+        const index = family.template_index orelse return null;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        if (index >= storage.parameterized_functions.items.len) return null;
+        return storage.parameterized_functions.items[index];
     }
 };
 
 test "contract resolver keeps compile-time relation metadata outside GlobalSG" {
     try std.testing.expect(@sizeOf(Stats) <= 56);
-    try std.testing.expect(@sizeOf(global_sg.GlobalDeclId) == 4);
+    try std.testing.expect(@sizeOf(global_sg.GlobalFamilyDefinitionId) == 4);
 }
 
 test "closed symbolic patterns compare without substitutions or graph mutation" {
@@ -2844,13 +2834,15 @@ test "unconstrained generic types and functions need no constraint substitutions
     });
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
-    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 1 } });
+    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 1 }, .declarations = .{ .start = 0, .len = 1 } });
+    try graph.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .type, .parameter_count = 1, .template_index = 0 });
+    try graph.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .function, .parameter_count = 1, .template_index = 0 });
     try graph.types.append(allocator, .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } } });
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.generic_arguments.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } });
     try graph.generic_function_instances.append(allocator, .{
         .function = @enumFromInt(0),
-        .parameterized_declaration = @enumFromInt(0),
+        .parameterized_definition = @enumFromInt(1),
         .arguments = .{ .start = 0, .len = 1 },
     });
     const modules = [_]module_sg.ModuleSemanticGraph{module};
@@ -2884,9 +2876,10 @@ fn extendTemplateIndex(allocator: std.mem.Allocator) !void {
     const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .family_definition = @enumFromInt(0) });
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = modules[0..1], .offsets = offsets[0..1], .core = undefined, .generics = undefined };
     defer resolver.deinit();
-    const declaration: global_sg.GlobalDeclId = @enumFromInt(0);
+    const declaration: global_sg.GlobalFamilyDefinitionId = @enumFromInt(0);
     try std.testing.expectEqual(@as(usize, 0), (try resolver.implementationTemplates(declaration, 1)).len);
     const saved = resolver.checkpointResolution();
     resolver.modules = &modules;

@@ -127,11 +127,12 @@ fn makeGenericArrayModule(allocator: std.mem.Allocator) !module_sg.ModuleSemanti
         .source_offset = 1,
         .module_file_index = 0,
         .type_id = @enumFromInt(1),
-        .generic_parameter_count = 1,
+        .family_definition = @enumFromInt(0),
     });
     try module.symbol_declarations.append(allocator, @enumFromInt(0));
     try module.symbols.append(allocator, .{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } });
 
+    try module.semantic.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 1 }, .declaration = @enumFromInt(0), .kind = .type, .parameter_count = 1 });
     try module.semantic.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
     try module.semantic.generic_arguments.append(allocator, .{
         .name = argument_name,

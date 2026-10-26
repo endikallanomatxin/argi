@@ -190,6 +190,8 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
     return .{
         .files = graph.file_offsets.items.len,
         .declarations = storage.declarations.items.len,
+        .family_definitions = storage.declarations.items.len,
+        .type_definitions = graph.semantic.type_definitions.items.len,
         .types = storage.types.items.len,
         .functions = storage.functions.items.len,
         .bindings = storage.bindings.items.len,

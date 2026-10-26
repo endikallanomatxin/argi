@@ -637,7 +637,7 @@ pub const Session = struct {
                         diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
                         .semantic,
                         "function '{s}' cannot return contract '{s}' as a runtime value; use a concrete type or Virtual",
-                        .{ relocation.graph.text(declaration.name), relocation.graph.text(relocation.graph.declaration(contract_use.declaration).name) },
+                        .{ relocation.graph.text(declaration.name), relocation.graph.familyDefinitionName(contract_use.declaration) },
                     );
                     return error.Reported;
                 }
@@ -1166,9 +1166,9 @@ pub const Session = struct {
                     "type '{s}' does not implement contract '{s}' required by generic type parameter '.{s}' of '{s}'",
                     .{
                         actual_name.items,
-                        relocation.graph.text(relocation.graph.declaration(failure.contract_decl).name),
+                        relocation.graph.familyDefinitionName(failure.contract_decl),
                         failure.parameter_name,
-                        relocation.graph.text(relocation.graph.declaration(failure.generic_decl).name),
+                        relocation.graph.familyDefinitionName(failure.generic_decl),
                     },
                 );
                 return error.Reported;
@@ -1366,6 +1366,7 @@ fn advanceResolution(
             staged_execution.stable_type_count = graph.types.items.len;
             staged_execution.stable_declaration_count = graph.declarations.items.len;
             staged_execution.stable_type_definition_count = graph.type_definitions.items.len;
+            staged_execution.stable_family_definition_count = graph.family_definitions.items.len;
             staged_execution.stable_node_count = graph.nodes.items.len;
             progress.profile_rounds += 1;
             if (core.scan_profile) |profile| profile.rounds += 1;
@@ -2738,7 +2739,7 @@ fn diagnoseContractRuntimeBindings(
     for (graph.bindings.items, 0..) |binding, raw| {
         const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
         const contract_use = contracts.runtimeBindingContract(binding_id) orelse continue;
-        const name = graph.text(graph.declarations.items[@intFromEnum(contract_use.declaration)].name);
+        const name = graph.familyDefinitionName(contract_use.declaration);
         try diagnostics.add(
             diagnosticLocation(graph, diagnostics, binding.source),
             .semantic,
@@ -3450,7 +3451,7 @@ fn diagnoseUnresolvedCall(
                     "type '{s}' does not satisfy contract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
                     .{
                         constraint_actual_name.items,
-                        graph.text(graph.declaration(failure.contract_decl).name),
+                        graph.familyDefinitionName(failure.contract_decl),
                         failure.parameter_name,
                         graph.text(graph.declaration(failure.function).name),
                     },
@@ -3596,7 +3597,7 @@ fn diagnoseUnresolvedCall(
                 var missing_contract: ?struct {
                     actual: global_sg.GlobalTypeId,
                     contract_type: global_sg.GlobalTypeId,
-                    declaration: global_sg.GlobalDeclId,
+                    declaration: global_sg.GlobalFamilyDefinitionId,
                     field: global_sg.Field,
                     source: primitives.SourceRef,
                 } = null;
@@ -3641,7 +3642,7 @@ fn diagnoseUnresolvedCall(
                         else => {},
                     }
 
-                    const declaration = contracts.contractDeclarationForType(expected_contract_type) orelse {
+                    const declaration = contracts.contractDefinitionForType(expected_contract_type) orelse {
                         other_mismatch = true;
                         continue;
                     };
@@ -3673,7 +3674,7 @@ fn diagnoseUnresolvedCall(
                         "type '{s}' does not implement contract '{s}' required by parameter '.{s}' of '{s}'",
                         .{
                             actual_name.items,
-                            graph.text(graph.declaration(missing.declaration).name),
+                            graph.familyDefinitionName(missing.declaration),
                             graph.text(missing.field.name),
                             name,
                         },
@@ -3880,7 +3881,7 @@ pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
         .nominal => |definition| try buffer.appendSlice(graph.typeDefinitionName(definition)),
         .generic => |generic| {
-            const base_name = graph.text(graph.declaration(generic.base).name);
+            const base_name = graph.familyDefinitionName(generic.base);
             if (std.mem.eql(u8, base_name, "Nullable")) {
                 for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| switch (argument.value) {
                     .type => |value| {
@@ -4122,7 +4123,7 @@ fn validateUnderlyingTypes(graph: *const global_sg.GlobalSemanticGraph, diagnost
 fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
     const sink = diagnostics orelse return;
     const failure = generics.argument_failure orelse return;
-    const declaration = graph.declaration(failure.declaration);
+    const declaration = graph.familyDefinition(failure.declaration);
     var source = declaration.source;
     // External type holes retain the application's location in ModuleSG.
     // Recover it only on failure, without adding source maps to hot type tables.
@@ -4137,7 +4138,7 @@ fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, dia
         }
         break;
     }
-    try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
+    try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.familyDefinitionName(failure.declaration) });
 }
 
 fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, optional: ?contract_mod.ParticipantConformanceFailure) !void {

@@ -124,7 +124,7 @@ pub const Resolver = struct {
 
     fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, node: module_entities.ModuleNodeId, name: []const u8, qualified: bool) !bool {
         var found: ?global_sg.GlobalTypeId = null;
-        var definition: ?global_sg.GlobalDeclId = null;
+        var definition: ?global_sg.GlobalFamilyDefinitionId = null;
         if (!qualified) for (self.graph.types.items, 0..) |item, raw| switch (item) {
             .builtin => |builtin| if (std.mem.eql(u8, name, @tagName(builtin))) {
                 // Globalization preserves module-local type identities, so the
@@ -137,15 +137,15 @@ pub const Resolver = struct {
         };
         for (self.graph.declarations.items, 0..) |declaration, raw| {
             if (declaration.kind != .type and declaration.kind != .function and declaration.kind != .contract_type) continue;
-            if (declaration.kind == .function and declaration.generic_parameter_count == null) continue;
+            if (declaration.kind == .function and declaration.family_definition == null) continue;
             if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             const owner = self.graph.moduleForDeclaration(id) orelse continue;
             if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and
                 (qualified or !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core)) continue;
             if (found != null or definition != null) return false;
-            if (declaration.generic_parameter_count != null or declaration.kind == .contract_type) {
-                definition = id;
+            if (declaration.family_definition != null or declaration.kind == .contract_type) {
+                definition = declaration.family_definition;
             } else found = declaration.type_id orelse continue;
         }
         if (definition) |id| {

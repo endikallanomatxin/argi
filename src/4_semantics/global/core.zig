@@ -517,7 +517,7 @@ pub const Resolver = struct {
     /// initializer's identity; it never acquires nominality from its own name.
     pub fn declarationTypeValue(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalTypeId {
         const declaration = self.graph.declaration(id);
-        if (declaration.generic_parameter_count != null or declaration.kind == .contract_type) return null;
+        if (declaration.family_definition != null or declaration.kind == .contract_type) return null;
         if (declaration.type_id) |ty| return ty;
         const binding = self.declarationBinding(id) orelse return null;
         if (self.graph.isBindingTypeUnresolved(binding)) return null;
@@ -527,7 +527,7 @@ pub const Resolver = struct {
     /// Resolve the visible binding first, then follow its definition value.
     /// Visibility applies to that binding; an exported alias may name a private
     /// underlying definition without changing its lexical context.
-    pub fn resolveDefinitionAlias(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?global_sg.GlobalDeclId {
+    pub fn resolveDefinitionAlias(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?global_sg.GlobalFamilyDefinitionId {
         const id = self.resolveDeclaration(module_index, reference, &.{.binding}) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return null,
             else => return err,
@@ -537,7 +537,7 @@ pub const Resolver = struct {
         return types.staticDefinitionBinding(self.graph, binding);
     }
 
-    pub fn resolveDefinitionReference(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, kinds: []const primitives.DeclarationKind) !?global_sg.GlobalDeclId {
+    pub fn resolveDefinitionReference(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, kinds: []const primitives.DeclarationKind) !?global_sg.GlobalFamilyDefinitionId {
         const id = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type, .function, .binding }) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return null,
             else => return err,
@@ -547,8 +547,14 @@ pub const Resolver = struct {
             const binding = self.declarationBinding(id) orelse return null;
             if (self.graph.isBindingTypeUnresolved(binding)) return null;
             break :blk types.staticDefinitionBinding(self.graph, binding) orelse return null;
-        } else id;
-        for (kinds) |kind| if (self.graph.declaration(definition).kind == kind) return definition;
+        } else declaration.family_definition orelse return null;
+        const family = self.graph.familyDefinition(definition);
+        for (kinds) |kind| if (switch (kind) {
+            .type => family.kind == .type,
+            .function => family.kind == .function,
+            .contract_type => family.kind == .contract,
+            else => false,
+        }) return definition;
         return null;
     }
 
@@ -561,9 +567,7 @@ pub const Resolver = struct {
                 return .{ .type = try self.builtin(kind) };
         }
         if (try self.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type, .function })) |id| {
-            const declaration = self.graph.declaration(id);
-            if (declaration.generic_parameter_count != null or declaration.kind == .contract_type)
-                return .{ .definition = id };
+            return .{ .definition = id };
         }
         if (try self.resolveTypeValue(module_index, reference)) |ty| return .{ .type = ty };
         return null;
@@ -575,7 +579,7 @@ pub const Resolver = struct {
             else => return err,
         };
         if (self.graph.declaration(declaration).kind == .contract_type)
-            return try types.definitionClass(self.allocator, self.graph, declaration);
+            return try types.definitionClass(self.allocator, self.graph, self.graph.declaration(declaration).family_definition.?);
         if (self.graph.declaration(declaration).kind == .binding) {
             if (try self.resolveDefinitionReference(module_index, reference, &.{.contract_type})) |contract|
                 return try types.definitionClass(self.allocator, self.graph, contract);
@@ -749,6 +753,11 @@ pub const Resolver = struct {
             .deferred => error.DeferredGlobalFunction,
             .ambiguous => error.AmbiguousGlobalFunction,
         };
+    }
+
+    pub fn familyVisible(self: *const Resolver, current_module: usize, id: global_sg.GlobalFamilyDefinitionId, module_filter: ?global_sg.GlobalModuleId) bool {
+        const declaration = self.graph.familyDefinition(id).declaration orelse return false;
+        return self.declarationVisible(current_module, declaration, module_filter);
     }
 
     pub fn declarationVisible(self: *const Resolver, current_module: usize, declaration: global_sg.GlobalDeclId, qualified_module: ?global_sg.GlobalModuleId) bool {
