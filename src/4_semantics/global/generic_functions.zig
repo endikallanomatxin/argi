@@ -1300,7 +1300,7 @@ pub const Resolver = struct {
         };
         if (self.graph.isTypeUnresolved(actual_pointer.child)) return false;
         const actual_base = switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
-            .declared => |declaration| declaration,
+            .nominal => |definition| self.graph.typeDefinition(definition).declaration orelse return false,
             .generic => |generic| generic.base,
             else => return false,
         };
@@ -1313,15 +1313,14 @@ pub const Resolver = struct {
             },
             else => return false,
         };
-        const expected_ref = switch (storage.types.items[@intFromEnum(expected_pointer.child)]) {
+        const expected_base = switch (storage.types.items[@intFromEnum(expected_pointer.child)]) {
             .resolved => |ty| switch (ty) {
-                .declared => |declaration| declaration,
-                .generic => |generic| generic.base,
+                .nominal => |definition| self.graph.typeDefinition(globalizer.globalTypeDefinition(self.offsets[module_index], definition)).declaration orelse return false,
+                .generic => |generic| self.generics.resolveParameterizedDeclaration(module_index, generic.base) catch return false,
                 else => return false,
             },
             else => return false,
         };
-        const expected_base = self.generics.resolveParameterizedDeclaration(module_index, expected_ref) catch return false;
         // A different concrete nominal base cannot be supplied by reach or
         // pointer compatibility. Contract participants keep the full matcher.
         return self.graph.declarations.items[@intFromEnum(expected_base)].kind == .type and actual_base != expected_base;
@@ -1561,7 +1560,7 @@ pub const Resolver = struct {
                 // type while a caller is still unspecialized. Only an
                 // implementer's type may bind its constrained parameter.
                 if (comptime_parameter.constraint != null) switch (self.graph.types.items[@intFromEnum(actual)]) {
-                    .declared => |declaration| if (self.graph.declarations.items[@intFromEnum(declaration)].kind == .contract_type) return false,
+                    .definition => |declaration| if (self.graph.declarations.items[@intFromEnum(declaration)].kind == .contract_type) return false,
                     else => {},
                 };
                 const slot = &bindings.types[@intFromEnum(parameter)];

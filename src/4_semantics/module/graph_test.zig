@@ -19,10 +19,10 @@ test "deferred struct definitions retain fields with external generic types" {
     var graph = try module_graph.build(allocator, "holder", &inputs);
     defer graph.deinit(allocator);
 
-    try std.testing.expectEqual(@as(?module_graph.FieldRange, null), graph.declarations.items[0].struct_fields);
+    try std.testing.expectEqual(@as(?@import("entities.zig").FieldRange, null), graph.semantic.type_definitions.items[@intFromEnum(graph.definitionForDeclaration(@enumFromInt(0)).?)].struct_fields);
     _ = try initializer_lowerer.lower(allocator, &graph, &inputs, null);
 
-    const fields = graph.declarations.items[0].struct_fields.?;
+    const fields = graph.semantic.type_definitions.items[@intFromEnum(graph.definitionForDeclaration(@enumFromInt(0)).?)].struct_fields.?;
     try std.testing.expectEqual(@as(u32, 1), fields.len);
     const field = try @import("views.zig").fieldView(&graph, @enumFromInt(fields.start));
     try std.testing.expectEqualStrings("value", graph.text(field.name));
@@ -199,8 +199,8 @@ test "module semantic graph owns declarations from all direct files" {
     try std.testing.expectEqual(@as(u32, 0), distance_interface.output.len);
     const point_field = graph.semantic.fields.items[distance_interface.input.start];
     try std.testing.expectEqualStrings("point", graph.text(point_field.name));
-    try std.testing.expectEqual(@import("entities.zig").ModuleType{ .resolved = .{ .declared = @enumFromInt(0) } }, graph.semantic.types.items[@intFromEnum(point_field.ty)]);
-    const point_fields = graph.declarations.items[0].struct_fields.?;
+    try std.testing.expectEqual(@import("entities.zig").ModuleType{ .resolved = .{ .nominal = @enumFromInt(0) } }, graph.semantic.types.items[@intFromEnum(point_field.ty)]);
+    const point_fields = graph.semantic.type_definitions.items[@intFromEnum(graph.definitionForDeclaration(@enumFromInt(0)).?)].struct_fields.?;
     try std.testing.expectEqual(@as(u32, 1), point_fields.len);
     try std.testing.expectEqualStrings("x", graph.text(graph.semantic.fields.items[point_fields.start].name));
 }
@@ -441,7 +441,7 @@ test "module graph builds nominal choice variants" {
     var graph = try buildInterfaces(allocator, "results", &.{.{ .path = "results/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
-    const range = graph.declarations.items[0].choice_variants.?;
+    const range = graph.semantic.type_definitions.items[@intFromEnum(graph.definitionForDeclaration(@enumFromInt(0)).?)].choice_variants.?;
     try std.testing.expectEqual(@as(u32, 2), range.len);
     const ok = graph.semantic.variants.items[range.start];
     try std.testing.expectEqualStrings("ok", graph.text(ok.name));
@@ -1325,7 +1325,7 @@ test "canonical choice construction keeps siblings contiguous across nested payl
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "nested_choices", &.{.{ .path = "nested_choices/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
-    const named = graph.declarations.items[0].choice_variants.?;
+    const named = graph.semantic.type_definitions.items[@intFromEnum(graph.definitionForDeclaration(@enumFromInt(0)).?)].choice_variants.?;
     try std.testing.expectEqualStrings("first", graph.text(graph.semantic.variants.items[named.start].name));
     try std.testing.expectEqualStrings("second", graph.text(graph.semantic.variants.items[named.start + 1].name));
     const nested = graph.semantic.types.items[@intFromEnum(graph.semantic.variants.items[named.start].payload_type.?)].resolved.structural_choice.variants;

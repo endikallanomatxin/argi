@@ -41,10 +41,7 @@ pub const Declaration = struct {
     module_file_index: u32,
     // Construction-time syntax provenance used while lowering declaration bodies.
     type_id: ?ModuleTypeId = null,
-    underlying_type: ?ModuleTypeId = null,
     function_id: ?ModuleFunctionId = null,
-    struct_fields: ?FieldRange = null,
-    choice_variants: ?FieldRange = null,
     generic_parameter_count: ?u32 = null,
 };
 
@@ -102,6 +99,12 @@ pub const ModuleSemanticGraph = struct {
         self.semantic.deinit(allocator);
         self.conditions.deinit(allocator);
         self.* = .{};
+    }
+
+    pub fn definitionForDeclaration(self: *const ModuleSemanticGraph, id: ModuleDeclId) ?module_entities.ModuleTypeDefinitionId {
+        const ty = self.declaration(id).type_id orelse return null;
+        const value = self.semantic.types.items[@intFromEnum(ty)];
+        return if (value == .resolved and value.resolved == .nominal) value.resolved.nominal else null;
     }
 
     pub fn declaration(self: *const ModuleSemanticGraph, id: ModuleDeclId) Declaration {
@@ -239,7 +242,7 @@ pub const ModuleSemanticGraphBuilder = struct {
             });
         }
         try buildSymbolIndex(self.allocator, &self.graph);
-        try predeclareTypes(self.allocator, &self.graph);
+        try predeclareTypes(self.allocator, &self.graph, files);
         resolveModuleTypeReferences(&self.graph);
         const result = self.graph;
         self.graph = .{};
@@ -303,7 +306,7 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
     }
 }
 
-fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !void {
+fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, files: []const FileInput) !void {
     for (graph.declarations.items, 0..) |*declaration, index| switch (declaration.kind) {
         .type, .contract_type => {
             if (graph.semantic.types.items.len >= std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
@@ -311,8 +314,19 @@ fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !v
             const id: ModuleDeclId = @enumFromInt(@as(u32, @intCast(index)));
             try graph.semantic.types.append(allocator, .{ .resolved = if (declaration.kind == .contract_type or declaration.generic_parameter_count != null)
                 .{ .definition = id }
-            else
-                .{ .declared = id } });
+            else concrete: {
+                const definition: module_entities.ModuleTypeDefinitionId = @enumFromInt(@as(u32, @intCast(graph.semantic.type_definitions.items.len)));
+                try graph.semantic.type_definitions.append(allocator, .{
+                    .source = .{ .file_index = declaration.module_file_index, .offset = definition: {
+                        const file = files[declaration.module_file_index];
+                        const node = declarationSyntaxNode(files, declaration.*) orelse break :definition declaration.source_offset;
+                        const value = file.tree.typeDeclaration(node) orelse break :definition declaration.source_offset;
+                        break :definition file.tree.location(value.value).offset;
+                    } },
+                    .declaration = id,
+                });
+                break :concrete .{ .nominal = definition };
+            } });
         },
         else => {},
     };

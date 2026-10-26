@@ -677,13 +677,13 @@ pub const SafetyChecker = struct {
             if (self.unit) |unit| if (!unit.containsBinding(@enumFromInt(raw))) continue;
             _ = try self.validateStorageRepresentation(binding.ty, binding.source);
         }
-        for (self.graph.declarations.items) |declaration| {
+        for (self.graph.type_definitions.items, 0..) |declaration, raw| {
             if (declaration.struct_layout != .c_struct) continue;
             const fields = declaration.struct_fields orelse continue;
-            if (fields.len == 0) try self.report(declaration.source, "CStruct '{s}' must contain at least one field", .{self.graph.text(declaration.name)});
+            if (fields.len == 0) try self.report(declaration.source, "CStruct '{s}' must contain at least one field", .{self.graph.typeDefinitionName(@enumFromInt(@as(u32, @intCast(raw))))});
             for (self.graph.fields.items[fields.start..][0..fields.len]) |field| {
                 if (!c_abi.supportsRepresentation(self.graph, field.ty))
-                    try self.report(field.source, "CStruct '{s}' field '{s}' has no supported C representation", .{ self.graph.text(declaration.name), self.graph.text(field.name) });
+                    try self.report(field.source, "CStruct '{s}' field '{s}' has no supported C representation", .{ self.graph.typeDefinitionName(@enumFromInt(@as(u32, @intCast(raw)))), self.graph.text(field.name) });
             }
         }
         for (self.graph.generic_instances.items) |instance| {
@@ -725,7 +725,7 @@ pub const SafetyChecker = struct {
     }
 
     fn validateNominalChoiceLayouts(self: *SafetyChecker) !void {
-        for (self.graph.declarations.items) |declaration| {
+        for (self.graph.type_definitions.items) |declaration| {
             if (declaration.choice_layout != .c_enum) continue;
             const variants = declaration.choice_variants orelse continue;
             for (self.graph.variants.items[variants.start..][0..variants.len]) |variant| {
@@ -2630,11 +2630,11 @@ pub const SafetyChecker = struct {
             };
         }
         const declaration = switch (self.graph.semanticType(ty)) {
-            .declared => |id| id,
+            .nominal => |id| id,
             else => return false,
         };
-        if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(declaration).name), "ForeignFunctionInterface")) return false;
-        const module = self.graph.moduleForDeclaration(declaration) orelse return false;
+        if (!std.mem.eql(u8, self.graph.typeDefinitionName(declaration), "ForeignFunctionInterface")) return false;
+        const module = types.nominalTypeOwner(self.graph, ty) orelse return false;
         return self.graph.modules.items[@intFromEnum(module)].is_bundled_core;
     }
 
@@ -4765,7 +4765,7 @@ pub const SafetyChecker = struct {
             .array => |array| self.typeContainsPointer(array.element),
             .nullable, .inferred_errable => |child| self.typeContainsPointer(child),
             .builtin, .definition => false,
-            .declared, .structural => blk: {
+            .nominal, .structural => blk: {
                 const range = types.fields(self.graph, ty) orelse break :blk self.choiceTypeContainsPointer(ty);
                 for (self.graph.fields.items[range.start..][0..range.len]) |field|
                     if (self.typeContainsPointer(field.ty)) break :blk true;
@@ -8273,7 +8273,7 @@ fn isPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTy
 fn appendSafetyTypeName(buffer: *std.array_list.Managed(u8), graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) anyerror!void {
     switch (graph.semanticType(ty)) {
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
-        .declared => |decl| try buffer.appendSlice(graph.text(graph.declaration(decl).name)),
+        .nominal => |decl| try buffer.appendSlice(graph.typeDefinitionName(decl)),
         .generic => |generic| try buffer.appendSlice(graph.text(graph.declaration(generic.base).name)),
         .pointer => |pointer| {
             try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
@@ -10944,7 +10944,7 @@ test "virtual input storage domains exist before concrete handles" {
     const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
     try graph.declarations.append(a, .{ .kind = .contract_type, .name = .{ .start = 0, .len = 0 }, .source = source, .contract_domain_count = 2 });
     try graph.types.appendSlice(a, &.{
-        .{ .declared = @enumFromInt(0) },
+        .{ .definition = @enumFromInt(0) },
         .{ .virtual = @enumFromInt(0) },
         .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
     });

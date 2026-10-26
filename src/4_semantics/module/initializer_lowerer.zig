@@ -80,7 +80,7 @@ const Context = struct {
                 else => {},
             }
             const underlying = try self.lowerType(value.value);
-            self.graph.declarations.items[raw].underlying_type = underlying;
+            self.graph.semantic.type_definitions.items[@intFromEnum(self.graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(raw)))).?)].underlying_type = underlying;
         }
     }
 
@@ -88,7 +88,9 @@ const Context = struct {
     /// siblings because lowering nested types can append to the same pools.
     fn lowerStructDefinitions(self: *Context) !void {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .type or declaration.struct_fields != null) continue;
+            if (declaration.kind != .type) continue;
+            const definition = self.graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+            if (self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields != null) continue;
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
@@ -97,13 +99,15 @@ const Context = struct {
 
             var lowerer = self.typeContext();
             const fields = try lowerer.lowerFields(literal);
-            self.graph.declarations.items[raw].struct_fields = .{ .start = fields.start, .len = fields.len };
+            self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields = .{ .start = fields.start, .len = fields.len };
         }
     }
 
     fn lowerChoiceDefinitions(self: *Context) !void {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .type or declaration.choice_variants != null) continue;
+            if (declaration.kind != .type) continue;
+            const definition = self.graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+            if (self.graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants != null) continue;
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
@@ -111,7 +115,7 @@ const Context = struct {
             const literal = self.tree.choiceTypeLiteral(type_declaration.value) orelse continue;
             var lowerer = self.typeContext();
             const variants = try lowerer.lowerVariants(literal);
-            self.graph.declarations.items[raw].choice_variants = .{ .start = variants.start, .len = variants.len };
+            self.graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants = .{ .start = variants.start, .len = variants.len };
         }
     }
 
@@ -219,7 +223,8 @@ const Context = struct {
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             switch (declaration.kind) {
-                .type => if (declaration.struct_fields) |range| {
+                .type => if (self.graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(index))))) |definition| {
+                    const range = self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields orelse continue;
                     const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
                     try self.lowerDefaults(range.start, range.len, type_declaration.value, stats);
                 },

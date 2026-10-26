@@ -415,15 +415,10 @@ pub const Resolver = struct {
                     if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
                     const field_name = self.modules[module_index].text(name);
                     if (std.mem.startsWith(u8, field_name, "_")) {
-                        const nominal = switch (self.graph.semanticType(ty)) {
-                            .declared => |declaration| declaration,
-                            .generic => |identity| identity.base,
-                            else => null,
-                        };
-                        if (nominal) |declaration| if (self.graph.moduleForDeclaration(declaration)) |owner| {
+                        if (global_types.nominalTypeOwner(self.graph, ty)) |owner| {
                             if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and !(self.modules[module_index].is_bundled_core and self.graph.modules.items[@intFromEnum(owner)].is_bundled_core))
                                 return self.domainFailure(source, "storage domain mappings cannot access private fields of another module");
-                        };
+                        }
                     }
                     const range = global_types.fields(self.graph, ty) orelse return self.domainFailure(source, "storage domain paths must select concrete record fields");
                     var selected: ?u32 = null;
@@ -496,7 +491,7 @@ pub const Resolver = struct {
 
     pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, contract_type: global_sg.GlobalTypeId) bool {
         const declaration = switch (self.graph.types.items[@intFromEnum(contract_type)]) {
-            .declared, .definition => |value| value,
+            .definition => |value| value,
             else => return false,
         };
         if (self.findContractDefinition(declaration) == null) return false;
@@ -1678,7 +1673,7 @@ pub const Resolver = struct {
             .resolved => |resolved| switch (resolved) {
                 .pointer => |pointer| return self.templateParticipantOwner(module_index, pointer.child),
                 .generic => |nominal| try self.generics.resolveParameterizedDeclaration(module_index, nominal.base),
-                .declared => |reference| try self.generics.resolveParameterizedDeclaration(module_index, reference),
+                .nominal => |reference| return self.graph.moduleForTypeDefinition(globalizer.globalTypeDefinition(self.offsets[module_index], reference)),
                 else => return null,
             },
             else => return null,
@@ -2500,7 +2495,7 @@ pub const Resolver = struct {
 
     pub fn contractUse(self: *const Resolver, ty: global_sg.GlobalTypeId) ?ContractUse {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
-            .declared, .definition => |declaration| if (self.findContractDefinition(declaration) != null)
+            .definition => |declaration| if (self.findContractDefinition(declaration) != null)
                 .{ .declaration = declaration, .arguments = .{ .start = 0, .len = 0 } }
             else
                 null,
@@ -2694,7 +2689,7 @@ pub const Resolver = struct {
             else => ty,
         };
         return switch (self.graph.types.items[@intFromEnum(contract_ty)]) {
-            .declared, .definition => |declaration| if (self.findContractDefinition(declaration) != null) declaration else null,
+            .definition => |declaration| if (self.findContractDefinition(declaration) != null) declaration else null,
             .generic => |generic| if (self.findContractDefinition(generic.base) != null) generic.base else null,
             else => null,
         };

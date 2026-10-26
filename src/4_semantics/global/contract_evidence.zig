@@ -43,7 +43,7 @@ pub fn operationInConformance(graph: *const graph_mod.GlobalSemanticGraph, confo
 
 pub fn contractDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
     const declaration = switch (graph.semanticType(ty)) {
-        .declared, .definition => |declaration| declaration,
+        .definition => |declaration| declaration,
         .generic => |identity| identity.base,
         else => return null,
     };

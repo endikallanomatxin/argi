@@ -408,7 +408,7 @@ pub const Resolver = struct {
 
     fn choiceUsesDeclaredTags(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
         return switch (self.graph.resolvedSemanticType(ty) orelse return false) {
-            .declared => |declaration| self.graph.declaration(declaration).choice_layout == .c_enum,
+            .nominal => |declaration| self.graph.typeDefinition(declaration).choice_layout == .c_enum,
             .structural_choice => |shape| shape.layout == .c_enum,
             .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
                 .choice => |shape| shape.layout == .c_enum,
@@ -861,7 +861,7 @@ test "inferred errable keeps an open reason choice and direct tracer reference" 
     defer graph.deinit(allocator);
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
     try graph.types.append(allocator, .{ .builtin = .Int32 });
-    try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .definition = @enumFromInt(0) });
     try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
     try graph.declarations.append(allocator, .{
         .kind = .contract_type,

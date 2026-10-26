@@ -270,21 +270,32 @@ pub const StorageDomainMapping = struct {
 
 /// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
 /// provenance is graph-local; semantic references use the corresponding Ids
-/// namespace. Layout lives here for nominal types because `.declared` type IDs
-/// intentionally carry only nominal identity.
+/// namespace. A declaration binds a name to a value; nominal representation
+/// belongs to the definition referenced by that value.
 pub fn Declaration(comptime Ids: type) type {
     return struct {
         kind: DeclarationKind,
         name: StringRange,
         source: SourceRef,
         type_id: ?Ids.TypeId = null,
-        /// Representation only; type_id continues to name this declaration.
-        underlying_type: ?Ids.TypeId = null,
         function_id: ?Ids.FunctionId = null,
-        struct_fields: ?Range(Ids.FieldId) = null,
-        choice_variants: ?Range(Ids.VariantId) = null,
         generic_parameter_count: ?u32 = null,
         contract_domain_count: u32 = 0,
+    };
+}
+
+/// A nominal definition owns its representation independently of any binding.
+/// The optional declaration is a source-name association, never its identity.
+pub fn TypeDefinition(comptime Ids: type) type {
+    return struct {
+        source: SourceRef,
+        declaration: ?Ids.DeclId = null,
+        /// Checked C callback prototype; it provides representation and ABI,
+        /// independently of the optional source-name association above.
+        function_id: ?Ids.FunctionId = null,
+        underlying_type: ?Ids.TypeId = null,
+        struct_fields: ?Range(Ids.FieldId) = null,
+        choice_variants: ?Range(Ids.VariantId) = null,
         struct_layout: StructLayout = .regular,
         choice_layout: ChoiceLayout = .regular,
     };
@@ -296,7 +307,7 @@ pub fn Declaration(comptime Ids: type) type {
 pub fn SemanticType(comptime Ids: type) type {
     return union(enum) {
         builtin: BuiltinType,
-        declared: Ids.DeclId,
+        nominal: Ids.TypeDefinitionId,
         /// Compile-time classification of an unspecialized definition value.
         /// It has no runtime storage layout and is not a concrete Type value.
         definition: Ids.DeclId,
@@ -781,6 +792,7 @@ pub fn Node(comptime Ids: type) type {
 test "semantic primitives instantiate with isolated id namespaces" {
     const Ids = struct {
         pub const DeclId = enum(u32) { _ };
+        pub const TypeDefinitionId = enum(u32) { _ };
         pub const TypeId = enum(u32) { _ };
         pub const FunctionId = enum(u32) { _ };
         pub const BindingId = enum(u32) { _ };
@@ -810,14 +822,12 @@ test "semantic primitives instantiate with isolated id namespaces" {
     const pointer = Ty{ .pointer = .{ .child = @enumFromInt(3), .mutability = .read_only } };
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(pointer.pointer.child));
 
-    const Decl = Declaration(Ids);
-    const decl = Decl{
-        .kind = .type,
-        .name = .{ .start = 0, .len = 1 },
+    const Definition = TypeDefinition(Ids);
+    const definition = Definition{
         .source = .{ .file_index = 0, .offset = 0 },
         .struct_layout = .c_union,
     };
-    try std.testing.expectEqual(StructLayout.c_union, decl.struct_layout);
+    try std.testing.expectEqual(StructLayout.c_union, definition.struct_layout);
 
     const SemanticNode = Node(Ids);
     const node = SemanticNode{

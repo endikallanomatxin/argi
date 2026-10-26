@@ -6,6 +6,7 @@ pub const Bounds = struct {
     argument_defaults: usize = 0,
     files: usize = 0,
     declarations: usize = 0,
+    type_definitions: usize = 0,
     types: usize = 0,
     functions: usize = 0,
     bindings: usize = 0,
@@ -45,16 +46,30 @@ pub fn declaration(comptime Ids: type, value: primitives.Declaration(Ids), bound
     try require(verify.stringFits(value.name, bounds.strings));
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.type_id, bounds.types));
-    try require(verify.optionalIdFits(value.underlying_type, bounds.types));
     try require(verify.optionalIdFits(value.function_id, bounds.functions));
+}
+
+pub fn typeDefinition(comptime Ids: type, value: primitives.TypeDefinition(Ids), bounds: Bounds) !void {
+    try require(verify.sourceFits(value.source, bounds.files));
+    try require(verify.optionalIdFits(value.declaration, bounds.declarations));
+    try require(verify.optionalIdFits(value.function_id, bounds.functions));
+    try require(verify.optionalIdFits(value.underlying_type, bounds.types));
     if (value.struct_fields) |range| try require(verify.rangeFits(range, bounds.fields));
     if (value.choice_variants) |range| try require(verify.rangeFits(range, bounds.variants));
+    try require(value.struct_fields == null or value.choice_variants == null);
+    if (value.underlying_type != null) try require(value.struct_fields == null and value.choice_variants == null);
+    if (value.struct_layout == .c_function_pointer) {
+        try require(value.function_id != null);
+        try require(value.struct_fields == null and value.choice_variants == null);
+    }
+    if (value.struct_layout == .c_incomplete) try require(value.struct_fields == null and value.choice_variants == null);
 }
 
 pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bounds: Bounds) !void {
     switch (value) {
         .builtin => {},
-        .declared, .definition => |id| try require(verify.idFits(id, bounds.declarations)),
+        .nominal => |id| try require(verify.idFits(id, bounds.type_definitions)),
+        .definition => |id| try require(verify.idFits(id, bounds.declarations)),
         .pointer => |item| try require(verify.idFits(item.child, bounds.types)),
         .array => |item| try require(verify.idFits(item.element, bounds.types)),
         .nullable, .inferred_errable => |id| try require(verify.idFits(id, bounds.types)),
@@ -371,6 +386,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
 test "shared payload verifier covers declarations and inferred choices" {
     const Ids = struct {
         pub const DeclId = enum(u32) { _ };
+        pub const TypeDefinitionId = enum(u32) { _ };
         pub const TypeId = enum(u32) { _ };
         pub const FunctionId = enum(u32) { _ };
         pub const BindingId = enum(u32) { _ };

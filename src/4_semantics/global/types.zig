@@ -35,7 +35,7 @@ pub fn representationType(graph: *const graph_mod.GlobalSemanticGraph, ty: graph
     for (0..graph.types.items.len + 1) |_| {
         const semantic = graph.resolvedSemanticType(current) orelse return null;
         const next: ?graph_mod.GlobalTypeId = switch (semantic) {
-            .declared => |id| graph.declaration(id).underlying_type,
+            .nominal => |id| graph.typeDefinition(id).underlying_type,
             .generic => if (genericInstance(graph, current)) |instance| switch (instance.shape) {
                 .alias => |target| target,
                 else => null,
@@ -77,7 +77,7 @@ pub fn isErrable(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
 
 pub fn isCUnion(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
     return switch (graph.semanticType(ty)) {
-        .declared => |decl| graph.declaration(decl).struct_layout == .c_union,
+        .nominal => |decl| graph.typeDefinition(decl).struct_layout == .c_union,
         .structural => |shape| shape.layout == .c_union,
         .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .structure => |shape| shape.layout == .c_union,
@@ -91,7 +91,7 @@ pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalT
     const semantic = representation(graph, ty) orelse return null;
     return switch (semantic) {
         .structural => |shape| shape.fields,
-        .declared => |decl| graph.declarations.items[@intFromEnum(decl)].struct_fields,
+        .nominal => |decl| graph.typeDefinition(decl).struct_fields,
         .generic => genericFields(graph, ty),
         else => null,
     };
@@ -102,7 +102,7 @@ pub fn variants(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
     return switch (semantic) {
         .structural_choice => |shape| shape.variants,
         .inferred_choice => |shape| shape.variants,
-        .declared => |decl| graph.declarations.items[@intFromEnum(decl)].choice_variants,
+        .nominal => |decl| graph.typeDefinition(decl).choice_variants,
         .generic => genericVariants(graph, ty),
         else => null,
     };
@@ -172,7 +172,7 @@ pub fn findVariant(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
 
 pub fn variantTag(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, hit: VariantHit) i32 {
     const layout: primitives.ChoiceLayout = switch (graph.semanticType(ty)) {
-        .declared => |id| graph.declaration(id).choice_layout,
+        .nominal => |id| graph.typeDefinition(id).choice_layout,
         .structural_choice => |shape| shape.layout,
         .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .choice => |shape| shape.layout,
@@ -317,8 +317,8 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
             else => false,
         },
         .definition => |x| right == .definition and x == right.definition,
-        .declared => |x| switch (right) {
-            .declared => |y| x == y,
+        .nominal => |x| switch (right) {
+            .nominal => |y| x == y,
             else => false,
         },
         .pointer => |x| switch (right) {
@@ -373,7 +373,7 @@ pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
             const stride = alignForward(element.size, element.alignment);
             break :blk .{ .size = stride * array.length, .alignment = element.alignment };
         },
-        .declared => |decl| declaredLayout(graph, decl),
+        .nominal => |decl| nominalLayout(graph, decl),
         .structural => |shape| structLayout(graph, shape.fields, shape.layout),
         .structural_choice => |shape| choiceLayout(graph, shape.variants, shape.layout),
         .inferred_choice => |shape| choiceLayout(graph, shape.variants, .regular),
@@ -403,10 +403,10 @@ fn builtinLayout(graph: *const graph_mod.GlobalSemanticGraph, builtin: primitive
     };
 }
 
-fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mod.GlobalDeclId) LayoutError!Layout {
+fn nominalLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mod.GlobalTypeDefinitionId) LayoutError!Layout {
     const raw: usize = @intFromEnum(decl_id);
-    if (raw >= graph.declarations.items.len) return error.UnmaterializedGlobalType;
-    const decl = graph.declarations.items[raw];
+    if (raw >= graph.type_definitions.items.len) return error.UnmaterializedGlobalType;
+    const decl = graph.type_definitions.items[raw];
     if (decl.struct_layout == .c_function_pointer) return .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() };
     if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
     if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
@@ -651,7 +651,7 @@ test "type helpers reject construction-time unresolved slots" {
 pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
     return switch (semantic) {
-        .declared => |id| if (graph.declaration(id).struct_layout == .c_incomplete) id else null,
+        .nominal => |id| if (graph.typeDefinition(id).struct_layout == .c_incomplete) graph.typeDefinition(id).declaration else null,
         .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .alias => |target| incompleteDeclaration(graph, target),
             else => null,
@@ -664,12 +664,9 @@ pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: gr
 /// while retaining the caller's lexical context for reached arguments.
 pub fn nominalTypeOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
-    const declaration = switch (semantic) {
-        .declared => |id| id,
-        .generic => |identity| identity.base,
-        else => return null,
-    };
-    return graph.moduleForDeclaration(declaration);
+    if (semantic == .generic) return graph.moduleForDeclaration(semantic.generic.base);
+    if (semantic != .nominal) return null;
+    return graph.moduleForTypeDefinition(semantic.nominal);
 }
 
 /// References retain the extension owner of their nominal referent. Structural
@@ -776,28 +773,24 @@ test "structural compatibility keeps defaults separate from specialization ident
     try std.testing.expect(!identityEqual(&graph, @enumFromInt(3), @enumFromInt(4)));
 }
 
-test "nominal underlying types retain identity and share only representation" {
+test "nominal definitions retain identity without declarations and share only representation" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
     try graph.types.appendSlice(allocator, &.{
         .{ .builtin = .UInt8 },
-        .{ .declared = @enumFromInt(0) },
-        .{ .declared = @enumFromInt(1) },
+        .{ .nominal = @enumFromInt(0) },
+        .{ .nominal = @enumFromInt(1) },
     });
-    const name = try graph.addString(allocator, "Id");
-    for (0..2) |index| try graph.declarations.append(allocator, .{
-        .kind = .type,
-        .name = name,
-        .source = .{ .file_index = 0, .offset = 0 },
-        .type_id = @enumFromInt(index + 1),
+    for (0..2) |index| try graph.type_definitions.append(allocator, .{
+        .source = .{ .file_index = 0, .offset = @intCast(index) },
         .underlying_type = @enumFromInt(index),
     });
     try std.testing.expect(!equal(&graph, @enumFromInt(0), @enumFromInt(1)));
     try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));
     try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(0)), representationType(&graph, @enumFromInt(2)));
     try std.testing.expectEqual(Layout{ .size = 1, .alignment = 1 }, try layoutOf(&graph, @enumFromInt(2)));
-    graph.declarations.items[0].underlying_type = @enumFromInt(2);
+    graph.type_definitions.items[0].underlying_type = @enumFromInt(2);
     try std.testing.expectEqual(null, representationType(&graph, @enumFromInt(1)));
     try std.testing.expectEqual(null, fields(&graph, @enumFromInt(1)));
     try std.testing.expectError(error.UnmaterializedGlobalType, layoutOf(&graph, @enumFromInt(1)));
@@ -848,4 +841,28 @@ test "definition values preserve classification and aliases without runtime layo
     graph.bindings.items[0].mutability = .constant;
     graph.bindings.items[0].initialization = @enumFromInt(128);
     try std.testing.expectEqual(null, staticDefinitionBinding(&graph, last));
+}
+
+test "nominal identity survives binding aliases pool growth and rejected definitions" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.type_definitions.append(a, .{ .source = source, .underlying_type = @enumFromInt(0) });
+    try graph.types.append(a, .{ .nominal = @enumFromInt(0) });
+    const retained = graph.checkpoint();
+    const name = try graph.addString(a, "Alias");
+    for (0..128) |_| {
+        try graph.declarations.append(a, .{ .kind = .type, .name = name, .source = source, .type_id = @enumFromInt(1) });
+        try graph.type_definitions.append(a, .{ .source = source, .underlying_type = @enumFromInt(0) });
+    }
+    try graph.types.append(a, .{ .nominal = @enumFromInt(128) });
+    try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+    graph.rollback(a, retained);
+    try std.testing.expectEqual(@as(usize, 1), graph.type_definitions.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.declarations.items.len);
+    try graph.types.append(a, .{ .nominal = @enumFromInt(0) });
+    try std.testing.expect(equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+    try std.testing.expectEqual(Layout{ .size = 4, .alignment = 4 }, try layoutOf(&graph, @enumFromInt(2)));
 }

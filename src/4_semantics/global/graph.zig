@@ -6,6 +6,7 @@ const module_sg = @import("../module/graph.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
 pub const GlobalTypeId = enum(u32) { _ };
+pub const GlobalTypeDefinitionId = enum(u32) { _ };
 pub const GlobalFunctionId = enum(u32) { _ };
 pub const GlobalBindingId = enum(u32) { _ };
 pub const GlobalNodeId = enum(u32) { _ };
@@ -34,6 +35,7 @@ pub const GlobalModuleId = enum(u32) { _ };
 pub const Ids = struct {
     pub const DeclId = GlobalDeclId;
     pub const TypeId = GlobalTypeId;
+    pub const TypeDefinitionId = GlobalTypeDefinitionId;
     pub const FunctionId = GlobalFunctionId;
     pub const BindingId = GlobalBindingId;
     pub const NodeId = GlobalNodeId;
@@ -66,6 +68,7 @@ pub const FieldRange = primitives.Range(GlobalFieldId);
 pub const VariantRange = primitives.Range(GlobalVariantId);
 
 pub const Declaration = primitives.Declaration(Ids);
+pub const TypeDefinition = primitives.TypeDefinition(Ids);
 pub const GlobalType = primitives.SemanticType(Ids);
 pub const GenericInstance = type_shapes.GenericInstance(Ids);
 pub const Field = primitives.Field(Ids);
@@ -180,7 +183,7 @@ pub const TypeResolutionState = enum(u8) {
     unresolved,
 };
 
-pub const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u32));
+pub const unresolved_type_poison_definition: GlobalTypeDefinitionId = @enumFromInt(std.math.maxInt(u32));
 const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
 pub const ArgumentDefaultTemporary = struct { expression: GlobalNodeId, declaration: GlobalNodeId };
@@ -366,6 +369,7 @@ pub const GlobalSemanticGraph = struct {
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(GlobalDeclId) = .empty,
     types: std.ArrayList(GlobalType) = .empty,
+    type_definitions: std.ArrayList(TypeDefinition) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
     generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
@@ -621,18 +625,18 @@ pub const GlobalSemanticGraph = struct {
         }
         self.safety_batches.deinit(allocator);
         inline for (.{
-            &self.modules,                     &self.module_aliases,             &self.files,                        &self.declarations,
-            &self.symbols,                     &self.symbol_declarations,        &self.types,                        &self.generic_instances,
-            &self.functions,                   &self.generic_function_instances, &self.bindings,                     &self.nodes,
-            &self.blocks,                      &self.fields,                     &self.variants,                     &self.generic_arguments,
-            &self.value_fields,                &self.switch_cases,               &self.switches,                     &self.auto_deinit_fields,
-            &self.auto_deinits,                &self.virtual_registries,         &self.virtualizes,                  &self.virtual_calls,
-            &self.reach_segments,              &self.reach_alternatives,         &self.reaches,                      &self.nullable_unwraps,
-            &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,               &self.node_refs,
-            &self.type_refs,                   &self.binding_refs,               &self.function_refs,                &self.virtual_registry_refs,
-            &self.strings,                     &self.roots,                      &self.contract_safety_conformances, &self.contract_conformances,
-            &self.contract_operation_bindings, &self.argument_defaults,          &self.argument_default_temporaries, &self.argument_default_bindings,
-            &self.comptime_requests,           &self.block_assumptions,
+            &self.modules,                   &self.module_aliases,              &self.files,                      &self.declarations,
+            &self.symbols,                   &self.symbol_declarations,         &self.types,                      &self.type_definitions,
+            &self.generic_instances,         &self.functions,                   &self.generic_function_instances, &self.bindings,
+            &self.nodes,                     &self.blocks,                      &self.fields,                     &self.variants,
+            &self.generic_arguments,         &self.value_fields,                &self.switch_cases,               &self.switches,
+            &self.auto_deinit_fields,        &self.auto_deinits,                &self.virtual_registries,         &self.virtualizes,
+            &self.virtual_calls,             &self.reach_segments,              &self.reach_alternatives,         &self.reaches,
+            &self.nullable_unwraps,          &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,
+            &self.node_refs,                 &self.type_refs,                   &self.binding_refs,               &self.function_refs,
+            &self.virtual_registry_refs,     &self.strings,                     &self.roots,                      &self.contract_safety_conformances,
+            &self.contract_conformances,     &self.contract_operation_bindings, &self.argument_defaults,          &self.argument_default_temporaries,
+            &self.argument_default_bindings, &self.comptime_requests,           &self.block_assumptions,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -793,6 +797,15 @@ pub const GlobalSemanticGraph = struct {
         return if (self.lookup.parameterized_function_names.get(name)) |matches| matches.items else &.{};
     }
 
+    pub fn typeDefinitionName(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) []const u8 {
+        const definition = self.typeDefinition(id);
+        return if (definition.declaration) |declaration_id| self.text(self.declaration(declaration_id).name) else "<anonymous>";
+    }
+
+    pub fn typeDefinition(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) TypeDefinition {
+        return self.type_definitions.items[@intFromEnum(id)];
+    }
+
     pub fn declaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) Declaration {
         return self.declarations.items[@intFromEnum(id)];
     }
@@ -823,7 +836,7 @@ pub const GlobalSemanticGraph = struct {
         try self.recordTypeRewrite(allocator, id, false);
         try self.ensureTypeResolutionCovers(allocator, self.types.items.len);
         self.construction.type_resolution.items[raw] = .unresolved;
-        self.types.items[raw] = .{ .declared = unresolved_type_poison_decl };
+        self.types.items[raw] = .{ .nominal = unresolved_type_poison_definition };
     }
 
     /// Publish a type through the construction-state boundary. Type holes must
@@ -1130,12 +1143,19 @@ pub const GlobalSemanticGraph = struct {
         // verifyModulePartitions checks that invariant before graph validation
         // uses this lookup. Empty modules and source fragments retain their own
         // positions. Canonical namespace ownership is a separate operation.
-        const raw = @intFromEnum(id);
+        return self.moduleForPartition("declarations", @intFromEnum(id));
+    }
+
+    pub fn moduleForTypeDefinition(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) ?GlobalModuleId {
+        return self.moduleForPartition("files", self.typeDefinition(id).source.file_index);
+    }
+
+    fn moduleForPartition(self: *const GlobalSemanticGraph, comptime field: []const u8, raw: u32) ?GlobalModuleId {
         var first: usize = 0;
         var end = self.modules.items.len;
         while (first < end) {
             const middle = first + (end - first) / 2;
-            const range = self.modules.items[middle].declarations;
+            const range = @field(self.modules.items[middle], field);
             if (raw < range.start) {
                 end = middle;
             } else if (raw - range.start >= range.len) {
@@ -1225,7 +1245,7 @@ test "global semantic graph derives symbol module ownership from declarations" {
         .source = .{ .file_index = 0, .offset = 4 },
         .type_id = @enumFromInt(0),
     });
-    try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .nominal = @enumFromInt(0) });
     try graph.symbol_declarations.append(allocator, @enumFromInt(0));
     const symbol = Symbol{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } };
     try graph.symbols.append(allocator, symbol);
@@ -1710,7 +1730,7 @@ test "resolution transactions undo canonicalization and completion in write orde
     try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .UInt8 });
     transaction.rollback();
     try std.testing.expect(graph.isTypeUnresolved(@enumFromInt(0)));
-    try std.testing.expectEqual(unresolved_type_poison_decl, graph.semanticType(@enumFromInt(0)).declared);
+    try std.testing.expectEqual(unresolved_type_poison_definition, graph.semanticType(@enumFromInt(0)).nominal);
     try std.testing.expectEqualDeep(before, graph.checkpoint());
 }
 

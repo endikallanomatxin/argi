@@ -9,7 +9,6 @@ const type_shapes = @import("../primitives/type_shapes.zig");
 pub const Storage = struct {
     local_semantics_complete: bool = false,
 
-    declaration_semantics: std.ArrayList(entities.DeclarationSemantic) = .empty,
     declaration_bindings: std.ArrayList(entities.DeclarationBinding) = .empty,
     module_aliases: std.ArrayList(entities.ModuleAlias) = .empty,
     function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
@@ -20,6 +19,7 @@ pub const Storage = struct {
     /// One canonical pool shared by discovery and subsequent lowering.
     generic_arguments: std.ArrayList(entities.GenericArgument) = .empty,
     types: std.ArrayList(entities.ModuleType) = .empty,
+    type_definitions: std.ArrayList(entities.TypeDefinition) = .empty,
 
     generic_instances: std.ArrayList(type_shapes.GenericInstance(entities.Ids)) = .empty,
 
@@ -64,7 +64,6 @@ pub const Storage = struct {
     roots: std.ArrayList(entities.ModuleNodeId) = .empty,
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
-        self.declaration_semantics.deinit(allocator);
         self.declaration_bindings.deinit(allocator);
         self.module_aliases.deinit(allocator);
         self.function_semantics.deinit(allocator);
@@ -72,6 +71,7 @@ pub const Storage = struct {
         self.variants.deinit(allocator);
         self.generic_arguments.deinit(allocator);
         self.types.deinit(allocator);
+        self.type_definitions.deinit(allocator);
         self.generic_instances.deinit(allocator);
         self.bindings.deinit(allocator);
         self.unresolved_binding_types.deinit(allocator);
@@ -110,7 +110,6 @@ pub const Storage = struct {
 
     pub fn storageBytes(self: *const Storage) usize {
         return @sizeOf(bool) +
-            self.declaration_semantics.items.len * @sizeOf(entities.DeclarationSemantic) +
             self.declaration_bindings.items.len * @sizeOf(entities.DeclarationBinding) +
             self.module_aliases.items.len * @sizeOf(entities.ModuleAlias) +
             self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
@@ -118,6 +117,7 @@ pub const Storage = struct {
             self.variants.items.len * @sizeOf(entities.ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(entities.GenericArgument) +
             self.types.items.len * @sizeOf(entities.ModuleType) +
+            self.type_definitions.items.len * @sizeOf(entities.TypeDefinition) +
             self.generic_instances.items.len * @sizeOf(type_shapes.GenericInstance(entities.Ids)) +
             self.bindings.items.len * @sizeOf(entities.Binding) +
             self.unresolved_binding_types.items.len * @sizeOf(entities.ModuleBindingId) +

@@ -204,7 +204,7 @@ pub const Resolver = struct {
                         } else if (pattern == .concrete) {
                             const closed = try self.generics.instantiateParameterizedType(module_index, patterns[index].value.type, &bindings);
                             const identity = switch (self.graph.resolvedSemanticType(closed) orelse continue :templates) {
-                                .declared => |id| id,
+                                .nominal => |id| self.graph.typeDefinition(id).declaration orelse continue :templates,
                                 .generic => |generic| generic.base,
                                 else => continue :templates,
                             };

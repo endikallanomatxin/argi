@@ -848,7 +848,7 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
                     } else try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Contract" });
                     if (if (operation_name == null) declaration.type_id else null) |ty| {
                         const self_reference = switch (graph.types.items[@intFromEnum(ty)]) {
-                            .declared => |target_decl| target_decl == id,
+                            .nominal => |definition| graph.typeDefinition(definition).declaration == id,
                             else => false,
                         };
                         if (!self_reference) {
@@ -899,7 +899,7 @@ fn writeFieldRange(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGr
 fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) std.mem.Allocator.Error!void {
     switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |value| try writer.writeAll(@tagName(value)),
-        .declared => |decl| try writer.writeAll(graph.text(graph.declarations.items[@intFromEnum(decl)].name)),
+        .nominal => |definition| try writer.writeAll(graph.typeDefinitionName(definition)),
         .definition => |decl| try writer.print("definition({s})", .{graph.text(graph.declaration(decl).name)}),
         .pointer => |pointer| {
             try writer.writeAll(if (pointer.mutability == .read_write) "$&" else "&");

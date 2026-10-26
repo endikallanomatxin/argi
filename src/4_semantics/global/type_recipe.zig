@@ -5,6 +5,7 @@ const Generics = @import("generics.zig").Resolver;
 
 const Ids = struct {
     pub const TypeId = enum(u32) { _ };
+    pub const TypeDefinitionId = g.GlobalTypeDefinitionId;
     pub const FieldId = enum(u32) { _ };
     pub const VariantId = enum(u32) { _ };
     pub const GenericArgId = enum(u32) { _ };
@@ -43,7 +44,7 @@ const Default = union(enum) {
 /// Only identities preceding the resolution pass can remain graph references.
 /// Pools retain sharing within the captured type DAG, without copying the graph.
 pub const Recipe = struct {
-    pub const Boundary = struct { types: usize, declarations: usize, nodes: usize };
+    pub const Boundary = struct { types: usize, declarations: usize, nodes: usize, type_definitions: usize = 0 };
     nodes: std.ArrayList(Node) = .empty,
     defaults: std.ArrayList(Default) = .empty,
     default_bindings: std.ArrayList(DefaultBinding) = .empty,
@@ -203,7 +204,7 @@ pub const Recipe = struct {
             if (@intFromEnum(std.meta.activeTag(shape)) != @intFromEnum(std.meta.activeTag(actual))) return false;
             return switch (shape) {
                 .builtin => |value| value == actual.builtin,
-                .declared => |value| value == actual.declared,
+                .nominal => |value| value == actual.nominal,
                 .definition => |value| value == actual.definition,
                 .pointer => |value| value.mutability == actual.pointer.mutability and try self.typeId(value.child, actual.pointer.child),
                 .array => |value| value.length == actual.array.length and try self.typeId(value.element, actual.array.element),
@@ -276,7 +277,7 @@ pub const Recipe = struct {
                 const shape = self.graph.types.items[@intFromEnum(id)];
                 const description: p.SemanticType(Ids) = switch (shape) {
                     .builtin => |v| .{ .builtin = v },
-                    .declared => |v| .{ .declared = try self.declaration(v) },
+                    .nominal => |v| .{ .nominal = if (@intFromEnum(v) < self.boundary.type_definitions) v else return error.ComptimeTypeRecipePending },
                     .definition => |v| .{ .definition = try self.declaration(v) },
                     .pointer => |v| .{ .pointer = .{ .child = try self.typeId(v.child, depth + 1), .mutability = v.mutability } },
                     .array => |v| .{ .array = .{ .element = try self.typeId(v.element, depth + 1), .length = v.length } },
@@ -411,7 +412,7 @@ pub const Recipe = struct {
             const node = self.recipe.nodes.items[index];
             const result = if (node == .stable) node.stable else try self.generics.internType(switch (node.shape) {
                 .builtin => |v| .{ .builtin = v },
-                .declared => |v| .{ .declared = v },
+                .nominal => |v| .{ .nominal = v },
                 .definition => |v| .{ .definition = v },
                 .pointer => |v| .{ .pointer = .{ .child = try self.typeId(v.child), .mutability = v.mutability } },
                 .array => |v| .{ .array = .{ .element = try self.typeId(v.element), .length = v.length } },
@@ -905,4 +906,29 @@ test "type recipes preserve pending errable wrappers without retaining speculati
     try std.testing.expect(child == .array);
     try std.testing.expectEqual(@as(u64, 3), child.array.length);
     try std.testing.expectEqual(@as(g.GlobalTypeId, @enumFromInt(0)), child.array.element);
+}
+
+test "type recipes retain anonymous nominal definitions across speculative type rollback" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.type_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 17 }, .underlying_type = @enumFromInt(0) });
+    const checkpoint = graph.checkpoint();
+    try graph.types.append(a, .{ .nominal = @enumFromInt(0) });
+    const input = [_]?g.GlobalTypeId{@enumFromInt(1)};
+    var recipe = try Recipe.capture(a, &graph, .{ .types = 1, .declarations = 0, .nodes = 0, .type_definitions = 1 }, &input);
+    defer recipe.deinit(a);
+    graph.rollback(a, checkpoint);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try std.testing.expect(!try recipe.matches(a, &graph, &input));
+    var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinitReachedCalls();
+    var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    var output: [1]?g.GlobalTypeId = .{null};
+    try recipe.publish(a, &generics, &output);
+    try std.testing.expectEqual(@as(g.GlobalTypeDefinitionId, @enumFromInt(0)), graph.semanticType(output[0].?).nominal);
+    try std.testing.expectEqual(@as(usize, 0), graph.declarations.items.len);
+    try std.testing.expectEqualStrings("<anonymous>", graph.typeDefinitionName(@enumFromInt(0)));
 }

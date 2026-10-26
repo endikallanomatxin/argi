@@ -3286,7 +3286,7 @@ pub const CodeGenerator = struct {
 
     fn isCEnum(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
-            .declared => |decl| self.graph.declarations.items[@intFromEnum(decl)].choice_layout == .c_enum,
+            .nominal => |decl| self.graph.typeDefinition(decl).choice_layout == .c_enum,
             .structural_choice => |shape| shape.layout == .c_enum,
             .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
                 .choice => |shape| shape.layout == .c_enum,

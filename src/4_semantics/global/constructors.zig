@@ -109,7 +109,7 @@ pub const Resolver = struct {
         return error.Reported;
     }
 
-    fn resolveCallbackConstructor(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype, declaration: global_sg.Declaration, ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId) !resolution.Result {
+    fn resolveCallbackConstructor(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype, declaration: global_sg.TypeDefinition, ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId) !resolution.Result {
         const target = globalizer.globalNode(o, value.node);
         const local_source = module.semantic.external_refs.items[@intFromEnum(value.callee)].source;
         const source: primitives.SourceRef = .{ .file_index = o.file_base + local_source.file_index, .offset = local_source.offset };
@@ -303,8 +303,8 @@ pub const Resolver = struct {
         };
         if (c_abi.isFunctionPointer(self.graph, ty)) {
             const semantic = self.graph.resolvedSemanticType(ty) orelse return .deferred;
-            if (semantic != .declared) return .deferred;
-            return self.resolveCallbackConstructor(module_index, module, o, value, self.graph.declaration(semantic.declared), ty, input);
+            if (semantic != .nominal) return .deferred;
+            return self.resolveCallbackConstructor(module_index, module, o, value, self.graph.typeDefinition(semantic.nominal), ty, input);
         }
 
         if (self.contractInitializer(module_index, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
@@ -538,9 +538,9 @@ const Fixture = struct {
             .name = declaration_name,
             .source = .{ .file_index = 0, .offset = 0 },
             .type_id = declared_type,
-            .struct_fields = .{ .start = 0, .len = 0 },
         });
-        try graph.types.append(allocator, .{ .declared = @as(global_sg.GlobalDeclId, @enumFromInt(0)) });
+        try graph.type_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .declaration = @enumFromInt(0), .struct_fields = .{ .start = 0, .len = 0 } });
+        try graph.types.append(allocator, .{ .nominal = @enumFromInt(0) });
         try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } });
 
         try graph.modules.append(allocator, .{

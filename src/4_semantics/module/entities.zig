@@ -3,6 +3,7 @@ const primitives = @import("../primitives/schema.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
 pub const ModuleTypeId = enum(u32) { _ };
+pub const ModuleTypeDefinitionId = enum(u32) { _ };
 pub const ModuleFunctionId = enum(u32) { _ };
 pub const ModuleBindingId = enum(u32) { _ };
 pub const ModuleNodeId = enum(u32) { _ };
@@ -37,6 +38,7 @@ pub const unresolved_binding_type_poison: ModuleTypeId = @enumFromInt(std.math.m
 pub const Ids = struct {
     pub const DeclId = ModuleDeclId;
     pub const TypeId = ModuleTypeId;
+    pub const TypeDefinitionId = ModuleTypeDefinitionId;
     pub const FunctionId = ModuleFunctionId;
     pub const BindingId = ModuleBindingId;
     pub const NodeId = ModuleNodeId;
@@ -71,6 +73,7 @@ pub const GenericArgRange = primitives.Range(ModuleGenericArgId);
 
 pub const ResolvedType = primitives.SemanticType(Ids);
 pub const Declaration = primitives.Declaration(Ids);
+pub const TypeDefinition = primitives.TypeDefinition(Ids);
 pub const Field = primitives.Field(Ids);
 pub const ChoiceVariant = primitives.ChoiceVariant(Ids);
 pub const GenericArgument = primitives.GenericArgument(Ids);
@@ -97,12 +100,6 @@ pub const ResolvedNode = primitives.Node(Ids);
 pub const ModuleType = union(enum) {
     resolved: ResolvedType,
     external: ExternalRefId,
-};
-
-pub const DeclarationSemantic = struct {
-    declaration: ModuleDeclId,
-    struct_layout: primitives.StructLayout = .regular,
-    choice_layout: primitives.ChoiceLayout = .regular,
 };
 
 /// Cold relation for declaration kinds that own runtime storage. Keeping this
@@ -328,10 +325,10 @@ pub const ModuleNode = union(enum) {
 };
 
 test "module semantic identities instantiate the shared schema" {
-    const decl: ModuleDeclId = @enumFromInt(1);
-    const resolved = ResolvedType{ .declared = decl };
+    const definition: ModuleTypeDefinitionId = @enumFromInt(1);
+    const resolved = ResolvedType{ .nominal = definition };
     const ty = ModuleType{ .resolved = resolved };
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ty.resolved.declared));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ty.resolved.nominal));
 
     const external = ExternalRef{
         .kind = .type,
@@ -343,7 +340,7 @@ test "module semantic identities instantiate the shared schema" {
     try std.testing.expectEqual(ExternalKind.type, external.kind);
     try std.testing.expectEqual(@as(u32, 2), external.generic_arguments.?.start);
 
-    const link = DeclarationBinding{ .declaration = decl, .binding = @enumFromInt(3) };
+    const link = DeclarationBinding{ .declaration = @enumFromInt(1), .binding = @enumFromInt(3) };
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(link.binding));
 
     const pending = PendingOperation{ .resolve_binary = .{

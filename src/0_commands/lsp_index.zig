@@ -111,7 +111,7 @@ pub const Index = struct {
             .function_call => |call| {
                 if (call.callee_value != null) continue;
                 const initialized = if (standard_contracts.initializedType(graph, call.callee)) |ty| switch (graph.resolvedSemanticType(ty) orelse continue) {
-                    .declared => |owner| owner,
+                    .nominal => |owner| graph.typeDefinition(owner).declaration,
                     .generic => |identity| identity.base,
                     else => null,
                 } else null;
@@ -139,7 +139,7 @@ pub const Index = struct {
             .struct_value_literal => {
                 const ty = node.ty orelse continue;
                 const owner = switch (graph.types.items[@intFromEnum(ty)]) {
-                    .declared => |id| id,
+                    .nominal => |id| graph.typeDefinition(id).declaration orelse continue,
                     .generic => |value| value.base,
                     else => continue,
                 };
@@ -299,7 +299,7 @@ pub fn occurrence_matches_source(graph: *const graph_mod.GlobalSemanticGraph, db
         if (occurrence.constructor_call) {
             const ty = standard_contracts.initializedType(graph, occurrence.target.function) orelse return false;
             const owner = switch (graph.resolvedSemanticType(ty) orelse return false) {
-                .declared => |id| id,
+                .nominal => |id| graph.typeDefinition(id).declaration orelse return false,
                 .generic => |identity| identity.base,
                 else => return false,
             };

@@ -61,7 +61,7 @@ pub fn finish(
     try function_identity_lowerer.validateOrdinaryIdentities(graph, files, diagnostics);
     const module_aliases = try module_alias_lowerer.lower(allocator, graph, files);
     const initializers = try initializer_lowerer.lower(allocator, graph, files, diagnostics);
-    try lowerNominalLayouts(allocator, graph, files);
+    try lowerNominalLayouts(graph, files);
 
     const global_roots = try global_roots_lowerer.lower(allocator, graph);
 
@@ -108,18 +108,18 @@ fn lowerModuleConditions(allocator: std.mem.Allocator, graph: *module_sg.ModuleS
 // Incomplete types and callback signatures have no structural fields. Layout
 // metadata distinguishes an incomplete identity from a pointer-valued signature
 // and from an ordinary record whose fields are still unresolved.
-fn lowerNominalLayouts(allocator: std.mem.Allocator, graph: *module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput) !void {
+fn lowerNominalLayouts(graph: *module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput) !void {
     for (graph.declarations.items, 0..) |declaration, raw| {
         if (declaration.kind != .type) continue;
         const file = files[declaration.module_file_index];
         const node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         const tag = file.tree.tag(node);
         if (tag != .c_enum_declaration and tag != .c_union_declaration and tag != .c_struct_declaration and tag != .c_incomplete_declaration and tag != .c_function_pointer_declaration) continue;
-        try graph.semantic.declaration_semantics.append(allocator, .{
-            .declaration = @enumFromInt(@as(u32, @intCast(raw))),
-            .choice_layout = if (tag == .c_enum_declaration) .c_enum else .regular,
-            .struct_layout = if (tag == .c_function_pointer_declaration) .c_function_pointer else if (tag == .c_union_declaration) .c_union else if (tag == .c_struct_declaration) .c_struct else if (tag == .c_incomplete_declaration) .c_incomplete else .regular,
-        });
+        const identity = graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+        const definition = &graph.semantic.type_definitions.items[@intFromEnum(identity)];
+        definition.function_id = declaration.function_id;
+        definition.choice_layout = if (tag == .c_enum_declaration) .c_enum else .regular;
+        definition.struct_layout = if (tag == .c_function_pointer_declaration) .c_function_pointer else if (tag == .c_union_declaration) .c_union else if (tag == .c_struct_declaration) .c_struct else if (tag == .c_incomplete_declaration) .c_incomplete else .regular;
     }
 }
 

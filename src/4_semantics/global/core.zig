@@ -842,7 +842,7 @@ pub const Resolver = struct {
             if (self.graph.semanticType(ty) == .definition or types.isBuiltin(self.graph, ty, .Type)) return .deferred;
             if (!c_abi.isFunctionPointer(self.graph, ty)) return .invalid;
             const declaration = switch (self.graph.resolvedSemanticType(ty).?) {
-                .declared => |id| self.graph.declaration(id),
+                .nominal => |id| self.graph.typeDefinition(id),
                 else => unreachable,
             };
             const signature = declaration.function_id orelse return .deferred;
@@ -2388,7 +2388,7 @@ pub const Resolver = struct {
     fn isCEnumPair(self: *const Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
         if (!types.equal(self.graph, a, b)) return false;
         return switch (self.graph.resolvedSemanticType(a) orelse return false) {
-            .declared => |decl| self.graph.declaration(decl).choice_layout == .c_enum,
+            .nominal => |decl| self.graph.typeDefinition(decl).choice_layout == .c_enum,
             else => false,
         };
     }

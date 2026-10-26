@@ -586,7 +586,7 @@ pub const Resolver = struct {
     ) anyerror!global_sg.GlobalTypeId {
         return switch (value) {
             .builtin => |builtin| self.internType(.{ .builtin = builtin }),
-            .declared => |decl| self.internType(.{ .declared = try self.resolveParameterizedDeclaration(module_index, decl) }),
+            .nominal => |definition| self.internType(.{ .nominal = globalizer.globalTypeDefinition(self.offsets[module_index], definition) }),
             .definition => |decl| self.internType(.{ .definition = try self.resolveParameterizedDeclaration(module_index, decl) }),
             .pointer => |pointer| self.internType(.{ .pointer = .{
                 .child = try self.instantiateParameterizedType(module_index, pointer.child, bindings),
@@ -1019,7 +1019,7 @@ fn sameShallowType(graph: *const global_sg.GlobalSemanticGraph, a: global_sg.Glo
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
     return switch (a) {
         .builtin => |value| value == b.builtin,
-        .declared => |value| value == b.declared,
+        .nominal => |value| value == b.nominal,
         .definition => |value| value == b.definition,
         .pointer => |value| value.mutability == b.pointer.mutability and global_types.identityEqual(graph, value.child, b.pointer.child),
         .array => |value| value.length == b.array.length and global_types.identityEqual(graph, value.element, b.array.element),

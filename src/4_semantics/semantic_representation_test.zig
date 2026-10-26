@@ -29,7 +29,8 @@ fn makeScalarModule(allocator: std.mem.Allocator, dir: []const u8, type_name_tex
         .module_file_index = 0,
         .type_id = @enumFromInt(0),
     });
-    try module.semantic.types.append(allocator, .{ .resolved = .{ .declared = @enumFromInt(0) } });
+    try module.semantic.type_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 1 }, .declaration = @enumFromInt(0) });
+    try module.semantic.types.append(allocator, .{ .resolved = .{ .nominal = @enumFromInt(0) } });
     try module.symbol_declarations.append(allocator, @enumFromInt(0));
     try module.symbols.append(allocator, .{
         .name = type_name,
@@ -155,6 +156,11 @@ test "module semantic ids relocate independently into the global graph" {
     const allocator = std.testing.allocator;
     var left = try makeScalarModule(allocator, "left", "Left", 10);
     defer left.deinit(allocator);
+    const extra = try @import("primitives/strings.zig").append(&left.strings, allocator, "extra");
+    try left.declarations.append(allocator, .{ .kind = .choice_option, .name = extra, .source_offset = 2, .module_file_index = 0 });
+    left.file_offsets.items[0].declaration_count += 1;
+    try left.symbol_declarations.append(allocator, @enumFromInt(1));
+    try left.symbols.append(allocator, .{ .name = extra, .declarations = .{ .start = 1, .len = 1 } });
     var right = try makeScalarModule(allocator, "right", "Right", 20);
     defer right.deinit(allocator);
     var reasons = try makeInferredChoiceModule(allocator);
@@ -169,16 +175,17 @@ test "module semantic ids relocate independently into the global graph" {
     try global_verify.verifyGlobal(&global);
 
     try std.testing.expectEqual(@as(usize, 3), global.modules.items.len);
-    try std.testing.expectEqual(@as(usize, 3), global.declarations.items.len);
+    try std.testing.expectEqual(@as(usize, 4), global.declarations.items.len);
     try std.testing.expectEqual(@as(usize, 3), global.types.items.len);
     try std.testing.expectEqual(@as(usize, 2), global.bindings.items.len);
     try std.testing.expectEqual(@as(usize, 4), global.nodes.items.len);
 
-    // Every ModuleSG starts at local declaration/type/binding/node ID 0. The
-    // second module must therefore be rebased to the first module's counts.
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(global.types.items[1].declared));
+    // Declaration and definition pools have different lengths. Type identity
+    // relocation must use the definition base, independently of named bindings.
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(global.type_definitions.items[1].declaration.?));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(global.types.items[1].nominal));
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(global.nodes.items[3].content.binding_use));
-    try std.testing.expectEqualStrings("Right", global.text(global.declarations.items[1].name));
+    try std.testing.expectEqualStrings("Right", global.text(global.declarations.items[2].name));
 
     const inferred = global.types.items[2].inferred_choice;
     try std.testing.expectEqual(@as(u32, 17), inferred.identity);
@@ -187,7 +194,7 @@ test "module semantic ids relocate independently into the global graph" {
     try std.testing.expectEqual(@as(u32, 1), inferred.variants.len);
 
     // Globalization copies and relocates; it does not mutate module-local IDs.
-    try std.testing.expectEqual(@as(u32, 0), @intFromEnum((try @import("module/views.zig").typeView(&right, @enumFromInt(0))).resolved.declared));
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum((try @import("module/views.zig").typeView(&right, @enumFromInt(0))).resolved.nominal));
 }
 
 test "generic identities and materialized shapes relocate together" {

@@ -29,7 +29,6 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     if (raw >= graph.declarations.items.len) return error.InvalidModuleDeclarationId;
     const declaration = graph.declarations.items[raw];
     if (declaration.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
-    const semantic = findDeclarationSemantic(graph, id);
     const domain_count: u32 = if (declaration.kind == .contract_type) count: {
         for (graph.semantic.parameterized_storage.contract_definitions.items) |definition|
             if (definition.declaration == id) break :count @intCast(definition.domains.len);
@@ -41,14 +40,9 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
         .name = declaration.name,
         .source = .{ .file_index = declaration.module_file_index, .offset = declaration.source_offset },
         .type_id = declaration.type_id,
-        .underlying_type = declaration.underlying_type,
         .function_id = declaration.function_id,
-        .struct_fields = if (declaration.struct_fields) |range| .{ .start = range.start, .len = range.len } else null,
-        .choice_variants = if (declaration.choice_variants) |range| .{ .start = range.start, .len = range.len } else null,
         .generic_parameter_count = declaration.generic_parameter_count,
         .contract_domain_count = domain_count,
-        .struct_layout = if (semantic) |value| value.struct_layout else .regular,
-        .choice_layout = if (semantic) |value| value.choice_layout else .regular,
     };
 }
 
@@ -95,10 +89,6 @@ pub fn functionView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Mo
     };
 }
 
-fn findDeclarationSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleDeclId) ?entities.DeclarationSemantic {
-    for (graph.semantic.declaration_semantics.items) |value| if (value.declaration == id) return value;
-    return null;
-}
 fn findFunctionSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFunctionId) ?entities.FunctionSemantic {
     for (graph.semantic.function_semantics.items) |value| if (value.function == id) return value;
     return null;

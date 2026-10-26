@@ -36,8 +36,8 @@ pub const Layout = struct {
             .array => |a| .{ .array = .{ .element = a.element, .length = a.length } },
             .structural => |s| .{ .fields = s.fields },
             inline .structural_choice, .inferred_choice => |s| .{ .variants = s.variants },
-            .declared => |id| blk: {
-                const declaration = graph.declaration(id);
+            .nominal => |id| blk: {
+                const declaration = graph.typeDefinition(id);
                 if (declaration.underlying_type) |target| break :blk .{ .alias = target };
                 if (declaration.struct_layout == .c_function_pointer) break :blk .leaf;
                 if (declaration.struct_fields) |fields| break :blk .{ .fields = fields };
@@ -196,13 +196,14 @@ test "reference evidence follows materialized nominal and generic shapes" {
     try graph.types.appendSlice(a, &.{
         .{ .builtin = .UInt8 },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
-        .{ .declared = @enumFromInt(0) },
+        .{ .nominal = @enumFromInt(0) },
         .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } },
         .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } },
         .{ .virtual = @enumFromInt(2) },
     });
     try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(1), .source = source });
-    try graph.declarations.append(a, .{ .name = name, .source = source, .kind = .type, .struct_fields = .{ .start = 0, .len = 1 } });
+    try graph.declarations.append(a, .{ .name = name, .source = source, .kind = .type });
+    try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
     try graph.generic_instances.appendSlice(a, &.{
         .{ .type_id = @enumFromInt(3), .shape = .{ .array = .{ .element = @enumFromInt(2), .length = 7 } } },
         .{ .type_id = @enumFromInt(4), .shape = .{ .alias = @enumFromInt(3) } },

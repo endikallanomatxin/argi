@@ -1365,6 +1365,7 @@ fn advanceResolution(
         while (changed) {
             staged_execution.stable_type_count = graph.types.items.len;
             staged_execution.stable_declaration_count = graph.declarations.items.len;
+            staged_execution.stable_type_definition_count = graph.type_definitions.items.len;
             staged_execution.stable_node_count = graph.nodes.items.len;
             progress.profile_rounds += 1;
             if (core.scan_profile) |profile| profile.rounds += 1;
@@ -1906,7 +1907,7 @@ fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: glob
 
 fn hasUnderlyingType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
     return switch (graph.resolvedSemanticType(ty) orelse return false) {
-        .declared => |id| graph.declaration(id).underlying_type != null,
+        .nominal => |id| graph.typeDefinition(id).underlying_type != null,
         .generic => if (global_types.genericInstance(graph, ty)) |instance| instance.shape == .alias else false,
         else => false,
     };
@@ -1914,7 +1915,7 @@ fn hasUnderlyingType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.
 
 fn isUnicodeScalarType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
     const declaration = switch (graph.semanticType(ty)) {
-        .declared => |id| id,
+        .nominal => |id| graph.typeDefinition(id).declaration orelse return false,
         else => return false,
     };
     const owner = graph.moduleForDeclaration(declaration) orelse return false;
@@ -3315,7 +3316,7 @@ fn diagnoseUnresolvedCall(
                     try diagnostics.add(location, .semantic, "cannot call binding '{s}': expected a CFunctionPointer value", .{name});
                 } else {
                     const declaration = switch (graph.resolvedSemanticType(ty).?) {
-                        .declared => |id| graph.declaration(id),
+                        .nominal => |id| graph.typeDefinition(id),
                         else => unreachable,
                     };
                     const signature = graph.function(declaration.function_id.?);
@@ -3348,7 +3349,8 @@ fn diagnoseUnresolvedCall(
             }
             for (try graph.declarationsNamed(allocator, name)) |id| {
                 const declaration = graph.declaration(id);
-                if (declaration.struct_layout != .c_incomplete or !generic_functions.core.declarationVisible(module_index, id, qualified_module)) continue;
+                const ty = declaration.type_id orelse continue;
+                if (global_types.incompleteDeclaration(graph, ty) == null or !generic_functions.core.declarationVisible(module_index, id, qualified_module)) continue;
                 try diagnostics.add(location, .semantic, "CIncomplete type '{s}' cannot be constructed; use RawPointer for foreign handles", .{name});
                 return true;
             }
@@ -3876,7 +3878,7 @@ pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_
     }
     switch (graph.semanticType(ty)) {
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
-        .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
+        .nominal => |definition| try buffer.appendSlice(graph.typeDefinitionName(definition)),
         .generic => |generic| {
             const base_name = graph.text(graph.declaration(generic.base).name);
             if (std.mem.eql(u8, base_name, "Nullable")) {
@@ -4101,15 +4103,15 @@ fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, 
 }
 
 fn validateUnderlyingTypes(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
-    for (graph.declarations.items) |declaration| {
-        var current = declaration.underlying_type orelse continue;
+    for (graph.type_definitions.items, 0..) |definition, raw| {
+        var current = definition.underlying_type orelse continue;
         for (0..graph.types.items.len + 1) |_| {
             const semantic = graph.resolvedSemanticType(current) orelse break;
-            if (semantic != .declared) break;
-            current = graph.declaration(semantic.declared).underlying_type orelse break;
+            if (semantic != .nominal) break;
+            current = graph.typeDefinition(semantic.nominal).underlying_type orelse break;
         } else {
             if (diagnostics) |sink| {
-                try sink.add(diagnosticLocation(graph, sink, declaration.source), .semantic, "cyclic underlying type for '{s}'", .{graph.text(declaration.name)});
+                try sink.add(diagnosticLocation(graph, sink, definition.source), .semantic, "cyclic underlying type for '{s}'", .{graph.typeDefinitionName(@enumFromInt(@as(u32, @intCast(raw))))});
                 return error.Reported;
             }
             return error.CyclicUnderlyingType;

@@ -5871,7 +5871,7 @@ pub const Infer = struct {
             .array => |array| self.typeContainsPointer(array.element),
             .nullable => |child| self.typeContainsPointer(child),
             .inferred_errable => |child| self.typeContainsPointer(child),
-            .structural, .declared, .generic => blk: {
+            .structural, .nominal, .generic => blk: {
                 const range = types.fields(self.graph, ty) orelse break :blk false;
                 for (self.graph.fields.items[range.start..][0..range.len]) |field|
                     if (self.typeContainsPointer(field.ty)) break :blk true;

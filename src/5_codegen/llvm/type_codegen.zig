@@ -19,7 +19,7 @@ pub const Lowerer = struct {
             // it here would recurse through self-referential structures.
             .pointer => c.LLVMPointerType(c.LLVMInt8Type(), 0),
             .array => |array| c.LLVMArrayType(try self.toLLVMType(array.element), @intCast(array.length)),
-            .declared => |decl| self.declaredType(decl),
+            .nominal => |decl| self.nominalType(decl),
             .structural => |shape| self.structType(shape.fields, shape.layout),
             .structural_choice => |shape| self.choiceType(shape.variants, shape.layout),
             .inferred_choice => |shape| self.choiceType(shape.variants, .regular),
@@ -57,8 +57,8 @@ pub const Lowerer = struct {
         };
     }
 
-    fn declaredType(self: *Lowerer, decl_id: graph_mod.GlobalDeclId) Error!llvm.c.LLVMTypeRef {
-        const declaration = self.graph.declarations.items[@intFromEnum(decl_id)];
+    fn nominalType(self: *Lowerer, decl_id: graph_mod.GlobalTypeDefinitionId) Error!llvm.c.LLVMTypeRef {
+        const declaration = self.graph.typeDefinition(decl_id);
         if (declaration.struct_layout == .c_function_pointer) return c.LLVMPointerType(c.LLVMInt8Type(), 0);
         if (declaration.struct_fields) |fields| return self.structType(fields, declaration.struct_layout);
         if (declaration.choice_variants) |variants| return self.choiceType(variants, declaration.choice_layout);
@@ -176,10 +176,10 @@ pub const Lowerer = struct {
                 try self.appendPrint(buffer, "arr{d}_", .{array.length});
                 try self.encodeType(buffer, array.element);
             },
-            .declared => |decl| {
+            .nominal => |decl| {
                 try buffer.appendSlice("d");
                 try self.appendPrint(buffer, "{d}_", .{@intFromEnum(decl)});
-                try buffer.appendSlice(self.graph.text(self.graph.declarations.items[@intFromEnum(decl)].name));
+                try buffer.appendSlice(self.graph.typeDefinitionName(decl));
             },
             .structural => |shape| {
                 try buffer.appendSlice("s{");

@@ -15,6 +15,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try payload.declaration(entities.Ids, declaration, bounds);
     }
 
+    for (graph.semantic.type_definitions.items) |definition| try payload.typeDefinition(entities.Ids, definition, bounds);
     for (graph.symbols.items) |symbol| {
         try require(verify.stringFits(symbol.name, graph.strings.items));
         try require(verify.rangeFits(symbol.declarations, graph.symbol_declarations.items.len));
@@ -167,10 +168,6 @@ fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
 }
 
 fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
-    for (graph.semantic.declaration_semantics.items, 0..) |value, index| {
-        try require(verify.idFits(value.declaration, graph.declarations.items.len));
-        try require(!hasDeclarationOverlayBefore(graph, index, value.declaration));
-    }
     for (graph.semantic.function_semantics.items, 0..) |value, index| {
         try require(verify.idFits(value.function, graph.functions.items.len));
         try require(!hasFunctionOverlayBefore(graph, index, value.function));
@@ -342,6 +339,7 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
     return .{
         .files = graph.file_offsets.items.len,
         .declarations = graph.declarations.items.len,
+        .type_definitions = graph.semantic.type_definitions.items.len,
         .types = views.typeCount(graph),
         .functions = graph.functions.items.len,
         .bindings = semantic.bindings.items.len,
@@ -374,10 +372,6 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
     };
 }
 
-fn hasDeclarationOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleDeclId) bool {
-    for (graph.semantic.declaration_semantics.items[0..end]) |value| if (value.declaration == id) return true;
-    return false;
-}
 fn hasFunctionOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleFunctionId) bool {
     for (graph.semantic.function_semantics.items[0..end]) |value| if (value.function == id) return true;
     return false;

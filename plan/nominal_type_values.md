@@ -169,6 +169,9 @@ before adding implementation exceptions.
   classification, without runtime storage. Binding and module aliases preserve
   their original templates and specialize through ordinary resolution. Concrete
   types and families share alias traversal but remain distinct classifications.
-- Definition-owned nominal identity is not migrated yet: semantic identities
-  still reference declarations. Legacy spellings still parse into the common
-  definition representation during migration.
+- Concrete nominal types reference independent type-definition IDs. Definitions
+  own layouts, fields, variants and callback prototypes; declarations bind their
+  type values. Source-name associations are optional and do not determine equality
+  or module ownership. Generic family identities and anonymous type definitions
+  still need migration. Legacy spellings still parse into the common definition
+  representation during migration.

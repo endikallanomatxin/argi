@@ -37,6 +37,7 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
         try require(graph.declarations.items[@intFromEnum(alias.declaration)].kind == .import_alias);
     }
 
+    for (graph.type_definitions.items) |definition| try payload.typeDefinition(graph_mod.Ids, definition, bounds);
     for (graph.declarations.items) |declaration| try payload.declaration(graph_mod.Ids, declaration, bounds);
     try verifySymbols(graph);
 
@@ -367,6 +368,7 @@ fn makeBounds(graph: *const graph_mod.GlobalSemanticGraph) payload.Bounds {
         .argument_defaults = graph.argument_defaults.items.len,
         .files = graph.files.items.len,
         .declarations = graph.declarations.items.len,
+        .type_definitions = graph.type_definitions.items.len,
         .types = graph.types.items.len,
         .functions = graph.functions.items.len,
         .bindings = graph.bindings.items.len,
