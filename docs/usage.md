@@ -270,11 +270,12 @@ Generic entries retain their specialization parameters and selected captures;
 rejected runtime captures publish no interactive revision.
 
 Execution is limited to one million instructions, 128 nested calls, and one
-million cumulative value cells by default. `argi run --vm` and `argi repl` accept
+million retained value cells by default. `argi run --vm` and `argi repl` accept
 `--vm-instructions N`, `--vm-call-depth N`, and `--vm-value-cells N` to configure
 runtime budgets; zero forbids that work. The REPL prelude uses these same limits
 and needs enough budget to initialize. REPL instructions and call depth apply
-per command, while value cells accumulate until reset. These flags do not change
+per command. Frame identities and immutable snapshots accumulate until reset;
+reused call buffers are charged once. These flags do not change
 compile-time evaluation budgets. Embedders can configure `vm.Limits`
 and supply a host-owned `vm.Cancellation` token. Cancellation is checked between
 bytecode instructions; blocking host adapters require their own interruption.

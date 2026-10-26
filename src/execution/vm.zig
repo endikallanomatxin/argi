@@ -30,8 +30,9 @@ pub const Limits = struct {
     instructions: usize = 1_000_000,
     call_depth: usize = 128,
     cancellation: ?*const Cancellation = null,
-    // Cumulative value cells, including frames and record snapshots. This bounds
-    // the execution arena even when a loop repeatedly creates short-lived values.
+    // Retained value cells, including every frame identity and record snapshot.
+    // Reused call backing is charged once; temporary snapshots remain charged
+    // until reset. This bounds the execution arena even in allocation loops.
     value_cells: usize = 1_000_000,
 };
 

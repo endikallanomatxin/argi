@@ -514,7 +514,7 @@ pub const Storage = struct {
     pub fn enterSession(self: *Storage, count: usize, cleanup: []const b.Cleanup) !Slots {
         const flag_count = b.cleanupFlagCount(cleanup) catch return error.ExecutionInvalidReference;
         for (cleanup) |entry| if (entry.root >= count) return error.ExecutionInvalidReference;
-        const frame_cells = std.math.add(usize, std.math.add(usize, count, flag_count) catch return error.ExecutionMemoryLimit, 1) catch return error.ExecutionMemoryLimit;
+        const frame_cells = try self.frameCharge(count, flag_count);
         if (frame_cells > self.limit -| self.cells) return error.ExecutionMemoryLimit;
         var staging = std.heap.ArenaAllocator.init(self.allocator);
         errdefer staging.deinit();
@@ -686,15 +686,23 @@ pub const Storage = struct {
         return self.enterBuffers(count, cleanup, flag_count);
     }
 
+    fn frameCharge(self: *const Storage, count: usize, flag_count: usize) !usize {
+        // Retired identities stay charged. Transferring their retained backing
+        // creates only one new identity, not another allocation of its cells.
+        if ((self.reusable_frames.get(.{ .values = count, .flags = flag_count }) orelse null) != null) return 1;
+        return std.math.add(usize, std.math.add(usize, count, flag_count) catch return error.ExecutionMemoryLimit, 1) catch return error.ExecutionMemoryLimit;
+    }
+
     fn enterBuffers(self: *Storage, count: usize, cleanup: []const b.Cleanup, flag_count: usize) !v.FrameId {
         if (self.frames.items.len >= std.math.maxInt(u32)) return error.ExecutionMemoryLimit;
         // Reserve both buffers before publishing an identity or removing a
         // reusable frame. Failed allocations leave the pool and quota intact.
-        const charge_count = std.math.add(usize, std.math.add(usize, count, flag_count) catch return error.ExecutionMemoryLimit, 1) catch return error.ExecutionMemoryLimit;
+        const size: FrameSize = .{ .values = count, .flags = flag_count };
+        const charge_count = try self.frameCharge(count, flag_count);
         try self.charge(charge_count);
         errdefer self.cells -= charge_count;
         try self.frames.ensureUnusedCapacity(self.allocator, 1);
-        const bin = try self.reusable_frames.getOrPut(self.allocator, .{ .values = count, .flags = flag_count });
+        const bin = try self.reusable_frames.getOrPut(self.allocator, size);
         if (!bin.found_existing) bin.value_ptr.* = null;
         const buffers: FrameBuffers = if (bin.value_ptr.*) |previous| reused: {
             const retired = &self.frames.items[@intFromEnum(previous)];
@@ -2643,4 +2651,65 @@ test "acquired choices use initialized tags and only the selected physical paylo
         try storage.acquisitions.write(&storage, region, 0, &tag);
         try std.testing.expectError(error.ExecutionInvalidReference, storage.choiceTag(root));
     }
+}
+
+test "reused call buffers charge backing once and every retired identity" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 8);
+    const first = try storage.enterCleanup(3, &.{.{ .root = 0, .offset = 0 }});
+    try std.testing.expectEqual(@as(usize, 5), storage.cells);
+    const backing = storage.frames.items[@intFromEnum(first)].values.ptr;
+    storage.leave(first);
+    for (6..9) |expected| {
+        const next = try storage.enterCleanup(3, &.{.{ .root = 0, .offset = 0 }});
+        try std.testing.expect(first != next);
+        try std.testing.expectEqual(expected, storage.cells);
+        try std.testing.expect(backing == storage.frames.items[@intFromEnum(next)].values.ptr);
+        storage.leave(next);
+    }
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.enterCleanup(3, &.{.{ .root = 0, .offset = 0 }}));
+    try std.testing.expectEqual(@as(usize, 8), storage.cells);
+    try std.testing.expectEqual(@as(usize, 4), storage.frames.items.len);
+    try std.testing.expect(!storage.frames.items[@intFromEnum(first)].alive);
+}
+
+fn failedReusedCallFrame(a: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1000);
+    var previous = try storage.enter(3);
+    storage.leave(previous);
+    for (0..20) |_| {
+        const cells = storage.cells;
+        const count = storage.frames.items.len;
+        const backing = storage.frames.items[@intFromEnum(previous)].values.ptr;
+        const next = storage.enter(3) catch |err| {
+            try std.testing.expectEqual(cells, storage.cells);
+            try std.testing.expectEqual(count, storage.frames.items.len);
+            try std.testing.expect(backing == storage.frames.items[@intFromEnum(previous)].values.ptr);
+            try std.testing.expectEqual(previous, storage.reusable_frames.get(.{ .values = 3, .flags = 0 }).?.?);
+            return err;
+        };
+        storage.leave(next);
+        previous = next;
+    }
+}
+
+test "reused call frame allocation failures preserve backing identities and quota" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failedReusedCallFrame, .{});
+}
+
+test "session publication preflights reused backing with its actual retained charge" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 5);
+    const old = try storage.enter(3);
+    storage.leave(old);
+    const session = try storage.enterSession(3, &.{});
+    try std.testing.expect(old != session.frame);
+    try std.testing.expectEqual(@as(usize, 5), storage.cells);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.slots(old));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, session.get(0));
+    try std.testing.expectError(error.ExecutionMemoryLimit, storage.enter(0));
 }
