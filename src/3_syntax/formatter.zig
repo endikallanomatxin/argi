@@ -305,8 +305,9 @@ const Layout = struct {
                     var following = cursor + 1;
                     while (following < tokens.len and tokens.contents[following] == .new_line) : (following += 1) {}
                     if (following < tokens.len and tokens.contents[following] == .open_parenthesis and token.comparison_operator == .greater_than) {
-                        self.tight_before[following] = application;
-                        self.space_before[following] = !application;
+                        const space = self.space_before[following] or !application;
+                        self.tight_before[following] = !space;
+                        self.space_before[following] = space;
                     }
                     return;
                 },
@@ -413,8 +414,16 @@ const Layout = struct {
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
             if (tree.parameterList(node) != null or tree.specializationArguments(node) != null)
                 layout.markAngleGroup(tokens, @intFromEnum(tree.mainToken(node)), tree.specializationArguments(node) != null);
+            if (tree.contractDeclaration(node)) |contract| {
+                if (contract.participants_struct) |group|
+                    layout.markAngleGroup(tokens, @intFromEnum(tree.mainToken(group)), true);
+            }
             if (tree.contractConformance(node)) |conformance| {
-                layout.space_before[@intFromEnum(tree.mainToken(conformance.implementation_members))] = true;
+                if (conformance.generic_params_struct) |group|
+                    layout.markAngleGroup(tokens, @intFromEnum(tree.mainToken(group)), true);
+                const members_open = @intFromEnum(tree.mainToken(conformance.implementation_members));
+                layout.space_before[members_open] = true;
+                layout.tight_before[members_open] = false;
                 if (conformance.generic_params_struct) |group| layout.reflow[@intFromEnum(tree.mainToken(group))] = true;
             }
             if (tree.syntaxType(node)) |ty| switch (ty) {
@@ -1564,5 +1573,12 @@ test "formatter reflows angle parameter and specialization lists with the ordina
     try expectFormat(
         "Example:=<.FirstCompileTimeTypeParameterWithLongName:Type,.OtherCompileTimeTypeParameterWithLongName:Type>(.value:FirstCompileTimeTypeParameterWithLongName)\n",
         "Example := <\n    .FirstCompileTimeTypeParameterWithLongName : Type,\n    .OtherCompileTimeTypeParameterWithLongName : Type\n> (.value: FirstCompileTimeTypeParameterWithLongName)\n",
+    );
+}
+
+test "formatter attaches angle parameters to contract and implementation headers" {
+    try expectFormat(
+        "Example < .Item: Type >: Contract = ()\nimplement < .Item: Type > Example<.Item: Item> ()\n",
+        "Example<.Item: Type>: Contract = ()\n\nimplement<.Item: Type> Example<.Item: Item> ()\n",
     );
 }

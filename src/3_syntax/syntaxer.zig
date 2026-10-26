@@ -171,6 +171,13 @@ pub const Syntaxer = struct {
         return arguments;
     }
 
+    fn namedAngleList(self: *const Syntaxer) bool {
+        if (!self.angleOpen()) return false;
+        var first = self.index + 1;
+        while (first < self.tokens.len and (self.contentAt(first) == .new_line or self.contentAt(first) == .comment)) : (first += 1) {}
+        return first < self.tokens.len and self.contentAt(first) == .dot;
+    }
+
     fn angleClose(self: *const Syntaxer) bool {
         const token = self.currentContent();
         return token == .comparison_operator and (token.comparison_operator == .greater_than or token.comparison_operator == .greater_than_or_equal);
@@ -2435,6 +2442,10 @@ pub const Syntaxer = struct {
             } else {
                 generic_params = try self.parseTypeList();
             }
+        } else if (self.angleOpen() and (std.mem.eql(u8, name.text, "implement") or self.namedAngleList())) {
+            const parameters = try self.parseGenericParamsStruct();
+            generic_params = try self.addNodeRange(self.file.parameterList(parameters).?.fields);
+            generic_params_struct = parameters;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
             generic_params = try self.parseGenericParamNames();
         }

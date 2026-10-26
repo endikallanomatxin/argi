@@ -539,7 +539,18 @@ pub const Resolver = struct {
     }
 
     pub fn resolveDefinitionReference(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, kinds: []const primitives.DeclarationKind) !?global_sg.GlobalFamilyDefinitionId {
-        const id = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type, .function, .binding }) catch |err| switch (err) {
+        var accepted: [std.meta.fields(primitives.DeclarationKind).len]primitives.DeclarationKind = undefined;
+        var count: usize = 0;
+        for (kinds) |kind| {
+            if (std.mem.indexOfScalar(primitives.DeclarationKind, accepted[0..count], kind) != null) continue;
+            accepted[count] = kind;
+            count += 1;
+        }
+        if (std.mem.indexOfScalar(primitives.DeclarationKind, accepted[0..count], .binding) == null) {
+            accepted[count] = .binding;
+            count += 1;
+        }
+        const id = self.resolveDeclaration(module_index, reference, accepted[0..count]) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return null,
             else => return err,
         };
@@ -2863,4 +2874,22 @@ test "arithmetic type propagation rechecks contextualized operands and preserves
     try std.testing.expect(try core.materializeBindingTypes());
     transaction.rollback();
     for (graph.nodes.items) |node| try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, byte), node.ty);
+}
+
+test "definition lookup filters requested kinds before resolving ambiguity" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "app") };
+    defer module.deinit(a);
+    try module.strings.appendSlice(a, "operation");
+    const local_name = primitives.StringRange{ .start = 0, .len = 9 };
+    const name = try graph.addString(a, "operation");
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (0..2) |_| try graph.declarations.append(a, .{ .kind = .function, .name = name, .source = source });
+    try graph.modules.append(a, .{ .dir = try graph.addString(a, "app"), .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 2 } });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{module}, .offsets = &.{} };
+    const reference: module_entities.ExternalRef = .{ .kind = .type, .module_path = null, .name = local_name, .source = source };
+    try std.testing.expectEqual(@as(?global_sg.GlobalFamilyDefinitionId, null), try resolver.resolveDefinitionReference(0, reference, &.{.type}));
+    try std.testing.expectError(error.AmbiguousGlobalDeclaration, resolver.resolveDefinitionReference(0, reference, &.{.function}));
 }

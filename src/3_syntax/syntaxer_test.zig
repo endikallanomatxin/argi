@@ -399,3 +399,13 @@ test "compact syntaxing specializes an associated type family in a type annotati
     try std.testing.expect(projection == .projection);
     try std.testing.expect(tree.syntaxType(projection.projection.base).? == .generic);
 }
+
+test "compact syntaxing uses angle parameters on contract and implementation headers" {
+    var tree = try parseTestSource("headers.rg", "Example<.Item: Type>: Contract = ()\nimplement<.Item: Type> Example<Item> ()\n");
+    defer tree.deinit(std.testing.allocator);
+    const contract = tree.contractDeclaration(tree.roots[0]).?;
+    try std.testing.expectEqual(@as(usize, 1), tree.parameterList(contract.participants_struct.?).?.fields.len);
+    const implementation = tree.contractConformance(tree.roots[1]).?;
+    try std.testing.expectEqual(@as(usize, 1), implementation.generic_params.len);
+    try std.testing.expect(tree.syntaxType(implementation.contract_type).? == .generic);
+}
