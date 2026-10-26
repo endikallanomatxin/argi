@@ -1535,3 +1535,27 @@ test "contract safety selectors read ordinary named signature fields" {
     try std.testing.expect(fields == .concrete);
     try @import("verify.zig").verifyModule(&graph);
 }
+
+test "contract safety selectors traverse a named signature family without instantiation" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Args := <.T: Type> (.owner: &T, .flag: Bool)
+        \\Read#(.Participant: Type): Contract = (
+        \\    .read: Args<Participant> -> (.result: Bool) where { depends_on(result, flag) }
+        \\)
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "reader/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "reader", &inputs);
+    defer graph.deinit(allocator);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const requirement = graph.semantic.parameterized_storage.contract_requirements.items[0];
+    const fields = @import("views.zig").signatureFields(&graph, requirement.input).?;
+    try std.testing.expectEqual(@as(u32, 2), fields.count());
+    try std.testing.expectEqualStrings("flag", graph.text(fields.name(&graph, 1)));
+    try std.testing.expectEqual(@as(u32, 1), requirement.safety_contract.?.dependencies[0].input_index);
+    for (graph.semantic.type_definitions.items) |definition|
+        try std.testing.expectEqual(null, definition.specialization);
+    try @import("verify.zig").verifyModule(&graph);
+}

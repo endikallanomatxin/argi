@@ -320,15 +320,18 @@ before adding implementation exceptions.
   signature field views, including closed named records, rather than assuming
   syntax literals. Views retain concrete/parameterized field namespaces without
   copying representations. Joint-output virtual Safety fixtures now share a named
-  result type and retain their original correlated-borrow diagnostics. Deferred
-  imported/generic signature fields still need late selector resolution.
+  result type and retain their original correlated-borrow diagnostics. Locally
+  available signature families expose their declared fields without instantiation,
+  including symbolic participants. Imported/deferred fields still need late selector
+  resolution.
 
 - Static contract calls accept closed named input/output records and infer
   participants through named signature families using the existing function
   inference path. Receiver indices for Safety come from the selected concrete
   function signature. Native/VM/`#run` coverage preserves returned loans, and a
-  negative case rejects escape after the source lifetime ends. Unbound unary
-  virtual receiver inference through named families remains pending.
+  negative case rejects escape after the source lifetime ends. Named signature
+  families with declared Safety also work through virtual handles in native, VM
+  and `#run`, using the existing interface and evidence selection.
 
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate

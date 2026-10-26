@@ -149,14 +149,31 @@ pub const SignatureFields = union(enum) {
 };
 
 pub fn signatureFields(graph: *const graph_mod.ModuleSemanticGraph, ty: @import("parameterized/ir.zig").ParameterizedTypeId) ?SignatureFields {
-    const value = graph.semantic.parameterized_storage.ir.representation(ty);
-    return switch (value) {
-        .concrete => |id| if (recordFields(graph, id)) |fields| .{ .concrete = fields } else null,
-        .resolved => |resolved| switch (resolved) {
-            .structural => |shape| .{ .parameterized = shape.fields },
-            .nominal => |id| if (graph.semantic.type_definitions.items[@intFromEnum(id)].struct_fields) |fields| .{ .concrete = fields } else null,
-            else => null,
-        },
-        else => null,
-    };
+    const storage = &graph.semantic.parameterized_storage;
+    var current = ty;
+    for (0..storage.ir.types.items.len + 1) |_| {
+        const value = storage.ir.representation(current);
+        switch (value) {
+            .concrete => |id| return if (recordFields(graph, id)) |fields| .{ .concrete = fields } else null,
+            .resolved => |resolved| switch (resolved) {
+                .structural => |shape| return .{ .parameterized = shape.fields },
+                .nominal => |id| return if (graph.semantic.type_definitions.items[@intFromEnum(id)].struct_fields) |fields| .{ .concrete = fields } else null,
+                .generic => |generic| {
+                    const reference = storage.ir.declarations.items[@intFromEnum(generic.base)].target;
+                    const declaration = switch (reference) {
+                        .module => |id| graph.declaration(id),
+                        .external => return null,
+                    };
+                    const family = graph.semantic.family_definitions.items[@intFromEnum(declaration.family_definition orelse return null)];
+                    if (family.kind != .type) return null;
+                    const index = family.template_index orelse return null;
+                    if (index >= storage.parameterized_types.items.len) return null;
+                    current = storage.parameterized_types.items[index].body;
+                },
+                else => return null,
+            },
+            else => return null,
+        }
+    }
+    return null;
 }

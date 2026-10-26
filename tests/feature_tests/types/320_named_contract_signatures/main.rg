@@ -18,7 +18,7 @@ implement Observe#(Owner) (
 Args := <.T: Type> (.owner: &T, .flag: Bool)
 
 Read#(.Participant: Type): Contract = (
-    .read_flag : Args<Participant> -> (.result: Bool)
+    .read_flag : Args<Participant> -> (.result: Bool) where { depends_on(result, flag) }
 )
 
 implement Read#(Owner) (
@@ -28,13 +28,21 @@ implement Read#(Owner) (
 computed ::= #run () -> (.result: Bool) {
     flag: Bool = true
     outputs: Output = Observe<Owner>.observe(.source = &flag)
-    result = outputs.ready and outputs.value&
+    owner: Owner = (.unused = false)
+    handle ::= to_virtual<.contract: Read>(.value = &owner)
+    result = [
+        outputs.ready
+        and outputs.value&
+        and read_flag(.owner = &handle, .flag = true).result
+    ]
 }
 
 main := () -> () {
     flag: Bool = true
     outputs: Output = Observe<Owner>.observe(.source = &flag)
     owner: Owner = (.unused = false)
+    handle ::= to_virtual<.contract: Read>(.value = &owner)
+    if read_flag(.owner = &handle, .flag = true).result {} else { abort }
     if outputs.ready and outputs.value&and read_flag(.owner = &owner, .flag = true).result {
     } else {
         abort
