@@ -281,7 +281,7 @@ test "module callable interfaces preserve nullable types" {
 
 test "module callable interfaces preserve inferred errable types" {
     const allocator = std.testing.allocator;
-    const source = "run() -> !Int32 := { return 1 }\n";
+    const source = "run := () -> !Int32 { return 1 }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var graph = try buildInterfaces(allocator, "errable", &.{.{ .path = "errable/main.rg", .tree = &tree, .source = source }});
@@ -295,7 +295,7 @@ test "module callable interfaces preserve inferred errable types" {
 
 test "module semantizing marks inferred error signatures" {
     const allocator = std.testing.allocator;
-    const source = "run() -> !Int32 := { return 1 }\n";
+    const source = "run := () -> !Int32 { return 1 }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var result = try module_semantizer.build(allocator, "errable", &.{.{ .path = "errable/main.rg", .tree = &tree, .source = source }});

@@ -260,7 +260,7 @@ const Parser = struct {
 
 test "conditional source retains unknown conditions and hides both arms" {
     const a = std.testing.allocator;
-    const source = "ready() -> (.ok: Bool = true) := {}\r\n#if ready() { missing := import(\"./missing\") } #else { other := 42 }";
+    const source = "ready := () -> (.ok: Bool = true)  {}\r\n#if ready() { missing := import(\"./missing\") } #else { other := 42 }";
     var offset: usize = 0;
     var plan = try Plan.parse(a, source, &offset);
     defer plan.deinit(a);
@@ -271,7 +271,7 @@ test "conditional source retains unknown conditions and hides both arms" {
     try std.testing.expectEqual(@as(usize, 1), pending.pending.len);
     try std.testing.expect(std.mem.indexOf(u8, pending.source, "missing") == null);
     try std.testing.expect(std.mem.indexOf(u8, pending.source, "other") == null);
-    try std.testing.expect(std.mem.indexOf(u8, pending.source, "ready() ->") != null);
+    try std.testing.expect(std.mem.indexOf(u8, pending.source, "ready := () ->") != null);
     const selected = try plan.select(a, &.{false});
     defer selected.deinit(a);
     try std.testing.expectEqual(@as(usize, 0), selected.pending.len);

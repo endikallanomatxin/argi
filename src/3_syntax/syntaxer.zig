@@ -2116,13 +2116,12 @@ pub const Syntaxer = struct {
         return value;
     }
 
-    fn parseNamedFunctionLikeDeclaration(
+    fn parseForeignFunctionDeclaration(
         self: *Syntaxer,
         name: ParsedName,
         is_once: bool,
         generic_params: syn.NodeRange,
         generic_params_struct: ?syn.NodeIndex,
-        body_follows_signature: bool,
     ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
 
@@ -2130,15 +2129,6 @@ pub const Syntaxer = struct {
         self.advanceOne();
         const output = try self.parseFunctionOutputType();
         self.skipNewLinesAndComments();
-        if (body_follows_signature) {
-            const body = try self.parseCodeBlock();
-            return self.functionBinding(if (is_once) .function_declaration_once else .function_declaration, name.token, generic_params, generic_params_struct, .{
-                .is_once = @intFromBool(is_once),
-                .input = input,
-                .output = output,
-                .body = syn.OptionalNodeIndex.init(body),
-            });
-        }
         if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
         self.advanceOne();
 
@@ -2193,16 +2183,8 @@ pub const Syntaxer = struct {
             else => {},
         }
 
-        if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
-        self.advanceOne();
-        const body = try self.parseCodeBlock();
-
-        return self.functionBinding(if (is_once) .function_declaration_once else .function_declaration, name.token, generic_params, generic_params_struct, .{
-            .is_once = @intFromBool(is_once),
-            .input = input,
-            .output = output,
-            .body = body.optional(),
-        });
+        try self.diags.add(self.tokenLocation(), .syntax, "legacy ordinary function declarations are unsupported; use 'name := (...) -> (...) {{ ... }}'", .{});
+        return error.ExpectedDeclarationOrAssignment;
     }
 
     fn parseTestDeclaration(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -2214,24 +2196,22 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         // Tests share ordinary named-function syntax, including `name := (...)`.
         const body_follows_signature = self.tokenIs(.colon) and self.contentAt(self.index + 1) == .equal;
-        if (body_follows_signature) {
-            self.advanceOne();
-            self.advanceOne();
-            self.skipNewLinesAndComments();
+        if (!body_follows_signature) {
+            try self.diags.add(self.tokenLocation(), .syntax, "test definitions use 'test name := (...) -> (...) {{ ... }}'", .{});
+            return error.ExpectedDeclarationOrAssignment;
         }
+        self.advanceOne();
+        self.advanceOne();
+        self.skipNewLinesAndComments();
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, body_follows_signature);
-        const function = self.file.functionDeclaration(decl_node).?;
-
-        if (function.body == null) {
+        const input = try self.parseStructTypeLiteral();
+        const value = try self.parseFunctionValue(input, false);
+        if (self.file.functionDefinition(value).?.body.unwrap() == null) {
             try self.diags.add(test_loc, .syntax, "tests must define a body", .{});
             return SyntaxerError.ExpectedAssignment;
         }
-
-        self.file.nodes.items(.tag)[@intFromEnum(decl_node)] = .test_declaration;
-        self.file.nodes.items(.main_token)[@intFromEnum(decl_node)] = test_token;
-        return decl_node;
+        return self.addNode(.test_declaration, test_token, .{ .token_and_node = .{ .token = name.token, .node = value } });
     }
 
     // (old parseStatement removed; unified version with generics is below)
@@ -2465,12 +2445,11 @@ pub const Syntaxer = struct {
 
         if (self.tokenIs(.open_parenthesis)) {
             if (self.looksLikeFunctionDeclarationInput(self.index)) {
-                const declaration = try self.parseNamedFunctionLikeDeclaration(
+                const declaration = try self.parseForeignFunctionDeclaration(
                     name,
                     is_once,
                     generic_params,
                     generic_params_struct,
-                    false,
                 );
                 return declaration;
             } else {

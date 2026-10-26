@@ -1,10 +1,10 @@
 -- Missing modules and unknown symbols in discarded branches are not resolved.
 #if target_os("windows") {
     platform := import ("./windows")
-    _platform_value() -> (.value: Int32) := { value = platform.value() }
+    _platform_value := () -> (.value: Int32) { value = platform.value() }
 } #else {
     platform := import ("./posix")
-    _platform_value() -> (.value: Int32) := { value = platform.value() }
+    _platform_value := () -> (.value: Int32) { value = platform.value() }
 }
 
 #if target_arch("aarch64") {

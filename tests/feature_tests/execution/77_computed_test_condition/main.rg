@@ -1,4 +1,4 @@
-test selected(.system: System) -> !() := {
+test selected := (.system: System) -> !() {
     #if 1 < 2 {
         testing.expect(.condition = true)!
     } #else {

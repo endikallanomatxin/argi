@@ -161,8 +161,14 @@ fn signature_begin(file: *const File, open: usize) ?usize {
         if (file.tokens.contents[index] == .close_brace) break;
         if (file.paren_depth[index] != 0) continue;
         if (file.tokens.contents[index] == .arrow) arrow = true;
-        if (arrow and file.tokens.contents[index] == .identifier and index + 1 < open and
-            (file.tokens.contents[index + 1] == .open_parenthesis or file.tokens.contents[index + 1] == .hash)) return index;
+        if (!arrow or file.tokens.contents[index] != .identifier) continue;
+        var next = index + 1;
+        while (next < open and (file.tokens.contents[next] == .new_line or file.tokens.contents[next] == .comment)) : (next += 1) {}
+        if (next >= open) continue;
+        // Incomplete bodies still expose the definition's lexical signature.
+        // Foreign declarations retain their name-first concrete signature.
+        if (file.tokens.contents[next] == .open_parenthesis) return index;
+        if (file.tokens.contents[next] == .colon and next + 1 < open and file.tokens.contents[next + 1] == .equal) return index;
     }
     return null;
 }
@@ -455,9 +461,9 @@ fn item_named(result: Result, name: []const u8) ?Item {
 
 test "LSP completion filters names and preserves scopes in unfinished code" {
     const source =
-        \\Point : Type = (.unrelated: Int32)
-        \\other(.foreign: Int32) -> () := { hidden := 1 }
-        \\main(.system: System) -> () := {
+        \\Point := (.unrelated: Int32)
+        \\other := (.foreign: Int32) -> ()  { hidden := 1 }
+        \\main := (.system: System) -> ()  {
         \\    visible := 1
         \\    if true { closed := 2 }
         \\    |
@@ -466,11 +472,11 @@ test "LSP completion filters names and preserves scopes in unfinished code" {
     ;
     var result = try test_completion(source, &.{
         .{ .path = "/bundle/core/print.rg", .origin = .bundled_core, .code =
-        \\print(.value: Int32) -> () := {}
-        \\_secret() -> () := {}
+        \\print := (.value: Int32) -> ()  {}
+        \\_secret := () -> ()  {}
         },
-        .{ .path = "/project/sibling.rg", .code = "sibling() -> () := {}" },
-        .{ .path = "/project/lib/foreign.rg", .code = "unqualified() -> () := {}" },
+        .{ .path = "/project/sibling.rg", .code = "sibling := () -> ()  {}" },
+        .{ .path = "/project/lib/foreign.rg", .code = "unqualified := () -> ()  {}" },
     });
     defer result.deinit();
     try std.testing.expect(item_named(result, "visible") != null);
@@ -485,10 +491,10 @@ test "LSP completion filters names and preserves scopes in unfinished code" {
 }
 
 test "LSP completion replaces whole identifier and deduplicates invalid duplicate declarations" {
-    var result = try test_completion("main() -> () := { pri|nt }", &.{.{ .path = "/bundle/core/print.rg", .origin = .bundled_core, .code =
-        \\print(.value: Int32) -> () := {}
-        \\print(.value: Bool) -> () := {}
-        \\print_error(.value: Int32) -> () := {}
+    var result = try test_completion("main := () -> ()  { pri|nt }", &.{.{ .path = "/bundle/core/print.rg", .origin = .bundled_core, .code =
+        \\print := (.value: Int32) -> ()  {}
+        \\print := (.value: Bool) -> ()  {}
+        \\print_error := (.value: Int32) -> ()  {}
     }});
     defer result.deinit();
     try std.testing.expectEqual(@as(usize, 2), result.items.len);
@@ -500,63 +506,63 @@ test "LSP completion replaces whole identifier and deduplicates invalid duplicat
 
 test "LSP completion offers known fields and respects private boundaries" {
     const dependencies = [_]sf.SourceFile{.{ .path = "/bundle/core/system.rg", .origin = .bundled_core, .code =
-        \\System : Type = (.terminal: $&Terminal, ._private: Int32)
-        \\Terminal : Type = (.stdout: Int32)
+        \\System := (.terminal: $&Terminal, ._private: Int32)
+        \\Terminal := (.stdout: Int32)
     }};
-    var result = try test_completion("main(.system: System) -> () := { system.te| }", &dependencies);
+    var result = try test_completion("main := (.system: System) -> ()  { system.te| }", &dependencies);
     defer result.deinit();
     try std.testing.expectEqual(@as(usize, 1), result.items.len);
     try std.testing.expectEqual(Kind.field, item_named(result, "terminal").?.kind);
-    var chained = try test_completion("main(.system: System) -> () := { system.terminal&.| }", &dependencies);
+    var chained = try test_completion("main := (.system: System) -> ()  { system.terminal&.| }", &dependencies);
     defer chained.deinit();
     try std.testing.expect(item_named(chained, "stdout") != null);
-    var local = try test_completion("Point : Type = (.x: Int32, ._private: Int32)\nmain() -> () := { point := Point(.x = 1, ._private = 2)\npoint.| }", &.{});
+    var local = try test_completion("Point := (.x: Int32, ._private: Int32)\nmain := () -> ()  { point := Point(.x = 1, ._private = 2)\npoint.| }", &.{});
     defer local.deinit();
     try std.testing.expect(item_named(local, "x") != null);
     try std.testing.expect(item_named(local, "_private") != null);
-    var public = try test_completion("main(.system: System) -> () := { system.| }", &dependencies);
+    var public = try test_completion("main := (.system: System) -> ()  { system.| }", &dependencies);
     defer public.deinit();
     try std.testing.expect(item_named(public, "_private") == null);
-    var shadow = try test_completion("Point : Type = (.x: Int32)\nmain() -> () := { point := Point(.x = 1)\nif true { point := 1\npoint.| } }", &.{});
+    var shadow = try test_completion("Point := (.x: Int32)\nmain := () -> ()  { point := Point(.x = 1)\nif true { point := 1\npoint.| } }", &.{});
     defer shadow.deinit();
     try std.testing.expectEqual(@as(usize, 0), shadow.items.len);
 }
 
 test "LSP completion offers unused named arguments and avoids duplicate equals" {
     const dependencies = [_]sf.SourceFile{.{ .path = "/bundle/core/print.rg", .origin = .bundled_core, .code =
-        \\print(.value: Int32, .writer: Int32) -> () := {}
+        \\print := (.value: Int32, .writer: Int32) -> ()  {}
     }};
-    var result = try test_completion("main() -> () := { print(.|", &dependencies);
+    var result = try test_completion("main := () -> ()  { print(.|", &dependencies);
     defer result.deinit();
     try std.testing.expectEqualStrings("value = ", item_named(result, "value").?.insert_text);
-    var supplied = try test_completion("main() -> () := { print(.value = 1, .|", &dependencies);
+    var supplied = try test_completion("main := () -> ()  { print(.value = 1, .|", &dependencies);
     defer supplied.deinit();
     try std.testing.expect(item_named(supplied, "value") == null);
     try std.testing.expect(item_named(supplied, "writer") != null);
-    var existing = try test_completion("main() -> () := { print(.va|lue = 1)", &dependencies);
+    var existing = try test_completion("main := () -> ()  { print(.va|lue = 1)", &dependencies);
     defer existing.deinit();
     try std.testing.expectEqualStrings("value", item_named(existing, "value").?.insert_text);
 }
 
 test "LSP completion supports imported names without exposing private declarations" {
     const dependencies = [_]sf.SourceFile{.{ .path = "/project/lib/main.rg", .code =
-        \\public(.input: Int32) -> () := {}
-        \\_private() -> () := {}
+        \\public := (.input: Int32) -> ()  {}
+        \\_private := () -> ()  {}
     }};
-    var result = try test_completion("lib ::= import(\"./lib\")\nmain() -> () := { lib.|", &dependencies);
+    var result = try test_completion("lib ::= import(\"./lib\")\nmain := () -> ()  { lib.|", &dependencies);
     defer result.deinit();
     try std.testing.expect(item_named(result, "public") != null);
     try std.testing.expect(item_named(result, "_private") == null);
-    var arguments = try test_completion("lib ::= import(\"./lib\")\nmain() -> () := { lib.public(.|", &dependencies);
+    var arguments = try test_completion("lib ::= import(\"./lib\")\nmain := () -> ()  { lib.public(.|", &dependencies);
     defer arguments.deinit();
     try std.testing.expect(item_named(arguments, "input") != null);
 }
 
 test "LSP completion does not suggest names in comments or strings" {
-    var comment = try test_completion("main() -> () := {\n-- pri|", &.{});
+    var comment = try test_completion("main := () -> ()  {\n-- pri|", &.{});
     defer comment.deinit();
     try std.testing.expectEqual(@as(usize, 0), comment.items.len);
-    var string = try test_completion("main() -> () := { text := \"pri|nt\" }", &.{});
+    var string = try test_completion("main := () -> ()  { text := \"pri|nt\" }", &.{});
     defer string.deinit();
     try std.testing.expectEqual(@as(usize, 0), string.items.len);
 }

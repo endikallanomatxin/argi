@@ -1,4 +1,4 @@
 Reader: Contract = ()
 Cell: Type = ()
-satisfies Reader#(Cell)
+satisfies Reader < Cell >
 main := () -> () {}

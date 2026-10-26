@@ -95,8 +95,8 @@ test "LSP syntax cache replaces changed files and releases departed sources" {
     var cache: Cache = .{};
     defer cache.deinit(allocator);
     const sources = [_]sf.SourceFile{
-        .{ .path = "main.rg", .code = "main() -> () := {}" },
-        .{ .path = "helper.rg", .code = "helper() -> () := {}" },
+        .{ .path = "main.rg", .code = "main := () -> ()  {}" },
+        .{ .path = "helper.rg", .code = "helper := () -> ()  {}" },
     };
     const first = try cache.load(allocator, arena.allocator(), &sources);
     const helper_tokens = first[1].tokens.contents.ptr;
@@ -301,7 +301,7 @@ fn test_definition(sources: []const sf.SourceFile, needle: []const u8) !?Declara
 
 test "syntax navigation preserves lexical scopes and ignores member guesses" {
     const code =
-        \\main(.input: Int32) -> (.result: Int32) := {
+        \\main := (.input: Int32) -> (.result: Int32)  {
         \\    value := input
         \\    if true { hidden := 1 }
         \\    result = value
@@ -324,10 +324,10 @@ test "syntax navigation preserves lexical scopes and ignores member guesses" {
 
 test "syntax navigation respects visibility and refuses duplicate function identities" {
     const sources = [_]sf.SourceFile{
-        .{ .path = "/app/main.rg", .code = "main() -> () := { local()\n unique()\n overload()\n foreign()\n _private()\n }" },
-        .{ .path = "/app/helper.rg", .code = "local() -> () := {}" },
-        .{ .path = "/core/library.rg", .origin = .bundled_core, .code = "local() -> () := {}\nunique() -> () := {}\noverload() -> () := {}\noverload(.a: Int32) -> () := {}\n_private() -> () := {}" },
-        .{ .path = "/other/foreign.rg", .code = "foreign() -> () := {}" },
+        .{ .path = "/app/main.rg", .code = "main := () -> ()  { local()\n unique()\n overload()\n foreign()\n _private()\n }" },
+        .{ .path = "/app/helper.rg", .code = "local := () -> ()  {}" },
+        .{ .path = "/core/library.rg", .origin = .bundled_core, .code = "local := () -> ()  {}\nunique := () -> ()  {}\noverload := () -> ()  {}\noverload := (.a: Int32) -> ()  {}\n_private := () -> ()  {}" },
+        .{ .path = "/other/foreign.rg", .code = "foreign := () -> ()  {}" },
     };
     const local = (try test_definition(&sources, "local()")).?;
     try std.testing.expectEqualStrings("/app/helper.rg", local.path);

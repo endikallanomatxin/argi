@@ -87,6 +87,11 @@ test "compact syntaxing specializes values and calls with one angle-list represe
     try std.testing.expect(tree.symbolDeclaration(tree.roots[4]).?.value != null);
 }
 
+test "compact syntaxing rejects declaration-owned ordinary function bodies" {
+    try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy.rg", "identity(.value: Int32) -> (.result: Int32) := { result = value }"));
+    try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy-test.rg", "test example() -> () := {}"));
+}
+
 test "compact syntaxing rejects superseded hash specialization syntax" {
     for ([_][]const u8{
         "value := identity#(.T: Int32)(.value = 42)",
@@ -389,7 +394,7 @@ test "generic type applications retain positional arguments" {
     try expectTags("tests/feature_tests/types/280_positional_type_arguments/main.rg", &.{ .specialization, .positional_type_field });
 }
 
-test "modern and legacy test declarations share function payloads" {
+test "test definitions share ordinary function payloads" {
     var tree = try parseTestFile("tests/feature_tests/testing/21_modern_test_syntax/main.rg");
     defer tree.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 3), tree.roots.len);

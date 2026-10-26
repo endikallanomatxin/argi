@@ -13101,7 +13101,7 @@ test "feature_tests/contracts/313X_scoped_virtual_association_mismatch" {
 }
 
 test "feature_tests/contracts/314X_legacy_ordinary_duplicate_identity" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/314X_legacy_ordinary_duplicate_identity", "ordinary function 'value' has more than one declaration", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/314X_legacy_ordinary_duplicate_identity", "legacy ordinary function declarations are unsupported", "panic");
 }
 
 test "feature_tests/contracts/315X_legacy_ordinary_compiletime_identity" {
@@ -15479,7 +15479,7 @@ test "feature_tests/testing/21_modern_test_syntax" {
         "tests/feature_tests/testing/21_modern_test_syntax",
         &.{},
         0,
-        "PASS modern\nPASS multiline\nPASS legacy\n",
+        "PASS modern\nPASS multiline\nPASS explicit\n",
     );
 }
 

@@ -85,8 +85,8 @@ fn expectCleanEquivalent(files: []const sf.SourceFile, session: *ModuleCache) !R
     return cached;
 }
 
-const main_source = "dep := import(\"../dep\")\nmain() -> (.status_code: Int32) := { status_code = dep.answer().result }\n";
-const dep_source = "answer() -> (.result: Int32) := { result = 7 }\n";
+const main_source = "dep := import(\"../dep\")\nmain := () -> (.status_code: Int32) { status_code = dep.answer().result }\n";
+const dep_source = "answer := () -> (.result: Int32) { result = 7 }\n";
 
 test "frontend module cache reuses modules after source arenas are destroyed" {
     var session = ModuleCache.init(std.testing.allocator, .{});
@@ -885,7 +885,7 @@ test "computed test discovery excludes main and dormant test bodies" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { missing_main() }\n#if choose() { test selected() -> () := { missing_test() } } #else { test discarded() -> () := {} }";
+    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { missing_main() }\n#if choose() { test selected := () -> () { missing_test() } } #else { test discarded := () -> () {} }";
     const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
     var diagnostics = diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();

@@ -3785,7 +3785,7 @@ fn diagnoseUnresolvedCall(
                 try message.appendSlice(reach_details.items);
                 if (std.mem.indexOf(u8, reach_details.items, ".ffi uses reach") != null)
                     try message.appendSlice("\n\nForeign calls require a live ForeignFunctionInterface capability. Bind 'assume ffi := system.ffi' in the caller or pass '.ffi' explicitly; this dependency is not part of the C signature.");
-                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
+                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main := (.system: System) -> (.status_code: Int32 = 0) { ... }\n\nOr pass the omitted argument explicitly.");
                 try diagnostics.add(location, .semantic, "{s}", .{message.items});
                 return true;
             }
