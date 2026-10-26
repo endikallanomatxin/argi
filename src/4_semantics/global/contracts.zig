@@ -1376,7 +1376,10 @@ pub const Resolver = struct {
             input_pattern.resolved.structural.fields
         else infer: {
             const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
-            if (!try infer(self.function_context.?, located.module_index, requirement, input, &bindings, context)) return null;
+            if (!(infer(self.function_context.?, located.module_index, requirement, input, &bindings, context) catch |err| switch (err) {
+                error.ConflictingGenericArgument => return null,
+                else => return err,
+            })) return null;
             break :infer primitives.Range(ir.ParameterizedFieldId){ .start = 0, .len = 0 };
         };
         var virtual = false;
@@ -1420,7 +1423,10 @@ pub const Resolver = struct {
                     }
                     // Input patterns can mention associated elements. Infer what is
                     // available now, then check the entire selected signature below.
-                    _ = try self.inferOperationInputPattern(located.module_index, field.ty, actual_ty, &bindings);
+                    _ = self.inferOperationInputPattern(located.module_index, field.ty, actual_ty, &bindings) catch |err| switch (err) {
+                        error.ConflictingGenericArgument => return null,
+                        else => return err,
+                    };
                 }
             }
             if (!explicit) if (field.default_value) |value| {
@@ -1442,7 +1448,10 @@ pub const Resolver = struct {
                         }
                     }
                 }
-                _ = try self.inferOperationInputPattern(located.module_index, field.ty, ty, &bindings);
+                _ = self.inferOperationInputPattern(located.module_index, field.ty, ty, &bindings) catch |err| switch (err) {
+                    error.ConflictingGenericArgument => return null,
+                    else => return err,
+                };
             };
         }
         const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
@@ -1473,7 +1482,10 @@ pub const Resolver = struct {
         }
         if (requirement.parameters.len != 0 and !virtual) {
             const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
-            if (!try infer(self.function_context.?, located.module_index, requirement, input, &bindings, context)) {
+            if (!(infer(self.function_context.?, located.module_index, requirement, input, &bindings, context) catch |err| switch (err) {
+                error.ConflictingGenericArgument => return null,
+                else => return err,
+            })) {
                 if (unresolved_actual) deferred.* = true;
                 return null;
             }

@@ -15743,3 +15743,14 @@ test "feature_tests/types/320_named_contract_signatures" {
 test "feature_tests/types/321X_named_contract_signature_escape" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/321X_named_contract_signature_escape", "root that has ended", "without a diagnostic");
 }
+
+test "feature_tests/types/322X_generic_operation_conflicting_inputs" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/322X_generic_operation_conflicting_inputs", "conflicting inferred generic parameters in call to 'pair'", "without a diagnostic");
+}
+
+test "feature_tests/types/323_generic_operation_losing_pattern" {
+    const path = "tests/feature_tests/types/323_generic_operation_losing_pattern";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}

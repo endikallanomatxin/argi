@@ -333,6 +333,12 @@ before adding implementation exceptions.
   families with declared Safety also work through virtual handles in native, VM
   and `#run`, using the existing interface and evidence selection.
 
+- Repeated generic-binding conflicts discard only the losing operation candidate;
+  they do not abort selection of another contract identity. Qualified calls retain
+  their explicit conflict diagnostic. Native/VM/`#run` regressions cover losing
+  patterns alongside bound filtering and genuine identity ambiguities. Universal
+  compatibility of generic definitions remains separate from per-instance checks.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, explicit unqualified operation specialization, remaining generic-call inference parity,
