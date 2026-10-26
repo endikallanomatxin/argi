@@ -29,7 +29,7 @@ pub fn requiresResolution(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) 
     if (tree.tag(node) == .associated_type_projection or tree.tag(node) == .comptime_entry) return true;
     if (tree.binaryOperation(node)) |operation|
         return requiresResolution(tree, operation.lhs) or requiresResolution(tree, operation.rhs);
-    if (tree.structTypeLiteral(node)) |literal| for (literal.fields) |field_node| {
+    if (tree.specializationArguments(node)) |literal| for (literal.fields) |field_node| {
         const field = tree.structTypeField(field_node) orelse continue;
         if (field.default_value) |value| if (requiresResolution(tree, value)) return true;
     };

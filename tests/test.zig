@@ -15629,3 +15629,10 @@ test "feature_tests/basics/100X_main_extra_outputs" {
 test "feature_tests/modules/37X_inferred_nested_aggregate" {
     try buildExpectFailWithoutNoise("tests/feature_tests/modules/37X_inferred_nested_aggregate", "cannot infer the type of 'record'; add an explicit type annotation", "without a diagnostic");
 }
+
+test "feature_tests/types/301_definition_expressions" {
+    const path = "tests/feature_tests/types/301_definition_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}

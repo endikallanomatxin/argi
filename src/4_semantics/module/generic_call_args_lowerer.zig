@@ -21,10 +21,10 @@ pub fn lower(
             if (tag != .function_call) continue;
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw_node)));
             const call = file.tree.functionCall(node) orelse continue;
-            if (call.type_arguments.len == 0 and call.type_arguments_struct == null) continue;
+            if (call.specialization_arguments == null) continue;
             const source_offset = file.tree.location(node).offset;
             const external = findCallReference(graph, file_index, source_offset) orelse continue;
-            if (call.type_arguments_struct) |literal| {
+            if (call.specialization_arguments) |literal| {
                 if (@import("type_arguments.zig").requiresResolution(file.tree, literal)) {
                     const arguments = try @import("parameterized/lowerer.zig").lowerConcreteArguments(graph, &writer, file_index, file.tree, file.source, literal);
                     graph.semantic.external_refs.items[@intFromEnum(external)].computed_arguments = arguments;
@@ -36,11 +36,11 @@ pub fn lower(
             // range. Their own arguments share this pool but belong elsewhere.
             var arguments = std.array_list.Managed(entities.GenericArgument).init(allocator);
             defer arguments.deinit();
-            if (call.type_arguments_struct) |struct_node| {
-                const literal = file.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericCallArguments;
+            if (call.specialization_arguments) |struct_node| {
+                const literal = file.tree.specializationArguments(struct_node) orelse return error.InvalidGenericCallArguments;
                 for (literal.fields) |field_node| {
                     const field = file.tree.structTypeField(field_node) orelse return error.InvalidGenericCallArgument;
-                    const name = try writer.addString(file.tree.tokenTextFromSource(file.source, field.name_token));
+                    const name = try writer.addString(@import("type_arguments.zig").name(file.tree, file.source, field, ""));
                     const value: entities.GenericArgument.Value = if (field.type_node) |type_node|
                         .{ .type = try lowerType(graph, &writer, file, file_index, type_node) }
                     else if (field.default_value) |value_node|
@@ -48,13 +48,6 @@ pub fn lower(
                     else
                         return error.InvalidGenericCallArgument;
                     try arguments.append(.{ .name = name, .value = value });
-                }
-            } else {
-                for (call.type_arguments) |type_node| {
-                    try arguments.append(.{
-                        .name = try writer.addString(""),
-                        .value = .{ .type = try lowerType(graph, &writer, file, file_index, type_node) },
-                    });
                 }
             }
             const start: u32 = @intCast(views.genericArgumentCount(graph));

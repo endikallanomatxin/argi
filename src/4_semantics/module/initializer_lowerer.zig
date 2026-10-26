@@ -94,19 +94,7 @@ const Context = struct {
             if (declaration.kind != .type or declaration.struct_fields != null) continue;
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
-            const type_declaration = switch (self.tree.tag(declaration_node)) {
-                .type_declaration, .c_struct_declaration => self.tree.typeDeclaration(declaration_node).?,
-                .c_union_declaration => blk: {
-                    const value = self.tree.cUnionDeclaration(declaration_node).?;
-                    break :blk syn.TypeDeclaration{
-                        .name_token = value.name_token,
-                        .generic_params = value.generic_params,
-                        .generic_params_struct = value.generic_params_struct,
-                        .value = value.value,
-                    };
-                },
-                else => continue,
-            };
+            const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
             if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null) continue;
             const literal = self.tree.structTypeLiteral(type_declaration.value) orelse continue;
 

@@ -142,7 +142,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                 indent += 4;
             };
             try out.appendNTimes(' ', indent);
-        } else if (layout.space_before[i] or needsSpace(previous.?, tag, tokens, i) or (previous.? == .binary_operator and i != 0 and layout.breaks[i - 1] != 0)) try out.append(' ');
+        } else if (!layout.tight_before[i] and (layout.space_before[i] or needsSpace(previous.?, tag, tokens, i) or (previous.? == .binary_operator and i != 0 and layout.breaks[i - 1] != 0))) try out.append(' ');
         const start: usize = tokens.locations[i].offset;
         const end: usize = if (i + 1 < tokens.len) tokens.locations[i + 1].offset else source.len;
         const text = std.mem.trimEnd(u8, source[start..end], " \t\r\n");
@@ -252,8 +252,46 @@ const Layout = struct {
     scalar_groups: []bool,
     struct_literals: []bool,
     space_before: []bool,
+    tight_before: []bool,
     syntax_tags: ?[]const syn.Node.Tag = null,
     root_count: usize = 0,
+
+    /// Angle groups are identified by syntax, never guessed from comparisons.
+    /// Normal nested delimiters are already paired in ends.
+    fn markAngleGroup(self: *Layout, tokens: tok.View, open: usize, application: bool) void {
+        if (tokens.contents[open] != .comparison_operator or tokens.contents[open].comparison_operator != .less_than) return;
+        self.tight_before[open] = application;
+        var depth: usize = 1;
+        var cursor = open + 1;
+        var first = true;
+        while (cursor < tokens.len) : (cursor += 1) {
+            const token = tokens.contents[cursor];
+            if (token == .new_line or token == .comment) continue;
+            if (first) {
+                self.tight_before[cursor] = true;
+                first = false;
+            }
+            if (token == .open_parenthesis or token == .open_bracket or token == .open_brace) {
+                cursor = self.ends[cursor];
+                continue;
+            }
+            if (token != .comparison_operator) continue;
+            switch (token.comparison_operator) {
+                .less_than => depth += 1,
+                .greater_than, .greater_than_or_equal => {
+                    depth -= 1;
+                    if (depth != 0) continue;
+                    self.tight_before[cursor] = true;
+                    var following = cursor + 1;
+                    while (following < tokens.len and tokens.contents[following] == .new_line) : (following += 1) {}
+                    if (following < tokens.len and tokens.contents[following] == .open_parenthesis and token.comparison_operator == .greater_than)
+                        self.tight_before[following] = application;
+                    return;
+                },
+                else => {},
+            }
+        }
+    }
 
     fn markSignature(self: *Layout, tree: *const syn.FileSyntaxTree, tokens: tok.View, parameters: ?syn.NodeIndex, input: syn.NodeIndex, output: syn.NodeIndex) void {
         const groups = [_]?syn.NodeIndex{ parameters, input, output };
@@ -292,6 +330,7 @@ const Layout = struct {
             .scalar_groups = try allocator.alloc(bool, tokens.len),
             .struct_literals = try allocator.alloc(bool, tokens.len),
             .space_before = try allocator.alloc(bool, tokens.len),
+            .tight_before = try allocator.alloc(bool, tokens.len),
         };
         @memset(layout.ends, 0);
         @memset(layout.breaks, 0);
@@ -309,6 +348,7 @@ const Layout = struct {
         @memset(layout.scalar_groups, false);
         @memset(layout.struct_literals, false);
         @memset(layout.space_before, false);
+        @memset(layout.tight_before, false);
         var opens = std.array_list.Managed(usize).init(allocator);
         for (tokens.contents, 0..) |content, i| switch (content) {
             .open_parenthesis, .open_bracket, .open_brace => try opens.append(i),
@@ -347,6 +387,8 @@ const Layout = struct {
         };
         for (0..tree.nodes.len) |raw| {
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.parameterList(node) != null or tree.specializationArguments(node) != null)
+                layout.markAngleGroup(tokens, @intFromEnum(tree.mainToken(node)), tree.specializationArguments(node) != null);
             if (tree.contractConformance(node)) |conformance| {
                 layout.space_before[@intFromEnum(tree.mainToken(conformance.implementation_members))] = true;
                 if (conformance.generic_params_struct) |group| layout.reflow[@intFromEnum(tree.mainToken(group))] = true;
@@ -360,6 +402,10 @@ const Layout = struct {
             };
 
             const members: ?[]const syn.NodeIndex = if (tree.structTypeLiteral(node)) |literal|
+                literal.fields
+            else if (tree.parameterList(node)) |literal|
+                literal.fields
+            else if (tree.specializationArguments(node)) |literal|
                 literal.fields
             else if (tree.structValueLiteral(node)) |literal|
                 literal.fields
@@ -398,7 +444,7 @@ const Layout = struct {
             }
         }
         for (tree.roots, 0..) |root, index| {
-            if (index != 0 and (isGlobalDeclaration(tree.tag(root)) or isGlobalDeclaration(tree.tag(tree.roots[index - 1])))) {
+            if (index != 0 and (isGlobalDeclaration(&tree, root) or isGlobalDeclaration(&tree, tree.roots[index - 1]))) {
                 var start = firstToken(&tree, root);
                 // Keep leading documentation comments attached to declarations.
                 var cursor = start;
@@ -426,7 +472,7 @@ const Layout = struct {
             }
             if (tree.functionCall(node)) |call| {
                 layout.reflow[@intFromEnum(tree.mainToken(call.input))] = true;
-                if (call.type_arguments_struct) |args| layout.reflow[@intFromEnum(tree.mainToken(args))] = true;
+                if (call.specialization_arguments) |args| layout.reflow[@intFromEnum(tree.mainToken(args))] = true;
             }
 
             if (tree.codeBlock(node)) |block| {
@@ -653,9 +699,23 @@ fn markOperatorChain(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex, root:
     markOperatorChain(tree, binary.rhs, root, tokens, layout, handled);
 }
 
-fn isGlobalDeclaration(tag: syn.Node.Tag) bool {
-    return switch (tag) {
-        .function_declaration, .function_declaration_once, .test_declaration, .c_function_pointer_declaration, .type_declaration, .contract_declaration, .contract_conformance, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration => true,
+fn isGlobalDeclaration(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) bool {
+    if (tree.definitionValue(node)) |value| {
+        if (tree.parameterizedDefinition(value) != null) return true;
+        if (tree.functionDefinition(value) != null) return true;
+        if (tree.structTypeLiteral(value) != null or tree.choiceTypeLiteral(value) != null) return true;
+    }
+    return switch (tree.tag(node)) {
+        .test_declaration,
+        .c_function_pointer_declaration,
+        .type_declaration,
+        .contract_declaration,
+        .contract_conformance,
+        .c_enum_declaration,
+        .c_union_declaration,
+        .c_struct_declaration,
+        .c_incomplete_declaration,
+        => true,
         else => false,
     };
 }
@@ -743,7 +803,7 @@ fn compactLength(tokens: tok.View, source: []const u8, start: usize, end: usize,
             length += 1;
             previous = .comma;
         }
-        if (previous) |left| if (needsSpace(left, tag, tokens, index)) {
+        if (previous) |left| if (!layout.tight_before[index] and needsSpace(left, tag, tokens, index)) {
             length += 1;
         };
         length += tokenText(tokens, source, index).len;
@@ -1453,5 +1513,16 @@ test "formatter preserves explicit semicolon statement boundaries" {
     try expectFormat(
         "main:=()->(){x:=1;y:=2;}\n",
         "main := () -> () {\n    x := 1;\n    y := 2;\n}\n",
+    );
+}
+
+test "formatter distinguishes specialization brackets from comparisons" {
+    try expectFormat(
+        "Box:=<.T:Type>(.value:T)\nidentity:=<.T:Type>(.value:T)->(.result:T){result=value}\n",
+        "Box := <.T: Type> (.value: T)\n\nidentity := <.T: Type> (.value: T) -> (.result: T) { result = value }\n",
+    );
+    try expectFormat(
+        "result:=identity<Int32>(.value=42)\nother:=Box<Box<Int32>>\ncomparison:=a<b or c>=d\n",
+        "result := identity<Int32>(.value = 42)\nother := Box<Box<Int32>>\ncomparison := a < b or c >= d\n",
     );
 }

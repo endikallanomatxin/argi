@@ -153,13 +153,13 @@ pub fn lowerConcreteArguments(graph: *graph_mod.ModuleSemanticGraph, writer: *wr
     };
     defer context.parameters.deinit();
     defer context.bindings.deinit();
-    const literal = tree.structTypeLiteral(node) orelse return error.InvalidGenericCallArguments;
+    const literal = tree.specializationArguments(node) orelse return error.InvalidGenericCallArguments;
     var arguments: std.ArrayList(ir.GenericArgument) = .empty;
     defer arguments.deinit(writer.allocator);
     for (literal.fields) |field_node| {
         const field = tree.structTypeField(field_node) orelse return error.InvalidGenericCallArgument;
         try arguments.append(writer.allocator, .{
-            .name = try writer.addString(tree.tokenTextFromSource(source, field.name_token)),
+            .name = try writer.addString(type_arguments.name(tree, source, field, "")),
             .value = if (field.type_node) |ty|
                 .{ .type = try context.lowerType(ty, false) }
             else if (field.default_value) |value|
@@ -275,7 +275,7 @@ pub const Context = struct {
                         }
                     }
                     const participants = if (contract.participants_struct) |participant_node| blk: {
-                        const literal = self.tree.structTypeLiteral(participant_node).?;
+                        const literal = self.tree.parameterList(participant_node).?;
                         if (literal.fields.len == 0) try self.contractError(declaration_node, "contract requires at least one named participant");
                         for (literal.fields) |field_node| {
                             const field = self.tree.structTypeField(field_node).?;
@@ -480,7 +480,7 @@ pub const Context = struct {
     fn lowerDependencyClause(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput), owned_outputs: *std.ArrayList(u32), transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), consumed_inputs: *std.ArrayList(u32), relocations: *std.ArrayList(primitives.MethodSafetyContract.Relocation), retained_inputs: *std.ArrayList(primitives.MethodSafetyContract.Retention), emptied_inputs: *std.ArrayList(primitives.MethodSafetyContract.StorageInput), storage_sources: *std.ArrayList(primitives.MethodSafetyContract.StorageDependency)) !void {
         const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
         const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
-        if ((std.mem.eql(u8, name, "retains") or std.mem.eql(u8, name, "empties") or std.mem.eql(u8, name, "from_storage")) and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+        if ((std.mem.eql(u8, name, "retains") or std.mem.eql(u8, name, "empties") or std.mem.eql(u8, name, "from_storage")) and call.module_qualifier == null and call.specialization_arguments == null) {
             const arguments = self.tree.structValueLiteral(call.input).?;
             const empty = std.mem.eql(u8, name, "empties");
             const from_storage = std.mem.eql(u8, name, "from_storage");
@@ -520,7 +520,7 @@ pub const Context = struct {
             return;
         }
         const is_referent = std.mem.eql(u8, name, "refers_to");
-        if ((std.mem.eql(u8, name, "owns") or std.mem.eql(u8, name, "transfers")) and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+        if ((std.mem.eql(u8, name, "owns") or std.mem.eql(u8, name, "transfers")) and call.module_qualifier == null and call.specialization_arguments == null) {
             const arguments = self.tree.structValueLiteral(call.input).?;
             const owns = std.mem.eql(u8, name, "owns");
             if (arguments.fields.len != (if (owns) @as(usize, 1) else 2)) return self.contractError(node, "owns requires one output; transfers requires one output and one input");
@@ -543,7 +543,7 @@ pub const Context = struct {
             return;
         }
 
-        if (std.mem.eql(u8, name, "relocates") and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+        if (std.mem.eql(u8, name, "relocates") and call.module_qualifier == null and call.specialization_arguments == null) {
             const arguments = self.tree.structValueLiteral(call.input).?;
             if (arguments.fields.len != 2) return self.contractError(node, "relocates requires a destination followed by a source input");
             var inputs: [2]u32 = undefined;
@@ -558,7 +558,7 @@ pub const Context = struct {
             return;
         }
 
-        if (std.mem.eql(u8, name, "consumes") and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+        if (std.mem.eql(u8, name, "consumes") and call.module_qualifier == null and call.specialization_arguments == null) {
             const arguments = self.tree.structValueLiteral(call.input).?;
             if (arguments.fields.len == 0) return self.contractError(node, "consumes requires one or more mutable reference inputs");
             for (arguments.fields) |argument| {
@@ -571,7 +571,7 @@ pub const Context = struct {
             return;
         }
 
-        if (std.mem.eql(u8, name, "invalidates") and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+        if (std.mem.eql(u8, name, "invalidates") and call.module_qualifier == null and call.specialization_arguments == null) {
             const arguments = self.tree.structValueLiteral(call.input).?;
             if (arguments.fields.len == 0) return self.contractError(node, "invalidates requires one or more mutable reference inputs");
             for (arguments.fields) |argument| {
@@ -592,7 +592,7 @@ pub const Context = struct {
             }
             return;
         }
-        if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null or
+        if (call.module_qualifier != null or call.specialization_arguments != null or
             (!is_referent and !std.mem.eql(u8, name, "depends_on")))
             return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
         const literal = self.tree.structValueLiteral(call.input).?;
@@ -701,21 +701,8 @@ pub const Context = struct {
     };
 
     fn genericTypePayload(self: *Context, node: syn.NodeIndex) ?GenericTypePayload {
-        return switch (self.tree.tag(node)) {
-            .type_declaration, .c_struct_declaration => blk: {
-                const value = self.tree.typeDeclaration(node).?;
-                break :blk .{ .params = value.generic_params, .params_struct = value.generic_params_struct, .value = value.value };
-            },
-            .c_enum_declaration => blk: {
-                const value = self.tree.cEnumDeclaration(node).?;
-                break :blk .{ .params = value.generic_params, .params_struct = value.generic_params_struct, .value = value.value };
-            },
-            .c_union_declaration => blk: {
-                const value = self.tree.cUnionDeclaration(node).?;
-                break :blk .{ .params = value.generic_params, .params_struct = value.generic_params_struct, .value = value.value };
-            },
-            else => null,
-        };
+        const value = self.tree.typeDeclaration(node) orelse return null;
+        return .{ .params = value.generic_params, .params_struct = value.generic_params_struct, .value = value.value };
     }
 
     fn lowerParameters(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
@@ -726,7 +713,7 @@ pub const Context = struct {
 
     fn lowerParameterBounds(self: *Context, range: primitives.Range(ir.ComptimeParameterId), params_struct: ?syn.NodeIndex) !void {
         const struct_node = params_struct orelse return;
-        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericParameters;
+        const literal = self.tree.parameterList(struct_node) orelse return error.InvalidGenericParameters;
         const start = range.start;
         for (literal.fields, 0..) |field_node, offset| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
@@ -756,7 +743,7 @@ pub const Context = struct {
     fn registerParameters(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
         if (params_struct) |struct_node| {
-            const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericParameters;
+            const literal = self.tree.parameterList(struct_node) orelse return error.InvalidGenericParameters;
 
             // Register every parameter before lowering bounds. Bounds may refer
             // to associated parameters declared later in the same generic list,
@@ -822,7 +809,7 @@ pub const Context = struct {
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         if (arguments_node) |args_node| {
-            const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidContractArguments;
+            const literal = self.tree.specializationArguments(args_node) orelse return error.InvalidContractArguments;
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidContractArgument;
                 const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
@@ -904,7 +891,7 @@ pub const Context = struct {
 
     fn lowerGenericType(self: *Context, generic: syn.GenericType, allow_self: bool) !ir.ParameterizedTypeId {
         if (type_lowerer.isRuntimeVirtualType(self.tree, self.source, generic)) {
-            const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidVirtualArguments;
+            const literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidVirtualArguments;
             if (literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(literal.fields[0]) orelse return error.InvalidVirtualArguments;
             if (!type_arguments.isVirtualContractParameter(type_arguments.name(self.tree, self.source, field, "Virtual"))) return error.InvalidVirtualArguments;
@@ -915,7 +902,7 @@ pub const Context = struct {
         const name = base.name;
         const base_text = self.tree.tokenTextFromSource(self.source, name.name_token);
         if (name.qualifier_token == null and std.mem.eql(u8, base_text, "choice_union")) {
-            const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidChoiceUnionArguments;
+            const literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidChoiceUnionArguments;
             if (literal.fields.len != 2) return error.InvalidChoiceUnionArguments;
             var left: ?ir.ParameterizedTypeId = null;
             var right: ?ir.ParameterizedTypeId = null;
@@ -929,7 +916,7 @@ pub const Context = struct {
             return self.addType(.{ .choice_union = .{ .left = left.?, .right = right.? } });
         }
         if (name.qualifier_token == null and std.mem.eql(u8, base_text, "Array")) {
-            const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidArrayArguments;
+            const literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidArrayArguments;
             var length: ?ir.ParameterizedIntExprId = null;
             var element: ?ir.ParameterizedTypeId = null;
             for (literal.fields) |field_node| {
@@ -947,7 +934,7 @@ pub const Context = struct {
             return self.addType(.{ .array = .{ .length = length.?, .element = element.?, .source = self.sourceRef(generic.base) } });
         }
         if (name.qualifier_token == null and std.mem.eql(u8, base_text, "Errable")) {
-            const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericParameterizedArguments;
+            const literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidGenericParameterizedArguments;
             if (literal.fields.len == 1) {
                 const field = self.tree.structTypeField(literal.fields[0]) orelse return error.InvalidGenericParameterizedArgument;
                 if (std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, "Errable"), "t")) {
@@ -970,7 +957,7 @@ pub const Context = struct {
         const parameterized_decl: ir.ParameterizedDeclId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.declarations.items.len)));
         try self.graph.semantic.parameterized_storage.ir.declarations.append(self.allocator, .{ .target = declaration_ref });
 
-        const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericParameterizedArguments;
+        const literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidGenericParameterizedArguments;
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         for (literal.fields) |field_node| {
@@ -1485,8 +1472,8 @@ pub const Context = struct {
             try self.captureAssumedFields(node, input);
             var arguments: std.ArrayList(ir.GenericArgument) = .empty;
             defer arguments.deinit(self.allocator);
-            if (call.type_arguments_struct) |struct_node| {
-                const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidParameterizedCallArguments;
+            if (call.specialization_arguments) |struct_node| {
+                const literal = self.tree.specializationArguments(struct_node) orelse return error.InvalidParameterizedCallArguments;
                 for (literal.fields) |field_node| {
                     const field = self.tree.structTypeField(field_node) orelse return error.InvalidParameterizedCallArgument;
                     const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
@@ -1496,12 +1483,10 @@ pub const Context = struct {
                     else
                         return error.InvalidParameterizedCallArgument;
                     try arguments.append(self.allocator, .{
-                        .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)),
+                        .name = try self.writer.addString(type_arguments.name(self.tree, self.source, field, "")),
                         .value = value,
                     });
                 }
-            } else for (call.type_arguments) |type_node| {
-                try arguments.append(self.allocator, .{ .name = try self.writer.addString(""), .value = .{ .type = try self.lowerType(type_node, false) } });
             }
             const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
             try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);

@@ -56,6 +56,9 @@ lookahead boundaries before implementing that rule. Cover nested specializations
 such as `Box<Box<Int32>>`, specialized values without a following call, ordinary
 comparisons, and diagnostics for missing closing delimiters. Semantic analysis
 receives a single interpretation and does not retry the other parse on failure.
+Positional specialization arguments are comma-separated. Comparisons and logical
+expressions used as specialization arguments require scalar grouping with `[...]`,
+so ordinary conditions containing `<` and `>=` remain comparisons.
 
 Definition identity comes from the definition site and its enclosing compile-time
 specialization environment. Specialization adds its explicit/inferred parameters.
@@ -133,8 +136,7 @@ rules, safety summaries, and virtual signature restrictions.
 The existing canonical generic-argument pool is a compatible first simplification.
 During migration, keep intermediate states explicit and remove declaration-bound
 generic syntax, `#(...)` specialization, and structural fallbacks once callers
-are migrated. Update core,
-more, formatter, editor support, descriptions, and diagnostics with each migration.
+are migrated. Update core, more, formatter, editor support, descriptions, and diagnostics with each migration.
 
 Validate coherent batches rather than each mechanical edit. Cover alias identity,
 independent same-shape definitions, repeated/nested specialization, missing context,
@@ -145,3 +147,16 @@ Open details: generic operation/family signature syntax and checking; precise
 multiple-output construction/destructuring; classification of compile-time family
 parameters; and phase-safe introspection. Settle these at the relevant boundary
 before adding implementation exceptions.
+
+## Progress
+
+- Discovery and later lowering share one canonical generic-argument pool.
+- Syntax stores function definitions and parameterized definitions independently
+  of their binding names. Calls reference callee expressions; type and function
+  applications share specialization nodes. Parameter and specialization lists
+  are distinct from struct type literals.
+- Angle syntax, syntactic disambiguation, named signature syntax, and formatter
+  spacing are implemented. An integration fixture executes definition expressions
+  through native code, VM, and `#run`.
+- Semantic nominal identity and family aliases are not migrated yet. Legacy
+  spellings still parse into the common definition representation during migration.

@@ -182,7 +182,7 @@ const Context = struct {
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         if (optional) |node| {
-            for (self.tree.structTypeLiteral(node).?.fields) |field_node| {
+            for (self.tree.specializationArguments(node).?.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node).?;
                 const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
                     .{ .type = try self.lowerConformanceType(type_node) }
@@ -236,7 +236,7 @@ const Context = struct {
         for (self.tree.codeBlock(node).?.statements) |statement| {
             const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
             const call = self.tree.functionCall(clause) orelse return error.InvalidStorageDomainMapping;
-            if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null) return error.InvalidStorageDomainMapping;
+            if (call.module_qualifier != null or call.specialization_arguments != null) return error.InvalidStorageDomainMapping;
             var paths: std.ArrayList(parameterized_storage.DomainMapping.Path) = .empty;
             defer paths.deinit(self.allocator);
             errdefer for (paths.items) |path| self.allocator.free(path.fields);
@@ -273,7 +273,7 @@ const Context = struct {
     fn lowerParams(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
         if (params_struct) |node| {
-            const literal = self.tree.structTypeLiteral(node) orelse return error.InvalidGenericParameters;
+            const literal = self.tree.parameterList(node) orelse return error.InvalidGenericParameters;
 
             // Register every relation parameter before lowering its metadata.
             // Bounds may reference associated parameters declared later.

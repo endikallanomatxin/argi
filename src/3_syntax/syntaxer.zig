@@ -2,6 +2,7 @@ const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("syntax_tree.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
+const specialization = @import("specialization.zig");
 
 pub const SyntaxerError = error{
     ExpectedIdentifier,
@@ -12,6 +13,8 @@ pub const SyntaxerError = error{
     ExpectedIntLiteral,
     ExpectedLeftParen,
     ExpectedRightParen,
+    ExpectedRightAngle,
+    ExpectedComma,
     ExpectedLeftBracket,
     ExpectedRightBracket,
     ExpectedLeftBrace,
@@ -47,6 +50,8 @@ pub const Syntaxer = struct {
     allow_operator_newlines: bool,
     allow_report_block: bool = true,
     scratch: std.ArrayList(syn.NodeIndex),
+    stop_at_angle_close: bool = false,
+    pending_equal: bool = false,
 
     pub fn init(alloc: std.mem.Allocator, toks: tok.View, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
         return initFile(alloc, try syn.FileSyntaxTree.init(alloc, toks.locations[0].file, toks), source, diags);
@@ -84,6 +89,10 @@ pub const Syntaxer = struct {
                 try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declarations cannot have compile-time parameters", .{});
             } else if (err == SyntaxerError.ExpectedConformanceType) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected a contract type after the conformance relation", .{});
+            } else if (err == SyntaxerError.ExpectedRightAngle) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected '>' to close compile-time parameters or specialization arguments", .{});
+            } else if (err == SyntaxerError.ExpectedComma) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected ',' between positional specialization arguments", .{});
             } else if (err == SyntaxerError.ExpectedType) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected an underlying type after 'Type ='", .{});
             } else if (self.tokenIs(.semicolon)) {
@@ -101,6 +110,7 @@ pub const Syntaxer = struct {
 
     // ───────────────────────────────── token helpers ─────────────────────────
     fn contentAt(self: *const Syntaxer, index: usize) tok.Content {
+        if (index == self.index and self.pending_equal) return .{ .equal = .{} };
         return self.tokens.contents[index];
     }
     fn currentContent(self: *const Syntaxer) tok.Content {
@@ -110,17 +120,69 @@ pub const Syntaxer = struct {
         return self.tokens.locations[index];
     }
     fn currentLocation(self: *const Syntaxer) tok.Location {
-        return self.locationAt(self.index);
+        var location = self.locationAt(self.index);
+        if (self.pending_equal) location.offset += 1;
+        return location;
     }
     fn advanceOne(self: *Syntaxer) void {
+        self.pending_equal = false;
         if (self.index < self.tokens.len) self.index += 1;
     }
     fn tokenLocation(self: *Syntaxer) tok.Location {
         return self.currentLocation();
     }
 
-    fn tokenIs(self: *Syntaxer, tag: tok.Content) bool {
+    fn tokenIs(self: *const Syntaxer, tag: tok.Content) bool {
         return std.meta.activeTag(self.currentContent()) == std.meta.activeTag(tag);
+    }
+
+    fn angleOpen(self: *const Syntaxer) bool {
+        const token = self.currentContent();
+        return token == .comparison_operator and token.comparison_operator == .less_than;
+    }
+
+    /// Syntactic speculation shares the actual argument grammar. Only newly
+    /// appended syntax and temporary diagnostics are discarded on a losing parse.
+    fn trySpecialization(self: *Syntaxer) SyntaxerError!?syn.NodeIndex {
+        if (self.pending_equal or !self.angleOpen()) return null;
+        var first = self.index + 1;
+        while (first < self.tokens.len and (self.contentAt(first) == .new_line or self.contentAt(first) == .comment)) : (first += 1) {}
+        const named = first < self.tokens.len and self.contentAt(first) == .dot;
+        if (!named and !specialization.starts(self.tokens.contents, self.index)) return null;
+        const index = self.index;
+        const nodes = self.file.nodes.len;
+        const extras = self.file.extra_data.items.len;
+        const diagnostics = self.diags;
+        var temporary_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer temporary_arena.deinit();
+        const temporary = temporary_arena.allocator();
+        var speculative = diagnostic.Diagnostics.initBorrowed(&temporary, diagnostics);
+        defer speculative.deinit();
+        self.diags = &speculative;
+        defer self.diags = diagnostics;
+        const arguments = self.parseStructTypeFields(true) catch |err| {
+            self.index = index;
+            self.pending_equal = false;
+            self.file.nodes.len = nodes;
+            self.file.extra_data.shrinkRetainingCapacity(extras);
+            if (err == error.OutOfMemory or named) return err;
+            return null;
+        };
+        return arguments;
+    }
+
+    fn angleClose(self: *const Syntaxer) bool {
+        const token = self.currentContent();
+        return token == .comparison_operator and (token.comparison_operator == .greater_than or token.comparison_operator == .greater_than_or_equal);
+    }
+
+    /// A closing specialization delimiter may share a lexical >= token with an
+    /// assignment. Preserve the token stream and consume its equal part next.
+    fn consumeAngleClose(self: *Syntaxer) SyntaxerError!void {
+        if (!self.angleClose()) return error.ExpectedRightAngle;
+        if (self.currentContent().comparison_operator == .greater_than_or_equal) {
+            self.pending_equal = true;
+        } else self.advanceOne();
     }
 
     fn currentIdentifierEquals(self: *Syntaxer, expected: []const u8) bool {
@@ -446,11 +508,11 @@ pub const Syntaxer = struct {
             .token = name_token,
             .optional = syn.OptionalTokenIndex.init(qualifier_token),
         } });
-        if (self.tokenIs(.hash)) {
+        if (self.tokenIs(.hash) or self.angleOpen()) {
             const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            if (self.tokenIs(.hash)) self.advanceOne();
             const gen_args = try self.parseStructTypeFields(true);
-            const instance = try self.addNode(.generic_type_instantiation, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
+            const instance = try self.addNode(.specialization, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
             if (self.tokenIs(.dot)) {
                 self.advanceOne();
                 const member = try self.parseName();
@@ -461,8 +523,13 @@ pub const Syntaxer = struct {
         return base;
     }
 
-    fn parseAssociatedValueProjection(self: *Syntaxer, name: syn.TokenIndex, qualifier: ?syn.TokenIndex, arguments: syn.NodeRange, named_arguments: ?syn.NodeIndex) SyntaxerError!syn.NodeIndex {
-        const literal = named_arguments orelse blk: {
+    fn specializationArguments(self: *Syntaxer, token: syn.TokenIndex, arguments: syn.NodeRange, named_arguments: ?syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        if (named_arguments) |arguments_node| {
+            if (self.file.parameterList(arguments_node) != null)
+                return self.addNode(.specialization_arguments, self.file.mainToken(arguments_node), self.file.data(arguments_node));
+            return arguments_node;
+        }
+        return blk: {
             // Extra-data growth must not invalidate the argument range being read.
             const values = try self.allocator.dupe(syn.NodeIndex, self.file.nodeRange(arguments));
             defer self.allocator.free(values);
@@ -475,20 +542,41 @@ pub const Syntaxer = struct {
                 });
                 try fields.append(self.allocator, try self.addNode(.positional_type_field, self.file.mainToken(value), .{ .u32_and_extra = .{ .value = @intCast(position), .extra = extra } }));
             }
-            break :blk try self.addNode(.struct_type_literal, name, .{ .extra_range = try self.addNodeRange(fields.items) });
+            break :blk try self.addNode(.specialization_arguments, token, .{ .extra_range = try self.addNodeRange(fields.items) });
         };
-        const base = try self.addNode(.type_name, name, .{ .token_and_optional_token = .{ .token = name, .optional = syn.OptionalTokenIndex.init(qualifier) } });
-        const instance = try self.addNode(.generic_type_instantiation, name, .{ .node_and_node = .{ .first = base, .second = literal } });
-        self.advanceOne();
-        const member = try self.parseName();
-        return try self.addNode(.associated_type_projection, member.token, .{ .node = instance });
     }
 
-    // Parse an abstract body: a parenthesized, comma-separated list of items.
-    // Each item can be:
-    //   - an identifier: composed abstract name (e.g., Addable)
-    //   - a function requirement: name ( StructTypeLiteral ) -> ( StructTypeLiteral )
-    // Newlines and comments are ignored.
+    fn namedCallee(self: *Syntaxer, name: syn.TokenIndex, qualifier: ?syn.TokenIndex, arguments: syn.NodeRange, named_arguments: ?syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        var base = try self.addNode(.identifier, name, .{ .unused = .{ 0, 0 } });
+        if (qualifier) |module_name| {
+            const module = try self.addNode(.identifier, module_name, .{ .unused = .{ 0, 0 } });
+            base = try self.addNode(.struct_field_access, name, .{ .token_and_node = .{ .token = name, .node = module } });
+        }
+        if (arguments.start == arguments.end and named_arguments == null) return base;
+        const literal = try self.specializationArguments(name, arguments, named_arguments);
+        return self.addNode(.specialization, name, .{ .node_and_node = .{ .first = base, .second = literal } });
+    }
+
+    fn callExpression(self: *Syntaxer, callee: syn.NodeIndex, input: syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        const base = if (self.file.tag(callee) == .specialization) self.file.data(callee).node_and_node.first else callee;
+        const name = if (self.file.tag(base) == .struct_field_access) self.file.data(base).token_and_node.token else self.file.mainToken(base);
+        const contract = if (self.file.tag(callee) == .associated_type_projection) self.file.data(callee).node.optional() else syn.OptionalNodeIndex.none;
+        return self.addNode(.function_call, name, .{ .extra = try self.addExtra(syn.CallExtra{ .contract_type = contract, .callee = callee, .input = input }) });
+    }
+
+    fn namedCall(self: *Syntaxer, name: syn.TokenIndex, qualifier: ?syn.TokenIndex, arguments: syn.NodeRange, named_arguments: ?syn.NodeIndex, input: syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        return self.callExpression(try self.namedCallee(name, qualifier, arguments, named_arguments), input);
+    }
+
+    fn parseAssociatedValueProjection(self: *Syntaxer, name: syn.TokenIndex, qualifier: ?syn.TokenIndex, arguments: syn.NodeRange, named_arguments: ?syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        const literal = try self.specializationArguments(name, arguments, named_arguments);
+        const base = try self.addNode(.type_name, name, .{ .token_and_optional_token = .{ .token = name, .optional = syn.OptionalTokenIndex.init(qualifier) } });
+        const instance = try self.addNode(.specialization, name, .{ .node_and_node = .{ .first = base, .second = literal } });
+        self.advanceOne();
+        const member = try self.parseName();
+        return self.addNode(.associated_type_projection, member.token, .{ .node = instance });
+    }
+
     fn parseContractBody(self: *Syntaxer) SyntaxerError!struct {
         req_names: syn.NodeRange,
         req_funcs: syn.NodeRange,
@@ -602,7 +690,7 @@ pub const Syntaxer = struct {
         var index = scratch_top;
         while (index < items_end) : (index += 1) {
             const item = self.scratch.items[index];
-            if (self.file.tag(item) == .type_name or self.file.tag(item) == .generic_type_instantiation) try self.scratch.append(self.allocator, item);
+            if (self.file.tag(item) == .type_name or self.file.tag(item) == .specialization) try self.scratch.append(self.allocator, item);
         }
         const funcs_start = self.scratch.items.len;
         index = scratch_top;
@@ -622,13 +710,75 @@ pub const Syntaxer = struct {
             const item = self.scratch.items[index];
             if (self.file.tag(item) == .struct_type_field) try self.scratch.append(self.allocator, item);
         }
-        const associated_struct = if (associated_start == self.scratch.items.len) null else try self.addNode(.struct_type_literal, body_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[associated_start..]) });
+        const associated_struct = if (associated_start == self.scratch.items.len) null else try self.addNode(.parameter_list, body_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[associated_start..]) });
         return .{
             .associated_struct = associated_struct,
             .req_names = try self.addNodeRange(self.scratch.items[items_end..funcs_start]),
             .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..domains_start]),
             .domains = try self.addNodeRange(self.scratch.items[domains_start..associated_start]),
         };
+    }
+
+    fn parameterizedDefinition(
+        self: *Syntaxer,
+        parameters: syn.NodeRange,
+        parameters_struct: ?syn.NodeIndex,
+        value: syn.NodeIndex,
+    ) SyntaxerError!syn.NodeIndex {
+        if (parameters.start == parameters.end and parameters_struct == null) return value;
+        const extra = try self.addExtra(syn.ParameterizedDefinitionExtra{
+            .parameters_start = parameters.start,
+            .parameters_end = parameters.end,
+            .parameters_struct = syn.OptionalNodeIndex.init(parameters_struct),
+            .value = value,
+        });
+        const token = self.file.mainToken(parameters_struct orelse value);
+        return self.addNode(.parameterized_definition, token, .{ .extra = extra });
+    }
+
+    fn functionBinding(
+        self: *Syntaxer,
+        tag: syn.Node.Tag,
+        name: syn.TokenIndex,
+        parameters: syn.NodeRange,
+        parameters_struct: ?syn.NodeIndex,
+        definition: syn.FunctionDefinitionExtra,
+    ) SyntaxerError!syn.NodeIndex {
+        const value = try self.addNode(.function_definition, self.file.mainToken(definition.input), .{ .extra = try self.addExtra(definition) });
+        const expression = try self.parameterizedDefinition(parameters, parameters_struct, value);
+        return self.addNode(tag, name, .{ .token_and_node = .{ .token = name, .node = expression } });
+    }
+
+    fn parseFunctionValue(self: *Syntaxer, input: syn.NodeIndex, is_once: bool) SyntaxerError!syn.NodeIndex {
+        if (!self.tokenIs(.arrow)) return error.ExpectedArrow;
+        self.advanceOne();
+        const output = try self.parseFunctionOutputType();
+        self.skipNewLinesAndComments();
+        const body = try self.parseCodeBlock();
+        return self.addNode(.function_definition, self.file.mainToken(input), .{ .extra = try self.addExtra(syn.FunctionDefinitionExtra{
+            .is_once = @intFromBool(is_once),
+            .input = input,
+            .output = output,
+            .body = body.optional(),
+        }) });
+    }
+
+    fn parseDefinitionValue(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        self.skipNewLinesAndComments();
+        const value = (try self.parseType()) orelse return error.ExpectedType;
+        return if (self.tokenIs(.arrow)) self.parseFunctionValue(value, false) else value;
+    }
+
+    fn parenthesizedStructDefinition(self: *const Syntaxer) bool {
+        if (!self.tokenIs(.open_parenthesis)) return false;
+        var cursor = self.index + 1;
+        while (cursor < self.tokens.len and (self.contentAt(cursor) == .new_line or self.contentAt(cursor) == .comment)) : (cursor += 1) {}
+        if (cursor >= self.tokens.len or self.contentAt(cursor) != .dot) return false;
+        cursor += 1;
+        if (cursor >= self.tokens.len or self.contentAt(cursor) != .identifier) return false;
+        cursor += 1;
+        while (cursor < self.tokens.len and (self.contentAt(cursor) == .new_line or self.contentAt(cursor) == .comment)) : (cursor += 1) {}
+        return cursor < self.tokens.len and self.contentAt(cursor) == .colon;
     }
 
     fn parseContractRequirement(self: *Syntaxer, name: ParsedName) SyntaxerError!syn.NodeIndex {
@@ -643,18 +793,13 @@ pub const Syntaxer = struct {
             break :blk if (self.tokenIs(.open_brace)) try self.parseSafetyContract() else try self.parseExpression();
         } else null;
         const empty = try self.addNodeRange(&.{});
-        const extra = try self.addExtra(syn.FunctionExtra{
+        return self.functionBinding(.contract_function_requirement, name.token, empty, null, .{
             .contract_member = 1,
-            .name_token = name.token,
-            .generic_params_start = empty.start,
-            .generic_params_end = empty.end,
-            .generic_params_struct = .none,
             .input = input,
             .output = output,
             .body = .none,
             .safety_contract = syn.OptionalNodeIndex.init(safety),
         });
-        return self.addNode(.contract_function_requirement, name.token, .{ .extra = extra });
     }
 
     fn parseImplementationMembers(self: *Syntaxer, implementation_parameters: syn.NodeRange) SyntaxerError!syn.NodeIndex {
@@ -687,17 +832,12 @@ pub const Syntaxer = struct {
                 self.skipNewLinesAndComments();
                 const body = try self.parseCodeBlock();
                 const empty = try self.addNodeRange(&.{});
-                const function = try self.addExtra(syn.FunctionExtra{
+                break :inline_body try self.functionBinding(.function_declaration, member.token, empty, null, .{
                     .contract_member = 1,
-                    .name_token = member.token,
-                    .generic_params_start = empty.start,
-                    .generic_params_end = empty.end,
-                    .generic_params_struct = .none,
                     .input = input,
                     .output = output,
                     .body = syn.OptionalNodeIndex.init(body),
                 });
-                break :inline_body try self.addNode(.function_declaration, member.token, .{ .extra = function });
             } else try self.parseExpression();
             const extra = try self.addExtra(syn.FieldExtra{ .type_node = syn.OptionalNodeIndex.init(kind), .default_value = syn.OptionalNodeIndex.init(value) });
             try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, member.token, .{ .extra = extra }));
@@ -715,16 +855,14 @@ pub const Syntaxer = struct {
             if (member.type_node != null) try self.scratch.append(self.allocator, self.scratch.items[index]);
         }
         const parameter_range = try self.addNodeRange(self.scratch.items[members_end..]);
-        const parameters = try self.addNode(.struct_type_literal, open, .{ .extra_range = parameter_range });
+        const parameters = try self.addNode(.parameter_list, open, .{ .extra_range = parameter_range });
         for (top..members_end) |index| {
             const value = self.file.structTypeField(self.scratch.items[index]).?.default_value.?;
             if (self.file.functionDeclaration(value) == null) continue;
-            var function = self.file.extraData(syn.FunctionExtra, self.file.data(value).extra);
-            function.generic_params_start = parameter_range.start;
-            function.generic_params_end = parameter_range.end;
-            function.generic_params_struct = syn.OptionalNodeIndex.init(if (parameter_range.start == parameter_range.end) null else parameters);
-            const function_extra = try self.addExtra(function);
-            self.file.nodes.items(.data)[@intFromEnum(value)] = .{ .extra = function_extra };
+            const binding = self.file.data(value).token_and_node;
+            const definition = self.file.definitionBody(binding.node);
+            const expression = try self.parameterizedDefinition(parameter_range, if (parameter_range.start == parameter_range.end) null else parameters, definition);
+            self.file.nodes.items(.data)[@intFromEnum(value)] = .{ .token_and_node = .{ .token = binding.token, .node = expression } };
         }
         return self.addNode(.struct_type_literal, open, .{ .extra_range = try self.addNodeRange(self.scratch.items[top..members_end]) });
     }
@@ -794,7 +932,11 @@ pub const Syntaxer = struct {
     // Generic type applications share named-field syntax with declarations,
     // but may supply an ordered positional prefix before any named arguments.
     fn parseStructTypeFields(self: *Syntaxer, allow_positional: bool) SyntaxerError!syn.NodeIndex {
-        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const angled = self.angleOpen();
+        if (!angled and !self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const previous_angle_close = self.stop_at_angle_close;
+        self.stop_at_angle_close = angled;
+        defer self.stop_at_angle_close = previous_angle_close;
         const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
         self.skipNewLinesAndComments();
@@ -804,7 +946,8 @@ pub const Syntaxer = struct {
 
         var has_named = false;
         var position: u32 = 0;
-        while (!self.tokenIs(.close_parenthesis)) {
+        while (!(if (angled) self.angleClose() else self.tokenIs(.close_parenthesis))) {
+            if (angled and self.tokenIs(.eof)) return error.ExpectedRightAngle;
             if (allow_positional and !self.tokenIs(.dot)) {
                 if (has_named) {
                     try self.diags.add(self.tokenLocation(), .syntax, "positional type arguments must appear before named arguments", .{});
@@ -816,7 +959,7 @@ pub const Syntaxer = struct {
                 if (self.currentContent() == .literal or
                     (self.currentContent() == .binary_operator and self.currentContent().binary_operator == .subtraction))
                 {
-                    value_node = try self.parseExpression();
+                    value_node = if (angled) try self.parseBinaryExpr() else try self.parseExpression();
                 } else {
                     type_node = try self.parseType();
                     if (type_node == null) return SyntaxerError.ExpectedIdentifier;
@@ -831,6 +974,10 @@ pub const Syntaxer = struct {
                 if (self.tokenIs(.comma)) {
                     self.advanceOne();
                     self.skipNewLinesAndComments();
+                } else if (angled and !self.angleClose()) {
+                    if (self.tokenIs(.equal) or self.tokenIs(.eof) or self.tokenIs(.close_parenthesis) or self.tokenIs(.close_brace))
+                        return error.ExpectedRightAngle;
+                    return error.ExpectedComma;
                 }
                 continue;
             }
@@ -851,7 +998,7 @@ pub const Syntaxer = struct {
             var def_val: ?syn.NodeIndex = null;
             if (self.tokenIs(.equal)) {
                 self.advanceOne();
-                def_val = try self.parseExpression();
+                def_val = if (angled) try self.parseBinaryExpr() else try self.parseExpression();
             }
 
             const extra = try self.addExtra(syn.FieldExtra{
@@ -866,10 +1013,14 @@ pub const Syntaxer = struct {
                 self.skipNewLinesAndComments();
             }
         }
-        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
-        self.advanceOne();
+        if (angled) {
+            try self.consumeAngleClose();
+        } else {
+            if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+            self.advanceOne();
+        }
 
-        return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
+        return try self.addNode(if (allow_positional) .specialization_arguments else .struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn parseFunctionOutputType(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -899,11 +1050,15 @@ pub const Syntaxer = struct {
             return try self.addNode(.struct_type_literal, bang_token, .{ .extra_range = try self.addNodeRange(&.{field}) });
         }
 
-        return self.parseStructTypeLiteral();
+        return (try self.parseType()) orelse return error.ExpectedType;
     }
 
     fn parseGenericParamsStruct(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
-        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const angled = self.angleOpen();
+        if (!angled and !self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const previous_angle_close = self.stop_at_angle_close;
+        self.stop_at_angle_close = angled;
+        defer self.stop_at_angle_close = previous_angle_close;
         const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
         self.skipNewLinesAndComments();
@@ -911,7 +1066,7 @@ pub const Syntaxer = struct {
         const scratch_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
-        while (!self.tokenIs(.close_parenthesis)) {
+        while (!(if (angled) self.angleClose() else self.tokenIs(.close_parenthesis))) {
             if (!self.tokenIs(.dot)) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected generic parameter, found '{s}'", .{@tagName(self.currentContent())});
                 return SyntaxerError.ExpectedStructField;
@@ -957,10 +1112,14 @@ pub const Syntaxer = struct {
                 self.skipNewLinesAndComments();
             }
         }
-        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
-        self.advanceOne();
+        if (angled) {
+            try self.consumeAngleClose();
+        } else {
+            if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+            self.advanceOne();
+        }
 
-        return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
+        return try self.addNode(.parameter_list, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn parseCEnumValue(self: *Syntaxer) SyntaxerError!i64 {
@@ -1269,6 +1428,9 @@ pub const Syntaxer = struct {
     }
 
     fn parseCollectionLiteral(self: *Syntaxer, force_struct: bool) SyntaxerError!syn.NodeIndex {
+        const previous_angle_close = self.stop_at_angle_close;
+        self.stop_at_angle_close = false;
+        defer self.stop_at_angle_close = previous_angle_close;
         const previous_report_block = self.allow_report_block;
         self.allow_report_block = true;
         defer self.allow_report_block = previous_report_block;
@@ -1364,24 +1526,17 @@ pub const Syntaxer = struct {
             }
 
             if (self.tokenIs(.open_parenthesis) and self.file.tag(node) == .associated_type_projection) {
-                const contract_type = self.file.data(node).node;
-                const operation_token = self.file.mainToken(node);
-                const input = try self.parseCollectionLiteral(true);
-                const empty = try self.addNodeRange(&.{});
-                const extra = try self.addExtra(syn.CallExtra{
-                    .contract_type = syn.OptionalNodeIndex.init(contract_type),
-                    .module_qualifier = .none,
-                    .type_arguments_start = empty.start,
-                    .type_arguments_end = empty.end,
-                    .type_arguments_struct = .none,
-                    .input = input,
-                });
-                node = try self.addNode(.function_call, operation_token, .{ .extra = extra });
+                node = try self.callExpression(node, try self.parseCollectionLiteral(true));
                 continue;
             }
 
-            if (self.tokenIs(.open_parenthesis) or self.tokenIs(.hash)) {
-                if (self.file.tag(node) == .struct_field_access or (allow_identifier_calls and self.file.tag(node) == .identifier)) {
+            const angle_arguments = if (self.file.tag(node) == .identifier or self.file.tag(node) == .struct_field_access)
+                try self.trySpecialization()
+            else
+                null;
+            const angled = angle_arguments != null;
+            if (self.tokenIs(.open_parenthesis) or self.tokenIs(.hash) or angled) {
+                if (self.file.tag(node) == .struct_field_access or ((allow_identifier_calls or angled) and self.file.tag(node) == .identifier)) {
                     var qualifier: ?syn.TokenIndex = null;
                     const callee_token = if (self.file.tag(node) == .struct_field_access) blk: {
                         const sfa = self.file.data(node).token_and_node;
@@ -1393,11 +1548,13 @@ pub const Syntaxer = struct {
                     } else self.file.mainToken(node);
                     var type_args = try self.addNodeRange(&.{});
                     var type_args_struct: ?syn.NodeIndex = null;
-                    const has_comptime_arguments = self.tokenIs(.hash);
-                    if (self.tokenIs(.hash)) {
+                    const has_comptime_arguments = self.tokenIs(.hash) or angled;
+                    if (angled) {
+                        type_args_struct = angle_arguments;
+                    } else if (self.tokenIs(.hash)) {
                         self.advanceOne();
                         if (self.comptime_arguments_are_named()) {
-                            type_args_struct = try self.parseStructTypeLiteral();
+                            type_args_struct = try self.parseStructTypeFields(true);
                         } else {
                             type_args = try self.parseTypeList();
                         }
@@ -1406,16 +1563,15 @@ pub const Syntaxer = struct {
                         node = try self.parseAssociatedValueProjection(callee_token, qualifier, type_args, type_args_struct);
                         continue;
                     }
-                    if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-                    const struct_value_literal = try self.parseCollectionLiteral(true);
-                    const extra = try self.addExtra(syn.CallExtra{
-                        .module_qualifier = syn.OptionalTokenIndex.init(qualifier),
-                        .type_arguments_start = type_args.start,
-                        .type_arguments_end = type_args.end,
-                        .type_arguments_struct = syn.OptionalNodeIndex.init(type_args_struct),
-                        .input = struct_value_literal,
-                    });
-                    node = try self.addNode(.function_call, callee_token, .{ .extra = extra });
+                    if (has_comptime_arguments) {
+                        const arguments = try self.specializationArguments(callee_token, type_args, type_args_struct);
+                        node = try self.addNode(.specialization, callee_token, .{ .node_and_node = .{ .first = node, .second = arguments } });
+                    }
+                    if (!self.tokenIs(.open_parenthesis)) {
+                        if (!has_comptime_arguments) return SyntaxerError.ExpectedLeftParen;
+                        continue;
+                    }
+                    node = try self.callExpression(node, try self.parseCollectionLiteral(true));
                     continue;
                 }
             }
@@ -1524,6 +1680,13 @@ pub const Syntaxer = struct {
     /// [primary] {'.' fld}  (bin-op rhs)?
     fn parsePrimary(self: *Syntaxer) !syn.NodeIndex {
         const content = self.currentContent();
+
+        if (self.angleOpen()) {
+            const parameters = try self.parseGenericParamsStruct();
+            const range = self.file.data(parameters).extra_range;
+            const value = try self.parseDefinitionValue();
+            return self.parameterizedDefinition(range, parameters, value);
+        }
 
         if (self.tokenIs(.hash)) {
             const prefix: syn.TokenIndex = @enumFromInt(self.index);
@@ -1650,16 +1813,24 @@ pub const Syntaxer = struct {
                 if (self.parsing_pipe_rhs and std.mem.eql(u8, name, "_")) {
                     break :blk try self.addNode(.pipe_placeholder, name_token, .{ .unused = .{ 0, 0 } });
                 }
+                if (self.tokenIs(.arrow)) {
+                    const input = try self.addNode(.type_name, name_token, .{ .token_and_optional_token = .{ .token = name_token, .optional = .none } });
+                    break :blk try self.parseFunctionValue(input, false);
+                }
                 var type_args = try self.addNodeRange(&.{});
                 var type_args_struct: ?syn.NodeIndex = null;
-                const has_comptime_arguments = self.tokenIs(.hash);
-                if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
+                const angle_arguments = try self.trySpecialization();
+                const angled = angle_arguments != null;
+                const has_comptime_arguments = self.tokenIs(.hash) or angled;
+                if (angled) {
+                    type_args_struct = angle_arguments;
+                } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
                     // Explicit type arguments on call site (old syntax)
                     type_args = try self.parseTypeList();
                 } else if (self.tokenIs(.hash)) {
                     self.advanceOne();
                     if (self.comptime_arguments_are_named()) {
-                        type_args_struct = try self.parseStructTypeLiteral();
+                        type_args_struct = try self.parseStructTypeFields(true);
                     } else {
                         type_args = try self.parseTypeList();
                     }
@@ -1669,15 +1840,9 @@ pub const Syntaxer = struct {
                 }
                 if (self.tokenIs(.open_parenthesis)) { // Call.
                     const struct_value_literal = try self.parseCollectionLiteral(true);
-                    const extra = try self.addExtra(syn.CallExtra{
-                        .module_qualifier = .none,
-                        .type_arguments_start = type_args.start,
-                        .type_arguments_end = type_args.end,
-                        .type_arguments_struct = syn.OptionalNodeIndex.init(type_args_struct),
-                        .input = struct_value_literal,
-                    });
-                    break :blk try self.addNode(.function_call, name_token, .{ .extra = extra });
+                    break :blk try self.namedCall(name_token, null, type_args, type_args_struct, struct_value_literal);
                 }
+                if (has_comptime_arguments) break :blk try self.namedCallee(name_token, null, type_args, type_args_struct);
                 break :blk try self.addNode(.identifier, name_token, .{ .unused = .{ 0, 0 } });
             },
 
@@ -1690,12 +1855,21 @@ pub const Syntaxer = struct {
 
             // ─── struct value literal or list literal ────────────────────────────────
             .open_parenthesis => blk: {
+                if (self.looksLikeFunctionDeclarationInput(self.index)) {
+                    const input = try self.parseStructTypeLiteral();
+                    break :blk try self.parseFunctionValue(input, false);
+                }
+                if (self.parenthesizedTypeIsChoiceLiteral()) break :blk try self.parseChoiceTypeLiteral(false);
+                if (self.parenthesizedStructDefinition()) break :blk try self.parseStructTypeLiteral();
                 break :blk try self.parseCollectionLiteral(false);
             },
 
             // Grouping is transparent to later phases: retain the enclosed
             // node so contextual typing and place identity stay unchanged.
             .open_bracket => blk: {
+                const previous_angle_close = self.stop_at_angle_close;
+                self.stop_at_angle_close = false;
+                defer self.stop_at_angle_close = previous_angle_close;
                 const previous_operator_newlines = self.allow_operator_newlines;
                 self.allow_operator_newlines = true;
                 defer self.allow_operator_newlines = previous_operator_newlines;
@@ -1828,7 +2002,7 @@ pub const Syntaxer = struct {
 
         while (true) {
             self.skipGroupedOperatorNewlines();
-            if (self.currentContent() != .comparison_operator) break;
+            if (self.currentContent() != .comparison_operator or (self.stop_at_angle_close and self.angleClose())) break;
             const op_content = self.currentContent();
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             var op: tok.ComparisonOperator = undefined;
@@ -1948,16 +2122,12 @@ pub const Syntaxer = struct {
         self.skipNewLinesAndComments();
         if (body_follows_signature) {
             const body = try self.parseCodeBlock();
-            const extra = try self.addExtra(syn.FunctionExtra{
-                .name_token = name.token,
-                .generic_params_start = generic_params.start,
-                .generic_params_end = generic_params.end,
-                .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+            return self.functionBinding(if (is_once) .function_declaration_once else .function_declaration, name.token, generic_params, generic_params_struct, .{
+                .is_once = @intFromBool(is_once),
                 .input = input,
                 .output = output,
                 .body = syn.OptionalNodeIndex.init(body),
             });
-            return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
         }
         if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
         self.advanceOne();
@@ -1976,17 +2146,12 @@ pub const Syntaxer = struct {
                         try self.diags.add(self.tokenLocation(), .syntax, "CFunctionPointer declares a type, without symbol options or a body", .{});
                         return SyntaxerError.ExpectedStructField;
                     }
-                    const extra = try self.addExtra(syn.FunctionExtra{
-                        .name_token = name.token,
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = .none,
+                    return self.functionBinding(.c_function_pointer_declaration, name.token, generic_params, generic_params_struct, .{
                         .input = input,
                         .output = output,
                         .body = .none,
                         .c_abi = 1,
                     });
-                    return try self.addNode(.c_function_pointer_declaration, name.token, .{ .extra = extra });
                 }
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
                     self.advanceOne();
@@ -2005,18 +2170,14 @@ pub const Syntaxer = struct {
                         self.advanceOne();
                         break :blk (try self.parseCodeBlock()).optional();
                     } else .none;
-                    const extra = try self.addExtra(syn.FunctionExtra{
-                        .name_token = name.token,
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                    return self.functionBinding(if (is_once) .function_declaration_once else .function_declaration, name.token, generic_params, generic_params_struct, .{
+                        .is_once = @intFromBool(is_once),
                         .input = input,
                         .output = output,
                         .body = body,
                         .c_options = options,
                         .c_abi = 1,
                     });
-                    return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
                 }
             },
             else => {},
@@ -2026,16 +2187,12 @@ pub const Syntaxer = struct {
         self.advanceOne();
         const body = try self.parseCodeBlock();
 
-        const extra = try self.addExtra(syn.FunctionExtra{
-            .name_token = name.token,
-            .generic_params_start = generic_params.start,
-            .generic_params_end = generic_params.end,
-            .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+        return self.functionBinding(if (is_once) .function_declaration_once else .function_declaration, name.token, generic_params, generic_params_struct, .{
+            .is_once = @intFromBool(is_once),
             .input = input,
             .output = output,
             .body = body.optional(),
         });
-        return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
     }
 
     fn parseTestDeclaration(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -2224,7 +2381,7 @@ pub const Syntaxer = struct {
             self.advanceOne();
             if (self.comptime_arguments_are_named()) {
                 const gen_struct = try self.parseGenericParamsStruct();
-                generic_params = try self.addNodeRange(self.file.structTypeLiteral(gen_struct).?.fields);
+                generic_params = try self.addNodeRange(self.file.parameterList(gen_struct).?.fields);
                 generic_params_struct = gen_struct;
             } else {
                 generic_params = try self.parseTypeList();
@@ -2242,7 +2399,7 @@ pub const Syntaxer = struct {
                 self.skipNewLinesAndComments();
                 break :blk try self.parseCodeBlock();
             } else null;
-            const extra = try self.addExtra(syn.GenericValueExtra{
+            const extra = try self.addExtra(syn.ConformanceExtra{
                 .generic_params_start = generic_params.start,
                 .generic_params_end = generic_params.end,
                 .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
@@ -2265,7 +2422,11 @@ pub const Syntaxer = struct {
                 self.advanceOne();
                 self.advanceOne();
                 self.skipNewLinesAndComments();
-                return self.parseNamedFunctionLikeDeclaration(name, is_once, generic_params, generic_params_struct, true);
+                const input = try self.parseStructTypeLiteral();
+                const function = try self.parseFunctionValue(input, is_once);
+                const value = try self.parameterizedDefinition(generic_params, generic_params_struct, function);
+                const extra = try self.addExtra(syn.FieldExtra{ .type_node = .none, .default_value = value.optional() });
+                return self.addNode(.symbol_declaration_constant, name.token, .{ .extra = extra });
             }
         }
 
@@ -2316,14 +2477,7 @@ pub const Syntaxer = struct {
                 // call: Name(...)
                 const input_node = try self.parseCollectionLiteral(true);
                 const type_arguments = if (generic_params_struct == null) generic_params else try self.addNodeRange(&.{});
-                const extra = try self.addExtra(syn.CallExtra{
-                    .module_qualifier = .none,
-                    .type_arguments_start = type_arguments.start,
-                    .type_arguments_end = type_arguments.end,
-                    .type_arguments_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                    .input = input_node,
-                });
-                const call_node = try self.addNode(.function_call, name.token, .{ .extra = extra });
+                const call_node = try self.namedCall(name.token, null, type_arguments, generic_params_struct, input_node);
                 const expr = try self.parseHandleTail(try self.parsePostfix(call_node));
                 if (expr == call_node) return call_node;
                 return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
@@ -2373,13 +2527,7 @@ pub const Syntaxer = struct {
                     if (self.tokenIs(.equal)) return SyntaxerError.IncompleteTypeHasNoDefinition;
                     // A nominal identity without a runtime definition. Reuse
                     // the declaration payload; no structural literal is built.
-                    const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(null),
-                        .value = ty,
-                    });
-                    return try self.addNode(.c_incomplete_declaration, name.token, .{ .extra = extra });
+                    return self.addNode(.c_incomplete_declaration, name.token, .{ .node = ty });
                 }
                 if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion") or std.mem.eql(u8, type_name, "CStruct")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
@@ -2391,13 +2539,8 @@ pub const Syntaxer = struct {
                         try self.parseChoiceTypeLiteral(tag == .c_enum_declaration)
                     else
                         try self.parseStructTypeLiteral();
-                    const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                        .value = lit_node,
-                    });
-                    return try self.addNode(tag, name.token, .{ .extra = extra });
+                    const value = try self.parameterizedDefinition(generic_params, generic_params_struct, lit_node);
+                    return self.addNode(tag, name.token, .{ .node = value });
                 } else if (std.mem.eql(u8, type_name, "Abstract")) {
                     try self.diags.add(id_loc, .syntax, "Abstract declarations are unsupported; use Contract with explicit participants", .{});
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
