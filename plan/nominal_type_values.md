@@ -298,6 +298,9 @@ before adding implementation exceptions.
   relocation and specialized IR. Type/function application binds the lexical prefix
   before explicit arguments; bound-argument publication is shared. Internal tests
   cover distinct environments, pool growth and rejection of capture rebinding.
+  Signature/body inference binds the same captured prefix, propagates only local
+  arguments back to the caller and checks nominal application captures before
+  inferring remaining parameters.
   Source construction of associated family values and their signature checking
   remain pending; the representation does not by itself complete that feature.
 

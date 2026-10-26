@@ -730,12 +730,12 @@ pub const Resolver = struct {
     const FamilyInput = union(enum) { fields: global_sg.GlobalNodeId, value_type: global_sg.GlobalTypeId, signature_type: global_sg.GlobalTypeId };
 
     fn inferFamilyApplication(self: *Resolver, module_index: usize, application: @FieldType(ir.ResolvedType, "generic"), input: FamilyInput, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, reach: ?ReachInferenceContext) anyerror!bool {
-        const family = try self.generics.resolveParameterizedFamily(module_index, application.base);
-        const located = self.generics.findTypeParameterized(family) orelse return false;
+        const definition = try self.generics.resolveParameterizedDefinitionValue(module_index, application.base);
+        const located = self.generics.findTypeParameterized(definition.origin) orelse return false;
         const module = &self.modules[located.module_index];
-        const parameters = located.parameterized.parameters;
         var local = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
         defer local.deinit(self.allocator);
+        const parameters = try self.generics.bindDefinitionCaptures(located.module_index, located.parameterized.parameters, definition, &local);
         // Transfer known arguments into the definition's lexical parameter IDs.
         for (0..parameters.len) |offset| {
             const raw = parameters.start + offset;
@@ -762,6 +762,16 @@ pub const Resolver = struct {
             .signature_type => |required| if (!try self.inferSignatureBindings(located.module_index, located.parameterized.body, required, &local)) return false,
         }
         try self.generics.applyParameterDefaults(located.module_index, parameters, &local);
+        // Captures are fixed lexical evidence. Traversing the family body may
+        // check them, but cannot infer a different environment from call inputs.
+        for (0..definition.captures.len) |offset| {
+            const raw = located.parameterized.parameters.start + offset;
+            const captured = self.graph.generic_arguments.items[definition.captures.start + offset].value;
+            switch (captured) {
+                .type => |ty| if (local.types[raw] == null or !global_types.equal(self.graph, local.types[raw].?, ty)) return false,
+                .comptime_int => |integer| if (local.ints[raw] != integer) return false,
+            }
+        }
         // Return only evidence inferred from inputs/defaults. Result types never
         // determine these bindings, and no nominal identity is changed.
         for (0..parameters.len) |offset| {
@@ -1724,7 +1734,8 @@ pub const Resolver = struct {
                     return true;
                 },
                 .generic => |generic| {
-                    const declaration = try self.generics.resolveParameterizedFamily(module_index, generic.base);
+                    const definition = try self.generics.resolveParameterizedDefinitionValue(module_index, generic.base);
+                    const declaration = definition.origin;
                     const located = self.generics.findTypeParameterized(declaration) orelse return false;
                     const owner = &self.modules[located.module_index];
                     const body = owner.semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
@@ -1735,13 +1746,17 @@ pub const Resolver = struct {
                         else => return false,
                     };
                     if (declaration != value.base) return false;
-                    if (generic.arguments.len != located.parameterized.parameters.len or value.arguments.len != generic.arguments.len) return false;
+                    if (definition.captures.len > located.parameterized.parameters.len or
+                        generic.arguments.len != located.parameterized.parameters.len - definition.captures.len or
+                        value.arguments.len != located.parameterized.parameters.len) return false;
+                    const actual_captures = primitives.Range(global_sg.GlobalGenericArgId){ .start = value.arguments.start, .len = definition.captures.len };
+                    if (!global_types.genericArgumentsEqual(self.graph, definition.captures, actual_captures)) return false;
                     // Bind by declaration parameter order, regardless of the
                     // participant's positional or reordered named spelling.
-                    for (0..located.parameterized.parameters.len) |position| {
+                    for (definition.captures.len..located.parameterized.parameters.len) |position| {
                         const parameter = owner.semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
                         const name = owner.text(parameter.name);
-                        const argument = self.generics.findPatternArgument(module_index, generic.arguments, position, name) orelse return false;
+                        const argument = self.generics.findPatternArgument(module_index, generic.arguments, position - definition.captures.len, name) orelse return false;
                         const concrete = self.generics.findGlobalArgument(name, value.arguments, position) orelse return false;
                         switch (argument.value) {
                             .type => |ty| {
