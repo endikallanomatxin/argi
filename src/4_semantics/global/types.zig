@@ -766,6 +766,7 @@ pub fn definitionValue(graph: *const graph_mod.GlobalSemanticGraph, initial: gra
 }
 
 pub fn staticDefinitionBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.DefinitionValue {
+    if (graph.isBindingTypeUnresolved(id)) return null;
     const binding = graph.binding(id);
     if (binding.mutability != .constant or binding.deferred_initialization) return null;
     const semantic = graph.resolvedSemanticType(binding.ty) orelse return null;
@@ -778,6 +779,7 @@ pub fn isStaticBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mo
 }
 
 pub fn staticTypeBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.GlobalTypeId {
+    if (graph.isBindingTypeUnresolved(id)) return null;
     const binding = graph.binding(id);
     if (binding.mutability != .constant or binding.deferred_initialization or !isBuiltin(graph, binding.ty, .Type)) return null;
     return typeValue(graph, binding.initialization orelse return null);
@@ -863,6 +865,11 @@ test "definition values preserve classification and aliases without runtime layo
     try std.testing.expectEqual(declaration, staticDefinitionBinding(&graph, last).?.origin);
     try std.testing.expectEqual(null, staticTypeBinding(&graph, last));
     try std.testing.expect(isStaticBinding(&graph, last));
+    try graph.markBindingTypeUnresolved(a, last);
+    try std.testing.expectEqual(null, staticDefinitionBinding(&graph, last));
+    try std.testing.expectEqual(null, staticTypeBinding(&graph, last));
+    try graph.resolveBindingType(a, last, classification);
+    try std.testing.expectEqual(declaration, staticDefinitionBinding(&graph, last).?.origin);
     try std.testing.expectError(error.TypeHasNoRuntimeLayout, layoutOf(&graph, classification));
     graph.bindings.items[0].mutability = .variable;
     try std.testing.expectEqual(null, staticDefinitionBinding(&graph, last));

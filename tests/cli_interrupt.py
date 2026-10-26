@@ -66,7 +66,7 @@ def check_repl(argi):
         until(b">>> ")
         os.write(master, b":begin\n")
         until(b"... ")
-        for line in [b'print("VM_RUNNING")', b"Writer#().flush(.self = writer)",
+        for line in [b'print("VM_RUNNING")', b"Writer<>.flush(.self = writer)",
                      b"while true {}"]:
             os.write(master, line + b"\n")
             until(b"... ")
