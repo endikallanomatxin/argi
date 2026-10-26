@@ -12,8 +12,6 @@ Measurements and commands: [compiler performance](../docs/compiler-performance.m
 - Clarify pass prerequisites and produced facts. Review ownership operand staging
   against shared lowering without duplicating evaluation or cleanup.
 - Measure invariant work in generic specialization before sharing representation.
-- Reproduce and improve diagnostics for inferred nested module-level aggregate
-  constants that fail graph verification; submodule fixtures use explicit types.
 
 Compare 10, 100 and 1,000 commands, including rejections and core/prelude workloads.
 Keep existing differential and allocation-failure coverage. New IRs, general

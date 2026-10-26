@@ -1,6 +1,7 @@
 const std = @import("std");
 const graph_mod = @import("graph.zig");
 const writer_mod = @import("writer.zig");
+const views = @import("views.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub fn lower(
@@ -17,7 +18,7 @@ pub fn lower(
                 .file_index = declaration.module_file_index,
                 .offset = declaration.source_offset,
             },
-            .ty = binding.ty,
+            .ty = if (views.bindingTypeUnresolved(graph, relation.binding)) null else binding.ty,
             .content = .{ .binding_declaration = relation.binding },
         });
         try writer.addRoot(node);

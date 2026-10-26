@@ -1254,3 +1254,23 @@ test "compile-time integer calls retain executable parameterized nodes" {
     }
     try std.testing.expectError(error.InvalidModuleParameterizedIR, @import("parameterized/ir_verify.zig").verifyIR(&decoded));
 }
+
+test "inferred module aggregates retain unresolved root types until global resolution" {
+    const allocator = std.testing.allocator;
+    const source = "record ::= (.inner = (.number = 9))\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var result = try module_semantizer.build(allocator, "aggregate", &.{.{ .path = "aggregate/main.rg", .tree = &tree, .source = source }});
+    defer result.graph.deinit(allocator);
+    const graph = &result.graph;
+    const binding = graph.semantic.declaration_bindings.items[0].binding;
+    try std.testing.expect(@import("views.zig").bindingTypeUnresolved(graph, binding));
+    var found = false;
+    for (graph.semantic.nodes.items) |node| {
+        if (node != .resolved or node.resolved.content != .binding_declaration) continue;
+        if (node.resolved.content.binding_declaration != binding) continue;
+        found = true;
+        try std.testing.expectEqual(@as(?module_graph.ModuleTypeId, null), node.resolved.ty);
+    }
+    try std.testing.expect(found);
+}

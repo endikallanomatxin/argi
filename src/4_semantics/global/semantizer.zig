@@ -1104,6 +1104,11 @@ pub const Session = struct {
                 if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
                     return error.Reported;
             }
+            // An untyped aggregate can leave its field users pending as well.
+            // Report the missing source type instead of an internal resolution failure.
+            if (options.diagnostics) |diagnostics|
+                if (try diagnoseUnresolvedBindingTypes(&relocation.graph, reachable, diagnostics, true))
+                    return error.Reported;
             dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
             return error.UnsupportedGlobalSemantic;
         }
@@ -1120,7 +1125,7 @@ pub const Session = struct {
         }
         if (hasSelectedUnresolvedBindingTypes(&relocation.graph, reachable)) {
             if (options.diagnostics) |diagnostics|
-                if (try diagnoseUnresolvedBindingTypes(&relocation.graph, reachable, diagnostics))
+                if (try diagnoseUnresolvedBindingTypes(&relocation.graph, reachable, diagnostics, false))
                     return error.Reported;
             std.debug.print("global sema unresolved binding types remain\n", .{});
             return error.UnsupportedGlobalSemantic;
@@ -2705,11 +2710,15 @@ fn diagnoseMissingArrayTypeContext(graph: *const global_sg.GlobalSemanticGraph, 
     return false;
 }
 
-fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, reachable: ?*const reachability_mod.FunctionSet, diagnostics: *diagnostics_mod.Diagnostics) !bool {
+fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, reachable: ?*const reachability_mod.FunctionSet, diagnostics: *diagnostics_mod.Diagnostics, aggregates_only: bool) !bool {
     for (graph.bindings.items, 0..) |binding, raw| {
         const id: global_sg.GlobalBindingId = @enumFromInt(raw);
         if (!graph.isBindingTypeUnresolved(id)) continue;
         if (reachable) |set| if (!set.containsBinding(id)) continue;
+        if (aggregates_only) {
+            const initializer = binding.initialization orelse continue;
+            if (graph.node(initializer).content != .struct_value_literal) continue;
+        }
         if (binding.name.len == 0 or binding.deferred_initialization) {
             try diagnostics.add(diagnosticLocation(graph, diagnostics, binding.source), .semantic, "cannot infer the type of this value; add an explicit type annotation", .{});
         } else {

@@ -15625,3 +15625,7 @@ test "feature_tests/execution/282_nested_loop_cleanup_context" {
 test "feature_tests/basics/100X_main_extra_outputs" {
     try buildExpectFail("tests/feature_tests/basics/100X_main_extra_outputs", "main must return no values or (.status_code: Int32)");
 }
+
+test "feature_tests/modules/37X_inferred_nested_aggregate" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/37X_inferred_nested_aggregate", "cannot infer the type of 'record'; add an explicit type annotation", "without a diagnostic");
+}
