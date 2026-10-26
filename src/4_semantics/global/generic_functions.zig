@@ -719,7 +719,12 @@ pub const Resolver = struct {
         const expression = caller.semantic.parameterized_storage.ir.representation(pattern);
         if (expression != .resolved or expression.resolved != .generic)
             return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset);
-        const application = expression.resolved.generic;
+        return self.inferFamilyApplication(module_index, expression.resolved.generic, .{ .fields = input }, bindings, field_offset, reach);
+    }
+
+    const FamilyInput = union(enum) { fields: global_sg.GlobalNodeId, value_type: global_sg.GlobalTypeId };
+
+    fn inferFamilyApplication(self: *Resolver, module_index: usize, application: @FieldType(ir.ResolvedType, "generic"), input: FamilyInput, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, reach: ?ReachInferenceContext) anyerror!bool {
         const family = try self.generics.resolveParameterizedFamily(module_index, application.base);
         const located = self.generics.findTypeParameterized(family) orelse return false;
         const module = &self.modules[located.module_index];
@@ -742,9 +747,14 @@ pub const Resolver = struct {
                 },
             }
         }
-        if (!try self.inferBindingsFromInputFields(located.module_index, located.parameterized.body, input, &local, field_offset, true)) return false;
-        if (reach) |context|
-            if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.parameterized.body, input, &local, context, field_offset)) return false;
+        switch (input) {
+            .fields => |node| {
+                if (!try self.inferBindingsFromInputFields(located.module_index, located.parameterized.body, node, &local, field_offset, true)) return false;
+                if (reach) |context|
+                    if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.parameterized.body, node, &local, context, field_offset)) return false;
+            },
+            .value_type => |actual| if (!try self.inferInputType(located.module_index, located.parameterized.body, actual, &local)) return false,
+        }
         try self.generics.applyParameterDefaults(located.module_index, parameters, &local);
         // Return only evidence inferred from inputs/defaults. Result types never
         // determine these bindings, and no nominal identity is changed.
@@ -1403,6 +1413,11 @@ pub const Resolver = struct {
         // Contract participants require conformance matching. Concrete nominal
         // definitions and type families can be rejected by identity alone.
         if (expected_base == .family and self.graph.familyDefinition(expected_base.family).kind == .contract) return false;
+        if (expected_base == .family) {
+            const located = self.generics.findTypeParameterized(expected_base.family) orelse return false;
+            const owner = &self.modules[located.module_index];
+            if (owner.semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)] != .definition) return false;
+        }
         return !std.meta.eql(actual_base, expected_base);
     }
 
@@ -1717,15 +1732,18 @@ pub const Resolver = struct {
                     return true;
                 },
                 .generic => |generic| {
+                    const declaration = try self.generics.resolveParameterizedFamily(module_index, generic.base);
+                    const located = self.generics.findTypeParameterized(declaration) orelse return false;
+                    const owner = &self.modules[located.module_index];
+                    const body = owner.semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
+                    if (body != .definition)
+                        return self.inferFamilyApplication(module_index, generic, .{ .value_type = actual }, bindings, 0, null);
                     const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
                         .generic => |value| value,
                         else => return false,
                     };
-                    const declaration = try self.generics.resolveParameterizedFamily(module_index, generic.base);
                     if (declaration != value.base) return false;
-                    const located = self.generics.findTypeParameterized(declaration) orelse return false;
                     if (generic.arguments.len != located.parameterized.parameters.len or value.arguments.len != generic.arguments.len) return false;
-                    const owner = &self.modules[located.module_index];
                     // Bind by declaration parameter order, regardless of the
                     // participant's positional or reordered named spelling.
                     for (0..located.parameterized.parameters.len) |position| {

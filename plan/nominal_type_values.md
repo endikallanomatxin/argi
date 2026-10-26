@@ -210,7 +210,14 @@ before adding implementation exceptions.
   bindings back through each lexical parameter list. Explicit type declarations
   accept parameterized definition expressions as their value.
 
-Still pending: transparent identity for parameterized type aliases,
+- Parameterized aliases complete their provisional application with the returned
+  semantic type rather than acquiring a family-based nominal identity. Input
+  inference follows their definition body using the same lexical binding transfer
+  as composed signatures; pointer prefilters do not reject transparent aliases by
+  their family name. Native/VM coverage includes round-trip assignments, alias
+  parameters and an identity type family.
+
+Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.

@@ -299,6 +299,21 @@ pub const Resolver = struct {
         // Validate and canonicalize before reusing an equivalent instance.
         if (global_types.genericInstance(self.graph, ty) != null) return .complete;
         const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings);
+        const body_expression = module.semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
+        if (body_expression != .definition) {
+            // A family whose body denotes an existing type is an alias, not a
+            // nominal definition. Complete its provisional application with the
+            // resulting semantic type through the ordinary transactional path.
+            if (body_type == ty) return .pending;
+            const value = self.graph.resolvedSemanticType(body_type) orelse return .pending;
+            try self.graph.resolveType(self.allocator, ty, value);
+            if (value == .generic) {
+                const instance = global_types.genericInstance(self.graph, body_type) orelse return .changed;
+                try self.graph.generic_instances.append(self.allocator, .{ .type_id = ty, .shape = instance.shape });
+            }
+            self.stats.type_instances += 1;
+            return .changed;
+        }
         const shape = switch (self.graph.types.items[@intFromEnum(body_type)]) {
             .nominal => |id| nominal: {
                 const definition = self.graph.typeDefinition(id);
@@ -1302,6 +1317,7 @@ test "pending generic types revisit old holes and discover appended types" {
     try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);
     // No defining module yet: keep the old generic candidate rather than
     // treating a false materialization result as completion.
+    try graph.family_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .type, .parameter_count = 0 });
     try graph.resolveType(a, @enumFromInt(0), .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } });
     try std.testing.expect(!try resolver.materializePendingTypes(&pending));
     try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);

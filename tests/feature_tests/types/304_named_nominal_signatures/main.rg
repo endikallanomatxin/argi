@@ -20,6 +20,16 @@ forward_identity := <.T: Type> ForwardArgs<T> -> GenericResult<T> {
     result = value
 }
 
+read_forwarded := <.T: Type> (.input: &ForwardArgs<T>) -> (.result: T) {
+    result = input&.value
+}
+
+IdentityType: Type = <.T: Type> T
+
+read_identity := <.T: Type> (.input: IdentityType<T>) -> (.result: T) {
+    result = input
+}
+
 Provider := (.flag: Bool)
 
 ReachedArgs := <.P: Type> (.provider: &P = reach provider)
@@ -41,6 +51,12 @@ computed_provider ::= #run () -> (.result: Bool) {
 main() -> () := {
     supply ::= Provider(.flag = true)
     assume provider ::= &supply
+    original: GenericArgs<Bool> = (.value = true)
+    forwarded: ForwardArgs<Bool> = original
+    restored: GenericArgs<Bool> = forwarded
+    if restored.value {} else { abort }
+    if read_forwarded(.input = &original).result {} else { abort }
+    if read_identity(.input = true).result {} else { abort }
     if read_provider().result {} else { abort }
     if computed {} else { abort }
     if computed_provider {} else { abort }
