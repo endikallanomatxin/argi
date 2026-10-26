@@ -264,6 +264,12 @@ before adding implementation exceptions.
   allocation-failure rollback; reachability and verification use the same evidence.
   Generic per-call specialization remains to be connected to these definitions.
 
+- Inline operation definitions preserve their own parameter lists after captured
+  conformance/associated bindings. The captured prefix is explicit in syntax and
+  ModuleSema; local parameters retain normal bounds/default lowering and cannot
+  shadow captures. Selected per-call specialization and generic requirement
+  compatibility are still pending.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove

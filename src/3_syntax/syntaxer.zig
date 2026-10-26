@@ -726,8 +726,13 @@ pub const Syntaxer = struct {
         parameters_struct: ?syn.NodeIndex,
         value: syn.NodeIndex,
     ) SyntaxerError!syn.NodeIndex {
+        return self.parameterizedDefinitionWithCaptures(parameters, parameters_struct, value, 0);
+    }
+
+    fn parameterizedDefinitionWithCaptures(self: *Syntaxer, parameters: syn.NodeRange, parameters_struct: ?syn.NodeIndex, value: syn.NodeIndex, captured_parameter_count: u32) SyntaxerError!syn.NodeIndex {
         if (parameters.start == parameters.end and parameters_struct == null) return value;
         const extra = try self.addExtra(syn.ParameterizedDefinitionExtra{
+            .captured_parameter_count = captured_parameter_count,
             .parameters_start = parameters.start,
             .parameters_end = parameters.end,
             .parameters_struct = syn.OptionalNodeIndex.init(parameters_struct),
@@ -820,7 +825,7 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedDeclarationOrAssignment;
             self.advanceOne();
             self.skipNewLinesAndComments();
-            const value = if (kind) |annotation| value: {
+            var value = if (kind) |annotation| value: {
                 if (self.file.tag(annotation) == .type_name and std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(annotation))).identifier), "Type"))
                     break :value try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
                 break :value try self.parseExpression();
@@ -839,6 +844,13 @@ pub const Syntaxer = struct {
                     .body = syn.OptionalNodeIndex.init(body),
                 });
             } else try self.parseExpression();
+            if (self.file.functionDefinition(self.file.definitionBody(value))) |function| {
+                var implementation = function;
+                implementation.contract_member = 1;
+                const own_parameters = self.file.parameterizedDefinition(value);
+                const range = if (own_parameters) |definition| self.file.data(definition.parameters_struct.?).extra_range else try self.addNodeRange(&.{});
+                value = try self.functionBinding(.function_declaration, member.token, range, if (own_parameters) |definition| definition.parameters_struct else null, implementation);
+            }
             const extra = try self.addExtra(syn.FieldExtra{ .type_node = syn.OptionalNodeIndex.init(kind), .default_value = syn.OptionalNodeIndex.init(value) });
             try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, member.token, .{ .extra = extra }));
             self.skipNewLinesAndComments();
@@ -855,13 +867,19 @@ pub const Syntaxer = struct {
             if (member.type_node != null) try self.scratch.append(self.allocator, self.scratch.items[index]);
         }
         const parameter_range = try self.addNodeRange(self.scratch.items[members_end..]);
-        const parameters = try self.addNode(.parameter_list, open, .{ .extra_range = parameter_range });
         for (top..members_end) |index| {
             const value = self.file.structTypeField(self.scratch.items[index]).?.default_value.?;
             if (self.file.functionDeclaration(value) == null) continue;
             const binding = self.file.data(value).token_and_node;
+            const function = self.file.functionDeclaration(value).?;
             const definition = self.file.definitionBody(binding.node);
-            const expression = try self.parameterizedDefinition(parameter_range, if (parameter_range.start == parameter_range.end) null else parameters, definition);
+            const captured_top = self.scratch.items.len;
+            try self.scratch.appendSlice(self.allocator, self.file.nodeRange(parameter_range));
+            try self.scratch.appendSlice(self.allocator, function.generic_params);
+            const combined = try self.addNodeRange(self.scratch.items[captured_top..]);
+            self.scratch.shrinkRetainingCapacity(captured_top);
+            const combined_parameters = try self.addNode(.parameter_list, open, .{ .extra_range = combined });
+            const expression = try self.parameterizedDefinitionWithCaptures(combined, if (combined.start == combined.end) null else combined_parameters, definition, @intCast(self.file.nodeRange(parameter_range).len));
             self.file.nodes.items(.data)[@intFromEnum(value)] = .{ .token_and_node = .{ .token = binding.token, .node = expression } };
         }
         return self.addNode(.struct_type_literal, open, .{ .extra_range = try self.addNodeRange(self.scratch.items[top..members_end]) });

@@ -70,6 +70,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
     }
 
     for (storage.parameterized_functions.items) |parameterized| {
+        try require(parameterized.captured_parameter_count <= parameterized.parameters.len);
         try require(verify.idFits(parameterized.declaration, graph.declarations.items.len));
         if (parameterized.concrete_function) |function| {
             try require(verify.idFits(function, graph.functions.items.len));

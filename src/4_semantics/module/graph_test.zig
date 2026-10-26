@@ -1452,3 +1452,38 @@ test "contract operation parameters have independent lexical scopes and do not s
     try std.testing.expectEqual(copy.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(copy_result)].parameter));
     try @import("verify.zig").verifyModule(&graph);
 }
+
+test "inline operation definitions preserve local parameters after conformance captures" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Factory#(.Owner: Type): Contract = (
+        \\    .Result: Type
+        \\    .make: <.Value: Type> (.value: Value) -> (.result: Result)
+        \\)
+        \\implement#(.Owner: Type) Factory#(Owner) (
+        \\    .Result: Type = Owner
+        \\    .make = <.Value: Type = Bool> (.value: Value) -> (.result: Result) { abort }
+        \\)
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "factory/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "factory", &inputs);
+    defer graph.deinit(allocator);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const storage = &graph.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 1), storage.parameterized_functions.items.len);
+    const function = storage.parameterized_functions.items[0];
+    try std.testing.expectEqual(@as(u32, 2), function.captured_parameter_count);
+    try std.testing.expectEqual(@as(u32, 3), function.parameters.len);
+    try std.testing.expect(storage.comptime_parameters.items[function.parameters.start + 2].default_type != null);
+    for ([_][]const u8{ "Owner", "Result", "Value" }, 0..) |name, position|
+        try std.testing.expectEqualStrings(name, graph.text(storage.comptime_parameters.items[function.parameters.start + position].name));
+    const input = storage.ir.representation(function.input).resolved.structural.fields;
+    const value = storage.ir.fields.items[input.start].ty;
+    try std.testing.expectEqual(function.parameters.start + 2, @intFromEnum(storage.ir.types.items[@intFromEnum(value)].parameter));
+    const output = storage.ir.representation(function.output).resolved.structural.fields;
+    const result = storage.ir.fields.items[output.start].ty;
+    try std.testing.expectEqual(function.parameters.start + 1, @intFromEnum(storage.ir.types.items[@intFromEnum(result)].parameter));
+    try @import("verify.zig").verifyModule(&graph);
+}

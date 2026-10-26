@@ -206,6 +206,7 @@ pub const FunctionDefinitionExtra = struct {
 };
 
 pub const ParameterizedDefinitionExtra = struct {
+    captured_parameter_count: u32 = 0,
     parameters_start: ExtraIndex,
     parameters_end: ExtraIndex,
     parameters_struct: OptionalNodeIndex,
@@ -213,6 +214,7 @@ pub const ParameterizedDefinitionExtra = struct {
 };
 
 pub const ParameterizedDefinition = struct {
+    captured_parameter_count: u32,
     parameters: []const NodeIndex,
     parameters_struct: ?NodeIndex,
     value: NodeIndex,
@@ -255,6 +257,7 @@ pub const ForExtra = struct { name_token: TokenIndex, iterable: NodeIndex, body:
 pub const MatchCaseExtra = struct { payload_name: OptionalTokenIndex, body: NodeIndex };
 
 pub const FunctionDeclaration = struct {
+    captured_parameter_count: u32 = 0,
     contract_member: bool = false,
     name_token: TokenIndex,
     generic_params: []const NodeIndex,
@@ -529,6 +532,7 @@ pub const FileSyntaxTree = struct {
         if (tree.tag(node) != .parameterized_definition) return null;
         const extra = tree.extraData(ParameterizedDefinitionExtra, tree.data(node).extra);
         return .{
+            .captured_parameter_count = extra.captured_parameter_count,
             .parameters = tree.nodeRange(.{ .start = extra.parameters_start, .end = extra.parameters_end }),
             .parameters_struct = extra.parameters_struct.unwrap(),
             .value = extra.value,
@@ -560,6 +564,7 @@ pub const FileSyntaxTree = struct {
         const extra = tree.functionDefinition(tree.definitionBody(value)) orelse return null;
         return .{
             .contract_member = extra.contract_member != 0,
+            .captured_parameter_count = if (parameters) |definition| definition.captured_parameter_count else 0,
             .name_token = if (tree.tag(node) == .symbol_declaration_constant) tree.mainToken(node) else tree.data(node).token_and_node.token,
             .generic_params = if (parameters) |definition| definition.parameters else &.{},
             .generic_params_struct = if (parameters) |definition| definition.parameters_struct else null,

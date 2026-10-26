@@ -236,9 +236,15 @@ pub const Context = struct {
                     const parameter_start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
                     if (explicit) {
                         const registered = try self.registerParameters(function.generic_params, function.generic_params_struct);
-                        // Inline members bind compiler-level associated elements.
-                        // Their Int marker is not a runtime numeric contract.
-                        if (!function.contract_member) try self.lowerParameterBounds(registered, function.generic_params_struct);
+                        if (function.contract_member) for (self.parameters.items[function.captured_parameter_count..], function.captured_parameter_count..) |current, position| {
+                            for (self.parameters.items[0..position]) |previous|
+                                if (std.mem.eql(u8, previous.name, current.name))
+                                    try self.contractError(declaration_node, "operation parameters must have distinct names from conformance captures");
+                        };
+                        // Captured conformance elements are already bound by
+                        // selection. Operation-local parameters retain ordinary
+                        // constraints and defaults.
+                        try self.lowerParameterBoundsAfter(registered, function.generic_params_struct, function.captured_parameter_count);
                     }
                     const params: primitives.Range(ir.ComptimeParameterId) = .{
                         .start = parameter_start,
@@ -254,6 +260,7 @@ pub const Context = struct {
                     const body = if (function.body) |node| try self.lowerBlock(node) else null;
                     const template_index: u32 = @intCast(self.graph.semantic.parameterized_storage.parameterized_functions.items.len);
                     try self.writer.addParameterizedFunction(.{
+                        .captured_parameter_count = function.captured_parameter_count,
                         .declaration = decl_id,
                         .concrete_function = if (params.len == 0 and (staged_body or deferred_signature)) declaration.function_id else null,
                         .parameters = params,
@@ -727,10 +734,15 @@ pub const Context = struct {
     }
 
     fn lowerParameterBounds(self: *Context, range: primitives.Range(ir.ComptimeParameterId), params_struct: ?syn.NodeIndex) !void {
+        return self.lowerParameterBoundsAfter(range, params_struct, 0);
+    }
+
+    fn lowerParameterBoundsAfter(self: *Context, range: primitives.Range(ir.ComptimeParameterId), params_struct: ?syn.NodeIndex, captured: u32) !void {
         const struct_node = params_struct orelse return;
         const literal = self.tree.parameterList(struct_node) orelse return error.InvalidGenericParameters;
         const start = range.start;
-        for (literal.fields, 0..) |field_node, offset| {
+        if (captured > literal.fields.len) return error.InvalidGenericParameters;
+        for (literal.fields[captured..], captured..) |field_node, offset| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
             const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
             const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
