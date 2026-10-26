@@ -113,6 +113,7 @@ pub const ContractOperationBinding = struct {
     declaration: GlobalDeclId,
     instantiate_associated: bool = false,
     materialized_function: ?GlobalFunctionId = null,
+    parameter_count: u32 = 0,
 };
 pub const ContractConformance = struct {
     // Declaration/signature validation is separate from the later safety proof.

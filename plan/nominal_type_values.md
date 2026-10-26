@@ -131,6 +131,13 @@ parameters is rejected. These parameters specialize an already selected operatio
 not the conformance. Publishing a conformance must retain the operation definition,
 rather than require one prematurely instantiated body for all specializations.
 
+Generic operation signatures and bodies are checked for selected static
+instantiations, as ordinary generic functions are. A conformance retains the
+selected definition; it does not fabricate a representative body or introduce a
+second specialization cache. Concrete calls must satisfy the instantiated
+requirement before publication. Virtual use requires a fixed supported interface
+and must not bypass these checks.
+
 Before migrating those protocols, specify how contracts declare generic operation
 signatures, how associated families share their parameters, and how implementation
 compatibility is verified. Preserve static inference, explicit/reached capability
@@ -254,25 +261,31 @@ before adding implementation exceptions.
 - Contract requirement syntax and ModuleSema retain operation-local compile-time
   parameter ranges independently of participants and associated elements. Their
   bounds and signature types are lowered in a scoped environment, and the module
-  verifier checks those ranges. This is representation support only: selection,
-  implementation binding, Safety evidence and execution of generic requirements
-  still need integration before the feature is usable.
+  verifier checks those ranges. Scoped static calls infer local parameters from
+  inputs/reached defaults, check bounds, and instantiate the selected definition
+  through the ordinary generic-function engine. Required outputs never infer them.
 
 - Selected operation bindings retain their optional materialized function
   directly. The parallel per-conformance function-reference list is removed.
   Completion is monotonic and journaled, including nested transactions and
   allocation-failure rollback; reachability and verification use the same evidence.
-  Generic per-call specialization remains to be connected to these definitions.
+  Generic bindings retain their definition instead of one materialized function;
+  the verifier checks each called instance's selected definition origin.
 
 - Inline operation definitions preserve their own parameter lists after captured
   conformance/associated bindings. The captured prefix is explicit in syntax and
   ModuleSema; local parameters retain normal bounds/default lowering and cannot
-  shadow captures. Selected per-call specialization and generic requirement
-  compatibility are still pending.
+  shadow captures. Selected instances check callable input/output compatibility
+  and ordinary Safety before execution, including implementations that alias
+  ordinary generic functions. Safety proof selection keys both operation identity
+  and specialized function; proofs from another instance are not reused.
+  Native/VM/`#run` coverage combines ordinary and generic operations, differing
+  parameter names, captured conformance bindings and incompatible output rejection.
 
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
-inference, generic operation signatures and associated Args migration. Remove
+inference, explicit operation specialization, unqualified/virtual generic operation
+integration, associated type-family signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
 Broad validation still exposes explicit argument-type identity and stale
 diagnostic expectations; these are not a completed migration. Selected internal

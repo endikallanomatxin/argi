@@ -104,7 +104,7 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
             try require(identity.conformance < graph.contract_conformances.items.len);
             const conformance = graph.contract_conformances.items[identity.conformance];
             try require(identity.index < conformance.operation_bindings.len);
-            try require(graph.contract_operation_bindings.items[conformance.operation_bindings.start + identity.index].materialized_function == call.callee);
+            try require((@import("contract_evidence.zig").operationInConformance(graph, conformance, identity.index) orelse return error.InvalidGlobalSemanticGraph).acceptsFunction(graph, call.callee));
         }
     }
     for (graph.contract_operation_bindings.items) |binding| {
@@ -117,7 +117,7 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
         try require(value.selection.conformance < graph.contract_conformances.items.len);
         const selected = graph.contract_conformances.items[value.selection.conformance];
         try require(value.selection.index < selected.operation_bindings.len);
-        try require(graph.contract_operation_bindings.items[selected.operation_bindings.start + value.selection.index].materialized_function == value.method);
+        try require((@import("contract_evidence.zig").operationInConformance(graph, selected, value.selection.index) orelse return error.InvalidGlobalSemanticGraph).acceptsFunction(graph, value.method));
         try require(verify.idFits(value.method, graph.functions.items.len));
         try require(verify.sourceFits(value.source, graph.files.items.len));
         try require(verify.sourceFits(value.contract.source, graph.files.items.len));

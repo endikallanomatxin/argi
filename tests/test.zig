@@ -15698,3 +15698,14 @@ test "feature_tests/types/312_named_operation_alias_signatures" {
     try runExpect(path, 0);
     try vmExpect(path, 0, null);
 }
+
+test "feature_tests/types/313_generic_contract_operation" {
+    const path = "tests/feature_tests/types/313_generic_contract_operation";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/314X_generic_operation_result_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/314X_generic_operation_result_mismatch", "operation returns an incompatible associated result", "without a diagnostic");
+}

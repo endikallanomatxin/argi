@@ -91,6 +91,8 @@ pub const Resolver = struct {
     instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
 
     instantiate_alias: ?*const fn (*anyopaque, global_sg.GlobalDeclId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
+    infer_operation_parameters: ?*const fn (*anyopaque, usize, parameterized_storage.ContractRequirement, global_sg.GlobalNodeId, *generic_mod.Resolver.Bindings, reach_context.Context) anyerror!bool = null,
+    instantiate_generic_operation: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId, bool) anyerror!global_sg.GlobalFunctionId = null,
 
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -1572,9 +1574,51 @@ pub const Resolver = struct {
             self.participant_conformance_failure = failure;
             return null;
         };
-        const method = try self.resolveOperationBinding(conformance, method_index);
         const requirement = storage.contract_requirements.items[located.definition.requirements.start + method_index];
+        if (requirement.parameters.len != 0) {
+            const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
+            if (!try infer(self.function_context.?, located.module_index, requirement, input, &bindings, context)) return null;
+        }
         const required_type = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
+        const required_output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings);
+        const method = if (requirement.parameters.len == 0)
+            try self.resolveOperationBinding(conformance, method_index)
+        else generic: {
+            const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(method_index)) orelse return error.InvalidContractOperation;
+            var captures: std.ArrayList(global_sg.GenericArgument) = .empty;
+            defer captures.deinit(self.allocator);
+            if (evidence.binding.instantiate_associated) {
+                try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
+                try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
+            }
+            const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+            try self.graph.generic_arguments.appendSlice(self.allocator, captures.items);
+            const instantiate = self.instantiate_generic_operation orelse return error.MissingOperationInstantiator;
+            const method = instantiate(self.function_context.?, evidence.binding.declaration, .{ .start = start, .len = @intCast(captures.items.len) }, required_type, required_output, evidence.binding.instantiate_associated) catch |err| {
+                failure.reason = switch (err) {
+                    error.ContextualSignatureMismatch, error.OperationAliasInputMismatch => "implementation operation has an incompatible input signature",
+                    error.ContextualOutputSignatureMismatch => "operation returns an incompatible associated result",
+                    error.OperationAliasConstraintMismatch => "the selected input signature does not satisfy the generic operation implementation bounds",
+                    error.GenericFunctionParameterizedNotFound, error.MissingGenericArgument => "the selected operation implementation cannot be specialized from its inputs",
+                    else => return err,
+                };
+                self.participant_conformance_failure = failure;
+                return null;
+            };
+            const function = self.graph.function(method);
+            if (!global_types.operationInputsCompatible(self.graph, global_types.fields(self.graph, required_type).?, function.input) or
+                !global_types.operationFieldsEqual(self.graph, global_types.fields(self.graph, required_output).?, function.output))
+            {
+                failure.reason = if (!global_types.operationInputsCompatible(self.graph, global_types.fields(self.graph, required_type).?, function.input))
+                    "implementation operation has an incompatible input signature"
+                else
+                    "operation returns an incompatible associated result";
+                self.participant_conformance_failure = failure;
+                return null;
+            }
+            try self.recordStaticSafetyContract(located, requirement, &bindings, participants[0], method, required_output, source, .{ .conformance = @intCast(selected.tuple), .index = @intCast(method_index) });
+            break :generic method;
+        };
         const required_fields = global_types.fields(self.graph, required_type) orelse return error.InvalidContractRequirementInput;
         if (!try self.core.completeCallInputFieldsWithReach(required_fields, input, context)) return null;
         const function = self.graph.function(method);
@@ -1875,6 +1919,7 @@ pub const Resolver = struct {
                 .name = try self.graph.addString(self.allocator, name),
                 .declaration = declaration,
                 .instantiate_associated = operation.instantiate_associated,
+                .parameter_count = requirement.parameters.len,
             });
         }
         const start: u32 = @intCast(self.graph.contract_operation_bindings.items.len);
@@ -2029,11 +2074,12 @@ pub const Resolver = struct {
                     return;
                 }
             }
-            var operations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            var operations: std.ArrayList(struct { index: u32, function: global_sg.GlobalFunctionId }) = .empty;
             defer operations.deinit(self.allocator);
             const first = bindings.types[located.definition.participants.start].?;
             for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, operation_index| {
                 const name = self.modules[located.module_index].text(requirement.name);
+                if (requirement.parameters.len != 0) continue;
                 const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
                 const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings);
                 const selected: MethodSelection = selected: {
@@ -2092,10 +2138,10 @@ pub const Resolver = struct {
                 }
 
                 try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source, .{ .conformance = @intCast(index), .index = @intCast(operation_index) });
-                try operations.append(self.allocator, selected.function);
+                try operations.append(self.allocator, .{ .index = @intCast(operation_index), .function = selected.function });
             }
-            for (operations.items, 0..) |function_id, operation_index|
-                try self.graph.completeOperationBinding(self.allocator, @enumFromInt(conformance.operation_bindings.start + @as(u32, @intCast(operation_index))), function_id);
+            for (operations.items) |operation|
+                try self.graph.completeOperationBinding(self.allocator, @enumFromInt(conformance.operation_bindings.start + operation.index), operation.function);
             var completed = self.graph.contract_conformances.items[index];
             // Empty marker contracts are validated too. Keep retrying markers
             // with unresolved arguments so projection/alias resolution cannot
@@ -2624,7 +2670,7 @@ pub const Resolver = struct {
         // The selected proof is immutable. Revalidation must not allocate a
         // second outcome tree that cannot add any information to that proof.
         for (self.graph.contract_safety_conformances.items) |existing| {
-            if (std.meta.eql(existing.selection, selection)) return;
+            if (std.meta.eql(existing.selection, selection) and existing.method == method) return;
         }
         const contract = contract_safety.globalSafetyContract(self, located.module_index, declared, function.input, output) catch |err| switch (err) {
             error.UnknownOutcomeContractVariant, error.DuplicateOutcomeContract, error.InvalidOutcomeContract => {

@@ -285,7 +285,8 @@ pub const Resolver = struct {
         // Retain calls carrying safety promises until their selected body is
         // proved. Primitive elision must not hide that operation's use.
         const selection = self.graph.callOperation(call.content.function_call).?;
-        for (self.graph.contract_safety_conformances.items) |proof| if (std.meta.eql(proof.selection, selection)) return false;
+        for (self.graph.contract_safety_conformances.items) |proof|
+            if (std.meta.eql(proof.selection, selection) and proof.method == call.content.function_call.callee) return false;
         const declaration = self.graph.declaration(self.graph.function(call.content.function_call.callee).declaration);
         const function = self.graph.function(call.content.function_call.callee);
         const file = self.graph.files.items[declaration.source.file_index];
@@ -2005,6 +2006,30 @@ pub const Resolver = struct {
         for (inputs.len..fields.len) |position|
             if (storage.fields.items[fields.start + position].default_value == null) return false;
         return true;
+    }
+
+    pub fn inferOperationParameters(context: *anyopaque, module_index: usize, requirement: @import("../module/parameterized/storage.zig").ContractRequirement, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, reach: ReachInferenceContext) anyerror!bool {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        if (!try self.inferBindingsFromInput(module_index, requirement.input, input, bindings)) return false;
+        if (!try self.inferBindingsFromReachDefaults(module_index, requirement.input, input, bindings, reach)) return false;
+        if (!try self.inferAndValidateConstraints(module_index, requirement.parameters, bindings)) return false;
+        return self.parametersBound(module_index, requirement.parameters, bindings);
+    }
+
+    pub fn instantiateGenericOperation(context: *anyopaque, declaration: global_sg.GlobalDeclId, captures: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalTypeId, output: global_sg.GlobalTypeId, contextual: bool) anyerror!global_sg.GlobalFunctionId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        const located = self.findParameterized(declaration) orelse return error.GenericFunctionParameterizedNotFound;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        if (contextual) try self.generics.bindGlobalArguments(located.module_index, .{ .start = located.parameterized.parameters.start, .len = located.parameterized.captured_parameter_count }, captures, &bindings);
+        if (!try self.inferSignatureBindings(located.module_index, located.parameterized.input, input, &bindings)) return error.OperationAliasInputMismatch;
+        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) return error.OperationAliasConstraintMismatch;
+        const arguments = try self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings);
+        const saved_publication = self.publishing_signature;
+        self.publishing_signature = true;
+        defer self.publishing_signature = saved_publication;
+        return self.instantiateWithSignature(declaration, arguments, if (contextual) .{ .input = input, .output = output } else null);
     }
 
     pub fn instantiateOperationAlias(context: *anyopaque, declaration: global_sg.GlobalDeclId, input: global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId {

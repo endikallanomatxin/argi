@@ -18,6 +18,15 @@ pub const SelectedOperation = struct {
         return self.binding.materialized_function;
     }
 
+    pub fn acceptsFunction(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId) bool {
+        if (self.materializedFunction()) |selected| return selected == function;
+        if (self.binding.parameter_count == 0) return false;
+        const family = graph.declaration(self.binding.declaration).family_definition orelse return false;
+        for (graph.generic_function_instances.items) |instance|
+            if (instance.function == function and instance.parameterized_definition == family) return true;
+        return false;
+    }
+
     pub fn participant(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph, index: usize) ?graph_mod.GlobalTypeId {
         if (index >= self.conformance.participants.len) return null;
         const argument = graph.generic_arguments.items[self.conformance.participants.start + index].value;
