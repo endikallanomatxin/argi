@@ -972,6 +972,9 @@ pub const Resolver = struct {
             const left = expected_storage.comptime_parameters.items[expected.start + position];
             const right = actual_storage.comptime_parameters.items[actual.start + position];
             if (left.kind != right.kind) return false;
+            // An unconstrained signature promises every value of this kind.
+            // The supplied family cannot silently narrow that domain.
+            if (left.constraint == null and right.constraint != null) return false;
             if (left.kind == .comptime_int) {
                 const expected_type = try self.instantiateParameterizedType(expected_module, left.value_type orelse return false, expected_bindings);
                 const actual_type = try self.instantiateParameterizedType(actual_module, right.value_type orelse return false, actual_bindings);

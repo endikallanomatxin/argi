@@ -15852,3 +15852,14 @@ test "feature_tests/types/338_named_array_dimensions" {
 test "feature_tests/types/339X_runtime_array_dimension" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/339X_runtime_array_dimension", "runtime values cannot be used", "failed without a diagnostic");
 }
+
+test "feature_tests/types/340X_family_added_constraint" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/340X_family_added_constraint", "type-family argument does not match its parameter signature", "failed without a diagnostic");
+}
+
+test "feature_tests/types/341_family_weaker_constraint" {
+    const path = "tests/feature_tests/types/341_family_weaker_constraint";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
