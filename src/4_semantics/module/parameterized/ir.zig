@@ -110,7 +110,12 @@ pub const Type = union(enum) {
     resolved: primitives.SemanticType(Ids),
 };
 
-pub const Decl = struct { target: DeclarationRef };
+pub const DefinitionRef = union(enum) {
+    module: entities.ModuleDeclId,
+    external: entities.ExternalRefId,
+    parameter: ComptimeParameterId,
+};
+pub const Decl = struct { target: DefinitionRef };
 pub const Function = struct { target: FunctionRef };
 pub const Variant = union(enum) {
     reference: VariantRef,

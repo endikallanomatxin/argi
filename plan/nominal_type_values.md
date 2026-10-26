@@ -362,6 +362,16 @@ before adding implementation exceptions.
   checks their ranges and parameter kinds. Associated family construction,
   application and implementation-signature compatibility remain open.
 
+- Type-family parameters can be passed explicitly, forwarded and specialized in
+  function signatures/bodies; family defaults use the same captured values.
+  Retained definition references distinguish lexical family parameters from named
+  declarations. Explicit binding checks remaining arity and parameter kinds;
+  universal compatibility of bounds and nested family signatures remains pending.
+  Concrete call arguments now share the retained-IR lowering path, removing the
+  separate literal-only evaluator. Scoped operation and virtual-evidence consumers
+  resolve those arguments through the common resolver. Native, VM and `#run`
+  fixtures cover application, forwarding, defaults and arity rejection.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, explicit unqualified operation specialization, remaining generic-call inference parity,

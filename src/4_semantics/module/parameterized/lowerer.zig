@@ -161,7 +161,7 @@ pub fn lowerConcreteArguments(graph: *graph_mod.ModuleSemanticGraph, writer: *wr
         try arguments.append(writer.allocator, .{
             .name = try writer.addString(type_arguments.name(tree, source, field, "")),
             .value = if (field.type_node) |ty|
-                .{ .type = try context.lowerType(ty, false) }
+                try context.lowerTypeArgument(ty, false)
             else if (field.default_value) |value|
                 try context.lowerGenericValue(value, false)
             else
@@ -728,6 +728,7 @@ pub const Context = struct {
                     .generic => |generic| blk: {
                         const reference = storage.declarations.items[@intFromEnum(generic.base)].target;
                         const name = switch (reference) {
+                            .parameter => return false,
                             .module => |declaration| self.graph.declaration(declaration).name,
                             .external => |external| self.graph.semantic.external_refs.items[@intFromEnum(external)].name,
                         };
@@ -793,7 +794,11 @@ pub const Context = struct {
             if (self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].kind == .definition) {
                 const signature = try self.lowerDefinitionParameterSignature(value_type_node);
                 self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].family_parameters = signature;
-                if (field.default_value != null) return error.DefinitionParameterDefaultNotLowered;
+                if (field.default_value) |value| {
+                    const lowered = try self.lowerGenericValue(value, false);
+                    if (lowered != .definition) return error.InvalidGenericArgumentKind;
+                    self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].default_definition = lowered.definition;
+                }
                 continue;
             }
             const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index];
@@ -808,7 +813,7 @@ pub const Context = struct {
             // Lower defaults after registering all parameters, keeping their
             // expressions symbolic until explicit/input bindings are known.
             if (field.default_value) |value| switch (parameter_record.kind) {
-                .definition => return error.DefinitionParameterDefaultNotLowered,
+                .definition => unreachable,
                 .type => parameter_record.default_type = switch (try self.lowerGenericValue(value, false)) {
                     .type => |ty| ty,
                     else => return error.InvalidGenericArgumentKind,
@@ -1041,8 +1046,11 @@ pub const Context = struct {
                 }
             }
         }
-        const declaration_ref = if (name.qualifier_token == null and self.localType(base_text) != null)
-            ir.DeclarationRef{ .module = self.localType(base_text).? }
+        const family_parameter = if (name.qualifier_token == null) self.parameter(base_text) else null;
+        const declaration_ref: ir.DefinitionRef = if (family_parameter != null and family_parameter.?.kind == .definition)
+            .{ .parameter = family_parameter.?.id }
+        else if (name.qualifier_token == null and self.localType(base_text) != null)
+            .{ .module = self.localType(base_text).? }
         else blk: {
             const external = try self.writer.addExternalRef(.{
                 .kind = .type,
@@ -1050,7 +1058,7 @@ pub const Context = struct {
                 .name = try self.writer.addString(base_text),
                 .source = self.sourceRef(generic.base),
             });
-            break :blk ir.DeclarationRef{ .external = external };
+            break :blk ir.DefinitionRef{ .external = external };
         };
         const parameterized_decl: ir.ParameterizedDeclId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.declarations.items.len)));
         try self.graph.semantic.parameterized_storage.ir.declarations.append(self.allocator, .{ .target = declaration_ref });
@@ -1062,7 +1070,7 @@ pub const Context = struct {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameterizedArgument;
             const name_range = try self.writer.addString(type_arguments.name(self.tree, self.source, field, if (base.name.qualifier_token == null) base_text else ""));
             const arg_value: ir.GenericArgument.Value = if (field.type_node) |type_node|
-                .{ .type = try self.lowerType(type_node, allow_self) }
+                try self.lowerTypeArgument(type_node, allow_self)
             else if (field.default_value) |value_node|
                 try self.lowerGenericValue(value_node, allow_self)
             else
@@ -1125,15 +1133,32 @@ pub const Context = struct {
         } } });
     }
 
+    fn lowerTypeArgument(self: *Context, node: syn.NodeIndex, allow_self: bool) !ir.GenericArgument.Value {
+        // A bare name can denote a family value. Compound type syntax, including
+        // associated projections, retains the meaning of a type annotation.
+        if (self.tree.tag(node) == .identifier or self.tree.tag(node) == .type_name)
+            return self.lowerGenericValue(node, allow_self);
+        return .{ .type = try self.lowerType(node, allow_self) };
+    }
+
     pub fn lowerGenericValue(self: *Context, node: syn.NodeIndex, allow_self: bool) !ir.GenericArgument.Value {
         // A value argument uses integer projections; type arguments use lowerType.
         if (self.tree.tag(node) == .associated_type_projection) return .{ .comptime_int = try self.lowerIntExpression(node) };
-        if (self.tree.tag(node) == .identifier) {
+        if (self.tree.tag(node) == .identifier or self.tree.tag(node) == .type_name) {
             const token = self.tree.mainToken(node);
             const name = self.tree.tokenTextFromSource(self.source, token);
             if (self.parameter(name)) |binding| {
+                if (binding.kind == .definition) return .{ .definition = .{ .parameter = binding.id } };
                 if (binding.kind == .type) return .{ .type = try self.addType(.{ .parameter = binding.id }) };
-            } else if (primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget()) != null or self.localType(name) != null) {
+            } else if (self.localType(name)) |declaration_id| {
+                const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
+                if (declaration.family_definition != null and declaration.kind == .type) {
+                    const reference: ir.ParameterizedDeclId = @enumFromInt(self.graph.semantic.parameterized_storage.ir.declarations.items.len);
+                    try self.graph.semantic.parameterized_storage.ir.declarations.append(self.allocator, .{ .target = .{ .module = declaration_id } });
+                    return .{ .definition = .{ .literal = .{ .origin = reference } } };
+                }
+                return .{ .type = try self.lowerNamedType(node, token, null, allow_self) };
+            } else if (primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget()) != null) {
                 return .{ .type = try self.lowerNamedType(node, token, null, allow_self) };
             }
         }

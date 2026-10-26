@@ -51,7 +51,14 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
         .resolved => |resolved| try payload.semanticType(ir.Ids, resolved, bounds),
     };
 
-    for (storage.declarations.items) |decl| try declarationRef(graph, decl.target);
+    for (storage.declarations.items) |decl| switch (decl.target) {
+        .module => |id| try require(verify.idFits(id, graph.declarations.items.len)),
+        .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
+        .parameter => |id| {
+            try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len));
+            try require(graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(id)].kind == .definition);
+        },
+    };
     for (storage.functions.items) |function| switch (function.target) {
         .module => |id| try require(verify.idFits(id, graph.functions.items.len)),
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
@@ -69,7 +76,10 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(verify.stringFits(value.name, graph.strings.items));
         switch (value.value) {
             .definition => |definition| switch (definition) {
-                .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
+                .parameter => |id| {
+                    try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len));
+                    try require(graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(id)].kind == .definition);
+                },
                 .literal => |literal| {
                     try require(verify.idFits(literal.origin, storage.declarations.items.len));
                     try require(verify.rangeFits(literal.captures, storage.generic_arguments.items.len));

@@ -20,6 +20,7 @@ pub const ComptimeParameter = struct {
     value_type: ?ir.ParameterizedTypeId = null,
     default_type: ?ir.ParameterizedTypeId = null,
     default_integer: ?ir.ParameterizedIntExprId = null,
+    default_definition: ?@FieldType(ir.GenericArgument.Value, "definition") = null,
     constraint: ?ContractConstraintId = null,
     family_parameters: ?primitives.Range(ComptimeParameterId) = null,
 };

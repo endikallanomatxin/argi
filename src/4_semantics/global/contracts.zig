@@ -199,7 +199,7 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
     ) bool {
-        if (reference.module_path != null or reference.generic_arguments != null) return false;
+        if (reference.module_path != null or reference.generic_arguments != null or reference.computed_arguments != null) return false;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |item| item,
             else => return false,
@@ -233,9 +233,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         expected: ?global_sg.GlobalTypeId,
     ) !?global_sg.Node {
-        const arguments = if (reference.generic_arguments) |local|
-            try self.generics.relocateModuleArguments(module_index, local)
-        else
+        const arguments = try self.generics.resolveCallArguments(module_index, reference) orelse
             primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
         return self.makeVirtualizeWithArguments(module_index, reference, input, arguments, expected);
     }
@@ -563,7 +561,7 @@ pub const Resolver = struct {
         source: primitives.SourceRef,
         reach: reach_context.Context,
     ) !?global_sg.Node {
-        if (reference.module_path != null or reference.generic_arguments != null) return null;
+        if (reference.module_path != null or reference.generic_arguments != null or reference.computed_arguments != null) return null;
         return self.makeVirtualOperationCall(self.modules[module_index].text(reference.name), null, input, source, reach, null);
     }
 
@@ -1293,7 +1291,7 @@ pub const Resolver = struct {
     pub fn resolveScopedOperation(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
         const context = reach_context.Context.fromModule(module, offsets, call.visible_bindings, call.owner_function);
-        const arguments = if (reference.generic_arguments) |local| try self.generics.relocateModuleArguments(module_index, local) else primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
+        const arguments = try self.generics.resolveCallArguments(module_index, reference) orelse primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
         const node = try self.makeSpecializedScopedOperationCall(module_index, globalizer.globalType(offsets, call.contract_type.?), module.text(reference.name), arguments, globalizer.globalNode(offsets, call.input), context, self.sourceFor(module_index, reference.source)) orelse
             return if (self.participant_conformance_failure != null) .invalid else .deferred;
         try self.graph.setNode(self.allocator, globalizer.globalNode(offsets, call.node), node);

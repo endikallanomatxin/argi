@@ -690,6 +690,7 @@ pub const Resolver = struct {
                     error.DuplicateGenericArgument => "duplicate compile-time argument",
                     error.TooManyGenericArguments => "too many compile-time arguments",
                     error.GenericArgumentKindMismatch => "compile-time argument kind does not match its parameter",
+                    error.DefinitionParameterSignatureMismatch => "type-family argument does not match its parameter signature",
                     else => return failure,
                 };
                 self.generics.comptime_failure = .{
@@ -730,7 +731,7 @@ pub const Resolver = struct {
     const FamilyInput = union(enum) { fields: global_sg.GlobalNodeId, value_type: global_sg.GlobalTypeId, signature_type: global_sg.GlobalTypeId };
 
     fn inferFamilyApplication(self: *Resolver, module_index: usize, application: @FieldType(ir.ResolvedType, "generic"), input: FamilyInput, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, reach: ?ReachInferenceContext) anyerror!bool {
-        const definition = try self.generics.resolveParameterizedDefinitionValue(module_index, application.base);
+        const definition = try self.generics.resolveParameterizedDefinitionValue(module_index, application.base, bindings);
         const located = self.generics.findTypeParameterized(definition.origin) orelse return false;
         const module = &self.modules[located.module_index];
         var local = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
@@ -1757,7 +1758,7 @@ pub const Resolver = struct {
                     return true;
                 },
                 .generic => |generic| {
-                    const definition = try self.generics.resolveParameterizedDefinitionValue(module_index, generic.base);
+                    const definition = try self.generics.resolveParameterizedDefinitionValue(module_index, generic.base, bindings);
                     const declaration = definition.origin;
                     const located = self.generics.findTypeParameterized(declaration) orelse return false;
                     const owner = &self.modules[located.module_index];

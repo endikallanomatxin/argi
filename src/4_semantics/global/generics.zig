@@ -451,6 +451,13 @@ pub const Resolver = struct {
     pub fn applyParameterDefaults(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *Bindings) !void {
         for (parameters.start..parameters.start + parameters.len) |raw| {
             const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[raw];
+            if (parameter.kind == .definition and bindings.definitions[raw] == null) {
+                if (parameter.default_definition) |expression| {
+                    const definition = try self.instantiateDefinitionValue(module_index, expression, bindings);
+                    if (!self.definitionParameterShapeMatches(module_index, parameter, definition)) return error.DefinitionParameterSignatureMismatch;
+                    bindings.definitions[raw] = definition;
+                }
+            }
             if (parameter.kind == .type and bindings.types[raw] == null) {
                 if (parameter.default_type) |expression|
                     bindings.types[raw] = try self.instantiateParameterizedType(module_index, expression, bindings);
@@ -497,7 +504,10 @@ pub const Resolver = struct {
             const argument = self.findGlobalArgument(module.text(parameter.name), arguments, position) orelse continue;
             switch (parameter.kind) {
                 .definition => switch (argument.value) {
-                    .definition => |value| bindings.definitions[param_raw] = value,
+                    .definition => |value| {
+                        if (!self.definitionParameterShapeMatches(module_index, parameter, value)) return error.DefinitionParameterSignatureMismatch;
+                        bindings.definitions[param_raw] = value;
+                    },
                     else => return error.GenericArgumentKindMismatch,
                 },
                 .type => switch (argument.value) {
@@ -814,7 +824,7 @@ pub const Resolver = struct {
                 .layout = shape.layout,
             } }),
             .generic => |generic| blk: {
-                const definition = try self.resolveParameterizedDefinitionValue(module_index, generic.base);
+                const definition = try self.resolveParameterizedDefinitionValue(module_index, generic.base, bindings);
                 const args = try self.instantiateParameterizedArguments(module_index, generic.arguments, bindings);
                 const complete_args = try self.completeDefinitionArguments(definition, args);
                 const id = try self.internType(.{ .generic = .{ .base = definition.origin, .arguments = complete_args } });
@@ -834,12 +844,13 @@ pub const Resolver = struct {
     }
 
     pub fn resolveParameterizedFamily(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.GlobalFamilyDefinitionId {
-        return (try self.resolveParameterizedDefinitionValue(module_index, id)).origin;
+        return (try self.resolveParameterizedDefinitionValue(module_index, id, null)).origin;
     }
 
-    pub fn resolveParameterizedDefinitionValue(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.DefinitionValue {
+    pub fn resolveParameterizedDefinitionValue(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId, bindings: ?*Bindings) !global_sg.DefinitionValue {
         const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
+            .parameter => |parameter| if (bindings) |environment| environment.definitions[@intFromEnum(parameter)] orelse error.UnboundDefinitionParameter else error.UnboundDefinitionParameter,
             .module => |local| .{ .origin = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse return error.ExpectedParameterizedDefinition },
             .external => |external| value: {
                 const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)];
@@ -852,6 +863,7 @@ pub const Resolver = struct {
     pub fn resolveParameterizedDeclaration(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.GlobalDeclId {
         const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
+            .parameter => return error.ExpectedDeclarationReference,
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
             .external => |external| self.core.resolveDeclaration(
                 module_index,
@@ -879,6 +891,17 @@ pub const Resolver = struct {
         return null;
     }
 
+    fn definitionParameterShapeMatches(self: *Resolver, module_index: usize, parameter: parameterized_storage.ComptimeParameter, actual: global_sg.DefinitionValue) bool {
+        const expected = parameter.family_parameters orelse return false;
+        const located = self.findTypeParameterized(actual.origin) orelse return false;
+        const parameters = located.parameterized.parameters;
+        if (actual.captures.len > parameters.len or parameters.len - actual.captures.len != expected.len) return false;
+        const wanted = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[expected.start..][0..expected.len];
+        const given = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[parameters.start + actual.captures.len ..][0..expected.len];
+        for (wanted, given) |left, right| if (left.kind != right.kind) return false;
+        return true;
+    }
+
     pub fn inferDefinitionValue(self: *Resolver, module_index: usize, pattern: @FieldType(ir.GenericArgument.Value, "definition"), actual: global_sg.DefinitionValue, bindings: *Bindings) !bool {
         if (pattern == .parameter) {
             const slot = &bindings.definitions[@intFromEnum(pattern.parameter)];
@@ -893,9 +916,19 @@ pub const Resolver = struct {
     pub fn instantiateDefinitionValue(self: *Resolver, module_index: usize, value: @FieldType(ir.GenericArgument.Value, "definition"), bindings: *Bindings) anyerror!global_sg.DefinitionValue {
         return switch (value) {
             .parameter => |id| bindings.definitions[@intFromEnum(id)] orelse error.UnboundDefinitionParameter,
-            .literal => |literal| .{
-                .origin = try self.resolveParameterizedFamily(module_index, literal.origin),
-                .captures = try self.instantiateParameterizedArguments(module_index, literal.captures, bindings),
+            .literal => |literal| value: {
+                const definition = try self.resolveParameterizedDefinitionValue(module_index, literal.origin, bindings);
+                const captures = try self.instantiateParameterizedArguments(module_index, literal.captures, bindings);
+                if (captures.len == 0) break :value definition;
+                if (definition.captures.len == 0) break :value .{ .origin = definition.origin, .captures = captures };
+                const count = std.math.add(u32, definition.captures.len, captures.len) catch return error.SemanticGraphTooLarge;
+                try self.graph.generic_arguments.ensureUnusedCapacity(self.allocator, count);
+                const start = std.math.cast(u32, self.graph.generic_arguments.items.len) orelse return error.SemanticGraphTooLarge;
+                const prefix = self.graph.generic_arguments.items[definition.captures.start..][0..definition.captures.len];
+                const suffix = self.graph.generic_arguments.items[captures.start..][0..captures.len];
+                self.graph.generic_arguments.appendSliceAssumeCapacity(prefix);
+                self.graph.generic_arguments.appendSliceAssumeCapacity(suffix);
+                break :value .{ .origin = definition.origin, .captures = .{ .start = start, .len = count } };
             },
         };
     }

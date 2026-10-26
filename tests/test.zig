@@ -15754,3 +15754,14 @@ test "feature_tests/types/323_generic_operation_losing_pattern" {
     try runExpect(path, 0);
     try vmExpect(path, 0, null);
 }
+
+test "feature_tests/types/324_type_family_arguments" {
+    const path = "tests/feature_tests/types/324_type_family_arguments";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/325X_type_family_signature_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/325X_type_family_signature_mismatch", "type-family argument does not match its parameter signature", "without a diagnostic");
+}
