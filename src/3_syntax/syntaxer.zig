@@ -522,7 +522,13 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.dot)) {
                 self.advanceOne();
                 const member = try self.parseName();
-                return try self.addNode(.associated_type_projection, member.token, .{ .node = instance });
+                const projection = try self.addNode(.associated_type_projection, member.token, .{ .node = instance });
+                if (self.angleOpen()) {
+                    const specialization_token: syn.TokenIndex = @enumFromInt(self.index);
+                    const arguments = try self.parseStructTypeFields(true);
+                    return try self.addNode(.specialization, specialization_token, .{ .node_and_node = .{ .first = projection, .second = arguments } });
+                }
+                return projection;
             }
             return instance;
         }

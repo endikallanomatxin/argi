@@ -388,3 +388,14 @@ test "compact syntaxing keeps contract and operation specialization arguments di
     const field = tree.structTypeField(parameters.fields[0]).?;
     try std.testing.expectEqualStrings("Value", tree.tokenTextFromSource(source, field.name_token));
 }
+
+test "compact syntaxing specializes an associated type family in a type annotation" {
+    var tree = try parseTestSource("associated_family.rg", "value: Factory<Owner>.Args<Bool> = (.value = true)\n");
+    defer tree.deinit(std.testing.allocator);
+    const declaration = tree.symbolDeclaration(tree.roots[0]).?;
+    const specialization = tree.syntaxType(declaration.type_node.?).?;
+    try std.testing.expect(specialization == .generic);
+    const projection = tree.syntaxType(specialization.generic.base).?;
+    try std.testing.expect(projection == .projection);
+    try std.testing.expect(tree.syntaxType(projection.projection.base).? == .generic);
+}

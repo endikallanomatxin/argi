@@ -15776,3 +15776,7 @@ test "feature_tests/types/326_associated_type_family" {
 test "feature_tests/types/327X_associated_family_signature" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/327X_associated_family_signature", "associated type-family argument does not match its parameter signature", "without a diagnostic");
 }
+
+test "feature_tests/types/328X_associated_type_as_family" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/328X_associated_type_as_family", "associated element is not a type family", "without a diagnostic");
+}

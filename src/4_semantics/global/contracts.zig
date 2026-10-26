@@ -2280,6 +2280,10 @@ pub const Resolver = struct {
         return contract_projections.resolveAssociatedType(context, base, member, source);
     }
 
+    pub fn resolveAssociatedDefinition(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.DefinitionValue {
+        return contract_projections.resolveAssociatedDefinition(context, base, member, source);
+    }
+
     pub fn resolveAssociatedInt(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!i64 {
         return contract_projections.resolveAssociatedInt(context, base, member, source);
     }

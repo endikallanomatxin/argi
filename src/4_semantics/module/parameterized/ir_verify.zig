@@ -52,6 +52,11 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     };
 
     for (storage.declarations.items) |decl| switch (decl.target) {
+        .projection => |projection| {
+            try require(verify.idFits(projection.base, storage.types.items.len));
+            try require(verify.stringFits(projection.member, graph.strings.items));
+            try require(verify.sourceFits(projection.source, graph.file_offsets.items.len));
+        },
         .module => |id| try require(verify.idFits(id, graph.declarations.items.len)),
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
         .parameter => |id| {

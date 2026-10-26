@@ -122,6 +122,14 @@ a signature/type family, not several conflicting `Init<String>` conformances
 distinguished by a free allocator parameter. Do not impose a provider participant
 on every protocol or implicitly erase allocators to virtual values.
 
+A written constructor target fixes the `T` participant of `Init<T>`; identical
+argument shapes on other targets introduce no ambiguity. Arithmetic operands fix
+`Left` and `Right` in the same way. Auxiliary arguments and allocator types belong
+to the operation signature and associated `Args`, not additional conformance
+participants. Infer remaining operation parameters from inputs and require explicit
+arguments when that inference is ambiguous. A partially specified target can still
+require input inference, but must preserve every explicitly supplied parameter.
+
 Operation implementation compatibility is separate from type equality. Required
 inputs match by position, name and ordinary type equality; additional implementation
 inputs need defaults. Outputs match exactly in count, names and field types. This
@@ -379,6 +387,14 @@ before adding implementation exceptions.
   multiple operation instances, and invalid family arity produces a conformance
   diagnostic. Inline associated definitions, projection as a family value and
   universal bound compatibility are still outstanding.
+
+- Associated family projections can be specialized directly in type annotations,
+  including generic signatures and `#run`. Resolution selects ordinary conformance
+  evidence and retains the provided family's nominal identity; it creates no new
+  family or nominal wrapper. A definition-reference projection carries its source,
+  contract base and member through retained IR. Tests distinguish concrete type
+  members from family members and preserve identity against the named family.
+  Passing an unspecialized projection as a family argument remains pending.
 
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate

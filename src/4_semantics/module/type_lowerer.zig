@@ -228,7 +228,7 @@ pub const Context = struct {
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
         const base = self.tree.typeReference(generic.base) orelse return error.InvalidGenericBase;
         const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
-        if (@import("type_arguments.zig").requiresResolution(self.tree, generic.arguments) or std.mem.eql(u8, base_name, "choice_union")) {
+        if (base == .projection or @import("type_arguments.zig").requiresResolution(self.tree, generic.arguments) or std.mem.eql(u8, base_name, "choice_union")) {
             return self.lowerComputedType(owner);
         }
         const arguments_literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidGenericArguments;

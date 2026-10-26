@@ -161,7 +161,7 @@ pub fn signatureFields(graph: *const graph_mod.ModuleSemanticGraph, ty: @import(
                 .generic => |generic| {
                     const reference = storage.ir.declarations.items[@intFromEnum(generic.base)].target;
                     const declaration = switch (reference) {
-                        .parameter => return null,
+                        .parameter, .projection => return null,
                         .module => |id| graph.declaration(id),
                         .external => return null,
                     };

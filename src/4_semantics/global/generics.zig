@@ -59,6 +59,7 @@ pub const Resolver = struct {
     argument_failure: ?struct { declaration: global_sg.GlobalFamilyDefinitionId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
+    definition_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.DefinitionValue = null,
     constant_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!i64 = null,
     pointer_types: @import("identity_cache.zig").IdentityCache(PointerKey, global_sg.GlobalTypeId) = .empty,
     generic_types: @import("identity_cache.zig").IdentityCache(GenericKey, global_sg.GlobalTypeId) = .empty,
@@ -850,6 +851,11 @@ pub const Resolver = struct {
     pub fn resolveParameterizedDefinitionValue(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId, bindings: ?*Bindings) !global_sg.DefinitionValue {
         const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
+            .projection => |projection| value: {
+                const environment = bindings orelse return error.UnboundDefinitionParameter;
+                const base = try self.instantiateParameterizedType(module_index, projection.base, environment);
+                break :value try self.definition_projection_resolver.?(self.projection_context.?, base, self.modules[module_index].text(projection.member), self.globalSource(module_index, projection.source));
+            },
             .parameter => |parameter| if (bindings) |environment| environment.definitions[@intFromEnum(parameter)] orelse error.UnboundDefinitionParameter else error.UnboundDefinitionParameter,
             .module => |local| .{ .origin = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse return error.ExpectedParameterizedDefinition },
             .external => |external| value: {
@@ -863,7 +869,7 @@ pub const Resolver = struct {
     pub fn resolveParameterizedDeclaration(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.GlobalDeclId {
         const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
-            .parameter => return error.ExpectedDeclarationReference,
+            .parameter, .projection => return error.ExpectedDeclarationReference,
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
             .external => |external| self.core.resolveDeclaration(
                 module_index,

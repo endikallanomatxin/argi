@@ -14,8 +14,15 @@ implement Factory#(Owner) (
     }
 )
 
+projected_flag := <.Participant: Type> (.args: Factory<Participant>.Args<Bool>) -> (
+    .result : Bool
+) {
+    result = args.value
+}
+
 known ::= #run () -> (.result: Bool) {
-    result = Factory<Owner>.make<Bool>(.value = true).result
+    args: Factory<Owner>.Args<Bool> = (.value = true)
+    result = Factory<Owner>.make<Bool>(.value = args.value).result
 }
 
 main := () -> () {
@@ -23,4 +30,8 @@ main := () -> () {
     number: Int32 = Factory<Owner>.make<Int32>(.value = 42).result
     if number != 42 { abort }
     if known {} else { abort }
+    projected: Factory<Owner>.Args<Bool> = (.value = true)
+    same: Arguments<Bool> = projected
+    if same.value {} else { abort }
+    if projected_flag<Owner>(.args = projected).result {} else { abort }
 }

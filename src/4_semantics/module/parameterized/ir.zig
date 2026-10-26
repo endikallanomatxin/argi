@@ -111,6 +111,7 @@ pub const Type = union(enum) {
 };
 
 pub const DefinitionRef = union(enum) {
+    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     module: entities.ModuleDeclId,
     external: entities.ExternalRefId,
     parameter: ComptimeParameterId,

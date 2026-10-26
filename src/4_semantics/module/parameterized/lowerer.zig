@@ -728,7 +728,7 @@ pub const Context = struct {
                     .generic => |generic| blk: {
                         const reference = storage.declarations.items[@intFromEnum(generic.base)].target;
                         const name = switch (reference) {
-                            .parameter => return false,
+                            .parameter, .projection => return false,
                             .module => |declaration| self.graph.declaration(declaration).name,
                             .external => |external| self.graph.semantic.external_refs.items[@intFromEnum(external)].name,
                         };
@@ -1002,6 +1002,15 @@ pub const Context = struct {
             return self.addType(.{ .resolved = .{ .virtual = try self.lowerType(field.type_node orelse return error.InvalidVirtualArguments, allow_self) } });
         }
         const base = self.tree.typeReference(generic.base) orelse return error.InvalidGenericParameterizedBase;
+        if (base == .projection) {
+            const projection = base.projection;
+            const target: ir.DefinitionRef = .{ .projection = .{
+                .base = try self.lowerType(projection.base, allow_self),
+                .member = try self.writer.addString(self.tree.tokenTextFromSource(self.source, projection.member_token)),
+                .source = self.sourceRef(generic.base),
+            } };
+            return self.lowerFamilyApplication(generic, target, "", allow_self);
+        }
         if (base != .name) return error.InvalidGenericParameterizedBase;
         const name = base.name;
         const base_text = self.tree.tokenTextFromSource(self.source, name.name_token);
@@ -1061,15 +1070,19 @@ pub const Context = struct {
             });
             break :blk ir.DefinitionRef{ .external = external };
         };
+        return self.lowerFamilyApplication(generic, declaration_ref, if (base.name.qualifier_token == null) base_text else "", allow_self);
+    }
+
+    fn lowerFamilyApplication(self: *Context, generic: syn.GenericType, target: ir.DefinitionRef, base_name: []const u8, allow_self: bool) anyerror!ir.ParameterizedTypeId {
         const parameterized_decl: ir.ParameterizedDeclId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.declarations.items.len)));
-        try self.graph.semantic.parameterized_storage.ir.declarations.append(self.allocator, .{ .target = declaration_ref });
+        try self.graph.semantic.parameterized_storage.ir.declarations.append(self.allocator, .{ .target = target });
 
         const literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidGenericParameterizedArguments;
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameterizedArgument;
-            const name_range = try self.writer.addString(type_arguments.name(self.tree, self.source, field, if (base.name.qualifier_token == null) base_text else ""));
+            const name_range = try self.writer.addString(type_arguments.name(self.tree, self.source, field, base_name));
             const arg_value: ir.GenericArgument.Value = if (field.type_node) |type_node|
                 try self.lowerTypeArgument(type_node, allow_self)
             else if (field.default_value) |value_node|
