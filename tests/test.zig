@@ -15780,3 +15780,7 @@ test "feature_tests/types/327X_associated_family_signature" {
 test "feature_tests/types/328X_associated_type_as_family" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/328X_associated_type_as_family", "associated element is not a type family", "without a diagnostic");
 }
+
+test "feature_tests/types/329X_associated_family_capture_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/329X_associated_family_capture_identity", "distinct nominal types require explicit conversion", "without a diagnostic");
+}

@@ -385,8 +385,8 @@ before adding implementation exceptions.
   through their own parameters; captured associated-family signatures retain their
   metadata without becoming operation defaults. Native/VM/`#run` cases exercise
   multiple operation instances, and invalid family arity produces a conformance
-  diagnostic. Inline associated definitions, projection as a family value and
-  universal bound compatibility are still outstanding.
+  diagnostic. Associated projections as family arguments and universal bound
+  compatibility are still outstanding.
 
 - Associated family projections can be specialized directly in type annotations,
   including generic signatures and `#run`. Resolution selects ordinary conformance
@@ -395,6 +395,15 @@ before adding implementation exceptions.
   contract base and member through retained IR. Tests distinguish concrete type
   members from family members and preserve identity against the named family.
   Passing an unspecialized projection as a family argument remains pending.
+
+- Inline associated type-family definitions share private declaration discovery,
+  nominal type lowering and ordinary specialization with named definitions. Generic
+  implementation parameters form the family's captured prefix; local family
+  parameters remain its public specialization arguments. Internal verification
+  checks retained lexical IDs, and native/VM/`#run` fixtures cover captures and
+  projected layouts. Equal field representations from different captured
+  conformances remain nominally distinct. No associated-family template registry
+  or separate identity cache is introduced.
 
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate

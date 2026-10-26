@@ -1595,3 +1595,30 @@ test "type-family parameter signatures keep nested binders outside definition ar
     try std.testing.expect(family.family_parameters.?.start >= function.parameters.start + function.parameters.len);
     try @import("verify.zig").verifyModule(&graph);
 }
+
+test "inline associated families retain private definition identities and lexical captures" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Protocol#(.Owner: Type): Contract = (.Args: <.Item: Type> Type)
+        \\implement#(.Owner: Type) Protocol#(Owner) (
+        \\    .Args: <.Item: Type> Type = <.Element: Type> (.owner: &Owner, .value: Element)
+        \\)
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "inline/main.rg", .tree = &tree, .source = source }};
+    var module = try module_semantizer.build(allocator, "inline", &inputs);
+    defer module.graph.deinit(allocator);
+    const storage = &module.graph.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 1), storage.parameterized_types.items.len);
+    const family = storage.parameterized_types.items[0];
+    try std.testing.expectEqual(@as(u32, 2), family.parameters.len);
+    const conformance = storage.contract_conformances.items[0];
+    const argument = storage.ir.generic_arguments.items[conformance.associated_arguments.start].value.definition.literal;
+    try std.testing.expectEqual(@as(u32, 1), argument.captures.len);
+    const reference = storage.ir.declarations.items[@intFromEnum(argument.origin)].target.module;
+    try std.testing.expectEqual(family.declaration, reference);
+    const capture = storage.ir.generic_arguments.items[argument.captures.start].value.type;
+    try std.testing.expectEqual(conformance.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(capture)].parameter));
+    try @import("verify.zig").verifyModule(&module.graph);
+}

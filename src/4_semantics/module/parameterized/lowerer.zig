@@ -216,6 +216,11 @@ pub const Context = struct {
                     if (!hasGenericParameters(payload.params, payload.params_struct)) continue;
                     self.parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(payload.params, payload.params_struct);
+                    for (self.parameters.items, 0..) |current, position| {
+                        for (self.parameters.items[0..position]) |previous|
+                            if (std.mem.eql(u8, previous.name, current.name))
+                                try self.contractError(declaration_node, "type definition parameters must have distinct names from lexical captures");
+                    }
                     const body = try self.lowerType(payload.value, false);
                     if (self.tree.tag(declaration_node) == .c_struct_declaration)
                         self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].definition.body)].resolved.structural.layout = .c_struct
@@ -1155,7 +1160,35 @@ pub const Context = struct {
         return .{ .type = try self.lowerType(node, allow_self) };
     }
 
+    pub fn lowerDefinitionArgument(self: *Context, node: syn.NodeIndex) anyerror!ir.GenericArgument.Value {
+        const declaration = for (self.graph.declarations.items, 0..) |candidate, index| {
+            if (candidate.kind == .type and candidate.module_file_index == self.file_index and candidate.source_offset == self.tree.location(node).offset)
+                break @as(entities.ModuleDeclId, @enumFromInt(index));
+        } else return error.ExpectedParameterizedDefinition;
+        const value = self.tree.definitionValue(node) orelse return error.ExpectedParameterizedDefinition;
+        const definition = self.tree.parameterizedDefinition(value) orelse return error.ExpectedParameterizedDefinition;
+        var captures: std.ArrayList(ir.GenericArgument) = .empty;
+        defer captures.deinit(self.allocator);
+        for (definition.parameters[0..definition.captured_parameter_count]) |field_node| {
+            const field = self.tree.structTypeField(field_node).?;
+            const name = self.tree.tokenTextFromSource(self.source, field.name_token);
+            const binding = self.parameter(name) orelse return error.UnboundDefinitionCapture;
+            try captures.append(self.allocator, .{ .name = try self.writer.addString(name), .value = switch (binding.kind) {
+                .type => .{ .type = try self.addType(.{ .parameter = binding.id }) },
+                .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = binding.id }) },
+                .definition => .{ .definition = .{ .parameter = binding.id } },
+            } });
+        }
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const start: u32 = @intCast(storage.generic_arguments.items.len);
+        try storage.generic_arguments.appendSlice(self.allocator, captures.items);
+        const reference: ir.ParameterizedDeclId = @enumFromInt(storage.declarations.items.len);
+        try storage.declarations.append(self.allocator, .{ .target = .{ .module = declaration } });
+        return .{ .definition = .{ .literal = .{ .origin = reference, .captures = .{ .start = start, .len = @intCast(captures.items.len) } } } };
+    }
+
     pub fn lowerGenericValue(self: *Context, node: syn.NodeIndex, allow_self: bool) !ir.GenericArgument.Value {
+        if (self.tree.typeDeclaration(node) != null) return self.lowerDefinitionArgument(node);
         // A value argument uses integer projections; type arguments use lowerType.
         if (self.tree.tag(node) == .associated_type_projection) return .{ .comptime_int = try self.lowerIntExpression(node) };
         if (self.tree.tag(node) == .identifier or self.tree.tag(node) == .type_name) {

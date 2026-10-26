@@ -866,6 +866,18 @@ pub const Syntaxer = struct {
                 const range = if (own_parameters) |definition| self.file.data(definition.parameters_struct.?).extra_range else try self.addNodeRange(&.{});
                 value = try self.functionBinding(.function_declaration, member.token, range, if (own_parameters) |definition| definition.parameters_struct else null, implementation);
             }
+            if (kind != null and self.file.parameterizedDefinition(kind.?) != null and self.file.parameterizedDefinition(value) != null) {
+                const own = self.file.parameterizedDefinition(value).?;
+                const captured_top = self.scratch.items.len;
+                try self.scratch.appendSlice(self.allocator, self.file.nodeRange(implementation_parameters));
+                try self.scratch.appendSlice(self.allocator, own.parameters);
+                const combined = try self.addNodeRange(self.scratch.items[captured_top..]);
+                self.scratch.shrinkRetainingCapacity(captured_top);
+                const parameters = try self.addNode(.parameter_list, member.token, .{ .extra_range = combined });
+                const definition = try self.parameterizedDefinitionWithCaptures(combined, parameters, own.value, @intCast(self.file.nodeRange(implementation_parameters).len));
+                const declaration_extra = try self.addExtra(syn.FieldExtra{ .type_node = .none, .default_value = definition.optional() });
+                value = try self.addNode(.symbol_declaration_constant, member.token, .{ .extra = declaration_extra });
+            }
             const extra = try self.addExtra(syn.FieldExtra{ .type_node = syn.OptionalNodeIndex.init(kind), .default_value = syn.OptionalNodeIndex.init(value) });
             try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, member.token, .{ .extra = extra }));
             self.skipNewLinesAndComments();
