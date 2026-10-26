@@ -346,6 +346,12 @@ before adding implementation exceptions.
   checkpoints cover rollback, with tests for repeated hits, ID reuse and wrong
   entries. This reduces repeated lookup work without another persistent cache.
 
+- Formatting treats syntax-confirmed angle lists as logical delimiter groups,
+  sharing the 96-column reflow policy with ordinary arguments. Comparison tokens
+  retain their original lexical text; token/syntax preservation and repository
+  idempotence checks remain active. Combined `>=` closers keep their original
+  layout until their assignment token can be represented independently.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, explicit unqualified operation specialization, remaining generic-call inference parity,

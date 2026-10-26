@@ -61,7 +61,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var pending_newlines: usize = 0;
     var source_newlines: usize = 0;
     for (0..tokens.len) |i| {
-        const tag = std.meta.activeTag(tokens.contents[i]);
+        const tag = layout.delimiterTag(tokens, i);
         if (tag == .eof) break;
         if (tag == .new_line) {
             if (layout.suppress_newlines[i]) continue;
@@ -87,7 +87,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             const frame = stack.items[stack.items.len - 1];
             var next = i + 1;
             while (next < tokens.len and tokens.contents[next] == .new_line) : (next += 1) {}
-            if (frame.reflow and (!frame.expand or frame.hanging) and tokens.contents[next] == .close_parenthesis) {
+            if (frame.reflow and (!frame.expand or frame.hanging) and layout.delimiterTag(tokens, next) == .close_parenthesis) {
                 removed[i] = true;
                 continue;
             }
@@ -151,7 +151,9 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         previous = tag;
         if (tag == .open_parenthesis or tag == .open_bracket or tag == .open_brace) {
             const reflow = layout.reflow[i] and canFlatten(tokens, source, i, layout);
-            const multiline = containsNewline(tokens, i);
+            const multiline = for (tokens.contents[i..][0 .. layout.ends[i] - i]) |content| {
+                if (content == .new_line) break true;
+            } else false;
             const expand = if (reflow)
                 layout.table_rows[i] or out.items.len - line_start - 1 + line_alignment_padding + layout.chain_suffix[i] + compactLength(tokens, source, i, layout.ends[i] + 1, layout) > line_width
             else
@@ -237,6 +239,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
 
 const Layout = struct {
     ends: []usize,
+    angle_delimiters: []i8,
     breaks: []u8,
     expand: []bool,
     reflow: []bool,
@@ -255,6 +258,14 @@ const Layout = struct {
     tight_before: []bool,
     syntax_tags: ?[]const syn.Node.Tag = null,
     root_count: usize = 0,
+
+    fn delimiterTag(self: Layout, tokens: tok.View, index: usize) Tag {
+        return switch (self.angle_delimiters[index]) {
+            1 => .open_parenthesis,
+            -1 => .close_parenthesis,
+            else => std.meta.activeTag(tokens.contents[index]),
+        };
+    }
 
     /// Angle groups are identified by syntax, never guessed from comparisons.
     /// Normal nested delimiters are already paired in ends.
@@ -282,10 +293,21 @@ const Layout = struct {
                     depth -= 1;
                     if (depth != 0) continue;
                     self.tight_before[cursor] = true;
+                    // A combined >= token also carries assignment syntax and
+                    // cannot be moved as an independent closing delimiter.
+                    if (token.comparison_operator == .greater_than) {
+                        self.ends[open] = cursor;
+                        self.ends[cursor] = open;
+                        self.angle_delimiters[open] = 1;
+                        self.angle_delimiters[cursor] = -1;
+                        self.reflow[open] = true;
+                    }
                     var following = cursor + 1;
                     while (following < tokens.len and tokens.contents[following] == .new_line) : (following += 1) {}
-                    if (following < tokens.len and tokens.contents[following] == .open_parenthesis and token.comparison_operator == .greater_than)
+                    if (following < tokens.len and tokens.contents[following] == .open_parenthesis and token.comparison_operator == .greater_than) {
                         self.tight_before[following] = application;
+                        self.space_before[following] = !application;
+                    }
                     return;
                 },
                 else => {},
@@ -315,6 +337,7 @@ const Layout = struct {
     fn init(allocator: std.mem.Allocator, tokens: tok.View, source: []const u8) !Layout {
         var layout: Layout = .{
             .ends = try allocator.alloc(usize, tokens.len),
+            .angle_delimiters = try allocator.alloc(i8, tokens.len),
             .breaks = try allocator.alloc(u8, tokens.len),
             .expand = try allocator.alloc(bool, tokens.len),
             .reflow = try allocator.alloc(bool, tokens.len),
@@ -333,6 +356,7 @@ const Layout = struct {
             .tight_before = try allocator.alloc(bool, tokens.len),
         };
         @memset(layout.ends, 0);
+        @memset(layout.angle_delimiters, 0);
         @memset(layout.breaks, 0);
         @memset(layout.expand, false);
         @memset(layout.reflow, false);
@@ -415,9 +439,7 @@ const Layout = struct {
                 null;
             if (members) |items| {
                 const opening = groupOpening(&tree, node, tokens);
-                // Angle lists retain explicit comma separators. Their members
-                // must not become items of the surrounding parenthesis frame.
-                if (tokens.contents[opening] == .comparison_operator) continue;
+                if (tokens.contents[opening] == .comparison_operator and layout.angle_delimiters[opening] != 1) continue;
                 layout.group[opening] = true;
                 // Reserve the padding a compact row would receive from its
                 // siblings, even when an expanded child currently separates them.
@@ -472,7 +494,7 @@ const Layout = struct {
                 layout.space_before[@intFromEnum(tree.mainToken(input))] = true;
             };
             if (tree.contractFunctionRequirement(node)) |requirement| {
-                layout.markSignature(&tree, tokens, null, requirement.input, requirement.output);
+                layout.markSignature(&tree, tokens, requirement.generic_params_struct, requirement.input, requirement.output);
             }
             if (tree.functionCall(node)) |call| {
                 layout.reflow[@intFromEnum(tree.mainToken(call.input))] = true;
@@ -795,12 +817,12 @@ fn compactLength(tokens: tok.View, source: []const u8, start: usize, end: usize,
     var length: usize = 0;
     var previous: ?Tag = null;
     for (start..end) |index| {
-        const tag = std.meta.activeTag(tokens.contents[index]);
+        const tag = layout.delimiterTag(tokens, index);
         if (tag == .new_line) continue;
         if (tag == .comma) {
             var next = index + 1;
             while (next < end and tokens.contents[next] == .new_line) : (next += 1) {}
-            if (next < end and tokens.contents[next] == .close_parenthesis and layout.reflow[layout.ends[next]]) continue;
+            if (next < end and layout.delimiterTag(tokens, next) == .close_parenthesis and layout.reflow[layout.ends[next]]) continue;
         }
         if (layout.item_start[index] and previous != .open_parenthesis and previous != .comma and previous != null) {
             length += 1;
@@ -1531,5 +1553,16 @@ test "formatter distinguishes specialization brackets from comparisons" {
     try expectFormat(
         "result:=identity<Int32>(.value=42)\nother:=Box<Box<Int32>>\ncomparison:=a<b or c>=d\n",
         "result := identity<Int32>(.value = 42)\nother := Box<Box<Int32>>\ncomparison := a < b or c >= d\n",
+    );
+}
+
+test "formatter reflows angle parameter and specialization lists with the ordinary width budget" {
+    try expectFormat(
+        "Box:=<\n.T:Type\n>(.value:T)\nvalue:=Box<\nInt32\n>(.value=42)\n",
+        "Box := <.T: Type> (.value: T)\n\nvalue := Box<Int32>(.value = 42)\n",
+    );
+    try expectFormat(
+        "Example:=<.FirstCompileTimeTypeParameterWithLongName:Type,.OtherCompileTimeTypeParameterWithLongName:Type>(.value:FirstCompileTimeTypeParameterWithLongName)\n",
+        "Example := <\n    .FirstCompileTimeTypeParameterWithLongName : Type,\n    .OtherCompileTimeTypeParameterWithLongName : Type\n> (.value: FirstCompileTimeTypeParameterWithLongName)\n",
     );
 }
