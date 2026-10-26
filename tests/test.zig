@@ -15792,3 +15792,14 @@ test "feature_tests/types/330X_explicit_operation_identity" {
 test "feature_tests/types/331X_nested_family_signature" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/331X_nested_family_signature", "type-family argument does not match its parameter signature", "without a diagnostic");
 }
+
+test "feature_tests/types/332_contextual_text_literal" {
+    const path = "tests/feature_tests/types/332_contextual_text_literal";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/333X_text_value_nominal_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/333X_text_value_nominal_identity", "no function named 'accept_c_text' accepts arguments", "without a diagnostic");
+}

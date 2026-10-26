@@ -2077,6 +2077,10 @@ pub const Resolver = struct {
     }
 
     fn contextualIdentityConflict(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        // Text literals receive StringView as their default type during
+        // resolution. Their spelling can still be contextualized as C text;
+        // a binding containing a StringView is not a literal and stays nominal.
+        if (self.graph.node(node).content == .string_literal) return false;
         const actual = self.graph.node(node).ty orelse return false;
         return types.hasNominalIdentity(self.graph, actual) and !types.equal(self.graph, actual, target);
     }
