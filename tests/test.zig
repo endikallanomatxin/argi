@@ -15732,3 +15732,14 @@ test "feature_tests/types/318X_unknown_operation_parameter" {
 test "feature_tests/types/319X_excess_operation_parameters" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/319X_excess_operation_parameters", "too many compile-time arguments", "without a diagnostic");
 }
+
+test "feature_tests/types/320_named_contract_signatures" {
+    const path = "tests/feature_tests/types/320_named_contract_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/321X_named_contract_signature_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/321X_named_contract_signature_escape", "root that has ended", "without a diagnostic");
+}

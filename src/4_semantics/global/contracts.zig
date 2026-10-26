@@ -1371,7 +1371,14 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        const fields = storage.ir.representation(requirement.input).resolved.structural.fields;
+        const input_pattern = storage.ir.representation(requirement.input);
+        const fields = if (input_pattern == .resolved and input_pattern.resolved == .structural)
+            input_pattern.resolved.structural.fields
+        else infer: {
+            const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
+            if (!try infer(self.function_context.?, located.module_index, requirement, input, &bindings, context)) return null;
+            break :infer primitives.Range(ir.ParameterizedFieldId){ .start = 0, .len = 0 };
+        };
         var virtual = false;
         var unresolved_actual = false;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
@@ -1687,7 +1694,9 @@ pub const Resolver = struct {
         const requirement = for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
             if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), name)) break requirement;
         } else return null;
-        const fields = storage.ir.representation(requirement.input).resolved.structural.fields;
+        const pattern_type = storage.ir.representation(requirement.input);
+        if (pattern_type != .resolved or pattern_type.resolved != .structural) return null;
+        const fields = pattern_type.resolved.structural.fields;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
             const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
             const pointer = pattern == .resolved and pattern.resolved == .pointer and
@@ -2737,12 +2746,9 @@ pub const Resolver = struct {
         const use = ContractUse{ .declaration = contract_decl, .arguments = .{ .start = start, .len = located.definition.parameters.len } };
         const domains = if (located.definition.domains.len == 0) &.{} else (try self.resolveStorageDomains(use, concrete, located, source)) orelse return;
         var receiver: ?u32 = null;
-        const input = storage.ir.representation(requirement.input).resolved.structural.fields;
-        for (storage.ir.fields.items[input.start..][0..input.len], 0..) |field, index| {
-            const ty = storage.ir.types.items[@intFromEnum(field.ty)];
-            if (ty == .resolved and ty.resolved == .pointer and
-                self.isUnaryReceiverParticipantType(located, ty.resolved.pointer.child))
-            {
+        for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+            const ty = self.graph.resolvedSemanticType(field.ty) orelse continue;
+            if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, concrete)) {
                 receiver = @intCast(index);
                 break;
             }
