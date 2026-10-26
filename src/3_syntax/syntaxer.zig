@@ -686,7 +686,7 @@ pub const Syntaxer = struct {
                 name = try self.parseOperatorName(name.token);
             }
 
-            if (self.tokenIs(.hash)) {
+            if (self.tokenIs(.hash) or self.angleOpen()) {
                 self.index = @intFromEnum(name.token);
                 const dependency = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
                 if (self.tokenIs(.open_parenthesis)) {

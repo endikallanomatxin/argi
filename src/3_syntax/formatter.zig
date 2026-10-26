@@ -305,9 +305,8 @@ const Layout = struct {
                     var following = cursor + 1;
                     while (following < tokens.len and tokens.contents[following] == .new_line) : (following += 1) {}
                     if (following < tokens.len and tokens.contents[following] == .open_parenthesis and token.comparison_operator == .greater_than) {
-                        const space = self.space_before[following] or !application;
-                        self.tight_before[following] = !space;
-                        self.space_before[following] = space;
+                        self.tight_before[following] = application;
+                        self.space_before[following] = !application;
                     }
                     return;
                 },
