@@ -164,9 +164,12 @@ const Context = struct {
             defer inputs.deinit();
             var outputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
             defer outputs.deinit();
-            const staged_body = if (declaration.body) |body| self.tree.hasComptimeSelection(body) else false;
-            try self.bindInterface(interface.input, .constant, &inputs);
-            try self.bindInterface(interface.output, .variable, &outputs);
+            const deferred_signature = views.functionSignatureDeferred(self.graph, function_id);
+            const staged_body = deferred_signature or (if (declaration.body) |body| self.tree.hasComptimeSelection(body) else false);
+            if (!deferred_signature) {
+                try self.bindInterface(interface.input, .constant, &inputs);
+                try self.bindInterface(interface.output, .variable, &outputs);
+            }
             const input_range = try self.writer.appendBindingRefs(inputs.items);
             const output_range = try self.writer.appendBindingRefs(outputs.items);
             self.writer.pending_owner_function = function_id;

@@ -1813,10 +1813,6 @@ pub const Syntaxer = struct {
                 if (self.parsing_pipe_rhs and std.mem.eql(u8, name, "_")) {
                     break :blk try self.addNode(.pipe_placeholder, name_token, .{ .unused = .{ 0, 0 } });
                 }
-                if (self.tokenIs(.arrow)) {
-                    const input = try self.addNode(.type_name, name_token, .{ .token_and_optional_token = .{ .token = name_token, .optional = .none } });
-                    break :blk try self.parseFunctionValue(input, false);
-                }
                 var type_args = try self.addNodeRange(&.{});
                 var type_args_struct: ?syn.NodeIndex = null;
                 const angle_arguments = try self.trySpecialization();
@@ -1901,7 +1897,8 @@ pub const Syntaxer = struct {
 
         // A grouped name can still be a callee. Declaration syntaxing uses
         // the restricted postfix form so it can recognize function signatures.
-        return try self.parsePostfixWithCalls(base, grouped);
+        const value = try self.parsePostfixWithCalls(base, grouped);
+        return if (self.tokenIs(.arrow)) self.parseFunctionValue(value, false) else value;
     }
 
     // Only an explicit scalar grouping permits a completed left operand to

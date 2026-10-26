@@ -170,6 +170,12 @@ fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
 fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entities.PendingOperation) !void {
     const semantic = &graph.semantic;
     switch (operation) {
+        .resolve_function_signature => |value| {
+            try require(verify.idFits(value.function, graph.functions.items.len));
+            const templates = graph.semantic.parameterized_storage.parameterized_functions.items;
+            try require(value.template_index < templates.len);
+            try require(templates[value.template_index].concrete_function == value.function);
+        },
         .resolve_type => |value| {
             try require(verify.idFits(value.external, semantic.external_refs.items.len));
             try require(semantic.external_refs.items[@intFromEnum(value.external)].kind == .type);

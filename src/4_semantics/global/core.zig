@@ -709,6 +709,19 @@ pub const Resolver = struct {
         return self.matchVisibleFunction(current_module, name, module_filter, input_node, null);
     }
 
+    pub fn functionSignaturePending(self: *const Resolver, id: global_sg.GlobalFunctionId) bool {
+        const function = self.graph.function(id);
+        if (function.flags.has_declared_body and
+            (function.input_bindings.len < function.input.len or function.output_bindings.len < function.output.len)) return true;
+        inline for (.{ "input", "output" }) |direction| {
+            if (@field(function, direction ++ "_type")) |ty| {
+                const fields = types.fields(self.graph, ty) orelse return true;
+                if (fields.len > @field(function, direction).len) return true;
+            }
+        }
+        return false;
+    }
+
     fn matchVisibleFunction(
         self: *Resolver,
         current_module: usize,
@@ -723,6 +736,10 @@ pub const Resolver = struct {
         for (candidates) |id| {
             const function = self.graph.function(id);
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
+            if (self.functionSignaturePending(id)) {
+                saw_deferred = true;
+                continue;
+            }
             const applicability = if (context) |reach|
                 try self.matchCallInputWithReach(function.input, input_node, reach)
             else

@@ -245,15 +245,17 @@ pub const Context = struct {
                         .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - parameter_start),
                     };
                     const staged_body = if (function.body) |body| self.tree.hasComptimeSelection(body) else false;
-                    if (params.len == 0 and !function.contract_member and !staged_body) continue;
+                    const deferred_signature = if (declaration.function_id) |id| views.functionSignatureDeferred(self.graph, id) else false;
+                    if (params.len == 0 and !function.contract_member and !staged_body and !deferred_signature) continue;
                     const input = try self.lowerType(function.input, false);
                     const output = try self.lowerType(function.output, false);
                     const input_bindings = try self.seedFunctionBindings(function.input, .constant);
                     const output_bindings = try self.seedFunctionBindings(function.output, .variable);
                     const body = if (function.body) |node| try self.lowerBlock(node) else null;
+                    const template_index: u32 = @intCast(self.graph.semantic.parameterized_storage.parameterized_functions.items.len);
                     try self.writer.addParameterizedFunction(.{
                         .declaration = decl_id,
-                        .concrete_function = if (params.len == 0 and staged_body) declaration.function_id else null,
+                        .concrete_function = if (params.len == 0 and (staged_body or deferred_signature)) declaration.function_id else null,
                         .parameters = params,
                         .input = input,
                         .output = output,
@@ -261,6 +263,10 @@ pub const Context = struct {
                         .input_bindings = input_bindings,
                         .output_bindings = output_bindings,
                     });
+                    if (deferred_signature) _ = try self.writer.addPendingOperation(.{ .resolve_function_signature = .{
+                        .function = declaration.function_id.?,
+                        .template_index = template_index,
+                    } });
                     stats.generic_functions += 1;
                 },
                 .contract_type => {
@@ -838,7 +844,7 @@ pub const Context = struct {
     }
 
     pub fn lowerType(self: *Context, node: syn.NodeIndex, allow_self: bool) anyerror!ir.ParameterizedTypeId {
-        const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedParameterizedType;
+        const syntax_type = self.tree.typeReference(node) orelse return error.ExpectedParameterizedType;
         return switch (syntax_type) {
             .name => |name| self.lowerNamedType(node, name.name_token, name.qualifier_token, allow_self),
             .pointer => |value| blk: {

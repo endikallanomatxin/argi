@@ -200,7 +200,13 @@ before adding implementation exceptions.
 - Named once capability constructors share explicit Args definitions with Init.
   A native/VM fixture covers named signatures, defaults and calls through #run.
 
-Still pending: deferred/imported signatures, inference through composed signature families,
+- Imported and deferred record signatures complete through ordinary pending work,
+  retaining their concrete function identity. Their bodies bind the completed
+  fields and defaults; qualified and closed specialized signatures share this
+  path. Non-record signatures receive semantic diagnostics. Integration coverage
+  exercises native execution, VM and `#run`.
+
+Still pending: inference through composed signature families,
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.

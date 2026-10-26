@@ -140,8 +140,8 @@ const Context = struct {
             const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(self.graph.functions.items.len)));
             try self.graph.functions.append(self.allocator, .{
                 .declaration = @enumFromInt(@as(u32, @intCast(raw))),
-                .input = .{ .start = input.fields.start, .len = input.fields.len },
-                .output = .{ .start = output.fields.start, .len = output.fields.len },
+                .input = input.fields orelse .{ .start = 0, .len = 0 },
+                .output = output.fields orelse .{ .start = 0, .len = 0 },
                 .input_type = input.ty,
                 .output_type = output.ty,
             });
@@ -149,7 +149,7 @@ const Context = struct {
         }
     }
 
-    const Signature = struct { ty: entities.ModuleTypeId, fields: entities.FieldRange };
+    const Signature = struct { ty: entities.ModuleTypeId, fields: ?entities.FieldRange };
 
     fn lowerSignature(self: *Context, node: syn.NodeIndex) !Signature {
         var lowerer = self.typeContext();
@@ -157,13 +157,13 @@ const Context = struct {
             try lowerer.lowerRecordFields(node, literal)
         else
             try lowerer.lower(node);
+        if (views.recordFields(self.graph, ty)) |fields| return .{ .ty = ty, .fields = fields };
         const semantic = try views.typeView(self.graph, ty);
-        if (semantic != .resolved) return error.UnresolvedSignatureType;
-        const fields = switch (semantic.resolved) {
-            .nominal => |definition| self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields orelse return error.ExpectedRecordSignature,
-            else => return error.ExpectedRecordSignature,
+        if (semantic == .resolved) switch (semantic.resolved) {
+            .builtin, .pointer, .array, .nullable, .inferred_errable, .structural_choice, .inferred_choice, .virtual, .definition => return error.ExpectedRecordSignature,
+            else => {},
         };
-        return .{ .ty = ty, .fields = fields };
+        return .{ .ty = ty, .fields = null };
     }
 
     fn predeclareGlobals(self: *Context, stats: *Stats) !void {
@@ -250,6 +250,7 @@ const Context = struct {
                     else
                         self.tree.functionDeclaration(declaration_node).?;
                     const function = self.graph.functions.items[@intFromEnum(function_id)];
+                    if (views.functionSignatureDeferred(self.graph, function_id)) continue;
                     try self.lowerDefaults(function.input.start, function.input.len, syntax_function.input, stats);
                     // Executable output defaults belong to the function entry scope.
                     if (syntax_function.body == null) {

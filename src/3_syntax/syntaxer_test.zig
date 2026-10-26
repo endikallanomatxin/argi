@@ -115,13 +115,13 @@ test "compact syntaxing separates comparison syntax from angle specialization wi
 }
 
 test "compact syntaxing permits ordinary named input and output types on function values" {
-    var tree = try parseTestSource("signatures.rg", "f := Args -> Results { result = x }\ng := <.T: Type> Args -> Results { result = x }");
+    var tree = try parseTestSource("signatures.rg", "f := Args -> Results { result = x }\ng := <.T: Type> Args -> Results { result = x }\nh := schema.Args -> schema.Results { result = x }\ni := schema.Args<Bool> -> schema.Results<Bool> { result = x }");
     defer tree.deinit(std.testing.allocator);
     for (tree.roots) |root| {
         const value = tree.definitionBody(tree.definitionValue(root).?);
         const definition = tree.functionDefinition(value).?;
-        try std.testing.expectEqual(syntax_tree.Node.Tag.type_name, tree.tag(definition.input));
-        try std.testing.expectEqual(syntax_tree.Node.Tag.type_name, tree.tag(definition.output));
+        try std.testing.expect(tree.typeReference(definition.input) != null);
+        try std.testing.expect(tree.typeReference(definition.output) != null);
     }
 }
 

@@ -1099,6 +1099,8 @@ pub const Session = struct {
                 }
                 if (try diagnoseUnknownNames(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, core, diagnostics))
                     return error.Reported;
+                if (try diagnoseUnresolvedFunctionSignatures(&relocation.graph, modules, resolved, relocation.offsets.items, diagnostics))
+                    return error.Reported;
                 if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, generic_functions, contracts, diagnostics))
                     return error.Reported;
                 if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
@@ -2365,7 +2367,7 @@ fn hasSelectedUnresolvedBindingTypes(
 fn pendingOwnerTag(tag: PendingTag) PendingOwner {
     return switch (tag) {
         .resolve_type => .types,
-        .resolve_call, .resolve_local_reach => .calls,
+        .resolve_call, .resolve_local_reach, .resolve_function_signature => .calls,
         .resolve_index => .indexing,
         .resolve_aggregate_literal,
         .resolve_entry_call,
@@ -2462,7 +2464,9 @@ fn resolvePendingOperation(
 ) !resolution.Result {
     return switch (pendingOwner(operation)) {
         .types => resolveTypeOperation(core, generics, module_index, module, o, operation),
-        .calls => if (operation == .resolve_local_reach)
+        .calls => if (operation == .resolve_function_signature)
+            ownedResult(try dispatch.generic_functions.tryResolve(module_index, module, o, operation))
+        else if (operation == .resolve_local_reach)
             dispatch.resolveLocalReach(module, o, operation.resolve_local_reach)
         else
             dispatch.resolveCall(module_index, module, o, operation),
@@ -3267,6 +3271,41 @@ fn appendAmbiguousCallPrefix(
         try message.appendSlice("' is ambiguous for arguments ")
     else
         try message.appendSlice("' for arguments ");
+}
+
+fn diagnoseUnresolvedFunctionSignatures(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items) |operation| {
+            defer flat += 1;
+            if (resolved[flat]) continue;
+            const signature = switch (operation) {
+                .resolve_function_signature => |value| value,
+                else => continue,
+            };
+            const function = graph.function(globalizer.globalFunction(offsets[module_index], signature.function));
+            for ([_]?global_sg.GlobalTypeId{ function.input_type, function.output_type }, 0..) |maybe_type, index| {
+                const ty = maybe_type orelse continue;
+                if (global_types.fields(graph, ty) != null) continue;
+                const represented = global_types.representation(graph, ty) orelse continue;
+                if (represented == .generic and global_types.genericInstance(graph, ty) == null) continue;
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, graph.declaration(function.declaration).source),
+                    .semantic,
+                    "function {s} signature must be a record type",
+                    .{if (index == 0) "input" else "output"},
+                );
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 fn diagnoseUnresolvedCall(

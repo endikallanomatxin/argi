@@ -15668,3 +15668,14 @@ test "feature_tests/types/306_nested_nominal_choices" {
     try runExpect(path, 0);
     try vmExpect(path, 0, null);
 }
+
+test "feature_tests/types/307_imported_nominal_signatures" {
+    const path = "tests/feature_tests/types/307_imported_nominal_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/308X_imported_signature_requires_record" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/308X_imported_signature_requires_record", "function input signature must be a record type", "failed without a diagnostic");
+}

@@ -41,7 +41,7 @@ pub const Context = struct {
     generated_source: ?primitives.SourceRef = null,
 
     pub fn lower(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleTypeId {
-        const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedTypeSyntax;
+        const syntax_type = self.tree.typeReference(node) orelse return error.ExpectedTypeSyntax;
         return switch (syntax_type) {
             .name => |name| self.lowerName(node, name.name_token, name.qualifier_token, null),
             .pointer => |pointer| blk: {

@@ -63,6 +63,31 @@ pub fn genericArgumentView(graph: *const graph_mod.ModuleSemanticGraph, id: enti
     return error.InvalidModuleGenericArgumentId;
 }
 
+pub fn recordFields(graph: *const graph_mod.ModuleSemanticGraph, ty: entities.ModuleTypeId) ?entities.FieldRange {
+    var current = ty;
+    for (0..graph.semantic.types.items.len) |_| {
+        const value = typeView(graph, current) catch return null;
+        if (value != .resolved) return null;
+        switch (value.resolved) {
+            .structural => |shape| return shape.fields,
+            .nominal => |id| {
+                const definition = graph.semantic.type_definitions.items[@intFromEnum(id)];
+                if (definition.struct_fields) |fields| return fields;
+                current = definition.underlying_type orelse return null;
+            },
+            else => return null,
+        }
+    }
+    return null;
+}
+
+pub fn functionSignatureDeferred(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFunctionId) bool {
+    const function = graph.functions.items[@intFromEnum(id)];
+    if (function.input_type) |ty| if (recordFields(graph, ty) == null) return true;
+    if (function.output_type) |ty| if (recordFields(graph, ty) == null) return true;
+    return false;
+}
+
 pub fn functionView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFunctionId) !entities.Function {
     const raw: usize = @intFromEnum(id);
     if (raw >= graph.functions.items.len) return error.InvalidModuleFunctionId;

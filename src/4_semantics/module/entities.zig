@@ -147,6 +147,7 @@ pub const ExternalRef = struct {
 };
 
 pub const PendingOperation = union(enum) {
+    resolve_function_signature: struct { function: ModuleFunctionId, template_index: u32 },
     resolve_type: struct {
         external: ExternalRefId,
         destination: ModuleTypeId,

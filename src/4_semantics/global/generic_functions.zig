@@ -200,8 +200,60 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_call => |value| try self.resolveModuleGenericCall(module_index, module, o, value),
+            .resolve_function_signature => |value| self.resolveRetainedSignature(module_index, module, o, value.function, value.template_index),
             else => .not_applicable,
         };
+    }
+
+    fn resolveRetainedSignature(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, local_function: module_entities.ModuleFunctionId, template_index: u32) !resolution.Result {
+        var speculation = self.beginSpeculation();
+        defer speculation.deinit();
+        const template = module.semantic.parameterized_storage.parameterized_functions.items[template_index];
+        const function_id = globalizer.globalFunction(offsets, local_function);
+        var function = self.graph.function(function_id);
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        const input = self.generics.instantiateParameterizedType(module_index, template.input, &bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => {
+                speculation.retainPendingExecution();
+                return .deferred;
+            },
+            else => return err,
+        };
+        const output = self.generics.instantiateParameterizedType(module_index, template.output, &bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => {
+                speculation.retainPendingExecution();
+                return .deferred;
+            },
+            else => return err,
+        };
+        const input_fields = global_types.fields(self.graph, input) orelse return self.unresolvedSignature(input);
+        const output_fields = global_types.fields(self.graph, output) orelse return self.unresolvedSignature(output);
+        var context = InstanceContext.init(self, module_index, template, &bindings);
+        defer context.deinit();
+        context.function = function_id;
+        const inputs = try context.instantiateSignatureBindings(template.input_bindings, input_fields, .constant);
+        const outputs = try context.instantiateSignatureBindings(template.output_bindings, output_fields, .variable);
+        function.input_type = input;
+        function.output_type = output;
+        function.input = try self.materializeInterfaceDefaults(input_fields, inputs);
+        function.output = try self.materializeInterfaceDefaults(output_fields, outputs);
+        function.input_bindings = inputs;
+        function.output_bindings = outputs;
+        function.flags.uses_inferred_error_reasons = false;
+        for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field|
+            if (self.graph.semanticType(field.ty) == .inferred_errable) {
+                function.flags.uses_inferred_error_reasons = true;
+            };
+        try self.graph.setFunction(self.allocator, function_id, function);
+        speculation.commit();
+        return .resolved;
+    }
+
+    fn unresolvedSignature(self: *Resolver, ty: global_sg.GlobalTypeId) resolution.Result {
+        const represented = global_types.representation(self.graph, ty) orelse return .deferred;
+        if (represented == .generic and global_types.genericInstance(self.graph, ty) == null) return .deferred;
+        return .invalid;
     }
 
     /// Operator sugar selects scoped evidence from an operand record. Reached
@@ -2142,6 +2194,7 @@ pub const Resolver = struct {
                 const local = parameterized.concrete_function orelse continue;
                 const function_id = globalizer.globalFunction(self.offsets[module_index], local);
                 const function = self.graph.function(function_id);
+                if (self.core.functionSignaturePending(function_id)) continue;
                 if (function.body != null or !function.flags.has_declared_body) continue;
                 if (reachable) |set| if (!set.contains(function_id)) continue;
                 var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
