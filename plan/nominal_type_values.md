@@ -187,6 +187,8 @@ before adding implementation exceptions.
   reuses identities. Diagnostic source remapping does not affect identity.
 - Definition completion is journaled. Speculative type recipes preserve origin,
   arguments, representation and defaults, including completion of retained IDs.
+  Compile-time entries capture demanded ambient bindings; own parameter defaults
+  do not acquire unused self-dependencies through signature record identities.
 - Concrete and specialized function interfaces retain input/output Type IDs.
   Local named records supply signatures and defaults; explicitly specialized
   functions also bind fields from named generic signature types. Input inference
@@ -201,10 +203,5 @@ Still pending: deferred/imported signatures, inference through composed signatur
 nominal choices versus structural option sets, general contextual aggregate
 inference, generic operation signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
-Broad validation currently exposes constructor inference, explicit argument-type
-identity, and stale diagnostic expectations; these are not a completed migration.
-
-Incremental validation still has three unresolved cases: extra reached inputs on
-inline implementations, session fixtures that independently redefine the same
-record shape, and choice defaults in staged generic calls. Keep these separate
-from the completed canonical-function storage consolidation.
+Broad validation still exposes explicit argument-type identity and stale
+diagnostic expectations; these are not a completed migration.

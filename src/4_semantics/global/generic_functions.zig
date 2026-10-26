@@ -1966,7 +1966,7 @@ pub const Resolver = struct {
         return self.instantiateWithSignature(declaration, arguments, null);
     }
 
-    fn contextualSignatureType(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, expected: global_sg.GlobalTypeId, direction: enum { input, output }, bindings: *generic_mod.Resolver.Bindings) anyerror!global_sg.GlobalTypeId {
+    fn contextualSignatureType(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, expected: global_sg.GlobalTypeId, direction: enum { input, output }, allow_optional_inputs: bool, bindings: *generic_mod.Resolver.Bindings) anyerror!global_sg.GlobalTypeId {
         const mismatch = if (direction == .input) error.ContextualSignatureMismatch else error.ContextualOutputSignatureMismatch;
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
@@ -1976,14 +1976,19 @@ pub const Resolver = struct {
             if (shape != .resolved or shape.resolved != .structural) return mismatch;
             const fields = global_types.fields(self.graph, expected) orelse return mismatch;
             const written = shape.resolved.structural.fields;
-            if (written.len != fields.len) return mismatch;
-            for (0..written.len) |offset| {
+            if (written.len < fields.len or (written.len != fields.len and !allow_optional_inputs)) return mismatch;
+            const contextual = try self.allocator.alloc(global_sg.GlobalTypeId, fields.len);
+            defer self.allocator.free(contextual);
+            for (0..fields.len) |offset| {
                 const field = storage.fields.items[written.start + offset];
                 const required = self.graph.fields.items[fields.start + offset];
                 if (!std.mem.eql(u8, module.text(field.name), self.graph.text(required.name))) return mismatch;
-                _ = try self.contextualSignatureType(module_index, field.ty, required.ty, direction, bindings);
+                contextual[offset] = try self.contextualSignatureType(module_index, field.ty, required.ty, direction, false, bindings);
             }
-            return expected;
+            if (written.len == fields.len) return expected;
+            for (fields.len..written.len) |offset|
+                if (storage.fields.items[written.start + offset].default_value == null) return mismatch;
+            return self.generics.instantiateRecordDefinition(module_index, pattern, bindings, contextual);
         }
         const actual = try self.generics.instantiateParameterizedType(module_index, pattern, bindings);
         if (!global_types.equal(self.graph, actual, expected)) return mismatch;
@@ -2004,9 +2009,10 @@ pub const Resolver = struct {
         if (existing) |id| {
             if (expected) |signature| {
                 const function = self.graph.function(id);
-                if (function.input_type == null or function.output_type == null or
-                    !global_types.equal(self.graph, function.input_type.?, signature.input) or
-                    !global_types.equal(self.graph, function.output_type.?, signature.output)) return error.ContextualSignatureMismatch;
+                const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
+                const required = global_types.fields(self.graph, signature.input) orelse return error.ContextualSignatureMismatch;
+                if (!contracts.inputFieldsSatisfyRequirement(required, function.input)) return error.ContextualSignatureMismatch;
+                if (function.output_type == null or !global_types.equal(self.graph, function.output_type.?, signature.output)) return error.ContextualOutputSignatureMismatch;
             }
             if (self.profile_io != null) self.profile_instantiate_existing += 1;
             return id;
@@ -2046,8 +2052,8 @@ pub const Resolver = struct {
             try contracts.prepareStorageCleanupEvidence(participant.type);
         }
 
-        const input_ty = if (expected) |signature| try self.contextualSignatureType(located.module_index, located.parameterized.input, signature.input, .input, &substitutions) else try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
-        const output_ty = if (expected) |signature| try self.contextualSignatureType(located.module_index, located.parameterized.output, signature.output, .output, &substitutions) else try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
+        const input_ty = if (expected) |signature| try self.contextualSignatureType(located.module_index, located.parameterized.input, signature.input, .input, true, &substitutions) else try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
+        const output_ty = if (expected) |signature| try self.contextualSignatureType(located.module_index, located.parameterized.output, signature.output, .output, false, &substitutions) else try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
         const input_shape = try self.interfaceFields(input_ty);
         const output_shape = try self.interfaceFields(output_ty);
         var inferred_errors = false;
@@ -2426,8 +2432,9 @@ pub const Resolver = struct {
                 const range = @field(self.parameterized, direction ++ "_bindings");
                 if (raw >= range.start and raw - range.start < range.len) {
                     const fields = try self.resolver.interfaceFields(@field(signature, direction));
-                    if (fields.len != range.len) return error.ContextualSignatureMismatch;
-                    return self.resolver.graph.fields.items[fields.start + raw - range.start].ty;
+                    const offset = raw - range.start;
+                    if (offset >= fields.len) return null;
+                    return self.resolver.graph.fields.items[fields.start + offset].ty;
                 }
             }
             return null;

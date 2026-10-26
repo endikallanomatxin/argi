@@ -984,7 +984,11 @@ pub const Context = struct {
         const body = try self.lowerStructType(literal, allow_self);
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
-        for (self.parameters.items) |captured| try arguments.append(self.allocator, .{
+        // A compile-time entry inherits an ambient environment, not new own
+        // parameters. Capture only the prefix demanded by its expressions;
+        // an unused parameter may still be awaiting its own default value.
+        const captures = if (self.inside_comptime_entry) self.parameters.items[0..self.referenced_parameter_prefix] else self.parameters.items;
+        for (captures) |captured| try arguments.append(self.allocator, .{
             .name = try self.writer.addString(captured.name),
             .value = switch (captured.kind) {
                 .type => .{ .type = try self.addType(.{ .parameter = captured.id }) },

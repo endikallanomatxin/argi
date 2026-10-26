@@ -536,6 +536,29 @@ pub const Resolver = struct {
         };
     }
 
+    /// Construct a definition with contextually checked field types. Only the
+    /// unpublished representation is built here; an existing identity is never
+    /// rewritten to fit a new context.
+    pub fn instantiateRecordDefinition(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *Bindings, prefix_types: []const global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const expression = storage.types.items[@intFromEnum(pattern)];
+        if (expression != .definition) return error.ContextualSignatureMismatch;
+        const origin = globalizer.globalTypeDefinition(self.offsets[module_index], expression.definition.origin);
+        const arguments = try self.instantiateParameterizedArguments(module_index, expression.definition.arguments, bindings);
+        if (try self.findDefinitionInstance(origin, arguments)) |existing| {
+            const fields = global_types.fields(self.graph, existing) orelse return error.ContextualSignatureMismatch;
+            if (prefix_types.len > fields.len) return error.ContextualSignatureMismatch;
+            for (prefix_types, 0..) |ty, offset|
+                if (!global_types.equal(self.graph, ty, self.graph.fields.items[fields.start + offset].ty)) return error.ContextualSignatureMismatch;
+            return existing;
+        }
+        const shape = storage.representation(pattern);
+        if (shape != .resolved or shape.resolved != .structural) return error.ContextualSignatureMismatch;
+        const fields = try self.instantiateFieldsWithTypes(module_index, shape.resolved.structural.fields, bindings, prefix_types);
+        const representation = try self.internType(.{ .structural = .{ .fields = fields, .layout = shape.resolved.structural.layout } });
+        return self.publishDefinitionInstance(origin, arguments, representation);
+    }
+
     pub const DefinitionArguments = struct { pattern: primitives.Range(ir.ParameterizedGenericArgId), actual: primitives.Range(global_sg.GlobalGenericArgId) };
 
     pub fn definitionArguments(self: *const Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, actual: global_sg.GlobalTypeId) ?DefinitionArguments {
@@ -868,13 +891,17 @@ pub const Resolver = struct {
         range: primitives.Range(ir.ParameterizedFieldId),
         bindings: *Bindings,
     ) !global_sg.FieldRange {
+        return self.instantiateFieldsWithTypes(module_index, range, bindings, &.{});
+    }
+
+    fn instantiateFieldsWithTypes(self: *Resolver, module_index: usize, range: primitives.Range(ir.ParameterizedFieldId), bindings: *Bindings, prefix_types: []const global_sg.GlobalTypeId) !global_sg.FieldRange {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
         var items: std.ArrayList(global_sg.Field) = .empty;
         defer items.deinit(self.allocator);
         for (0..range.len) |offset| {
             const field = storage.fields.items[range.start + @as(u32, @intCast(offset))];
-            const ty = try self.instantiateParameterizedType(module_index, field.ty, bindings);
+            const ty = if (offset < prefix_types.len) prefix_types[offset] else try self.instantiateParameterizedType(module_index, field.ty, bindings);
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(field.name)),
                 .ty = ty,

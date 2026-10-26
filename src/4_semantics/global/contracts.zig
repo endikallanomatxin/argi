@@ -453,7 +453,7 @@ pub const Resolver = struct {
         return try arena.dupe(primitives.StorageDomainMapping, result.items);
     }
 
-    fn inputFieldsSatisfyRequirement(
+    pub fn inputFieldsSatisfyRequirement(
         self: *const Resolver,
         required: global_sg.FieldRange,
         implementation: global_sg.FieldRange,

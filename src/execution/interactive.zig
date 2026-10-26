@@ -701,8 +701,9 @@ test "interactive inherited assumptions supply selected nested cleanup" {
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submit("Resource: Type = ()");
-    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .capability: $&(.used: Bool) = reach capability) -> () { capability&.used = true })");
-    try session.submitStatements("state :: (.used: Bool) = (.used = false)\nassume capability ::= $&state");
+    try session.submit("Capability: Type = (.used: Bool)");
+    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .capability: $&Capability = reach capability) -> () { capability&.used = true })");
+    try session.submitStatements("state :: Capability = (.used = false)\nassume capability ::= $&state");
     try session.submitStatements("if true {\nresource :: Resource = ()\n}");
     try std.testing.expect((try session.submitInput("state.used")).?.value.runtime.boolean);
     try session.close();
@@ -980,8 +981,8 @@ test "interactive deferred condition storage can be initialized repeatedly" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("produce := (.state: $&(.used: Bool)) -> (.result: Bool) { if state&.used { result = false } else { state&.used = true\nresult = true } }\nobserve := (.value: &Bool) -> (.result: Bool) { result = value& }");
-    try session.submitStatements("state :: (.used: Bool) = (.used = false)");
+    try session.submitDefinitions("State: Type = (.used: Bool)\nproduce := (.state: $&State) -> (.result: Bool) { if state&.used { result = false } else { state&.used = true\nresult = true } }\nobserve := (.value: &Bool) -> (.result: Bool) { result = value& }");
+    try session.submitStatements("state :: State = (.used = false)");
     try session.submitStatements("while observe(.value = &produce(.state = $&state)) {}");
     try std.testing.expect((try session.submitInput("state.used")).?.value.runtime.boolean);
     try session.close();
