@@ -281,11 +281,17 @@ before adding implementation exceptions.
   and specialized function; proofs from another instance are not reused.
   Native/VM/`#run` coverage combines ordinary and generic operations, differing
   parameter names, captured conformance bindings and incompatible output rejection.
+- Unqualified candidates check operation parameter bounds/defaults before choosing
+  an operation identity. Distinct applicable identities remain ambiguous. Generic
+  operations are rejected explicitly at the virtual boundary. Interactive coverage
+  retains accepted instances across rejected submissions; declaration Safety
+  metadata is freed recursively, including partially built outcomes on allocation
+  failure.
 
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
-inference, explicit operation specialization, unqualified/virtual generic operation
-integration, associated type-family signatures and associated Args migration. Remove
+inference, explicit operation specialization, remaining generic-call inference parity,
+associated type-family signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
 Broad validation still exposes explicit argument-type identity and stale
 diagnostic expectations; these are not a completed migration. Selected internal

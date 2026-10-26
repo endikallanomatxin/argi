@@ -232,6 +232,15 @@ pub const MethodSafetyContract = struct {
     outcomes: []const Outcome = &.{},
     source: SourceRef,
 
+    /// Frees independently allocated declaration metadata. Arena-backed GlobalSG
+    /// proofs are released with their arena instead of through this method.
+    pub fn deinit(self: MethodSafetyContract, allocator: std.mem.Allocator) void {
+        for (self.outcomes) |outcome| outcome.deinit(allocator);
+        inline for (@typeInfo(MethodSafetyContract).@"struct".fields) |field| {
+            if (@typeInfo(field.type) == .pointer) allocator.free(@field(self, field.name));
+        }
+    }
+
     pub const Relocation = struct { destination: u32, source: u32 };
     pub const StorageInput = struct { input_index: u32, domain_index: ?u32 = null };
     pub const Retention = struct { storage: StorageInput, input: u32 };
@@ -259,6 +268,13 @@ pub const MethodSafetyContract = struct {
         /// Repeated selectors follow their payload; other selectors conjoin.
         outcomes: []const Outcome = &.{},
         source: SourceRef,
+
+        pub fn deinit(self: Outcome, allocator: std.mem.Allocator) void {
+            for (self.outcomes) |outcome| outcome.deinit(allocator);
+            inline for (@typeInfo(Outcome).@"struct".fields) |field| {
+                if (@typeInfo(field.type) == .pointer) allocator.free(@field(self, field.name));
+            }
+        }
     };
 };
 

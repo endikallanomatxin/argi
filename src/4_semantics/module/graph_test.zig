@@ -1487,3 +1487,23 @@ test "inline operation definitions preserve local parameters after conformance c
     try std.testing.expectEqual(function.parameters.start + 1, @intFromEnum(storage.ir.types.items[@intFromEnum(result)].parameter));
     try @import("verify.zig").verifyModule(&graph);
 }
+
+test "operation safety metadata releases nested outcomes after lowering allocation failures" {
+    const source =
+        \\Factory#(.Owner: Type): Contract = (
+        \\    .read: <.Value: Type> (.value: Value) -> (.result: (..some Value, ..none)) where {
+        \\        on result..some { depends_on(result, value) }
+        \\    }
+        \\)
+    ;
+    var tree = try parseSource(std.testing.allocator, source, @enumFromInt(0));
+    defer tree.deinit(std.testing.allocator);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(allocator: std.mem.Allocator, syntax: *const syn.FileSyntaxTree) !void {
+            const inputs = [_]module_graph.FileInput{.{ .path = "factory/main.rg", .tree = syntax, .source = source }};
+            var graph = try module_graph.build(allocator, "factory", &inputs);
+            defer graph.deinit(allocator);
+            _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+        }
+    }.run, .{&tree});
+}

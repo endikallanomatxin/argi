@@ -21,7 +21,7 @@ implement AliasIdentity#(Owner) (.alias_apply = ordinary_identity)
 
 Factory#(.Participant: Type): Contract = (
     .Result: Type
-    .make: <.Value: Type> (.owner: &Participant, .value: Value) -> (.result: Result)
+    .make: <.Value: Type = Bool> (.owner: &Participant, .value: Value = true) -> (.result: Result)
 )
 
 implement#(.Participant: Type) Factory#(Participant) (
@@ -39,6 +39,8 @@ main := () -> () {
     owner: Owner = (.flag = true)
     if Identity#(Owner).flag(.owner = &owner).result {} else { abort }
     if Factory#(Owner).make(.owner = &owner, .value = 42).result {} else { abort }
+    if make(.owner = &owner, .value = true).result {} else { abort }
+    if make(.owner = &owner).result {} else { abort }
     if Identity#(Owner).apply(.value = true).result {} else { abort }
     number: Int32 = Identity#(Owner).apply(.value = 42).result
     if number != 42 { abort }

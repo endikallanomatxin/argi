@@ -347,6 +347,7 @@ pub const Context = struct {
                         const input = try self.lowerType(requirement.input, true);
                         const output = try self.lowerType(requirement.output, true);
                         const safety_contract = try self.lowerMethodSafetyContract(requirement, domains.items);
+                        errdefer if (safety_contract) |contract_metadata| contract_metadata.deinit(self.allocator);
                         try self.graph.semantic.parameterized_storage.contract_requirements.append(self.allocator, .{
                             .parameters = operation_parameters,
                             .source = .{ .file_index = self.sourceRef(requirement_node).file_index, .offset = self.tree.tokenLocation(requirement.name_token).offset },
@@ -381,6 +382,7 @@ pub const Context = struct {
         var general_conditions = false;
         var outcomes: std.ArrayList(primitives.MethodSafetyContract.Outcome) = .empty;
         defer outcomes.deinit(self.allocator);
+        errdefer for (outcomes.items) |outcome| outcome.deinit(self.allocator);
         var dependencies: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
         defer dependencies.deinit(self.allocator);
         var referents: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
@@ -428,6 +430,8 @@ pub const Context = struct {
                     var child = requirement;
                     child.safety_contract = data.body;
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
+                    var transferred = false;
+                    defer if (!transferred) effect.deinit(self.allocator);
                     if (effect.retained_inputs.len != 0) {
                         try self.contractError(statement, "conditional opaque storage clauses require correlated hidden storage post-states; declare unconditional effects instead");
                         unreachable;
@@ -468,30 +472,33 @@ pub const Context = struct {
                         .outcomes = effect.outcomes,
                         .source = effect.source,
                     });
+                    transferred = true;
                     continue;
                 }
                 const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
                 try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources);
             }
         } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources);
-        return .{
+        var result: primitives.MethodSafetyContract = .{
             .general_conditions = general_conditions,
-            .outcomes = try outcomes.toOwnedSlice(self.allocator),
             .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
-            .dependencies = try dependencies.toOwnedSlice(self.allocator),
-            .referents = try referents.toOwnedSlice(self.allocator),
-            .consumed_inputs = try consumed_inputs.toOwnedSlice(self.allocator),
-            .relocations = try relocations.toOwnedSlice(self.allocator),
-            .retained_inputs = try retained_inputs.toOwnedSlice(self.allocator),
-            .emptied_inputs = try emptied_inputs.toOwnedSlice(self.allocator),
-            .storage_sources = try storage_sources.toOwnedSlice(self.allocator),
-            .invalidates = try invalidates.toOwnedSlice(self.allocator),
-            .domain_dependencies = try domain_dependencies.toOwnedSlice(self.allocator),
-            .invalidated_domains = try invalidated_domains.toOwnedSlice(self.allocator),
-            .owned_outputs = try owned_outputs.toOwnedSlice(self.allocator),
-            .transfers = try transfers.toOwnedSlice(self.allocator),
             .source = self.sourceRef(node),
         };
+        errdefer result.deinit(self.allocator);
+        result.outcomes = try outcomes.toOwnedSlice(self.allocator);
+        result.dependencies = try dependencies.toOwnedSlice(self.allocator);
+        result.referents = try referents.toOwnedSlice(self.allocator);
+        result.consumed_inputs = try consumed_inputs.toOwnedSlice(self.allocator);
+        result.relocations = try relocations.toOwnedSlice(self.allocator);
+        result.retained_inputs = try retained_inputs.toOwnedSlice(self.allocator);
+        result.emptied_inputs = try emptied_inputs.toOwnedSlice(self.allocator);
+        result.storage_sources = try storage_sources.toOwnedSlice(self.allocator);
+        result.invalidates = try invalidates.toOwnedSlice(self.allocator);
+        result.domain_dependencies = try domain_dependencies.toOwnedSlice(self.allocator);
+        result.invalidated_domains = try invalidated_domains.toOwnedSlice(self.allocator);
+        result.owned_outputs = try owned_outputs.toOwnedSlice(self.allocator);
+        result.transfers = try transfers.toOwnedSlice(self.allocator);
+        return result;
     }
 
     fn contractError(self: *Context, node: syn.NodeIndex, message: []const u8) !void {

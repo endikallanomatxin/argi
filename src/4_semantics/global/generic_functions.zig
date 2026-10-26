@@ -2010,6 +2010,8 @@ pub const Resolver = struct {
 
     pub fn inferOperationParameters(context: *anyopaque, module_index: usize, requirement: @import("../module/parameterized/storage.zig").ContractRequirement, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, reach: ReachInferenceContext) anyerror!bool {
         const self: *Resolver = @ptrCast(@alignCast(context));
+        const saved_constraint = self.failed_constraint;
+        defer self.failed_constraint = saved_constraint;
         if (!try self.inferBindingsFromInput(module_index, requirement.input, input, bindings)) return false;
         if (!try self.inferBindingsFromReachDefaults(module_index, requirement.input, input, bindings, reach)) return false;
         if (!try self.inferAndValidateConstraints(module_index, requirement.parameters, bindings)) return false;

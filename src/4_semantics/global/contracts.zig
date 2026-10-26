@@ -692,6 +692,10 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage;
         for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
             const name = module.text(requirement.name);
+            if (requirement.parameters.len != 0) {
+                self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "generic contract operations require static specialization and cannot be virtualized" };
+                return false;
+            }
             var reason: ?[]const u8 = null;
             // Bind the handle's associated arguments before erasing its participant.
             const contract_use = self.contractUse(contract_ty) orelse return false;
@@ -1459,6 +1463,13 @@ pub const Resolver = struct {
                 return null;
             }
         }
+        if (requirement.parameters.len != 0 and !virtual) {
+            const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
+            if (!try infer(self.function_context.?, located.module_index, requirement, input, &bindings, context)) {
+                if (unresolved_actual) deferred.* = true;
+                return null;
+            }
+        }
         const required = self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings) catch |err| {
             if (err == error.OutOfMemory) return err;
             return null;
@@ -1481,6 +1492,10 @@ pub const Resolver = struct {
             const requirement = for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
                 if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), name)) break requirement;
             } else return null;
+            if (requirement.parameters.len != 0) {
+                self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "generic contract operations require static specialization and cannot be virtualized" };
+                return null;
+            }
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
             const interface = self.contractUse(candidate.participants[0]) orelse return null;

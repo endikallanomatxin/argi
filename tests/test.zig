@@ -15709,3 +15709,18 @@ test "feature_tests/types/313_generic_contract_operation" {
 test "feature_tests/types/314X_generic_operation_result_mismatch" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/314X_generic_operation_result_mismatch", "operation returns an incompatible associated result", "without a diagnostic");
 }
+
+test "feature_tests/types/315X_virtual_generic_contract_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/315X_virtual_generic_contract_operation", "generic contract operations require static specialization and cannot be virtualized", "without a diagnostic");
+}
+
+test "feature_tests/types/316_generic_operation_candidate_bounds" {
+    const path = "tests/feature_tests/types/316_generic_operation_candidate_bounds";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/317X_generic_operation_identity_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/317X_generic_operation_identity_ambiguity", "multiple applicable operation identities", "without a diagnostic");
+}

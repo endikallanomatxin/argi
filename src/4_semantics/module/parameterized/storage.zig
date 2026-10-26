@@ -125,6 +125,8 @@ pub const Storage = struct {
         self.contract_constraints.deinit(allocator);
         self.parameterized_functions.deinit(allocator);
         self.parameterized_types.deinit(allocator);
+        for (self.contract_requirements.items) |requirement|
+            if (requirement.safety_contract) |contract| contract.deinit(allocator);
         self.contract_requirements.deinit(allocator);
         for (self.contract_definitions.items) |definition| allocator.free(definition.domains);
         self.contract_definitions.deinit(allocator);
