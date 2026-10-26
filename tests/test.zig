@@ -8359,8 +8359,23 @@ test "feature_tests/modules/32_qualified_comptime_calls" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/modules/33X_qualified_comptime_call_missing_input" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/modules/33X_qualified_comptime_call_missing_input", "ExpectedLeftParen", "failed without a diagnostic");
+test "feature_tests/modules/33_qualified_definition_values" {
+    const path = "tests/feature_tests/modules/33_qualified_definition_values";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/modules/34X_specialized_function_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/34X_specialized_function_argument", "arguments do not match this specialized function definition", "failed without a diagnostic");
+}
+
+test "feature_tests/modules/35X_specialized_function_rebinding" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/35X_specialized_function_rebinding", "too many compile-time arguments", "failed without a diagnostic");
+}
+
+test "feature_tests/modules/36X_function_definition_argument_kind" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/36X_function_definition_argument_kind", "compile-time argument kind does not match the definition parameter", "failed without a diagnostic");
 }
 
 test "C interop invokes host-managed scalar and record callbacks" {

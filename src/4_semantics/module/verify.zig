@@ -181,6 +181,10 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(semantic.external_refs.items[@intFromEnum(value.external)].kind == .type);
             try require(verify.idFits(value.destination, views.typeCount(graph)));
         },
+        .resolve_entity_value => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.expression, semantic.parameterized_storage.ir.types.items.len));
+        },
         .resolve_value_type => |value| {
             try require(verify.idFits(value.value, semantic.nodes.items.len));
             try require(verify.idFits(value.destination, views.typeCount(graph)));

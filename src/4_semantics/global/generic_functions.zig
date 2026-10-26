@@ -498,6 +498,45 @@ pub const Resolver = struct {
         return id;
     }
 
+    pub fn makeDefinitionCall(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, definition: global_sg.DefinitionValue, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !global_sg.Node {
+        const input_value = self.graph.node(input).content;
+        if (input_value == .struct_value_literal) {
+            const fields = input_value.struct_value_literal.fields;
+            for (self.graph.value_fields.items[fields.start..][0..fields.len]) |field| {
+                const ty = self.graph.node(field.value).ty orelse return error.DeferredGenericFunction;
+                if (self.graph.isTypeUnresolved(ty)) return error.DeferredGenericFunction;
+            }
+        }
+        const selected = (if (arguments.len != 0)
+            self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, reach, true, definition)
+        else
+            self.selectImplicitGenericFunctionFiltered(module_index, self.graph.familyDefinitionName(definition.origin), null, input, reach, null, definition)) catch |err| switch (err) {
+            error.NoMatchingGenericFunction, error.ConflictingGenericArgument => {
+                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match this specialized function definition" };
+                return error.InvalidGenericCallArguments;
+            },
+            else => return err,
+        };
+        const function = try self.instantiate(selected.declaration, selected.arguments);
+        if (!try self.core.completeCallInputFieldsWithReach(self.graph.function(function).input, input, reach)) return error.DeferredGenericFunction;
+        return .{
+            .source = source,
+            .ty = try self.core.functionOutputType(function),
+            .content = .{ .function_call = .{ .callee = function, .input = input } },
+        };
+    }
+
+    pub fn resolveDefinitionCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype, definition: global_sg.DefinitionValue) !resolution.Result {
+        const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+        const arguments = try self.generics.resolveCallArguments(module_index, reference) orelse primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
+        const node = self.makeDefinitionCall(module_index, reference, definition, arguments, globalizer.globalNode(offsets, call.input), ReachInferenceContext.fromModule(module, offsets, call.visible_bindings, call.owner_function), self.sourceFor(module_index, reference.source)) catch |err| switch (err) {
+            error.DeferredGenericFunction => return .deferred,
+            else => return err,
+        };
+        try self.graph.setNode(self.allocator, globalizer.globalNode(offsets, call.node), node);
+        return .resolved;
+    }
+
     fn resolveModuleGenericCall(
         self: *Resolver,
         module_index: usize,
@@ -588,7 +627,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach_context: ?ReachInferenceContext,
     ) !global_sg.GlobalFunctionId {
-        const selected = try self.selectExplicitGenericFunction(current_module, module, reference, arguments, input, reach_context, true);
+        const selected = try self.selectExplicitGenericFunction(current_module, module, reference, arguments, input, reach_context, true, null);
         const instantiate_start = self.profileTimestamp();
         const result = try self.instantiate(selected.declaration, selected.arguments);
         self.addProfileTime(instantiate_start, &self.selection_profile.explicit_final_instantiation_ns);
@@ -604,13 +643,14 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach_context: ?ReachInferenceContext,
         report_argument_failure: bool,
+        definition_override: ?global_sg.DefinitionValue,
     ) !ImplicitGenericSelection {
         if (self.profile_io != null) self.selection_profile.explicit_calls += 1;
         const module_filter = if (reference.module_path) |path|
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
             null;
-        const selected_definition = try self.core.resolveDefinitionAlias(current_module, reference);
+        const selected_definition = definition_override orelse try self.core.resolveDefinitionAlias(current_module, reference);
         const name = if (selected_definition) |value| self.graph.familyDefinitionName(value.origin) else module.text(reference.name);
         var selected: ?global_sg.GlobalDeclId = null;
         var selected_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
@@ -713,7 +753,8 @@ pub const Resolver = struct {
                 if (!report_argument_failure) return error.InvalidGenericCallArguments;
                 self.generics.comptime_failure = .{
                     .source = self.sourceFor(current_module, reference.source),
-                    .reason = try std.fmt.allocPrint(self.allocator, "{s} in call to '{s}'", .{ reason, name }),
+                    .reason = reason,
+                    .call_name = module.text(reference.name),
                 };
                 return error.InvalidGenericCallArguments;
             };
@@ -1251,7 +1292,7 @@ pub const Resolver = struct {
             self.failed_constraint = failed;
             self.generics.argument_failure = argument_failure;
         }
-        const selected = self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, reach, false) catch |err| return switch (err) {
+        const selected = self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, reach, false, null) catch |err| return switch (err) {
             error.ComptimeExecutionPending => pending: {
                 speculation.retainPendingExecution();
                 break :pending .deferred;
@@ -3319,10 +3360,28 @@ pub const Resolver = struct {
                 .entry_capture => error.InvalidParameterizedEntryCapture,
                 .unknown_identifier => if (value.name) |name| self.resolveName(.{ .name = name, .source = value.source }) else error.UnknownParameterizedName,
                 .comptime_parameter => self.resolveComptimeParameter(value),
+                .entity_application => blk: {
+                    const source = self.resolver.sourceFor(self.module_index, value.source);
+                    const entity = try self.resolver.generics.instantiateEntityValue(self.module_index, value.detail.entity_application, self.substitutions, source);
+                    break :blk switch (entity) {
+                        .type => |ty| .{ .source = source, .ty = try self.resolver.core.builtin(.Type), .content = .{ .type_literal = ty } },
+                        .definition => |definition| .{ .source = source, .ty = try global_types.definitionClass(self.resolver.allocator, self.resolver.graph, definition.origin), .content = .{ .definition_literal = definition } },
+                    };
+                },
                 .generic_call => blk: {
                     const name = value.name orelse return error.GenericParameterizedCallWithoutName;
                     const args = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.generic_arguments, self.substitutions);
                     const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
+                    if (value.detail == .callee_value) {
+                        const callee = try self.instantiateNode(value.detail.callee_value);
+                        if (global_types.definitionValue(self.resolver.graph, callee)) |definition| {
+                            if (self.resolver.graph.familyDefinition(definition.origin).kind == .function) {
+                                const reach = try self.operatorContext(value.assumed_arguments);
+                                defer self.resolver.allocator.free(reach.global.visible_bindings);
+                                break :blk try self.resolver.makeDefinitionCall(self.module_index, .{ .kind = .function, .module_path = null, .name = name, .source = value.source }, definition, args, input, reach, self.resolver.sourceFor(self.module_index, value.source));
+                            }
+                        }
+                    }
                     if (value.contract_type) |contract| {
                         const base = try self.resolver.generics.instantiateParameterizedType(self.module_index, contract, self.substitutions);
                         var context = try self.operatorContext(value.assumed_arguments);

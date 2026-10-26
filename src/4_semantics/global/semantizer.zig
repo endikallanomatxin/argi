@@ -2358,7 +2358,7 @@ fn hasSelectedUnresolvedBindingTypes(
 
 fn pendingOwnerTag(tag: PendingTag) PendingOwner {
     return switch (tag) {
-        .resolve_type => .types,
+        .resolve_type, .resolve_entity_value => .types,
         .resolve_call, .resolve_local_reach, .resolve_function_signature => .calls,
         .resolve_index => .indexing,
         .resolve_aggregate_literal,
@@ -2429,6 +2429,7 @@ fn resolveTypeOperation(
 ) !resolution.Result {
     const value = switch (operation) {
         .resolve_type => |value| value,
+        .resolve_entity_value => return ownedResult(try generics.tryResolve(module_index, module, o, operation)),
         else => unreachable,
     };
     const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
@@ -4174,6 +4175,8 @@ fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, 
     if (diagnostics) |bag| {
         if (failure.unknown_name) |name| {
             try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "unknown name '{s}' in this scope", .{name});
+        } else if (failure.call_name) |name| {
+            try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s} in call to '{s}'", .{ failure.reason, name });
         } else if (failure.materialization_error) |err| {
             try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}: {s}", .{ failure.reason, @errorName(err) });
         } else try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});

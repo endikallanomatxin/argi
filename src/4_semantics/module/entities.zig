@@ -152,6 +152,10 @@ pub const PendingOperation = union(enum) {
         external: ExternalRefId,
         destination: ModuleTypeId,
     },
+    resolve_entity_value: struct {
+        node: ModuleNodeId,
+        expression: @import("parameterized/ir.zig").ParameterizedTypeId,
+    },
     resolve_value_type: struct {
         value: ModuleNodeId,
         destination: ModuleTypeId,

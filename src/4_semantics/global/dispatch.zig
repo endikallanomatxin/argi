@@ -83,9 +83,33 @@ pub const Resolver = struct {
     ) !resolution.Result {
         if (operation == .resolve_call and operation.resolve_call.contract_type != null)
             return self.contracts.resolveScopedOperation(module_index, module, o, operation.resolve_call);
+        // Retained interactive bindings have the same static callable identity
+        // as lexical bindings lowered directly into the current module.
+        if (operation == .resolve_call and operation.resolve_call.callee_value == null) {
+            const call = operation.resolve_call;
+            const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+            if (reference.module_path == null) if (self.generic_functions.capture_lookup) |lookup| {
+                const owner = if (call.owner_function) |function| globalizer.globalFunction(o, function) else null;
+                if (lookup(self.generic_functions.capture_lookup_context.?, module_index, owner, module.text(reference.name))) |binding| {
+                    if (@import("types.zig").staticDefinitionBinding(self.core.graph, binding)) |definition| {
+                        if (self.core.graph.familyDefinition(definition.origin).kind == .function)
+                            return self.generic_functions.resolveDefinitionCall(module_index, module, o, call, definition);
+                    }
+                }
+            };
+        }
         // A lexical callable value shadows named functions and constructors.
-        if (operation == .resolve_call and operation.resolve_call.callee_value != null)
+        if (operation == .resolve_call and operation.resolve_call.callee_value != null) {
+            const call = operation.resolve_call;
+            const callee = globalizer.globalNode(o, call.callee_value.?);
+            const ty = self.core.graph.node(callee).ty orelse return .deferred;
+            if (self.core.graph.isTypeUnresolved(ty)) return .deferred;
+            if (@import("types.zig").definitionValue(self.core.graph, callee)) |definition| {
+                if (self.core.graph.familyDefinition(definition.origin).kind == .function)
+                    return self.generic_functions.resolveDefinitionCall(module_index, module, o, call, definition);
+            }
             return self.core.tryResolve(module_index, module, o, operation);
+        }
         if (operation == .resolve_call) {
             const call = operation.resolve_call;
             const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];

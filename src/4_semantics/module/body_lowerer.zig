@@ -491,7 +491,8 @@ const Context = struct {
             .address_of, .address_of_mut => self.lowerAddress(node, expected),
             .dereference => self.lowerDereference(node, expected),
             .pointer_assignment => self.lowerPointerAssignment(node, expected),
-            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .specialization, .associated_type_projection, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
+            .specialization => self.lowerEntityApplication(node),
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .associated_type_projection, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
             .import_statement => self.lowerImport(node, expected),
             else => return error.UnexpectedBodySyntaxNode,
         };
@@ -1794,6 +1795,21 @@ const Context = struct {
         if (child_ty == null and expected == null) try self.trackAggregateDestination(value.node, .{ .pointee = pointer.node });
         const ty: ?entities.ModuleTypeId = expected orelse value.ty;
         return self.resolved(node, ty, .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } });
+    }
+
+    fn lowerEntityApplication(self: *Context, node: syn.NodeIndex) !Lowered {
+        const expression = try @import("parameterized/lowerer.zig").lowerConcreteTypeExpression(
+            self.graph,
+            &self.writer,
+            self.file_index,
+            self.tree,
+            self.source,
+            node,
+        );
+        return self.pending(node, .{ .resolve_entity_value = .{
+            .node = self.nextNodeId(),
+            .expression = expression,
+        } }, null);
     }
 
     fn lowerTypeLiteral(self: *Context, node: syn.NodeIndex) !Lowered {

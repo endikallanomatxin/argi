@@ -192,6 +192,14 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
                     try require(node == .resolved and node.resolved.content == .code_block);
                 }
             }
+            if (value.detail == .callee_value) {
+                try require(value.kind == .generic_call);
+                try require(verify.idFits(value.detail.callee_value, storage.nodes.items.len));
+            }
+            if (value.kind == .entity_application) {
+                try require(value.detail == .entity_application);
+                try require(verify.idFits(value.detail.entity_application, storage.types.items.len));
+            }
             try require(verify.optionalIdFits(value.assumed_arguments, storage.nodes.items.len));
             if (value.name) |name| try require(verify.stringFits(name, graph.strings.items));
             if (value.module_path) |path| try require(verify.stringFits(path, graph.strings.items));

@@ -169,6 +169,7 @@ pub const PendingExpressionKind = enum(u8) {
     unwrap_or_do,
     nullable_test,
     generic_call,
+    entity_application,
     explicit_cast,
     choice_literal,
     field_access,
@@ -198,6 +199,8 @@ pub const PendingExpressionKind = enum(u8) {
 };
 
 pub const PendingExpressionDetail = union(enum(u8)) {
+    entity_application: ParameterizedTypeId,
+    callee_value: ParameterizedNodeId,
     capture_module_value: entities.ModuleNodeId,
     capture_owner: ?entities.ModuleFunctionId,
     none,

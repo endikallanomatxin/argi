@@ -1614,6 +1614,8 @@ pub const Context = struct {
 
         for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
         if (self.tree.tag(node) == .comptime_entry) return self.lowerAnonymousEntry(node);
+        if (self.tree.tag(node) == .specialization)
+            return self.addPending(node, .entity_application, &.{}, null, null, .{ .entity_application = try self.lowerType(node, false) });
         if (self.tree.tag(node) == .pipe_placeholder) return self.pipe_value orelse error.PipePlaceholderOutsidePipe;
         if (self.tree.tag(node) == .pipe_expression) return self.lowerPipe(node);
         if (self.tree.tag(node) == .handle_expression or self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block) return self.lowerHandle(node);
@@ -1685,7 +1687,12 @@ pub const Context = struct {
             }
             const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
             try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
-            const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)), null, .none);
+            const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
+            const callee_value: ?ir.ParameterizedNodeId = if (call.module_qualifier == null and call.contract_type == null) blk: {
+                const binding = self.parameterizedBinding(name) orelse break :blk null;
+                break :blk try self.addResolvedNode(node, self.graph.semantic.parameterized_storage.ir.bindingType(binding), .{ .binding_use = binding });
+            } else null;
+            const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(name), null, if (callee_value) |callee| .{ .callee_value = callee } else .none);
             const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)].pending;
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.generic_arguments = .{ .start = start, .len = @intCast(arguments.items.len) };
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (call.module_qualifier) |token| try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, token, call.callee_token) else null;

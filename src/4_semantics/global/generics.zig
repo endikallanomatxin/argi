@@ -32,6 +32,7 @@ pub const ComptimeFailure = struct {
     reason: []const u8,
     // Borrow the original module token; rendering happens after rollback.
     unknown_name: ?[]const u8 = null,
+    call_name: ?[]const u8 = null,
     materialization_error: ?anyerror = null,
 };
 
@@ -200,8 +201,59 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_type => |value| try self.resolveGenericTypeHole(module_index, module, o, value),
+            .resolve_entity_value => |value| blk: {
+                var bindings = try Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+                defer bindings.deinit(self.allocator);
+                const target = globalizer.globalNode(o, value.node);
+                const source = self.graph.node(target).source;
+                const entity = try self.instantiateEntityValue(module_index, value.expression, &bindings, source);
+                try self.graph.setNode(self.allocator, target, switch (entity) {
+                    .type => |ty| .{ .source = source, .ty = try self.core.builtin(.Type), .content = .{ .type_literal = ty } },
+                    .definition => |definition| .{ .source = source, .ty = try global_types.definitionClass(self.allocator, self.graph, definition.origin), .content = .{ .definition_literal = definition } },
+                });
+                break :blk .resolved;
+            },
             else => .not_applicable,
         };
+    }
+
+    /// Applying a definition in value position preserves a function producer;
+    /// only a type producer yields a concrete Type value. Both reuse the same
+    /// argument binding and captured-prefix representation as ordinary calls.
+    pub fn instantiateEntityValue(self: *Resolver, module_index: usize, expression: ir.ParameterizedTypeId, bindings: *Bindings, source: primitives.SourceRef) !global_types.EntityValue {
+        const recipe = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(expression)];
+        if (recipe == .resolved and recipe.resolved == .generic) {
+            const application = recipe.resolved.generic;
+            const definition = try self.resolveParameterizedDefinitionValue(module_index, application.base, bindings);
+            const family = self.graph.familyDefinition(definition.origin);
+            if (family.kind == .function) {
+                const owner: usize = @intFromEnum(self.graph.moduleForFamilyDefinition(definition.origin) orelse return error.UnknownParameterizedName);
+                const storage = &self.modules[owner].semantic.parameterized_storage;
+                const template = storage.parameterized_functions.items[family.template_index orelse return error.UnknownParameterizedName];
+                var substitutions = try Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+                defer substitutions.deinit(self.allocator);
+                const remaining = try self.bindDefinitionCaptures(owner, template.parameters, definition, &substitutions);
+                const arguments = try self.instantiateParameterizedArguments(module_index, application.arguments, bindings);
+                self.bindGlobalArguments(owner, remaining, arguments, &substitutions) catch |err| {
+                    const reason = switch (err) {
+                        error.TooManyGenericArguments => "too many compile-time arguments in definition specialization",
+                        error.UnknownGenericArgument => "unknown compile-time argument in definition specialization",
+                        error.DuplicateGenericArgument => "duplicate compile-time argument in definition specialization",
+                        error.MissingGenericArgument => "missing compile-time argument in definition specialization",
+                        error.GenericArgumentKindMismatch => "compile-time argument kind does not match the definition parameter",
+                        error.DefinitionParameterSignatureMismatch => "definition argument does not match its parameter signature",
+                        else => return err,
+                    };
+                    self.comptime_failure = .{ .source = source, .reason = reason };
+                    return error.InvalidGenericCallArguments;
+                };
+                return .{ .definition = .{
+                    .origin = definition.origin,
+                    .captures = try self.appendBoundArguments(owner, template.parameters, &substitutions),
+                } };
+            }
+        }
+        return .{ .type = try self.instantiateParameterizedType(module_index, expression, bindings) };
     }
 
     fn resolveGenericTypeHole(

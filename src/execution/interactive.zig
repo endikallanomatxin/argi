@@ -1691,3 +1691,19 @@ test "interactive generic contract operations retain instances across rejected s
     try std.testing.expect((try session.submitInput("apply<Bool>(.owner = &owner, .value = true).result")).?.value.runtime.boolean);
     try session.close();
 }
+
+test "interactive specialized definition values preserve captures across rejection" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("identity := <.T: Type> (.value: T) -> (.result: T) { result = value }");
+    try session.submitStatements("selected := identity<Int32>");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("selected(.value = 42)")).?.value.runtime.integer);
+    const revision = session.compiler.revision;
+    const arguments = session.compiler.semantic.resolvers.core.graph.generic_arguments.items.len;
+    try std.testing.expectError(error.Reported, session.submitInput("selected<Bool>(.value = true)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(arguments, session.compiler.semantic.resolvers.core.graph.generic_arguments.items.len);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("selected(.value = 7)")).?.value.runtime.integer);
+    try session.close();
+}
