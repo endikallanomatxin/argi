@@ -46,6 +46,9 @@ same specialization. Two independently written definitions remain distinct.
 Named arguments use the same delimiters, for example
 `base | convert<.to: UIntNative>(_)`. Runtime arguments retain `(...)`.
 `#run` and `#if` retain their directive spelling.
+Conformance parameters use `implement<.T: Type> Protocol<T> (...)`. The same
+angle delimiters apply to contract participants and dependencies. Empty type
+literals may retain an explicit annotation, for example `Marker: Type = ()`.
 
 Tokenization emits ordinary `<` and `>` tokens. Syntaxing alone determines whether
 they form specialization syntax or comparisons, using context and syntactic
@@ -419,12 +422,43 @@ before adding implementation exceptions.
   Integer parameter types and bound implication still need full compatibility
   checks; this shape check does not claim universal signature compatibility.
 
+- Specialization in value position uses a shared entity-application recipe.
+  Type producers yield Type values; function producers retain their origin and
+  canonical captured arguments without executing or duplicating a template.
+  Module, lexical and retained interactive aliases invoke ordinary specialization
+  and argument completion. Parameterized bodies and compile-time entries share
+  that application path. Rebinding captured arguments and mismatched runtime
+  inputs are rejected. Rejection diagnostics borrow static messages rather than
+  leaking formatted strings outside transaction ownership.
+
+- MatrixProduct now selects only Left/Right; Args is an associated nominal record
+  shared by the general algorithm, diagonal specialization and Multiply adapters.
+  Native/VM matrix-shape coverage and weighted regression exercise the same result
+  projection. Init and the standard arithmetic protocols still require migration.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
 inference, remaining generic-call inference parity,
 associated type-family signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
-Broad validation still exposes explicit argument-type identity and stale
-diagnostic expectations; these are not a completed migration. Selected internal
-coverage also exposes constructor-navigation and shared-operation LSP fixtures
-whose contract signature migration remains pending.
+Bundled core/more sources, generated entrypoints, REPL preludes, scaffolding,
+primitive signature specifications and editor type displays use angle specialization
+and definition values. Constructor and operation fixtures must share nominal Args
+identities; editor parameter classification uses signature binding references as
+well as field origins. Full internal validation reached 1,027 passes with one
+skip and one editor failure; the subsequent focused checks pass after correcting
+that failure. The test syntax migration is consolidated in one commit. Broad program validation
+remains incomplete; the last full serial fixture group exposed constructor
+inference and associated-projection failures, with other diagnosed failures
+subsequently repaired. Init/arithmetic Args still need their associated-family migration;
+syntax migration alone does not complete that semantic change.
+
+Concrete constructor migration case: explicit StandardHashPolicy input makes both
+HashMap Init implementations applicable. Their independently defined nominal Args
+records prevent tuple coverage from establishing specialization. Reproduced with
+`argi build tests/feature_tests/system/86_word_count_consumer --no-cache`.
+Do not restore structural Args identity or rank unrelated nominal records by their
+fields. Migrate to one Init conformance per target, with operation-level Provider
+parameters and associated argument families. Standard-policy defaults belong to
+the selected target's argument definition; custom policies remain explicit. Preserve
+partial target inference and the existing noncopyable policy transfer behavior.
