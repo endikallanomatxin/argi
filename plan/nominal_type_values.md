@@ -224,6 +224,12 @@ before adding implementation exceptions.
   their family name. Native/VM coverage includes round-trip assignments, alias
   parameters and an identity type family.
 
+- Type-valued declarations, including parameterized aliases, use ordinary
+  constant binding syntax regardless of whether `: Type` is written. Family
+  classification comes from the definition expression; aliases whose bodies are
+  type parameters, references, arrays or other specializations need no annotation.
+  The separate ordinary type-declaration AST node is removed; C representation
+  declarations retain their explicit foreign forms.
 - Closed `Name: Type = value` declarations use ordinary constant bindings, just
   like inferred type-valued declarations. Explicit annotations do not nominalize
   an existing type. The nominal `underlying_type` representation and its separate

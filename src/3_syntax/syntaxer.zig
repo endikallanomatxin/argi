@@ -2529,24 +2529,24 @@ pub const Syntaxer = struct {
                 if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion") or std.mem.eql(u8, type_name, "CStruct")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
-                    const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else if (std.mem.eql(u8, type_name, "CStruct")) .c_struct_declaration else .type_declaration;
-                    const lit_node = if (tag == .type_declaration and self.angleOpen())
+                    const c_tag: ?syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else if (std.mem.eql(u8, type_name, "CStruct")) .c_struct_declaration else null;
+                    const lit_node = if (c_tag == null and self.angleOpen())
                         try self.parsePrimary()
-                    else if (tag == .type_declaration and !self.tokenIs(.open_parenthesis))
+                    else if (c_tag == null and !self.tokenIs(.open_parenthesis))
                         (try self.parseType()) orelse return SyntaxerError.ExpectedType
-                    else if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
-                        try self.parseChoiceTypeLiteral(tag == .c_enum_declaration)
+                    else if (c_tag == .c_enum_declaration or (c_tag == null and self.parenthesizedTypeIsChoiceLiteral()))
+                        try self.parseChoiceTypeLiteral(c_tag == .c_enum_declaration)
                     else
                         try self.parseStructTypeLiteral();
                     const value = try self.parameterizedDefinition(generic_params, generic_params_struct, lit_node);
-                    if (tag == .type_declaration and self.file.parameterizedDefinition(value) == null) {
+                    if (c_tag == null) {
                         const extra = try self.addExtra(syn.FieldExtra{
                             .type_node = ty.optional(),
                             .default_value = value.optional(),
                         });
                         return self.addNode(.symbol_declaration_constant, name.token, .{ .extra = extra });
                     }
-                    return self.addNode(tag, name.token, .{ .node = value });
+                    return self.addNode(c_tag.?, name.token, .{ .node = value });
                 } else if (std.mem.eql(u8, type_name, "Abstract")) {
                     try self.diags.add(id_loc, .syntax, "Abstract declarations are unsupported; use Contract with explicit participants", .{});
                     return SyntaxerError.ExpectedDeclarationOrAssignment;

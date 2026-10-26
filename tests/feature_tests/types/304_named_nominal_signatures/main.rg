@@ -14,7 +14,7 @@ identity := <.T: Type> GenericArgs<T> -> GenericResult<T> {
     result = value
 }
 
-ForwardArgs: Type = <.T: Type> GenericArgs<T>
+ForwardArgs := <.T: Type> GenericArgs<T>
 
 forward_identity := <.T: Type> ForwardArgs<T> -> GenericResult<T> {
     result = value
@@ -24,7 +24,9 @@ read_forwarded := <.T: Type> (.input: &ForwardArgs<T>) -> (.result: T) {
     result = input&.value
 }
 
-IdentityType: Type = <.T: Type> T
+IdentityType := <.T: Type> T
+ReferenceType := <.T: Type> &T
+PairType := <.T: Type> [2]T
 
 read_identity := <.T: Type> (.input: IdentityType<T>) -> (.result: T) {
     result = input
@@ -54,6 +56,11 @@ main() -> () := {
     original: GenericArgs<Bool> = (.value = true)
     forwarded: ForwardArgs<Bool> = original
     restored: GenericArgs<Bool> = forwarded
+    reference: ReferenceType<Bool> = &restored.value
+    pair: PairType<Bool> = (true, false)
+    if reference& {} else { abort }
+    if pair[0] {} else { abort }
+    if pair[1] { abort }
     if restored.value {} else { abort }
     if read_forwarded(.input = &original).result {} else { abort }
     if read_identity(.input = true).result {} else { abort }

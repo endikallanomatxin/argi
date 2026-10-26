@@ -712,7 +712,6 @@ fn isGlobalDeclaration(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) boo
     return switch (tree.tag(node)) {
         .test_declaration,
         .c_function_pointer_declaration,
-        .type_declaration,
         .contract_declaration,
         .contract_conformance,
         .c_enum_declaration,

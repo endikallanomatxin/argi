@@ -70,7 +70,6 @@ pub const Node = struct {
         choice_option_declaration,
         symbol_declaration_constant,
         symbol_declaration_variable,
-        type_declaration,
         c_enum_declaration,
         c_union_declaration,
         c_struct_declaration,
@@ -549,7 +548,7 @@ pub const FileSyntaxTree = struct {
     pub fn definitionValue(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
         return switch (tree.tag(node)) {
             .function_declaration, .function_declaration_once, .c_function_pointer_declaration, .test_declaration, .contract_function_requirement => tree.data(node).token_and_node.node,
-            .type_declaration, .c_struct_declaration, .c_enum_declaration, .c_union_declaration, .c_incomplete_declaration => tree.data(node).node,
+            .c_struct_declaration, .c_enum_declaration, .c_union_declaration, .c_incomplete_declaration => tree.data(node).node,
             .symbol_declaration_constant => (tree.symbolDeclaration(node) orelse return null).value,
             else => null,
         };
@@ -813,10 +812,13 @@ pub const FileSyntaxTree = struct {
     pub fn typeDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?TypeDeclaration {
         if (tree.tag(node) == .symbol_declaration_constant) {
             const value = tree.definitionValue(node) orelse return null;
-            const tag_ = tree.tag(tree.definitionBody(value));
-            if (tag_ != .struct_type_literal and tag_ != .choice_type_literal) return null;
+            const body = tree.definitionBody(value);
+            const tag_ = tree.tag(body);
+            if (tag_ != .struct_type_literal and tag_ != .choice_type_literal) {
+                if (tree.parameterizedDefinition(value) == null or tree.functionDefinition(body) != null or tree.typeReference(body) == null) return null;
+            }
         } else switch (tree.tag(node)) {
-            .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration => {},
+            .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration => {},
             else => return null,
         }
         return tree.boundTypeDefinition(node);

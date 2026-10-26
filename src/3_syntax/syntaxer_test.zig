@@ -128,6 +128,7 @@ test "compact syntaxing permits ordinary named input and output types on functio
 test "compact syntaxing permits parameterized values in explicit type declarations" {
     var tree = try parseTestSource("families.rg", "Forward: Type = <.T: Type> Original<T>");
     defer tree.deinit(std.testing.allocator);
+    try std.testing.expectEqual(syntax_tree.Node.Tag.symbol_declaration_constant, tree.tag(tree.roots[0]));
     const declaration = tree.typeDeclaration(tree.roots[0]).?;
     try std.testing.expectEqual(@as(usize, 1), declaration.generic_params.len);
     try std.testing.expect(tree.typeReference(declaration.value) != null);

@@ -376,7 +376,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
                 break :blk if (value != null and tree.tag(value.?) == .import_statement) .import_alias else .binding;
             },
             .contract_declaration => .contract_type,
-            .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration => .type,
+            .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration => .type,
             .choice_option_declaration => .choice_option,
             .function_declaration, .function_declaration_once => .function,
             .test_declaration => .test_function,
