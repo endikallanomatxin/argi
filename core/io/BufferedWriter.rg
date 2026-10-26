@@ -1,24 +1,24 @@
 -- Borrows both the writer and an initialized byte buffer. Construction does
 -- not allocate. Explicit flush reports errors; cleanup flushes best-effort.
 -- Failed writes discard pending bytes because partial progress is unknown.
-BufferedWriter#(.base_type: Type: Writer#(base_type)): Type = (
+BufferedWriter := <.base_type: Type: Writer<base_type>> (
     .base   : $&base_type
-    .buffer : MutableArrayView#(.t: UInt8)
+    .buffer : MutableArrayView<.t: UInt8>
     .length : UIntNative
 )
 
-implement#(.base_type: Type: Writer#(base_type)) Init#(
-    BufferedWriter#(.base_type: base_type),
+implement<.base_type: Type: Writer<base_type>> Init<
+    BufferedWriter<.base_type: base_type>,
     (
         .base   : $&base_type,
-        .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
+        .buffer : MutableArrayView<.t: UInt8> = view($&zeroed<.t: [4096]UInt8>())
     )
-) (
-    .Result : Type = BufferedWriter#(.base_type: base_type)
+> (
+    .Result : Type = BufferedWriter<.base_type: base_type>
     .init   = (
         .args : (
             .base   : $&base_type,
-            .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
+            .buffer : MutableArrayView<.t: UInt8> = view($&zeroed<.t: [4096]UInt8>())
         )
     ) -> (.result: Result) {
         base ::= args.base
@@ -28,15 +28,15 @@ implement#(.base_type: Type: Writer#(base_type)) Init#(
     }
 )
 
-implement#(.base_type: Type: Writer#(base_type)) Deinit#(BufferedWriter#(.base_type: base_type)) (
-    .deinit = (.self: $&BufferedWriter#(.base_type: base_type)) -> () {
+implement<.base_type: Type: Writer<base_type>> Deinit<BufferedWriter<.base_type: base_type>> (
+    .deinit = (.self: $&BufferedWriter<.base_type: base_type>) -> () {
         buffered_writer_flush(self)
     }
 )
 
-buffered_writer_flush#(.base_type: Type: Writer#(base_type))(
-    .self : $&BufferedWriter#(.base_type: base_type)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) := {
+buffered_writer_flush := <.base_type: Type: Writer<base_type>> (
+    .self : $&BufferedWriter<.base_type: base_type>
+) -> (.result: Errable<Void, (..stream_write_failed, ..stream_flush_failed)>) {
     i :: UIntNative = 0
 
     while i < self&.length {
@@ -57,7 +57,7 @@ buffered_writer_flush#(.base_type: Type: Writer#(base_type))(
         i = i + count
     }
 
-    flushed ::= Writer#().flush(.self = self&.base)
+    flushed ::= Writer<>.flush(.self = self&.base)
 
     if is(.value = flushed, .variant = ..error) {
         self&.length = 0
@@ -70,12 +70,12 @@ buffered_writer_flush#(.base_type: Type: Writer#(base_type))(
     result = ..ok Void()
 }
 
-implement#(.base_type: Type: Writer#(base_type)) Writer#(BufferedWriter#(.base_type: base_type)) (
-    .write_byte = (.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+implement<.base_type: Type: Writer<base_type>> Writer<BufferedWriter<.base_type: base_type>> (
+    .write_byte = (.self: $&BufferedWriter<.base_type: base_type>, .byte: UInt8) -> (
+        .result: Errable<Void, (..stream_write_failed, ..stream_flush_failed)>
     ) {
         if length(&self&.buffer) == 0 {
-            result = Writer#().write_byte(self&.base, .byte = byte)
+            result = Writer<>.write_byte(self&.base, .byte = byte)
             return
         }
 
@@ -94,8 +94,8 @@ implement#(.base_type: Type: Writer#(base_type)) Writer#(BufferedWriter#(.base_t
         result = ..ok Void()
     }
 
-    .flush = (.self: $&BufferedWriter#(.base_type: base_type)) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .flush = (.self: $&BufferedWriter<.base_type: base_type>) -> (
+        .result: Errable<Void, (..stream_write_failed, ..stream_flush_failed)>
     ) {
         result = buffered_writer_flush(self)
     }

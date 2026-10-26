@@ -1,12 +1,12 @@
 -- PCG XSH-RR 64/32 with the standard single-stream increment. Split products
 -- express its modulo-2^64 recurrence without weakening checked arithmetic.
-Pcg32: Type = (
+Pcg32 := (
     ._state : UInt64
 )
 
-implement ImplicitlyCopyable#(Pcg32) ()
+implement ImplicitlyCopyable<Pcg32> ()
 
-_pcg_advance(.state: UInt64) -> (.next: UInt64) := {
+_pcg_advance := (.state: UInt64) -> (.next: UInt64) {
     low ::= state % 4294967296
     high ::= state / 4294967296
     -- The multiplier halves sum to less than 2^32, so both accumulators
@@ -16,7 +16,7 @@ _pcg_advance(.state: UInt64) -> (.next: UInt64) := {
     next = [high_product % 4294967296] * 4294967296 + low_product % 4294967296
 }
 
-_pcg_seed_state(.seed: UInt64) -> (.state: UInt64) := {
+_pcg_seed_state := (.seed: UInt64) -> (.state: UInt64) {
     increment: UInt64 = 1442695040888963407
     maximum: UInt64 = 18446744073709551615
     combined :: UInt64 = 0
@@ -30,7 +30,7 @@ _pcg_seed_state(.seed: UInt64) -> (.state: UInt64) := {
     state = _pcg_advance(.state = combined).next
 }
 
-implement Init#(Pcg32, (.seed: UInt64)) (
+implement Init<Pcg32, (.seed: UInt64)> (
     .Result : Type = Pcg32
     .init   = (.args: (.seed: UInt64)) -> (.result: Result) {
         seed ::= args.seed
@@ -39,13 +39,13 @@ implement Init#(Pcg32, (.seed: UInt64)) (
     }
 )
 
-reseed(.self: $&Pcg32, .seed: UInt64) -> () := {
+reseed := (.self: $&Pcg32, .seed: UInt64) -> () {
     self&._state = _pcg_seed_state(.seed = seed).state
 }
 
 -- Only the low 32 bits of state >> 27 and the 19 bits of state >> 45
 -- participate in the output XOR. Their sum and overlap fit in UInt64.
-_pcg_xor_window(.left: UInt64, .right: UInt64) -> (.value: UInt64) := {
+_pcg_xor_window := (.left: UInt64, .right: UInt64) -> (.value: UInt64) {
     a ::= left
     b ::= right
     place :: UInt64 = 1
@@ -61,7 +61,7 @@ _pcg_xor_window(.left: UInt64, .right: UInt64) -> (.value: UInt64) := {
     value = left + right - overlap * 2
 }
 
-next_uint32(.self: $&Pcg32) -> (.value: UInt32) := {
+next_uint32 := (.self: $&Pcg32) -> (.value: UInt32) {
     previous ::= self&._state
     self&._state = _pcg_advance(.state = previous).next
     mixed ::= _pcg_xor_window(
@@ -77,45 +77,45 @@ next_uint32(.self: $&Pcg32) -> (.value: UInt32) := {
     }
 
     rotated ::= mixed / divisor + [mixed % divisor] * [4294967296 / divisor]
-    value = unwrap_or_abort(.value = rotated | convert#(.to: UInt32)(_)).result
+    value = unwrap_or_abort(.value = rotated | convert<.to: UInt32>(_)).result
 }
 
-next_uint64(.self: $&Pcg32) -> (.value: UInt64) := {
-    high ::= next_uint32(self).value | convert#(.to: UInt64)(_)
-    low ::= next_uint32(self).value | convert#(.to: UInt64)(_)
+next_uint64 := (.self: $&Pcg32) -> (.value: UInt64) {
+    high ::= next_uint32(self).value | convert<.to: UInt64>(_)
+    low ::= next_uint32(self).value | convert<.to: UInt64>(_)
     value = high * 4294967296 + low
 }
 
-next_bool(.self: $&Pcg32) -> (.value: Bool) := {
+next_bool := (.self: $&Pcg32) -> (.value: Bool) {
     value = next_uint32(self).value >= 2147483648
 }
 
-uniform_uint32(.self: $&Pcg32, .upper_bound: UInt32) -> (
-    .result : Errable#(UInt32, (..invalid_range))
-) := {
+uniform_uint32 := (.self: $&Pcg32, .upper_bound: UInt32) -> (
+    .result: Errable<UInt32, (..invalid_range)>
+) {
     if upper_bound == 0 {
         result = ..error(.reason = ..invalid_range)
         return
     }
 
-    bound ::= upper_bound | convert#(.to: UInt64)(_)
+    bound ::= upper_bound | convert<.to: UInt64>(_)
     space: UInt64 = 4294967296
     threshold ::= [space - bound] % bound
 
     while true {
-        candidate ::= next_uint32(self).value | convert#(.to: UInt64)(_)
+        candidate ::= next_uint32(self).value | convert<.to: UInt64>(_)
         if candidate >= threshold {
             result = ..ok unwrap_or_abort(
-                .value = [[candidate % bound] | convert#(.to: UInt32)(_)]
+                .value = [[candidate % bound] | convert<.to: UInt32>(_)]
             ).result
             return
         }
     }
 }
 
-uniform_uint64(.self: $&Pcg32, .upper_bound: UInt64) -> (
-    .result : Errable#(UInt64, (..invalid_range))
-) := {
+uniform_uint64 := (.self: $&Pcg32, .upper_bound: UInt64) -> (
+    .result: Errable<UInt64, (..invalid_range)>
+) {
     if upper_bound == 0 {
         result = ..error(.reason = ..invalid_range)
         return
@@ -136,7 +136,7 @@ uniform_uint64(.self: $&Pcg32, .upper_bound: UInt64) -> (
 
 -- Accumulating exactly representable binary fractions avoids an integer/float
 -- cast dependency and never rounds a unit-interval result upward to one.
-_pcg_fraction#(.t: Type: Float)(.sample: UInt64, .bits: UInt32) -> (.value: t) := {
+_pcg_fraction := <.t: Type: Float> (.sample: UInt64, .bits: UInt32) -> (.value: t) {
     value = 0.0
     one :: t = 1.0
     half :: t = 0.5
@@ -151,20 +151,20 @@ _pcg_fraction#(.t: Type: Float)(.sample: UInt64, .bits: UInt32) -> (.value: t) :
     }
 }
 
-next_float16(.self: $&Pcg32) -> (.value: Float16) := {
-    value = _pcg_fraction#(.t: Float16)(
-        .sample = [next_uint32(self).value | convert#(.to: UInt64)(_) / 2097152], .bits = 11
+next_float16 := (.self: $&Pcg32) -> (.value: Float16) {
+    value = _pcg_fraction<.t: Float16>(
+        .sample = [next_uint32(self).value | convert<.to: UInt64>(_) / 2097152], .bits = 11
     ).value
 }
 
-next_float32(.self: $&Pcg32) -> (.value: Float32) := {
-    value = _pcg_fraction#(.t: Float32)(
-        .sample = [next_uint32(self).value | convert#(.to: UInt64)(_) / 256], .bits = 24
+next_float32 := (.self: $&Pcg32) -> (.value: Float32) {
+    value = _pcg_fraction<.t: Float32>(
+        .sample = [next_uint32(self).value | convert<.to: UInt64>(_) / 256], .bits = 24
     ).value
 }
 
-next_float64(.self: $&Pcg32) -> (.value: Float64) := {
-    value = _pcg_fraction#(.t: Float64)(
+next_float64 := (.self: $&Pcg32) -> (.value: Float64) {
+    value = _pcg_fraction<.t: Float64>(
         .sample = next_uint64(self).value / 2048, .bits = 53
     ).value
 }

@@ -1,33 +1,31 @@
-SocketAddress#(.Socket: Type): Contract = (
-    .local : (.self: &Socket) -> (.result: Errable#(NetworkAddress, (..socket_option_failed)))
+SocketAddress<.Socket: Type>: Contract = (
+    .local : (.self: &Socket) -> (.result: Errable<NetworkAddress, (..socket_option_failed)>)
 )
 
-SocketTimeout#(.Socket: Type): Contract = (
+SocketTimeout<.Socket: Type>: Contract = (
     .configure_timeout : (.self: $&Socket, .milliseconds: UInt32) -> (
-        .result : Errable#(Void, (..socket_option_failed))
+        .result: Errable<Void, (..socket_option_failed)>
     )
 )
 
-local_address#(.Socket: Type: SocketAddress#(Socket)) := (.self: &Socket) -> (
-    .result : Errable#(NetworkAddress, (..socket_option_failed))
+local_address := <.Socket: Type: SocketAddress<Socket>> (.self: &Socket) -> (
+    .result: Errable<NetworkAddress, (..socket_option_failed)>
 ) {
-    result = SocketAddress#(Socket).local(.self = self)
+    result = SocketAddress<Socket>.local(.self = self)
 }
 
-set_timeout#(.Socket: Type: SocketTimeout#(Socket)) := (.self: $&Socket, .milliseconds: UInt32) -> (
-    .result : Errable#(Void, (..socket_option_failed))
+set_timeout := <.Socket: Type: SocketTimeout<Socket>> (.self: $&Socket, .milliseconds: UInt32) -> (
+    .result: Errable<Void, (..socket_option_failed)>
 ) {
-    result = SocketTimeout#(
-        Socket
-    ).configure_timeout(.self = self, .milliseconds = milliseconds)
+    result = SocketTimeout<Socket>.configure_timeout(.self = self, .milliseconds = milliseconds)
 }
 
-implement SocketAddress#(TcpConnection) (.local = _local_address_TcpConnection)
+implement SocketAddress<TcpConnection> (.local = _local_address_TcpConnection)
 
-implement SocketAddress#(TcpListener) (.local = _local_address_TcpListener)
+implement SocketAddress<TcpListener> (.local = _local_address_TcpListener)
 
-implement SocketAddress#(UdpSocket) (.local = _local_address_UdpSocket)
+implement SocketAddress<UdpSocket> (.local = _local_address_UdpSocket)
 
-implement SocketTimeout#(TcpConnection) (.configure_timeout = _set_timeout_TcpConnection)
+implement SocketTimeout<TcpConnection> (.configure_timeout = _set_timeout_TcpConnection)
 
-implement SocketTimeout#(UdpSocket) (.configure_timeout = _set_timeout_UdpSocket)
+implement SocketTimeout<UdpSocket> (.configure_timeout = _set_timeout_UdpSocket)

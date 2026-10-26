@@ -1,4 +1,4 @@
-_bounded_stream_maximum() -> (.value: UIntNative) := {
+_bounded_stream_maximum := () -> (.value: UIntNative) {
     maximum :: UIntNative = 0
     byte_index :: UIntNative = 0
     native_bytes ::= size_of(.type = UIntNative)
@@ -13,25 +13,25 @@ _bounded_stream_maximum() -> (.value: UIntNative) := {
 
 StreamCopyEnd: Type = (..end, ..limit)
 
-implement ImplicitlyCopyable#(StreamCopyEnd) ()
+implement ImplicitlyCopyable<StreamCopyEnd> ()
 
-StreamCopyResult: Type = (.count: UIntNative, .termination: StreamCopyEnd)
+StreamCopyResult := (.count: UIntNative, .termination: StreamCopyEnd)
 
-implement ImplicitlyCopyable#(StreamCopyResult) ()
+implement ImplicitlyCopyable<StreamCopyResult> ()
 
 ..size_limit_exceeded
 
 -- A limit is a stopping point, not an assertion that the source ended. No
 -- lookahead byte is consumed, including when the limit is zero or exactly met.
-copy_stream_limited#(
-    .ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType)
-)(
+copy_stream_limited := <
+    .ReaderType: Type: BlockReader<ReaderType>, .WriterType: Type: BlockWriter<WriterType>
+> (
     .reader : $&ReaderType,
     .writer : $&WriterType,
-    .buffer : MutableArrayView#(.t: UInt8),
+    .buffer : MutableArrayView<.t: UInt8>,
     .limit  : UIntNative
 ) -> (
-    .result : Errable#(
+    .result : Errable<
         StreamCopyResult,
         (
             ..stream_read_failed,
@@ -39,8 +39,8 @@ copy_stream_limited#(
             ..stream_flush_failed,
             ..invalid_stream_buffer
         )
-    )
-) := {
+    >
+) {
     copied :: UIntNative = 0
 
     if limit == 0 {
@@ -59,7 +59,7 @@ copy_stream_limited#(
         request ::= limit - copied
         if request > size { request = size }
         destination ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = request))
-        got ::= BlockReader#().read_block(reader, .buffer = destination)!
+        got ::= BlockReader<>.read_block(reader, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
             result = ..ok(.count = copied, .termination = ..end)
@@ -75,24 +75,24 @@ copy_stream_limited#(
 
 -- Return complete binary data or release the partial owner on every error.
 -- Capacity growth is capped independently of the caller's scratch extent.
-read_all_limited#(
-    .SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
-)(
+read_all_limited := <
+    .SelfType: Type: BlockReader<SelfType>, .AllocatorType: Type: Allocator<AllocatorType>
+> (
     .self      : $&SelfType,
-    .buffer    : MutableArrayView#(.t: UInt8),
+    .buffer    : MutableArrayView<.t: UInt8>,
     .limit     : UIntNative,
     .allocator : $&AllocatorType
 ) -> (
-    .result : Errable#(
-        DynamicArray#(UInt8),
+    .result : Errable<
+        DynamicArray<UInt8>,
         (
             ..stream_read_failed,
             ..invalid_stream_buffer,
             ..size_limit_exceeded,
             ..out_of_memory
         )
-    )
-) := {
+    >
+) {
     assume allocator
     size ::= length(&buffer).count
 
@@ -104,7 +104,7 @@ read_all_limited#(
     initial ::= size
 
     if initial > limit { initial = limit }
-    out ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = initial)!
+    out ::= DynamicArray<UInt8>(.allocator = allocator, .capacity = initial)!
 
     while length(&out).count < limit {
         request ::= limit - length(&out).count
@@ -120,13 +120,13 @@ read_all_limited#(
             }
             -- Generic array growth may exceed a requested minimum. Allocate
             -- the exact bounded capacity before consuming another source chunk.
-            fresh ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = grown)!
+            fresh ::= DynamicArray<UInt8>(.allocator = allocator, .capacity = grown)!
             for byte in out { push_assume_capacity($&fresh, .value = byte) }
             deinit(.self = $&out)
             out = ~fresh
         }
         destination ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = request))
-        got ::= BlockReader#().read_block(self, .buffer = destination)!
+        got ::= BlockReader<>.read_block(self, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
             result = ..ok ~out
@@ -142,7 +142,7 @@ read_all_limited#(
     }
     -- A single scratch byte distinguishes exact EOF from excess data.
     probe ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = 1))
-    got ::= BlockReader#().read_block(self, .buffer = probe)!
+    got ::= BlockReader<>.read_block(self, .buffer = probe)!
 
     if got > 1 { abort }
     if got != 0 {

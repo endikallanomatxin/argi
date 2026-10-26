@@ -363,9 +363,9 @@ pub const FrontendPipeline = struct {
         const result = if (is_test) "result" else "status_code";
         const template = @embedFile("program_entry.rg");
         const tracer = if (needs_reporting)
-            "trace_buffer :: [4096]UInt8 = zeroed#(.t: [4096]UInt8)()\n" ++
+            "trace_buffer :: [4096]UInt8 = zeroed<.t: [4096]UInt8>()\n" ++
                 "    tracer_storage ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))\n" ++
-                "    tracer_virtual ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer_storage)\n" ++
+                "    tracer_virtual ::= to_virtual<.contract: ErrorTracer>(.value = $&tracer_storage)\n" ++
                 "    assume error_tracer ::= $&tracer_virtual"
         else
             "assume error_tracer ::= $&noop_error_tracer";

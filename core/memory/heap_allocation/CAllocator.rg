@@ -1,8 +1,8 @@
-CAllocator: Type = (
+CAllocator := (
     .ffi : $&ForeignFunctionInterface
 )
 
-implement Init#(CAllocator, (.ffi: $&ForeignFunctionInterface)) (
+implement Init<CAllocator, (.ffi: $&ForeignFunctionInterface)> (
     .Result : Type = CAllocator
 
     .init = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
@@ -11,9 +11,9 @@ implement Init#(CAllocator, (.ffi: $&ForeignFunctionInterface)) (
     }
 )
 
-implement Allocator#(CAllocator) (
+implement Allocator<CAllocator> (
     .allocate = (.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
+        .result: Errable<Allocation, (..out_of_memory)>
     ) {
         acquired ::= acquire_heap_storage(
             .size = size, .alignment = alignment, .ffi = self&.ffi
@@ -22,9 +22,9 @@ implement Allocator#(CAllocator) (
         match acquired {
             ..error _ { result = ..error(.reason = ..out_of_memory) }
             ..ok ~storage {
-                deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(
+                deallocator :: Virtual<.contract: Deallocator> = to_virtual<
                     .contract : Deallocator
-                )(.value = self)
+                >(.value = self)
                 allocation ::= establish_allocation(
                     .storage     = ~storage
                     .size        = size
@@ -37,10 +37,10 @@ implement Allocator#(CAllocator) (
     }
 )
 
-implement Deallocator#(CAllocator) (
+implement Deallocator<CAllocator> (
     .deallocate = (
         .self      : $&CAllocator,
-        .data      : RawPointer#(.t: UInt8),
+        .data      : RawPointer<.t: UInt8>,
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {

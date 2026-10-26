@@ -1,8 +1,8 @@
 -- Decimal inputs are rounded from exact rational integers, without an
 -- intermediate floating-point format or a dependency on the host library.
-_float_parse#(.t: Type: Float)(
+_float_parse := <.t: Type: Float> (
     .text: StringView, .precision: Int32, .maximum_exponent: Int32, .minimum_exponent: Int32
-) -> (.result: Errable#(t, (..invalid_input, ..out_of_range))) := {
+) -> (.result: Errable<t, (..invalid_input, ..out_of_range)>) {
     if text._length == 0 {
         result = ..error(.reason = ..invalid_input)
         return
@@ -39,7 +39,7 @@ _float_parse#(.t: Type: Float)(
             if byte < 48 or byte > 57 { break }
             has_digit = true
             if point { fractional = fractional + 1 }
-            digit ::= [byte - 48] | convert#(.to: UInt32)(_)
+            digit ::= [byte - 48] | convert<.to: UInt32>(_)
             if significant != 0 or digit != 0 {
                 significant = significant + 1
                 -- Binary64's most demanding midpoint is a multiple of
@@ -90,7 +90,7 @@ _float_parse#(.t: Type: Float)(
                 result = ..error(.reason = ..invalid_input)
                 return
             }
-            digit ::= [digit_byte - 48] | convert#(.to: UIntNative)(_)
+            digit ::= [digit_byte - 48] | convert<.to: UIntNative>(_)
             if exponent <= cap / 10 {
                 exponent = exponent * 10 + digit
                 if exponent > cap { exponent = cap }
@@ -134,14 +134,14 @@ _float_parse#(.t: Type: Float)(
             result = ..error(.reason = ..out_of_range)
             return
         }
-        power = unwrap_or_abort(.value = difference | convert#(.to: Int32)(_)).result
+        power = unwrap_or_abort(.value = difference | convert<.to: Int32>(_)).result
     } else {
         difference ::= negative_power - positive_power
         if difference > 1200 {
             result = ..error(.reason = ..out_of_range)
             return
         }
-        power = 0 - unwrap_or_abort(.value = difference | convert#(.to: Int32)(_)).result
+        power = 0 - unwrap_or_abort(.value = difference | convert<.to: Int32>(_)).result
     }
     -- A retained significand has at most 800 digits. Powers outside these
     -- bounds cannot approach any supported finite nonzero float. Within the
@@ -240,26 +240,26 @@ _float_parse#(.t: Type: Float)(
     result = ..ok value
 }
 
-parse_float16(.text: StringView) -> (
-    .result : Errable#(Float16, (..invalid_input, ..out_of_range))
-) := {
-    result = _float_parse#(.t: Float16)(
+parse_float16 := (.text: StringView) -> (
+    .result: Errable<Float16, (..invalid_input, ..out_of_range)>
+) {
+    result = _float_parse<.t: Float16>(
         .text = text, .precision = 11, .maximum_exponent = 15, .minimum_exponent = -24
     ).result
 }
 
-parse_float32(.text: StringView) -> (
-    .result : Errable#(Float32, (..invalid_input, ..out_of_range))
-) := {
-    result = _float_parse#(.t: Float32)(
+parse_float32 := (.text: StringView) -> (
+    .result: Errable<Float32, (..invalid_input, ..out_of_range)>
+) {
+    result = _float_parse<.t: Float32>(
         .text = text, .precision = 24, .maximum_exponent = 127, .minimum_exponent = -149
     ).result
 }
 
-parse_float64(.text: StringView) -> (
-    .result : Errable#(Float64, (..invalid_input, ..out_of_range))
-) := {
-    result = _float_parse#(.t: Float64)(
+parse_float64 := (.text: StringView) -> (
+    .result: Errable<Float64, (..invalid_input, ..out_of_range)>
+) {
+    result = _float_parse<.t: Float64>(
         .text = text, .precision = 53, .maximum_exponent = 1023, .minimum_exponent = -1074
     ).result
 }

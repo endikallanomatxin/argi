@@ -1,9 +1,9 @@
-PageAllocator: Type = (
+PageAllocator := (
     .memory    : $&Memory
     .page_size : UIntNative
 )
 
-implement Init#(PageAllocator, (.memory: $&Memory)) (
+implement Init<PageAllocator, (.memory: $&Memory)> (
     .Result : Type = PageAllocator
 
     .init = (.args: (.memory: $&Memory)) -> (.result: Result) {
@@ -12,11 +12,11 @@ implement Init#(PageAllocator, (.memory: $&Memory)) (
     }
 )
 
-page_allocator_page_size(.self: $&PageAllocator) -> (.size: UIntNative) := {
+page_allocator_page_size := (.self: $&PageAllocator) -> (.size: UIntNative) {
     size = self&.page_size
 }
 
-page_allocator_round_up(.size: UIntNative, .alignment: UIntNative) -> (.rounded: UIntNative) := {
+page_allocator_round_up := (.size: UIntNative, .alignment: UIntNative) -> (.rounded: UIntNative) {
     rounded = size
 
     if rounded == 0 {
@@ -33,9 +33,9 @@ page_allocator_round_up(.size: UIntNative, .alignment: UIntNative) -> (.rounded:
     }
 }
 
-implement Allocator#(PageAllocator) (
+implement Allocator<PageAllocator> (
     .allocate = (.self: $&PageAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
+        .result: Errable<Allocation, (..out_of_memory)>
     ) {
         mapped ::= map_pages(self&.memory, .size = size, .alignment = alignment)
 

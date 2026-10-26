@@ -1,22 +1,22 @@
 _set_attribute(
     .context : UIntNative,
-    .object  : RawPointer#(.t: _PyObject),
+    .object  : RawPointer<.t: _PyObject>,
     .bytes   : &UInt8,
     .length  : UIntNative,
-    .value   : RawPointer#(.t: _PyObject)
+    .value   : RawPointer<.t: _PyObject>
 ) -> (.status: Int32): CFunction(.symbol = "_argi_python_set_attribute")
 
-_iterator(.context: UIntNative, .object: RawPointer#(.t: _PyObject)) -> (
-    .handle : RawPointer#(.t: _PyObject)
+_iterator(.context: UIntNative, .object: RawPointer<.t: _PyObject>) -> (
+    .handle : RawPointer<.t: _PyObject>
 ): CFunction(.symbol = "_argi_python_iterator")
 
-_next(.context: UIntNative, .object: RawPointer#(.t: _PyObject), .exhausted: $&Int32) -> (
-    .handle : RawPointer#(.t: _PyObject)
+_next(.context: UIntNative, .object: RawPointer<.t: _PyObject>, .exhausted: $&Int32) -> (
+    .handle : RawPointer<.t: _PyObject>
 ): CFunction(.symbol = "_argi_python_next")
 
-set_attribute(.self: &Object, .name: StringView, .value: &Object) -> (
-    .result : Errable#(Void, (..python_error))
-) := {
+set_attribute := (.self: &Object, .name: StringView, .value: &Object) -> (
+    .result: Errable<Void, (..python_error)>
+) {
     assume ffi := self&._python&._ffi
 
     if [
@@ -36,18 +36,18 @@ set_attribute(.self: &Object, .name: StringView, .value: &Object) -> (
     result = ..ok Void()
 }
 
-tuple(.self: &Python, .values: ArrayView#(.t: &Object) = _no_arguments()) -> (
-    .result : Errable#(Object, (..python_error))
-) := {
+tuple := (.self: &Python, .values: ArrayView<.t: &Object> = _no_arguments()) -> (
+    .result: Errable<Object, (..python_error)>
+) {
     result = positional_arguments(.self = self, .values = values)
 }
 
 -- Python's next protocol is fallible. Exhaustion is a successful absent value,
 -- so this iterator deliberately uses an explicit next call instead of promising
 -- the core Iterator contract's infallible next/has_next protocol.
-PythonIterator: Type = (._object: Object)
+PythonIterator := (._object: Object)
 
-iterate(.self: &Object) -> (.result: Errable#(PythonIterator, (..python_error))) := {
+iterate := (.self: &Object) -> (.result: Errable<PythonIterator, (..python_error)>) {
     assume ffi := self&._python&._ffi
     object ::= _owned(
         .self   = self&._python
@@ -57,7 +57,7 @@ iterate(.self: &Object) -> (.result: Errable#(PythonIterator, (..python_error)))
     result = ..ok(._object = ~object)
 }
 
-next(.self: $&PythonIterator) -> (.result: Errable#(?Object, (..python_error))) := {
+next := (.self: $&PythonIterator) -> (.result: Errable<?Object, (..python_error)>) {
     assume ffi := self&._object._python&._ffi
     exhausted :: Int32 = 0
     handle ::= _next(

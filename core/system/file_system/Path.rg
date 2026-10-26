@@ -5,15 +5,15 @@
 -- the compilation target; joining uses '/' on both supported platform families.
 -- This type does not canonicalize paths or query the filesystem.
 --
-Path: Type = (
+Path := (
     .text : String
 )
 
-path_is_separator(.byte: UInt8) -> (.ok: Bool) := {
+path_is_separator := (.byte: UInt8) -> (.ok: Bool) {
     ok = _platform_path_is_separator(.byte = byte).ok
 }
 
-path_last_separator_index(.view: &StringView) -> (.value: ?UIntNative) := {
+path_last_separator_index := (.view: &StringView) -> (.value: ?UIntNative) {
     if view&._length == 0 {
         value = ..none
         return
@@ -34,13 +34,13 @@ path_last_separator_index(.view: &StringView) -> (.value: ?UIntNative) := {
     value = ..none
 }
 
-string_view_slice(.view: &StringView, .start: UIntNative, .length: UIntNative) -> (
+string_view_slice := (.view: &StringView, .start: UIntNative, .length: UIntNative) -> (
     .out : StringView
-) := {
+) {
     out = _string_view_subrange(view&, .start = start, .count = length).view
 }
 
-implement Init#(Path, (.text: String)) (
+implement Init<Path, (.text: String)> (
     .Result : Type = Path
     .init   = (.args: (.text: String)) -> (.result: Result) {
         text ::= ~args.text
@@ -49,9 +49,9 @@ implement Init#(Path, (.text: String)) (
     }
 )
 
-path_with_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
+path_with_view := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .view: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(Path, (..out_of_memory))) := {
+) -> (.result: Errable<Path, (..out_of_memory)>) {
     assume allocator
 
     text ::= string_with_capacity(.allocator = allocator, .capacity = view._length)!
@@ -60,16 +60,16 @@ path_with_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok(.text = ~text)
 }
 
-implement Deinit#(Path) (
+implement Deinit<Path> (
     .deinit = (.self: $&Path) -> () {
         deinit(.self = $&self&.text)
     }
 )
 
-implement#(.Provider: Type: Allocator) FalliblyCopyable#(Path, Provider) (
+implement<.Provider: Type: Allocator> FalliblyCopyable<Path, Provider> (
     .reasons : Type = (..out_of_memory)
     .copy    = (.self: &Path, .allocator: $&Provider) -> (
-        .result : Errable#(Path, (..out_of_memory))
+        .result: Errable<Path, (..out_of_memory)>
     ) {
         assume allocator
 
@@ -80,18 +80,18 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(Path, Provider) (
 
 )
 
-implement Viewable#(&Path) (
+implement Viewable<&Path> (
     .Result    : Type = StringView
     .make_view = (.self: &Path) -> (.view: StringView) {
-        view = Viewable#(&String).make_view(.self = &self&.text)
+        view = Viewable<&String>.make_view(.self = &self&.text)
     }
 )
 
-as_c_string(.self: &Path) -> (.text: &CChar) := {
+as_c_string := (.self: &Path) -> (.text: &CChar) {
     text = as_c_string(&self&.text)
 }
 
-is_absolute(.self: &Path) -> (.ok: Bool) := {
+is_absolute := (.self: &Path) -> (.ok: Bool) {
     view ::= view(self)
 
     if view._length == 0 {
@@ -102,7 +102,7 @@ is_absolute(.self: &Path) -> (.ok: Bool) := {
     ok = _platform_path_root_length(.view = &view).length > 0
 }
 
-file_name(.self: &Path) -> (.value: ?StringView) := {
+file_name := (.self: &Path) -> (.value: ?StringView) {
     view ::= view(self)
 
     if view._length == 0 {
@@ -136,7 +136,7 @@ file_name(.self: &Path) -> (.value: ?StringView) := {
     }
 }
 
-parent(.self: &Path) -> (.value: ?StringView) := {
+parent := (.self: &Path) -> (.value: ?StringView) {
     view ::= view(self)
     sep_index ::= path_last_separator_index(.view = &view).value
 
@@ -159,7 +159,7 @@ parent(.self: &Path) -> (.value: ?StringView) := {
     }
 }
 
-extension(.self: &Path) -> (.value: ?StringView) := {
+extension := (.self: &Path) -> (.value: ?StringView) {
     name ::= file_name(self).value
 
     match name {
@@ -196,9 +196,9 @@ extension(.self: &Path) -> (.value: ?StringView) := {
     }
 }
 
-join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
+join_views := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .left: &StringView, .right: &StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(Path, (..out_of_memory))) := {
+) -> (.result: Errable<Path, (..out_of_memory)>) {
     assume allocator
 
     native :: UIntNative = 0
@@ -238,7 +238,7 @@ join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
     match created {
         ..ok ~created_text {
             text ::= ~created_text
-            left_bytes ::= _trusted_array_view#(.t: UInt8)(
+            left_bytes ::= _trusted_array_view<.t: UInt8>(
                 .data = left&._data, .length = left&._length
             )
             _string_append_bytes($&text, .source = left_bytes)
@@ -254,7 +254,7 @@ join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 }
             }
 
-            right_bytes ::= _trusted_array_view#(.t: UInt8)(
+            right_bytes ::= _trusted_array_view<.t: UInt8>(
                 .data = right&._data, .length = right&._length
             )
             _string_append_bytes($&text, .source = right_bytes)
@@ -267,9 +267,9 @@ join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 }
 
-join#(.AllocatorType: Type: Allocator#(AllocatorType))(
+join := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .left: &Path, .right: &Path, .allocator: $&AllocatorType
-) -> (.result: Errable#(Path, (..out_of_memory))) := {
+) -> (.result: Errable<Path, (..out_of_memory)>) {
     assume allocator
 
     left_view ::= view(left)
@@ -278,13 +278,13 @@ join#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)
 }
 
-implement Equal#(Path, Path, (.left: &Path, .right: &Path)) (
+implement Equal<Path, Path, (.left: &Path, .right: &Path)> (
     .equal = (.args: (.left: &Path, .right: &Path)) -> (.ok: Bool) {
         ok = path_equals(.left = args.left, .right = args.right).ok
     }
 )
 
-path_equals(.left: &Path, .right: &Path) -> (.ok: Bool) := {
+path_equals := (.left: &Path, .right: &Path) -> (.ok: Bool) {
     left_view ::= view(left)
     right_view ::= view(right)
     ok = left_view == right_view

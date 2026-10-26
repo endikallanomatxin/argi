@@ -1,4 +1,4 @@
-_string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringView) -> () := {
+_string_copy_view_into := (.output: $&String, .offset: UIntNative, .source: StringView) -> () {
     index :: UIntNative = 0
 
     while index < source._length {
@@ -11,9 +11,9 @@ _string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringVi
     }
 }
 
-join#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .parts: ArrayView#(.t: StringView), .separator: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow))) := {
+join := <.AllocatorType: Type: Allocator<AllocatorType>> (
+    .parts: ArrayView<.t: StringView>, .separator: StringView, .allocator: $&AllocatorType
+) -> (.result: Errable<String, (..out_of_memory, ..size_overflow)>) {
     limit ::= _string_max_result_length().length
     count ::= length(&parts).count
     total :: UIntNative = 0

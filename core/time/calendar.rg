@@ -1,6 +1,6 @@
 -- Proleptic Gregorian UTC dates use years 1..9999 and seconds 0..59.
 -- Leap seconds and local timezone rules are outside this representation.
-UtcDateTime: Type = (
+UtcDateTime := (
     .year        : Int32,
     .month       : UInt32,
     .day         : UInt32,
@@ -10,13 +10,13 @@ UtcDateTime: Type = (
     .nanoseconds : UInt32  = 0
 )
 
-implement ImplicitlyCopyable#(UtcDateTime) ()
+implement ImplicitlyCopyable<UtcDateTime> ()
 
-is_leap_year(.year: Int32) -> (.ok: Bool) := {
+is_leap_year := (.year: Int32) -> (.ok: Bool) {
     ok = [year % 4 == 0 and [year % 100 != 0 or year % 400 == 0]]
 }
 
-days_in_month(.year: Int32, .month: UInt32) -> (.count: UInt32 = 0) := {
+days_in_month := (.year: Int32, .month: UInt32) -> (.count: UInt32 = 0) {
     if month < 1 or month > 12 { return }
     count = 31
 
@@ -27,7 +27,7 @@ days_in_month(.year: Int32, .month: UInt32) -> (.count: UInt32 = 0) := {
     }
 }
 
-valid_utc_date(.date: UtcDateTime) -> (.ok: Bool) := {
+valid_utc_date := (.date: UtcDateTime) -> (.ok: Bool) {
     ok = [
         date.year >= 1
         and date.year <= 9999
@@ -42,36 +42,39 @@ valid_utc_date(.date: UtcDateTime) -> (.ok: Bool) := {
     ]
 }
 
-unix_timestamp(.date: UtcDateTime) -> (.result: Errable#(UnixTimestamp, (..out_of_range))) := {
+unix_timestamp := (.date: UtcDateTime) -> (.result: Errable<UnixTimestamp, (..out_of_range)>) {
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..out_of_range)
         return
     }
 
-    previous ::= date.year | convert#(.to: Int64)(_) - 1
+    previous ::= date.year | convert<.to: Int64>(_) - 1
     days ::= previous * 365 + previous / 4 - previous / 100 + previous / 400 - 719162
     month :: UInt32 = 1
 
     while month < date.month {
         days = [
             days
-            + days_in_month(.year = date.year, .month = month).count | convert#(.to: Int64)(_)
+            + [
+                days_in_month(.year = date.year, .month = month).count
+                | convert<.to: Int64>(_)
+            ]
         ]
         month = [month + 1]
     }
 
-    days = days + date.day | convert#(.to: Int64)(_) - 1
+    days = days + date.day | convert<.to: Int64>(_) - 1
     seconds ::= [
         days * 86400
-        + date.hour | convert#(.to: Int64)(_) * 3600
-        + date.minute | convert#(.to: Int64)(_) * 60
-        + date.second | convert#(.to: Int64)(_)
+        + date.hour | convert<.to: Int64>(_) * 3600
+        + date.minute | convert<.to: Int64>(_) * 60
+        + date.second | convert<.to: Int64>(_)
     ]
 
     result = unix_timestamp_precise(.seconds = seconds, .nanoseconds = date.nanoseconds)
 }
 
-utc_date(.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of_range))) := {
+utc_date := (.timestamp: UnixTimestamp) -> (.result: Errable<UtcDateTime, (..out_of_range)>) {
     seconds ::= unix_seconds(&timestamp).value
 
     if seconds < -62135596800 or seconds > 253402300799 {
@@ -84,7 +87,7 @@ utc_date(.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of
     within ::= shifted % 86400
     cycles ::= days / 146097
     days = days % 146097
-    year ::= unwrap_or_abort(.value = [cycles * 400 + 1] | convert#(.to: Int32)(_))
+    year ::= unwrap_or_abort(.value = [cycles * 400 + 1] | convert<.to: Int32>(_))
 
     while true {
         year_days :: Int64 = 365
@@ -99,7 +102,7 @@ utc_date(.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of
     while true {
         month_days ::= [
             days_in_month(.year = year, .month = month).count
-            | convert#(.to: Int64)(_)
+            | convert<.to: Int64>(_)
         ]
         if days < month_days { break }
         days = days - month_days
@@ -109,20 +112,20 @@ utc_date(.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of
     result = ..ok(
         .year   = year
         .month  = month
-        .day    = unwrap_or_abort(.value = [days + 1] | convert#(.to: UInt32)(_))
-        .hour   = unwrap_or_abort(.value = [within / 3600] | convert#(.to: UInt32)(_))
+        .day    = unwrap_or_abort(.value = [days + 1] | convert<.to: UInt32>(_))
+        .hour   = unwrap_or_abort(.value = [within / 3600] | convert<.to: UInt32>(_))
         .minute = unwrap_or_abort(
-            .value = [[within % 3600] / 60] | convert#(.to: UInt32)(_)
+            .value = [[within % 3600] / 60] | convert<.to: UInt32>(_)
         )
-        .second      = unwrap_or_abort(.value = [within % 60] | convert#(.to: UInt32)(_))
+        .second      = unwrap_or_abort(.value = [within % 60] | convert<.to: UInt32>(_))
         .nanoseconds = nanoseconds(&timestamp).value
     )
 }
 
 -- Sunday is zero, matching conventional civil weekday numbering.
-weekday(.date: UtcDateTime) -> (.result: Errable#(UInt32, (..out_of_range))) := {
+weekday := (.date: UtcDateTime) -> (.result: Errable<UInt32, (..out_of_range)>) {
     timestamp ::= unix_timestamp(.date = date)!
     days ::= [unix_seconds(&timestamp).value + 62135596800] / 86400
 
-    result = ..ok unwrap_or_abort(.value = [[days + 1] % 7] | convert#(.to: UInt32)(_))
+    result = ..ok unwrap_or_abort(.value = [[days + 1] % 7] | convert<.to: UInt32>(_))
 }

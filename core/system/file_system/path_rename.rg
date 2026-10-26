@@ -1,10 +1,10 @@
 -- Path representation selects one operation identity; allocation is explicit.
-PathRenaming#(.PathValue: Type): Contract = (
+PathRenaming<.PathValue: Type>: Contract = (
     .Result : Type
     .rename : (.self: &FileSystem, .from: PathValue, .to: PathValue) -> (.result: Result)
 )
 
-AllocatingPathRenaming#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+AllocatingPathRenaming<.PathValue: Type, .Provider: Type: Allocator<Provider>>: Contract = (
     .Result : Type
     .rename : (
         .self      : &FileSystem,
@@ -15,7 +15,7 @@ AllocatingPathRenaming#(.PathValue: Type, .Provider: Type: Allocator#(Provider))
 )
 
 _path_rename_c := (.self: &FileSystem, .from: &CChar, .to: &CChar) -> (
-    .result : Errable#(Bool, (..path_rename_failed))
+    .result: Errable<Bool, (..path_rename_failed)>
 ) {
     assume ffi := self&._ffi
 
@@ -28,7 +28,7 @@ _path_rename_c := (.self: &FileSystem, .from: &CChar, .to: &CChar) -> (
 }
 
 _path_rename_string := (.self: &FileSystem, .from: &String, .to: &String) -> (
-    .result : Errable#(Bool, (..path_rename_failed))
+    .result: Errable<Bool, (..path_rename_failed)>
 ) {
     assume ffi := self&._ffi
     c_from ::= as_c_string(from)
@@ -37,9 +37,9 @@ _path_rename_string := (.self: &FileSystem, .from: &String, .to: &String) -> (
     result = rename(.self = self, .from = c_from, .to = c_to)
 }
 
-_path_rename_view#(.Provider: Type: Allocator#(Provider)) := (
+_path_rename_view := <.Provider: Type: Allocator<Provider>> (
     .self: &FileSystem, .from: StringView, .to: StringView, .allocator: $&Provider
-) -> (.result: Errable#(Bool, (..path_rename_failed, ..out_of_memory))) {
+) -> (.result: Errable<Bool, (..path_rename_failed, ..out_of_memory)>) {
     assume ffi := self&._ffi
     assume allocator
 
@@ -63,29 +63,29 @@ _path_rename_view#(.Provider: Type: Allocator#(Provider)) := (
 }
 
 _path_rename_owned := (.self: &FileSystem, .from: &Path, .to: &Path) -> (
-    .result : Errable#(Bool, (..path_rename_failed))
+    .result: Errable<Bool, (..path_rename_failed)>
 ) {
     assume ffi := self&._ffi
 
     result = rename(.self = self, .from = &from&.text, .to = &to&.text)
 }
 
-implement PathRenaming#(&CChar) (
-    .Result : Type = Errable#(Bool, (..path_rename_failed))
+implement PathRenaming<&CChar> (
+    .Result : Type = Errable<Bool, (..path_rename_failed)>
     .rename = _path_rename_c
 )
 
-implement PathRenaming#(&String) (
-    .Result : Type = Errable#(Bool, (..path_rename_failed))
+implement PathRenaming<&String> (
+    .Result : Type = Errable<Bool, (..path_rename_failed)>
     .rename = _path_rename_string
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) AllocatingPathRenaming#(StringView, Provider) (
-    .Result : Type = Errable#(Bool, (..path_rename_failed, ..out_of_memory))
+implement<.Provider: Type: Allocator<Provider>> AllocatingPathRenaming<StringView, Provider> (
+    .Result : Type = Errable<Bool, (..path_rename_failed, ..out_of_memory)>
     .rename = _path_rename_view
 )
 
-implement PathRenaming#(&Path) (
-    .Result : Type = Errable#(Bool, (..path_rename_failed))
+implement PathRenaming<&Path> (
+    .Result : Type = Errable<Bool, (..path_rename_failed)>
     .rename = _path_rename_owned
 )

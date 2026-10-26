@@ -1,22 +1,22 @@
 ..invalid_base64
 
-_alphabet() -> (.text: StringView) := {
+_alphabet := () -> (.text: StringView) {
     text = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 }
 
-_value(.byte: UInt8) -> (.value: UInt32 = 255) := {
+_value := (.byte: UInt8) -> (.value: UInt32 = 255) {
     if byte >= 65 and byte <= 90 {
-        value = [byte - 65] | convert#(.to: UInt32)(_)
+        value = [byte - 65] | convert<.to: UInt32>(_)
         return
     }
 
     if byte >= 97 and byte <= 122 {
-        value = [byte - 97] | convert#(.to: UInt32)(_) + 26
+        value = [byte - 97] | convert<.to: UInt32>(_) + 26
         return
     }
 
     if byte >= 48 and byte <= 57 {
-        value = [byte - 48] | convert#(.to: UInt32)(_) + 52
+        value = [byte - 48] | convert<.to: UInt32>(_) + 52
         return
     }
 
@@ -25,9 +25,9 @@ _value(.byte: UInt8) -> (.value: UInt32 = 255) := {
 }
 
 -- RFC 4648 standard alphabet with required padding; no inserted whitespace.
-encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .bytes: ArrayView#(.t: UInt8), .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(String, (..out_of_memory, ..out_of_range))) := {
+encode := <.AllocatorType: Type: Allocator<AllocatorType>> (
+    .bytes: ArrayView<.t: UInt8>, .allocator: $&AllocatorType = reach allocator
+) -> (.result: Errable<String, (..out_of_memory, ..out_of_range)>) {
     assume allocator
     alphabet ::= _alphabet().text
     count ::= length(&bytes).count
@@ -42,7 +42,7 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
     while index < count {
         a ::= [
             unwrap_or_abort(.value = get(.self = &bytes, .index = index))
-            | convert#(.to: UInt32)(_)
+            | convert<.to: UInt32>(_)
         ]
         b :: UInt32 = 0
         c :: UInt32 = 0
@@ -51,7 +51,7 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 [
                     unwrap_or_abort(.value = get(.self = &bytes, .index = [index + 1]))
                 ]
-                | convert#(.to: UInt32)(_)
+                | convert<.to: UInt32>(_)
             ]
         }
         if count - index > 2 {
@@ -59,7 +59,7 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 [
                     unwrap_or_abort(.value = get(.self = &bytes, .index = [index + 2]))
                 ]
-                | convert#(.to: UInt32)(_)
+                | convert<.to: UInt32>(_)
             ]
         }
         _ ::= unwrap_or_abort(
@@ -68,7 +68,7 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 .index = output
                 .byte  = unwrap_or_abort(
                     .value = bytes_get(
-                        .view = &alphabet, .index = [[a / 4] | convert#(.to: UIntNative)(_)]
+                        .view = &alphabet, .index = [[a / 4] | convert<.to: UIntNative>(_)]
                     )
                 )
             )
@@ -80,7 +80,7 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 .byte  = unwrap_or_abort(
                     .value = bytes_get(
                         .view  = &alphabet
-                        .index = [[a % 4] * 16 + b / 16] | convert#(.to: UIntNative)(_)
+                        .index = [[a % 4] * 16 + b / 16] | convert<.to: UIntNative>(_)
                     )
                 )
             )
@@ -91,14 +91,14 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             third = unwrap_or_abort(
                 .value = bytes_get(
                     .view  = &alphabet
-                    .index = [[b % 16] * 4 + c / 64] | convert#(.to: UIntNative)(_)
+                    .index = [[b % 16] * 4 + c / 64] | convert<.to: UIntNative>(_)
                 )
             )
         }
         if count - index > 2 {
             fourth = unwrap_or_abort(
                 .value = bytes_get(
-                    .view = &alphabet, .index = [[c % 64] | convert#(.to: UIntNative)(_)]
+                    .view = &alphabet, .index = [[c % 64] | convert<.to: UIntNative>(_)]
                 )
             )
         }
@@ -119,9 +119,9 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
 -- Reject misplaced padding, whitespace and nonzero unused trailing bits.
 -- Validation precedes allocation, so malformed input publishes no prefix.
-decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
+decode := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .text: StringView, .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(DynamicArray#(.t: UInt8), (..invalid_base64, ..out_of_memory))) := {
+) -> (.result: Errable<DynamicArray<.t: UInt8>, (..invalid_base64, ..out_of_memory)>) {
     assume allocator
 
     if byte_length(&text).count % 4 != 0 {
@@ -180,7 +180,7 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
         }
     }
 
-    bytes ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = count - padding)!
+    bytes ::= DynamicArray<.t: UInt8>(.allocator = allocator, .capacity = count - padding)!
     index = 0
 
     while index < byte_length(&text).count {
@@ -198,20 +198,20 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
         ).value
         push_assume_capacity(
             .self  = $&bytes
-            .value = unwrap_or_abort(.value = [a * 4 + b / 16] | convert#(.to: UInt8)(_))
+            .value = unwrap_or_abort(.value = [a * 4 + b / 16] | convert<.to: UInt8>(_))
         )
         if c != 255 {
             push_assume_capacity(
                 .self  = $&bytes
                 .value = unwrap_or_abort(
-                    .value = [[[b % 16] * 16 + c / 4] | convert#(.to: UInt8)(_)]
+                    .value = [[[b % 16] * 16 + c / 4] | convert<.to: UInt8>(_)]
                 )
             )
         }
         if d != 255 {
             push_assume_capacity(
                 .self  = $&bytes
-                .value = unwrap_or_abort(.value = [[c % 4] * 64 + d] | convert#(.to: UInt8)(_))
+                .value = unwrap_or_abort(.value = [[c % 4] * 64 + d] | convert<.to: UInt8>(_))
             )
         }
         index = index + 4

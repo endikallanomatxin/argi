@@ -1,14 +1,14 @@
 -- Hash implementations consume blocks; keys choose their canonical byte stream.
-Hasher#(.State: Type): Contract = (
-    .write_bytes : (.self: $&State, .bytes: ArrayView#(UInt8)) -> ()
+Hasher<.State: Type>: Contract = (
+    .write_bytes : (.self: $&State, .bytes: ArrayView<UInt8>) -> ()
     .finish      : (.self: &State) -> (.hash: UIntNative)
 )
 
 -- FNV-1a-64, with explicit offset basis. This is a non-cryptographic hash.
 -- https://www.ietf.org/archive/id/draft-eastlake-fnv-25.html
-StandardHasher: Type = (._state: UInt64)
+StandardHasher := (._state: UInt64)
 
-implement Init#(StandardHasher, (.seed: UInt64 = 14695981039346656037)) (
+implement Init<StandardHasher, (.seed: UInt64 = 14695981039346656037)> (
     .Result : Type = StandardHasher
     .init   = (.args: (.seed: UInt64 = 14695981039346656037)) -> (.result: Result) {
         result = (._state = args.seed)
@@ -18,7 +18,7 @@ implement Init#(StandardHasher, (.seed: UInt64 = 14695981039346656037)) (
 -- Both operands fit the requested low-bit window. Arithmetic XOR avoids
 -- introducing a hashing-specific compiler primitive.
 -- TODO: Use ordinary bitwise XOR once the language provides it.
-_hash_xor_window(.left: UInt64, .right: UInt64) -> (.result: UInt64) := {
+_hash_xor_window := (.left: UInt64, .right: UInt64) -> (.result: UInt64) {
     a ::= left
     b ::= right
     place :: UInt64 = 1
@@ -32,9 +32,9 @@ _hash_xor_window(.left: UInt64, .right: UInt64) -> (.result: UInt64) := {
     result = left + right - overlap * 2
 }
 
-_hash_fnv_byte(.state: UInt64, .byte: UInt8) -> (.result: UInt64) := {
+_hash_fnv_byte := (.state: UInt64, .byte: UInt8) -> (.result: UInt64) {
     low_byte ::= state % 256
-    digit ::= byte | convert#(.to: UInt64)(_)
+    digit ::= byte | convert<.to: UInt64>(_)
     mixed ::= state - low_byte + _hash_xor_window(.left = low_byte, .right = digit).result
     low ::= mixed % 4294967296
     high ::= mixed / 4294967296
@@ -44,8 +44,8 @@ _hash_fnv_byte(.state: UInt64, .byte: UInt8) -> (.result: UInt64) := {
     result = [high_product % 4294967296] * 4294967296 + low_product % 4294967296
 }
 
-implement Hasher#(StandardHasher) (
-    .write_bytes = (.self: $&StandardHasher, .bytes: ArrayView#(UInt8)) -> () {
+implement Hasher<StandardHasher> (
+    .write_bytes = (.self: $&StandardHasher, .bytes: ArrayView<UInt8>) -> () {
         index :: UIntNative = 0
         while index < length(&bytes) {
             byte ::= unwrap_or_abort(.value = get_reference(&bytes, .index = index))
@@ -55,7 +55,7 @@ implement Hasher#(StandardHasher) (
     }
     .finish = (.self: &StandardHasher) -> (.hash: UIntNative) {
         #if target_pointer_bits(64) {
-            hash = self&._state | convert#(.to: UIntNative)(_)
+            hash = self&._state | convert<.to: UIntNative>(_)
         } #else {
             -- Fold into the native width rather than discard the upper bits.
             radix :: UInt64 = 1
@@ -71,7 +71,7 @@ implement Hasher#(StandardHasher) (
                 folded = _hash_xor_window(.left = folded, .right = remaining % radix).result
                 remaining = remaining / radix
             }
-            hash = unwrap_or_abort(.value = [folded | convert#(.to: UIntNative)(_)])
+            hash = unwrap_or_abort(.value = [folded | convert<.to: UIntNative>(_)])
         }
     }
 )

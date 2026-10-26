@@ -332,13 +332,13 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedIdentifier;
             },
             .comparison_operator => {
-                try self.diags.add(self.tokenLocation(), .syntax, "comparison operator declarations are unsupported; use implement Equal#(Left, Right, Args)", .{});
+                try self.diags.add(self.tokenLocation(), .syntax, "comparison operator declarations are unsupported; use implement Equal<Left, Right, Args>", .{});
                 return SyntaxerError.ExpectedIdentifier;
             },
             .binary_operator => |op| {
                 const name = switch (op) {
                     .addition => blk: {
-                        try self.diags.add(self.tokenLocation(), .syntax, "operator + declarations are unsupported; use implement Add#(Left, Right, Args)", .{});
+                        try self.diags.add(self.tokenLocation(), .syntax, "operator + declarations are unsupported; use implement Add<Left, Right, Args>", .{});
                         break :blk "";
                     },
                     else => blk: {
@@ -2473,7 +2473,7 @@ pub const Syntaxer = struct {
         }
 
         if (std.mem.eql(u8, name.text, "satisfies") and self.currentContent() == .identifier) {
-            try self.diags.add(id_loc, .syntax, "legacy conformance declarations are unsupported; use implement Contract#(participants) (...) instead", .{});
+            try self.diags.add(id_loc, .syntax, "legacy conformance declarations are unsupported; use implement Contract<participants> (...) instead", .{});
             return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
 
@@ -2555,7 +2555,7 @@ pub const Syntaxer = struct {
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
                 }
                 if (std.mem.eql(u8, kw, "implements") or std.mem.eql(u8, kw, "satisfies")) {
-                    try self.diags.add(id_loc, .syntax, "legacy conformance declarations are unsupported; use implement Contract#(participants) (...) instead", .{});
+                    try self.diags.add(id_loc, .syntax, "legacy conformance declarations are unsupported; use implement Contract<participants> (...) instead", .{});
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
                     try self.diags.add(id_loc, .syntax, "defaultsto is unsupported; choose a concrete representation explicitly", .{});
@@ -2578,7 +2578,7 @@ pub const Syntaxer = struct {
                 if (self.file.syntaxType(ty)) |syntax_type| if (syntax_type == .generic) {
                     const base = syntax_type.generic.base;
                     if (self.file.tag(base) == .type_name and std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(base))).identifier), "Contract")) {
-                        try self.diags.add(self.tokenLocation(), .syntax, "declare contract participants on the name: Name#(.Participant: Type): Contract", .{});
+                        try self.diags.add(self.tokenLocation(), .syntax, "declare contract participants on the name: Name<.Participant: Type>: Contract", .{});
                         return SyntaxerError.ExpectedIdentifier;
                     }
                 };

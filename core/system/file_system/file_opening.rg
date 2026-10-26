@@ -1,7 +1,7 @@
 -- Canonical file opening selects path representation and allocation evidence
 -- through Init Args. Borrowed terminated paths do not allocate temporary text.
 _open_c_file := (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode) -> (
-    .result : Errable#(File, (..path_open_failed))
+    .result: Errable<File, (..path_open_failed)>
 ) {
     assume ffi := file_system&._ffi
     file ::= File(.stream_address = 0, .should_close = false)
@@ -13,8 +13,8 @@ _open_c_file := (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode) 
     result = ..error(.reason = ..path_open_failed)
 }
 
-implement Init#(File, (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read)) (
-    .Result : Type = Errable#(File, (..path_open_failed))
+implement Init<File, (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read)> (
+    .Result : Type = Errable<File, (..path_open_failed)>
     .init   = (.args: (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read)) -> (
         .result : Result
     ) {
@@ -24,8 +24,8 @@ implement Init#(File, (.file_system: &FileSystem, .path: &CChar, .mode: FileOpen
     }
 )
 
-implement Init#(File, (.file_system: &FileSystem, .path: &String, .mode: FileOpenMode = ..read)) (
-    .Result : Type = Errable#(File, (..path_open_failed))
+implement Init<File, (.file_system: &FileSystem, .path: &String, .mode: FileOpenMode = ..read)> (
+    .Result : Type = Errable<File, (..path_open_failed)>
     .init   = (.args: (.file_system: &FileSystem, .path: &String, .mode: FileOpenMode = ..read)) -> (
         .result : Result
     ) {
@@ -35,8 +35,8 @@ implement Init#(File, (.file_system: &FileSystem, .path: &String, .mode: FileOpe
     }
 )
 
-implement Init#(File, (.file_system: &FileSystem, .path: &Path, .mode: FileOpenMode = ..read)) (
-    .Result : Type = Errable#(File, (..path_open_failed))
+implement Init<File, (.file_system: &FileSystem, .path: &Path, .mode: FileOpenMode = ..read)> (
+    .Result : Type = Errable<File, (..path_open_failed)>
     .init   = (.args: (.file_system: &FileSystem, .path: &Path, .mode: FileOpenMode = ..read)) -> (
         .result : Result
     ) {
@@ -48,7 +48,7 @@ implement Init#(File, (.file_system: &FileSystem, .path: &Path, .mode: FileOpenM
     }
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) Init#(
+implement<.Provider: Type: Allocator<Provider>> Init<
     File,
     (
         .file_system : &FileSystem,
@@ -56,8 +56,8 @@ implement#(.Provider: Type: Allocator#(Provider)) Init#(
         .mode        : FileOpenMode = ..read,
         .allocator   : $&Provider   = reach allocator
     )
-) (
-    .Result : Type = Errable#(File, (..path_open_failed, ..out_of_memory))
+> (
+    .Result : Type = Errable<File, (..path_open_failed, ..out_of_memory)>
     .init   = (
         .args : (
             .file_system : &FileSystem,

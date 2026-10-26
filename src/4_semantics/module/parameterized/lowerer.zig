@@ -853,7 +853,7 @@ pub const Context = struct {
 
             // Register every parameter before lowering bounds. Bounds may refer
             // to associated parameters declared later in the same generic list,
-            // e.g. t: Type: FalliblyCopyable#(.reasons: element_reasons).
+            // e.g. t: Type: FalliblyCopyable<.reasons: element_reasons>.
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);

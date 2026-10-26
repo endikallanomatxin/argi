@@ -1,26 +1,26 @@
-_WalkFrame: Type = (.directory: Directory, .path: Path, .depth: UIntNative)
+_WalkFrame := (.directory: Directory, .path: Path, .depth: UIntNative)
 
-implement Deinit#(_WalkFrame) (
+implement Deinit<_WalkFrame> (
     .deinit = (.self: $&_WalkFrame) -> () {
         deinit(.self = $&self&.directory)
         deinit(.self = $&self&.path)
     }
 )
 
-WalkEntry: Type = (.path: Path, .info: FileMetadata, .depth: UIntNative)
+WalkEntry := (.path: Path, .info: FileMetadata, .depth: UIntNative)
 
 -- Depth-first traversal owns one open directory per active level. Entries
 -- own their paths. Native enumeration order is unspecified. Links/reparse
 -- points are reported as other and never deliberately descended into; path
 -- lookup races mean this is not a security boundary. Depth zero visits nothing.
-DirectoryWalker: Type = (
-    ._frames        : DynamicArray#(.t: _WalkFrame),
+DirectoryWalker := (
+    ._frames        : DynamicArray<.t: _WalkFrame>,
     ._filesystem    : &FileSystem,
     ._maximum_depth : UIntNative,
     ._ended         : Bool
 )
 
-implement#(.Provider: Type: Allocator) Init#(
+implement<.Provider: Type: Allocator> Init<
     DirectoryWalker,
     (
         .self          : &FileSystem = reach file_system,
@@ -28,8 +28,8 @@ implement#(.Provider: Type: Allocator) Init#(
         .maximum_depth : UIntNative  = 64,
         .allocator     : $&Provider  = reach allocator,
     )
-) (
-    .Result : Type = Errable#(DirectoryWalker, _FilesystemReasons)
+> (
+    .Result : Type = Errable<DirectoryWalker, _FilesystemReasons>
     .init   = (
         .args : (
             .self          : &FileSystem = reach file_system,
@@ -44,7 +44,7 @@ implement#(.Provider: Type: Allocator) Init#(
         allocator ::= args.allocator
 
         assume allocator
-        frames ::= DynamicArray#(.t: _WalkFrame)(.capacity = 1)!
+        frames ::= DynamicArray<.t: _WalkFrame>(.capacity = 1)!
 
         if maximum_depth > 0 {
             owned ::= path_with_view(.view = path)!
@@ -61,7 +61,7 @@ implement#(.Provider: Type: Allocator) Init#(
     }
 )
 
-implement Deinit#(DirectoryWalker) (
+implement Deinit<DirectoryWalker> (
     .deinit = (.self: $&DirectoryWalker) -> () {
         while length(&self&._frames).count > 0 {
             discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames))
@@ -72,9 +72,9 @@ implement Deinit#(DirectoryWalker) (
 )
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
-_next_directory_walker#(.Provider: Type: Allocator#(Provider)) := (
+_next_directory_walker := <.Provider: Type: Allocator<Provider>> (
     .self: $&DirectoryWalker, .allocator: $&Provider = reach allocator
-) -> (.result: Errable#(?WalkEntry, _FilesystemReasons)) {
+) -> (.result: Errable<?WalkEntry, _FilesystemReasons>) {
     assume allocator
 
     if self&._ended {

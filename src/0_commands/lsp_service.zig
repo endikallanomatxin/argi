@@ -928,7 +928,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
         .structural_choice => |shape| try writeVariants(writer, graph, shape.variants),
         .generic => |generic| {
             try writer.writeAll(graph.familyDefinitionName(generic.base));
-            try writer.writeAll("#(");
+            try writer.writeAll("<");
             for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, index| {
                 if (index != 0) try writer.writeAll(", ");
                 try writer.print(".{s} {s} ", .{ graph.text(argument.name), if (argument.value == .comptime_int) "=" else ":" });
@@ -938,12 +938,12 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
                     .definition => |value| try writer.writeAll(graph.familyDefinitionName(value.origin)),
                 }
             }
-            try writer.writeAll(")");
+            try writer.writeAll(">");
         },
         .virtual => |contract_type| {
-            try writer.writeAll("Virtual#(.contract: ");
+            try writer.writeAll("Virtual<.contract: ");
             try writeType(writer, graph, contract_type);
-            try writer.writeAll(")");
+            try writer.writeAll(">");
         },
     }
 }
@@ -986,6 +986,7 @@ fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, 
         }
         if (tree.contractDeclaration(node)) |ty| try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
         if (tree.symbolDeclaration(node)) |binding| {
+            if (tree.functionDeclaration(node) != null or tree.typeDeclaration(node) != null) continue;
             const readonly = if (binding.mutability == .constant) @as(u32, 1) << MOD_INDEX.readonly else 0;
             try markSyntax(tree, classes, binding.name_token, TOKEN_INDEX.variable, declaration | readonly);
         }
@@ -1022,7 +1023,11 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
     const graph = &analysis.graph;
     var parameters: std.AutoHashMap(graph_mod.GlobalBindingId, void) = .init(allocator);
     var parameter_fields: std.AutoHashMap(graph_mod.GlobalFieldId, void) = .init(allocator);
+    // Operation signatures may reuse requirement fields. Their body parameters
+    // retain their own bindings in the signature's binding-reference ranges.
     for (graph.functions.items) |function| {
+        for ([_]graph_mod.BindingRange{ function.input_bindings, function.output_bindings }) |range|
+            for (graph.binding_refs.items[range.start..][0..range.len]) |binding| try parameters.put(binding, {});
         for ([_]graph_mod.FieldRange{ function.input, function.output }) |range|
             for (0..range.len) |index| try parameter_fields.put(@enumFromInt(range.start + @as(u32, @intCast(index))), {});
     }

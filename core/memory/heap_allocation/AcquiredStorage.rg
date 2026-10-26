@@ -1,7 +1,7 @@
 -- A successful acquisition certifies bytes, not initialized values or a
 -- temporal owner. Moving the receipt transfers its authorization; establishment
 -- consumes it before references to the acquired bytes can escape.
-AcquiredStorage: Type = (
+AcquiredStorage := (
     ._address   : UIntNative
     ._size      : UIntNative
     ._alignment : UIntNative
@@ -10,34 +10,34 @@ AcquiredStorage: Type = (
 -- The receipt owns establishment authority, not physical cleanup. Dropping it
 -- requires explicit move semantics and does not release the acquired bytes;
 -- the low-level caller must establish an owner or arrange trusted cleanup.
-implement Deinit#(AcquiredStorage) (
+implement Deinit<AcquiredStorage> (
     .deinit = (.self: $&AcquiredStorage) -> () {
     }
 )
 
 -- This attaches acquired bytes to an existing temporal domain. The caller
 -- arranges physical cleanup with that domain; no initialized T is created.
-establish_inherited_storage(.storage: AcquiredStorage, .root: &Any) -> (
-    .raw : RawPointer#(.t: UInt8)
-) := {
+establish_inherited_storage := (.storage: AcquiredStorage, .root: &Any) -> (
+    .raw : RawPointer<.t: UInt8>
+) {
     raw = trusted_establish_inherited_storage(.address = storage._address, .root = root).raw
 }
 
-acquired_storage_address(.storage: &AcquiredStorage) -> (.address: UIntNative) := {
+acquired_storage_address := (.storage: &AcquiredStorage) -> (.address: UIntNative) {
     address = storage&._address
 }
 
-acquired_storage_size(.storage: &AcquiredStorage) -> (.size: UIntNative) := {
+acquired_storage_size := (.storage: &AcquiredStorage) -> (.size: UIntNative) {
     size = storage&._size
 }
 
-acquired_storage_alignment(.storage: &AcquiredStorage) -> (.alignment: UIntNative) := {
+acquired_storage_alignment := (.storage: &AcquiredStorage) -> (.alignment: UIntNative) {
     alignment = storage&._alignment
 }
 
-acquire_heap_storage(
+acquire_heap_storage := (
     .size: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface
-) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) := {
+) -> (.result: Errable<AcquiredStorage, (..out_of_memory)>) {
     _require_allocation_alignment(.alignment = alignment)
     physical_alignment ::= alignment
     pointer_alignment ::= alignment_of(.type = UIntNative)
@@ -71,9 +71,9 @@ acquire_heap_storage(
     result = ..ok(._address = address, ._size = size, ._alignment = alignment)
 }
 
-acquire_page_storage(.memory: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
-    .result : Errable#(AcquiredStorage, (..out_of_memory))
-) := {
+acquire_page_storage := (.memory: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
+    .result: Errable<AcquiredStorage, (..out_of_memory)>
+) {
     assume ffi := memory&._ffi
     acquired ::= _memory_map_aligned(
         .size = size, .alignment = alignment, .page_size = memory&._page_size

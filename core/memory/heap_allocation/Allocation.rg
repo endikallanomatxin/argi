@@ -5,9 +5,9 @@ allocation_static_anchor :: UInt8 = 0
 
 -- Logical extent retained by typed allocation requests. This describes slots,
 -- never their occupancy, initialization or cleanup obligations.
-_AllocationSlotExtent: Type = (.element_size: UIntNative, .count: UIntNative)
+_AllocationSlotExtent := (.element_size: UIntNative, .count: UIntNative)
 
-Allocation: Type = (
+Allocation := (
     --
     -- Contiguous allocated storage together with the deallocator required for
     -- its physical cleanup.
@@ -22,12 +22,12 @@ Allocation: Type = (
     -- `Allocation` is move-only. A higher-level owner may provide its own
     -- explicit `copy()` that acquires independent storage.
     --
-    .data      : RawPointer#(.t: UInt8)
+    .data      : RawPointer<.t: UInt8>
     .size      : UIntNative
     .alignment : UIntNative
     -- The heap uses a static marker; arena children point at ArenaDomain.
     .anchor      : &Any
-    .deallocator : Virtual#(.contract: Deallocator)
+    .deallocator : Virtual<.contract: Deallocator>
     -- Allocator-authenticated bounds. Public receipt fields can restrict a
     -- request, but cannot enlarge this region or change the address, size,
     -- or alignment passed to physical cleanup.
@@ -46,22 +46,20 @@ Allocation: Type = (
 -- The allocator certifies acquisition and containment; these scalar arguments
 -- are not themselves evidence that storage was acquired. Private bounds keep
 -- that assertion intact when the receipt crosses ordinary caller code.
-trusted_establish_allocation(
+trusted_establish_allocation := (
     .storage     : UIntNative,
     .size        : UIntNative,
     .alignment   : UIntNative,
-    .deallocator : Virtual#(.contract: Deallocator),
-    .anchor      : &Any        = erase_reference#(.t: UInt8)(
-        .base = &allocation_static_anchor
-    ).reference,
-) -> (.allocation: Allocation) := {
+    .deallocator : Virtual<.contract: Deallocator>,
+    .anchor      : &Any        = erase_reference<.t: UInt8>(.base = &allocation_static_anchor).reference,
+) -> (.allocation: Allocation) {
     _require_allocation_alignment(.alignment = alignment)
 
     if storage == 0 and size != 0 { abort }
     if storage % alignment != 0 { abort }
     if storage + size < storage { abort }
     allocation = (
-        .data               = raw_pointer#(.t: UInt8)(.address = storage).raw
+        .data               = raw_pointer<.t: UInt8>(.address = storage).raw
         .size               = size
         .alignment          = alignment
         .anchor             = anchor
@@ -77,15 +75,13 @@ trusted_establish_allocation(
 -- Normal establishment requires an acquisition receipt. Its private bounds
 -- remain authoritative while forwarding moves the receipt. Establishment
 -- consumes that receipt through the ordinary move rules.
-establish_allocation(
+establish_allocation := (
     .storage     : AcquiredStorage,
     .size        : UIntNative,
     .alignment   : UIntNative,
-    .deallocator : Virtual#(.contract: Deallocator),
-    .anchor      : &Any             = erase_reference#(.t: UInt8)(
-        .base = &allocation_static_anchor
-    ).reference,
-) -> (.allocation: Allocation) := {
+    .deallocator : Virtual<.contract: Deallocator>,
+    .anchor      : &Any             = erase_reference<.t: UInt8>(.base = &allocation_static_anchor).reference,
+) -> (.allocation: Allocation) {
     _require_allocation_alignment(.alignment = alignment)
 
     if size > storage._size { abort }
@@ -101,13 +97,12 @@ establish_allocation(
     allocation._storage_alignment = storage._alignment
 }
 
-implement Deinit#(Allocation) (
+implement Deinit<Allocation> (
     .deinit = (.self: $&Allocation) -> () {
         -- Cleanup may touch backing metadata; an ended region cannot be released.
         live ::= self&.anchor&
-        data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
-        Deallocator#(
-        ).deallocate(
+        data ::= raw_pointer<.t: UInt8>(.address = self&._storage_address).raw
+        Deallocator<>.deallocate(
             $&self&.deallocator
             .data      = data
             .size      = self&._release_size
@@ -118,13 +113,13 @@ implement Deinit#(Allocation) (
 
 -- Shared across element types. Forward failures intact instead of capturing
 -- another tracer context while attaching metadata to successful receipts.
-_typed_allocation_result(
-    .allocated    : Errable#(Allocation, (..out_of_memory)),
+_typed_allocation_result := (
+    .allocated: Errable<Allocation, (..out_of_memory)>,
     .element_size : UIntNative,
     .count        : UIntNative,
     .prefix       : UIntNative,
     .payload_size : UIntNative
-) -> (.result: Errable#(Allocation, (..out_of_memory))) := {
+) -> (.result: Errable<Allocation, (..out_of_memory)>) {
     match allocated {
         ..ok ~payload {
             allocation ::= ~payload

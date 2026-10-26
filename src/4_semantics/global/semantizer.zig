@@ -2782,7 +2782,7 @@ fn diagnoseContractRuntimeBindings(
         try diagnostics.add(
             diagnosticLocation(graph, diagnostics, binding.source),
             .semantic,
-            "contract '{s}' has no runtime representation; use a concrete type or Virtual#(.contract: {s})",
+            "contract '{s}' has no runtime representation; use a concrete type or Virtual<.contract: {s}>",
             .{ name, name },
         );
         return true;
@@ -3431,7 +3431,7 @@ fn diagnoseUnresolvedCall(
             }
 
             if (reference.module_path == null and reference.generic_arguments == null and reference.computed_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
-                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the contract parameter of 'to_virtual'; provide a Virtual result type or '#(.contract: ContractName)'", .{});
+                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the contract parameter of 'to_virtual'; provide a Virtual result type or '<.contract: ContractName>'", .{});
                 return true;
             }
 
@@ -3967,7 +3967,7 @@ pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_
                 };
             }
             try buffer.appendSlice(base_name);
-            try buffer.appendSlice("#(");
+            try buffer.appendSlice("<");
             for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, index| {
                 if (index != 0) try buffer.appendSlice(", ");
                 const name = graph.text(argument.name);
@@ -3991,7 +3991,7 @@ pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_
                     },
                 }
             }
-            try buffer.append(')');
+            try buffer.append('>');
         },
         .pointer => |pointer| {
             try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");

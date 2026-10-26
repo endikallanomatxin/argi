@@ -1,6 +1,6 @@
-_EnvironmentVariablesInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+_EnvironmentVariablesInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
 
-EnvironmentVariables: Type = (._ffi: $&ForeignFunctionInterface)
+EnvironmentVariables := (._ffi: $&ForeignFunctionInterface)
 
 once _acquire_environment_variables := (.args: _EnvironmentVariablesInitArgs) -> (
     .result : EnvironmentVariables
@@ -10,16 +10,16 @@ once _acquire_environment_variables := (.args: _EnvironmentVariablesInitArgs) ->
     result._ffi = ffi
 }
 
-implement Init#(EnvironmentVariables, _EnvironmentVariablesInitArgs) (
+implement Init<EnvironmentVariables, _EnvironmentVariablesInitArgs> (
     .Result : Type = EnvironmentVariables
     .init   = _acquire_environment_variables
 )
 
-environment_variables_get_c_string(.key: &CChar) -> (
-    .result : Errable#(?StringView, (..invalid_utf8))
-) := {
+environment_variables_get_c_string := (.key: &CChar) -> (
+    .result: Errable<?StringView, (..invalid_utf8)>
+) {
     raw_ptr ::= getenv(.name = key).value
-    raw_addr :: UIntNative = raw_ptr | convert#(.to: UIntNative)(_)
+    raw_addr :: UIntNative = raw_ptr | convert<.to: UIntNative>(_)
     if raw_addr == 0 {
         result = ..ok ..none
         return
@@ -28,9 +28,9 @@ environment_variables_get_c_string(.key: &CChar) -> (
     result = ..ok ..some(.value = _trusted_c_string_view(.text = raw_ptr))
 }
 
-lookup_environment#(.Provider: Type: Allocator#(Provider)) := (
+lookup_environment := <.Provider: Type: Allocator<Provider>> (
     .self: &EnvironmentVariables, .key: StringView, .allocator: $&Provider
-) -> (.result: Errable#(?StringView, (..out_of_memory, ..invalid_utf8))) {
+) -> (.result: Errable<?StringView, (..out_of_memory, ..invalid_utf8)>) {
     assume ffi := self&._ffi
     assume allocator
 
@@ -44,9 +44,9 @@ lookup_environment#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-has#(.AllocatorType: Type: Allocator#(AllocatorType))(
+has := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .self: &EnvironmentVariables, .key: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(Bool, (..out_of_memory, ..invalid_utf8))) := {
+) -> (.result: Errable<Bool, (..out_of_memory, ..invalid_utf8)>) {
     assume ffi := self&._ffi
     assume allocator
 

@@ -16,7 +16,7 @@ _FilesystemReasons: Type = (
     ..out_of_memory
 )
 
-_fs_reason(.status: Int32) -> (.reason: _FilesystemReasons) := {
+_fs_reason := (.status: Int32) -> (.reason: _FilesystemReasons) {
     reason = ..filesystem_failed
 
     if status == -2 { reason = ..invalid_path }
@@ -79,9 +79,9 @@ _fs_truncate(.stream: UIntNative, .size: UInt64) -> (.status: Int32): CFunction(
     .symbol = "_argi_fs_truncate"
 )
 
-create_directory(.self: &FileSystem = reach file_system, .path: StringView) -> (
-    .result : Errable#(Void, _FilesystemReasons)
-) := {
+create_directory := (.self: &FileSystem = reach file_system, .path: StringView) -> (
+    .result: Errable<Void, _FilesystemReasons>
+) {
     assume ffi := self&._ffi
     status ::= _fs_mkdir(.bytes = path._data, .length = path._length).status
 
@@ -93,9 +93,9 @@ create_directory(.self: &FileSystem = reach file_system, .path: StringView) -> (
     result = ..ok Void()
 }
 
-remove_directory(.self: &FileSystem = reach file_system, .path: StringView) -> (
-    .result : Errable#(Void, _FilesystemReasons)
-) := {
+remove_directory := (.self: &FileSystem = reach file_system, .path: StringView) -> (
+    .result: Errable<Void, _FilesystemReasons>
+) {
     assume ffi := self&._ffi
     status ::= _fs_rmdir(.bytes = path._data, .length = path._length).status
 
@@ -109,15 +109,15 @@ remove_directory(.self: &FileSystem = reach file_system, .path: StringView) -> (
 
 FileKind: Type = (..file, ..directory, ..other)
 
-implement ImplicitlyCopyable#(FileKind) ()
+implement ImplicitlyCopyable<FileKind> ()
 
-FileMetadata: Type = (.kind: FileKind, .size: UInt64, .modified: UnixTimestamp)
+FileMetadata := (.kind: FileKind, .size: UInt64, .modified: UnixTimestamp)
 
-implement ImplicitlyCopyable#(FileMetadata) ()
+implement ImplicitlyCopyable<FileMetadata> ()
 
-metadata(.self: &FileSystem = reach file_system, .path: StringView, .follow_links: Bool = true) -> (
-    .result : Errable#(FileMetadata, _FilesystemReasons)
-) := {
+metadata := (
+    .self : &FileSystem = reach file_system, .path: StringView, .follow_links: Bool = true
+) -> (.result: Errable<FileMetadata, _FilesystemReasons>) {
     assume ffi := self&._ffi
     kind :: Int32 = 0
     size :: UInt64 = 0
@@ -162,12 +162,12 @@ metadata(.self: &FileSystem = reach file_system, .path: StringView, .follow_link
 }
 
 -- Enumeration copies names into independent owners, never borrowed dirent data.
-Directory: Type = (._filesystem: &FileSystem, ._handle: UIntNative, ._ended: Bool)
+Directory := (._filesystem: &FileSystem, ._handle: UIntNative, ._ended: Bool)
 
-DirectoryEntry: Type = (.name: String)
+DirectoryEntry := (.name: String)
 
-implement Init#(Directory, (.self: &FileSystem = reach file_system, .path: StringView)) (
-    .Result : Type = Errable#(Directory, _FilesystemReasons)
+implement Init<Directory, (.self: &FileSystem = reach file_system, .path: StringView)> (
+    .Result : Type = Errable<Directory, _FilesystemReasons>
     .init   = (.args: (.self: &FileSystem = reach file_system, .path: StringView)) -> (
         .result : Result
     ) {
@@ -189,9 +189,9 @@ implement Init#(Directory, (.self: &FileSystem = reach file_system, .path: Strin
     }
 )
 
-_next_directory#(.Provider: Type: Allocator#(Provider)) := (
+_next_directory := <.Provider: Type: Allocator<Provider>> (
     .self: $&Directory, .allocator: $&Provider = reach allocator
-) -> (.result: Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)) {
+) -> (.result: Errable<Nullable<.t: DirectoryEntry>, _FilesystemReasons>) {
     assume ffi := self&._filesystem&._ffi
     assume allocator
 
@@ -234,7 +234,7 @@ _next_directory#(.Provider: Type: Allocator#(Provider)) := (
     result = ..ok ..some(.value = (.name = ~name))
 }
 
-implement Deinit#(Directory) (
+implement Deinit<Directory> (
     .deinit = (.self: $&Directory) -> () {
         assume ffi := self&._filesystem&._ffi
         _fs_directory_close(.handle = self&._handle)
@@ -243,14 +243,14 @@ implement Deinit#(Directory) (
 
 SeekOrigin: Type = (..start, ..current, ..end)
 
-implement ImplicitlyCopyable#(SeekOrigin) ()
+implement ImplicitlyCopyable<SeekOrigin> ()
 
 ..stream_seek_failed
 ..stream_truncate_failed
 
-seek(.self: $&File, .offset: Int64, .origin: SeekOrigin) -> (
-    .result : Errable#(UInt64, (..stream_seek_failed))
-) := {
+seek := (.self: $&File, .offset: Int64, .origin: SeekOrigin) -> (
+    .result: Errable<UInt64, (..stream_seek_failed)>
+) {
     assume ffi := self&._ffi
     selected :: Int32 = 0
 
@@ -274,11 +274,13 @@ seek(.self: $&File, .offset: Int64, .origin: SeekOrigin) -> (
     result = ..ok position
 }
 
-position(.self: $&File) -> (.result: Errable#(UInt64, (..stream_seek_failed))) := {
+position := (.self: $&File) -> (.result: Errable<UInt64, (..stream_seek_failed)>) {
     result = seek(self, .offset = 0, .origin = ..current)
 }
 
-truncate(.self: $&File, .size: UInt64) -> (.result: Errable#(Void, (..stream_truncate_failed))) := {
+truncate := (.self: $&File, .size: UInt64) -> (
+    .result: Errable<Void, (..stream_truncate_failed)>
+) {
     assume ffi := self&._ffi
 
     if _fs_truncate(.stream = self&.stream_address, .size = size).status != 0 {
@@ -311,9 +313,9 @@ _fs_temp_close(.handle: UIntNative) -> (.status: Int32): CFunction(
 
 _fs_temp_cleanup(.handle: UIntNative) -> (): CFunction(.symbol = "_argi_fs_temp_cleanup")
 
-TemporaryDirectory: Type = (._filesystem: &FileSystem, ._handle: UIntNative, ._path: String)
+TemporaryDirectory := (._filesystem: &FileSystem, ._handle: UIntNative, ._path: String)
 
-implement#(.Provider: Type: Allocator) Init#(
+implement<.Provider: Type: Allocator> Init<
     TemporaryDirectory,
     (
         .self      : &FileSystem = reach file_system,
@@ -321,8 +323,8 @@ implement#(.Provider: Type: Allocator) Init#(
         .prefix    : StringView  = "argi-",
         .allocator : $&Provider  = reach allocator,
     )
-) (
-    .Result : Type = Errable#(TemporaryDirectory, _FilesystemReasons)
+> (
+    .Result : Type = Errable<TemporaryDirectory, _FilesystemReasons>
     .init   = (
         .args : (
             .self      : &FileSystem = reach file_system,
@@ -384,13 +386,13 @@ implement#(.Provider: Type: Allocator) Init#(
     }
 )
 
-path(.self: &TemporaryDirectory) -> (.view: StringView) := {
-    view = Viewable#(&String).make_view(.self = &self&._path)
+path := (.self: &TemporaryDirectory) -> (.view: StringView) {
+    view = Viewable<&String>.make_view(.self = &self&._path)
 }
 
-_close_TemporaryDirectory(.self: $&TemporaryDirectory) -> (
-    .result : Errable#(Void, _FilesystemReasons)
-) := {
+_close_TemporaryDirectory := (.self: $&TemporaryDirectory) -> (
+    .result: Errable<Void, _FilesystemReasons>
+) {
     assume ffi := self&._filesystem&._ffi
     status ::= _fs_temp_close(.handle = self&._handle).status
 
@@ -404,7 +406,7 @@ _close_TemporaryDirectory(.self: $&TemporaryDirectory) -> (
     result = ..ok Void()
 }
 
-implement Deinit#(TemporaryDirectory) (
+implement Deinit<TemporaryDirectory> (
     .deinit = (.self: $&TemporaryDirectory) -> () {
         assume ffi := self&._filesystem&._ffi
         _fs_temp_cleanup(.handle = self&._handle)
@@ -412,7 +414,7 @@ implement Deinit#(TemporaryDirectory) (
     }
 )
 
-implement Closeable#(TemporaryDirectory) (
-    .Result         : Type = Errable#(Void, _FilesystemReasons)
+implement Closeable<TemporaryDirectory> (
+    .Result         : Type = Errable<Void, _FilesystemReasons>
     .close_resource = _close_TemporaryDirectory
 )

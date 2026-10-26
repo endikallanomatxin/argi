@@ -1,6 +1,6 @@
 -- The cursor owns no storage. Source and separator views retain their backing
 -- lifetimes; advancing it does not invalidate previously returned segments.
-StringSplitIterator: Type = (
+StringSplitIterator := (
     ._text      : StringView
     ._separator : StringView
     ._start     : UIntNative
@@ -9,9 +9,9 @@ StringSplitIterator: Type = (
 
 -- A borrowed traversal starts from the current cursor without advancing it.
 
-split(.self: StringView, .separator: StringView) -> (
-    .result : Errable#(StringSplitIterator, (..empty_separator))
-) := {
+split := (.self: StringView, .separator: StringView) -> (
+    .result: Errable<StringSplitIterator, (..empty_separator)>
+) {
     if separator._length == 0 {
         result = ..error(.reason = ..empty_separator)
         return
@@ -20,7 +20,7 @@ split(.self: StringView, .separator: StringView) -> (
     result = ..ok(._text = self, ._separator = separator, ._start = 0, ._done = false)
 }
 
-implement Iterable#(StringSplitIterator) (
+implement Iterable<StringSplitIterator> (
     .Item         : Type = StringView
     .IteratorType : Type = StringSplitIterator
 
@@ -34,7 +34,7 @@ implement Iterable#(StringSplitIterator) (
     }
 )
 
-implement Iterator#(StringSplitIterator) (
+implement Iterator<StringSplitIterator> (
     .Item : Type = StringView
 
     .has_next = (.self: &StringSplitIterator) -> (.ok: Bool) {

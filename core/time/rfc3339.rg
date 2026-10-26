@@ -2,9 +2,9 @@
 
 -- UTC RFC 3339 profile: YYYY-MM-DDTHH:MM:SS[.1..9 digits]Z. Numeric
 -- timezone offsets and leap seconds require a separate timezone policy.
-_date_digits(.text: StringView, .start: UIntNative, .count: UIntNative) -> (
-    .result : Errable#(UInt32, (..invalid_datetime))
-) := {
+_date_digits := (.text: StringView, .start: UIntNative, .count: UIntNative) -> (
+    .result: Errable<UInt32, (..invalid_datetime)>
+) {
     value :: UInt32 = 0
     index :: UIntNative = 0
 
@@ -14,14 +14,14 @@ _date_digits(.text: StringView, .start: UIntNative, .count: UIntNative) -> (
             result = ..error(.reason = ..invalid_datetime)
             return
         }
-        value = value * 10 + [byte - 48] | convert#(.to: UInt32)(_)
+        value = value * 10 + [byte - 48] | convert<.to: UInt32>(_)
         index = index + 1
     }
 
     result = ..ok value
 }
 
-parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datetime))) := {
+parse_utc := (.text: StringView) -> (.result: Errable<UtcDateTime, (..invalid_datetime)>) {
     if text._length < 20 or text._length > 30 {
         result = ..error(.reason = ..invalid_datetime)
         return
@@ -61,7 +61,7 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
         .year = unwrap_or_abort(
             .value = [
                 _date_digits(.text = text, .start = 0, .count = 4)!
-                | convert#(.to: Int32)(_)
+                | convert<.to: Int32>(_)
             ]
         )
         .month       = _date_digits(.text = text, .start = 5, .count = 2)!
@@ -80,12 +80,9 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
     result = ..ok date
 }
 
-_write_date_digits(
-    .buffer : MutableArrayView#(.t: UInt8),
-    .start  : UIntNative,
-    .count  : UIntNative,
-    .value  : UInt32
-) -> () := {
+_write_date_digits := (
+    .buffer: MutableArrayView<.t: UInt8>, .start: UIntNative, .count: UIntNative, .value: UInt32
+) -> () {
     index ::= count
     remaining ::= value
 
@@ -94,16 +91,16 @@ _write_date_digits(
         target ::= unwrap_or_abort(
             .value = get_mutable_reference($&buffer, .index = [start + index])
         )
-        target&= unwrap_or_abort(.value = [remaining % 10 + 48] | convert#(.to: UInt8)(_))
+        target&= unwrap_or_abort(.value = [remaining % 10 + 48] | convert<.to: UInt8>(_))
         remaining = remaining / 10
     }
 }
 
 -- Validate date and complete capacity before writing. Nonzero fractions use
 -- nine digits, preserving every nanosecond without allocation or truncation.
-format_utc_into(.date: UtcDateTime, .buffer: MutableArrayView#(.t: UInt8)) -> (
-    .result : Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))
-) := {
+format_utc_into := (.date: UtcDateTime, .buffer: MutableArrayView<.t: UInt8>) -> (
+    .result: Errable<UIntNative, (..invalid_datetime, ..out_of_bounds)>
+) {
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..invalid_datetime)
         return
@@ -132,7 +129,7 @@ format_utc_into(.date: UtcDateTime, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .buffer = buffer
         .start  = 0
         .count  = 4
-        .value  = unwrap_or_abort(.value = date.year | convert#(.to: UInt32)(_))
+        .value  = unwrap_or_abort(.value = date.year | convert<.to: UInt32>(_))
     )
     _write_date_digits(.buffer = buffer, .start = 5, .count = 2, .value = date.month)
     _write_date_digits(.buffer = buffer, .start = 8, .count = 2, .value = date.day)

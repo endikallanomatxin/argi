@@ -1,5 +1,5 @@
 -- References to resources owned by the checked program entry scope.
-System: Type = (
+System := (
     .memory         : $&Memory
     .page_allocator : $&PageAllocator
     .terminal       : $&Terminal

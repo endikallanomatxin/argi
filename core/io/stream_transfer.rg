@@ -1,7 +1,7 @@
 -- Transfer specialization belongs to one operation identity for both endpoints.
-StreamTransfer#(.ReaderType: Type, .WriterType: Type): Contract = (
+StreamTransfer<.ReaderType: Type, .WriterType: Type>: Contract = (
     .transfer_stream : (.reader: $&ReaderType, .writer: $&WriterType) -> (
-        .result : Errable#(
+        .result : Errable<
             UIntNative,
             (
                 ..stream_read_failed,
@@ -9,18 +9,18 @@ StreamTransfer#(.ReaderType: Type, .WriterType: Type): Contract = (
                 ..stream_flush_failed,
                 ..size_overflow
             )
-        )
+        >
     )
 )
 
 -- Transfer implementations consider both endpoints. Buffered writers fill their own
 -- free space; plain writers need only one initialized byte. Success counts newly
 -- accepted bytes and leaves final flushing and endpoint cleanup to the caller.
-implement#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: Writer#(WriterType)) StreamTransfer#(
+implement<.ReaderType: Type: BlockReader<ReaderType>, .WriterType: Type: Writer<WriterType>> StreamTransfer<
     ReaderType, WriterType
-) (
+> (
     .transfer_stream = (.reader: $&ReaderType, .writer: $&WriterType) -> (
-        .result : Errable#(
+        .result : Errable<
             UIntNative,
             (
                 ..stream_read_failed,
@@ -28,14 +28,14 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: Write
                 ..stream_flush_failed,
                 ..size_overflow
             )
-        )
+        >
     ) {
-        storage ::= zeroed#([1]UInt8)()
+        storage ::= zeroed<[1]UInt8>()
         buffer ::= view($&storage)
         copied :: UIntNative = 0
 
         while true {
-            got ::= BlockReader#().read_block(reader, .buffer = buffer)!
+            got ::= BlockReader<>.read_block(reader, .buffer = buffer)!
             if got == 0 {
                 result = ..ok copied
                 return
@@ -46,19 +46,17 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: Write
                 return
             }
 
-            Writer#().write_byte(writer, .byte = storage[0])!
+            Writer<>.write_byte(writer, .byte = storage[0])!
             copied = copied + 1
         }
     }
 )
 
-implement#(.ReaderType: Type: BlockReader#(ReaderType), .base_type: Type: Writer#(base_type)) StreamTransfer#(
-    ReaderType, BufferedWriter#(.base_type: base_type)
-) (
-    .transfer_stream = (
-        .reader: $&ReaderType, .writer: $&BufferedWriter#(.base_type: base_type)
-    ) -> (
-        .result : Errable#(
+implement<.ReaderType: Type: BlockReader<ReaderType>, .base_type: Type: Writer<base_type>> StreamTransfer<
+    ReaderType, BufferedWriter<.base_type: base_type>
+> (
+    .transfer_stream = (.reader: $&ReaderType, .writer: $&BufferedWriter<.base_type: base_type>) -> (
+        .result : Errable<
             UIntNative,
             (
                 ..stream_read_failed,
@@ -66,7 +64,7 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .base_type: Type: Writer
                 ..stream_flush_failed,
                 ..size_overflow
             )
-        )
+        >
     ) {
         capacity ::= length(&writer&.buffer).count
         copied :: UIntNative = 0
@@ -86,7 +84,7 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .base_type: Type: Writer
                 .value = slice(&writer&.buffer, .start = writer&.length, .count = available)
             )
             -- A failed read may modify free space; commit only a successful count.
-            got ::= BlockReader#().read_block(reader, .buffer = free_space)!
+            got ::= BlockReader<>.read_block(reader, .buffer = free_space)!
             if got == 0 {
                 result = ..ok copied
                 return

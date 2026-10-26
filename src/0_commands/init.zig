@@ -101,11 +101,11 @@ const moduleMainParameterized =
     \\    assume ffi ::= system.ffi
     \\    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     \\    assume error_tracer ::= FixedSizeErrorTracer(
-    \\        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-    \\    ) | to_virtual#(ErrorTracer)($&_) | $&_
-    \\    assume writer ::= $&BufferedWriter#(.base_type: File)(
+    \\        .buffer = view($&zeroed<.t: [4096]UInt8>()),
+    \\    ) | to_virtual<ErrorTracer>($&_) | $&_
+    \\    assume writer ::= $&BufferedWriter<.base_type: File>(
     \\        .base = $&system.terminal&.stdout,
-    \\        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
+    \\        .buffer = view($&zeroed<.t: [4096]UInt8>()),
     \\    )
     \\    assume reader ::= $&system.terminal&.stdin
     \\}

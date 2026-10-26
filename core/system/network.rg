@@ -1,21 +1,21 @@
-_NetworkInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+_NetworkInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
 
 -- Native addresses are copied values socket handles are private owners.
 _NetworkAddress: CStruct = (._bytes: [128]UInt8, ._length: UInt32)
 
-implement ImplicitlyCopyable#(_NetworkAddress) ()
+implement ImplicitlyCopyable<_NetworkAddress> ()
 
-NetworkAddress: Type = (._native: _NetworkAddress, ._datagram: Bool)
+NetworkAddress := (._native: _NetworkAddress, ._datagram: Bool)
 
-implement ImplicitlyCopyable#(NetworkAddress) ()
+implement ImplicitlyCopyable<NetworkAddress> ()
 
 NetworkFamily: Type = (..any, ..ipv4, ..ipv6)
 
-implement ImplicitlyCopyable#(NetworkFamily) ()
+implement ImplicitlyCopyable<NetworkFamily> ()
 
 NetworkTransport: Type = (..tcp, ..udp)
 
-implement ImplicitlyCopyable#(NetworkTransport) ()
+implement ImplicitlyCopyable<NetworkTransport> ()
 
 _network_init() -> (.status: Int32): CFunction(.symbol = "_argi_network_init")
 
@@ -67,15 +67,15 @@ _network_timeout(.handle: UIntNative, .milliseconds: UInt32) -> (.status: Int32)
 
 _network_send(
     .handle : UIntNative,
-    .bytes  : RawPointer#(.t: UInt8),
+    .bytes  : RawPointer<.t: UInt8>,
     .length : UIntNative,
-    .peer   : RawPointer#(.t: _NetworkAddress),
+    .peer   : RawPointer<.t: _NetworkAddress>,
     .sent   : $&UIntNative
 ) -> (.status: Int32): CFunction(.symbol = "_argi_network_send")
 
 _network_receive(
     .handle   : UIntNative,
-    .bytes    : RawPointer#(.t: UInt8),
+    .bytes    : RawPointer<.t: UInt8>,
     .capacity : UIntNative,
     .peer     : $&_NetworkAddress,
     .received : $&UIntNative
@@ -85,7 +85,7 @@ _network_shutdown(.handle: UIntNative) -> (.status: Int32): CFunction(
     .symbol = "_argi_network_shutdown_write"
 )
 
-Network: Type = (._ffi: $&ForeignFunctionInterface, ._ready: Bool)
+Network := (._ffi: $&ForeignFunctionInterface, ._ready: Bool)
 
 once _acquire_network := (.args: _NetworkInitArgs) -> (.result: Network) {
     ffi ::= args.ffi
@@ -95,12 +95,12 @@ once _acquire_network := (.args: _NetworkInitArgs) -> (.result: Network) {
     result = (._ffi = ffi, ._ready = _network_init().status == 0)
 }
 
-implement Init#(Network, _NetworkInitArgs) (
+implement Init<Network, _NetworkInitArgs> (
     .Result : Type = Network
     .init   = _acquire_network
 )
 
-implement Deinit#(Network) (
+implement Deinit<Network> (
     .deinit = (.self: $&Network) -> () {
         assume ffi := self&._ffi
 
@@ -119,20 +119,20 @@ implement Deinit#(Network) (
 ..datagram_too_large
 ..datagram_truncated
 
-ResolvedAddresses: Type = (._network: &Network, ._handle: UIntNative, ._datagram: Bool)
+ResolvedAddresses := (._network: &Network, ._handle: UIntNative, ._datagram: Bool)
 
-implement Deinit#(ResolvedAddresses) (
+implement Deinit<ResolvedAddresses> (
     .deinit = (.self: $&ResolvedAddresses) -> () {
         assume ffi := self&._network&._ffi
         _network_free(.handle = self&._handle)
     }
 )
 
-_network_any() -> (.value: NetworkFamily) := { value = ..any }
+_network_any := () -> (.value: NetworkFamily) { value = ..any }
 
-_network_tcp() -> (.value: NetworkTransport) := { value = ..tcp }
+_network_tcp := () -> (.value: NetworkTransport) { value = ..tcp }
 
-resolve_addresses(
+resolve_addresses := (
     .host      : StringView,
     .port      : UInt16,
     .transport : NetworkTransport = _network_tcp(),
@@ -140,11 +140,11 @@ resolve_addresses(
     .passive   : Bool             = false,
     .self      : &Network         = reach network,
 ) -> (
-    .result : Errable#(
+    .result : Errable<
         ResolvedAddresses,
         (..invalid_network_argument, ..address_resolution_failed, ..out_of_memory)
-    )
-) := {
+    >
+) {
     assume ffi := self&._ffi
 
     if self&._ready == false {
@@ -191,16 +191,16 @@ resolve_addresses(
     result = ..ok(._network = self, ._handle = handle, ._datagram = datagram == 1)
 }
 
-length(.self: &ResolvedAddresses) -> (.count: UIntNative) := {
+length := (.self: &ResolvedAddresses) -> (.count: UIntNative) {
     assume ffi := self&._network&._ffi
     count = _network_count(.handle = self&._handle).count
 }
 
 address_at := (.self: &ResolvedAddresses, .index: UIntNative) -> (
-    .result : Errable#(NetworkAddress, (..out_of_bounds))
+    .result: Errable<NetworkAddress, (..out_of_bounds)>
 ) {
     assume ffi := self&._network&._ffi
-    native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+    native :: _NetworkAddress = (._bytes = zeroed<.t: [128]UInt8>(), ._length = 0)
 
     if _network_get(.handle = self&._handle, .index = index, .address = $&native).status != 0 {
         result = ..error(.reason = ..out_of_bounds)
@@ -210,17 +210,17 @@ address_at := (.self: &ResolvedAddresses, .index: UIntNative) -> (
     result = ..ok(._native = native, ._datagram = self&._datagram)
 }
 
-port(.self: &NetworkAddress, .network: &Network = reach network) -> (.value: UInt16) := {
+port := (.self: &NetworkAddress, .network: &Network = reach network) -> (.value: UInt16) {
     assume ffi := network&._ffi
     value = _network_port(.address = &self&._native).port
 }
 
-TcpConnection: Type = (._network: &Network, ._handle: UIntNative)
+TcpConnection := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(TcpConnection, (.address: NetworkAddress, .network: &Network = reach network)) (
-    .Result : Type = Errable#(
+implement Init<TcpConnection, (.address: NetworkAddress, .network: &Network = reach network)> (
+    .Result : Type = Errable<
         TcpConnection, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-    )
+    >
     .init = (.args: (.address: NetworkAddress, .network: &Network = reach network)) -> (
         .result : Result
     ) {
@@ -258,9 +258,9 @@ implement Init#(TcpConnection, (.address: NetworkAddress, .network: &Network = r
     }
 )
 
-_close_TcpConnection(.self: $&TcpConnection) -> (
-    .result : Errable#(Void, (..socket_close_failed))
-) := {
+_close_TcpConnection := (.self: $&TcpConnection) -> (
+    .result: Errable<Void, (..socket_close_failed)>
+) {
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -273,19 +273,19 @@ _close_TcpConnection(.self: $&TcpConnection) -> (
     result = ..ok Void()
 }
 
-implement Deinit#(TcpConnection) (
+implement Deinit<TcpConnection> (
     .deinit = (.self: $&TcpConnection) -> () {
         _ = close(self)
     }
 )
 
-_is_open_TcpConnection(.self: &TcpConnection) -> (.ok: Bool) := { ok = self&._handle != 0 }
+_is_open_TcpConnection := (.self: &TcpConnection) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_local_address_TcpConnection(.self: &TcpConnection) -> (
-    .result : Errable#(NetworkAddress, (..socket_option_failed))
-) := {
+_local_address_TcpConnection := (.self: &TcpConnection) -> (
+    .result: Errable<NetworkAddress, (..socket_option_failed)>
+) {
     assume ffi := self&._network&._ffi
-    native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+    native :: _NetworkAddress = (._bytes = zeroed<.t: [128]UInt8>(), ._length = 0)
 
     if _network_local(.handle = self&._handle, .address = $&native).status != 0 {
         result = ..error(.reason = ..socket_option_failed)
@@ -295,12 +295,12 @@ _local_address_TcpConnection(.self: &TcpConnection) -> (
     result = ..ok(._native = native, ._datagram = false)
 }
 
-TcpListener: Type = (._network: &Network, ._handle: UIntNative)
+TcpListener := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(TcpListener, (.address: NetworkAddress, .network: &Network = reach network)) (
-    .Result : Type = Errable#(
+implement Init<TcpListener, (.address: NetworkAddress, .network: &Network = reach network)> (
+    .Result : Type = Errable<
         TcpListener, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-    )
+    >
     .init = (.args: (.address: NetworkAddress, .network: &Network = reach network)) -> (
         .result : Result
     ) {
@@ -338,7 +338,9 @@ implement Init#(TcpListener, (.address: NetworkAddress, .network: &Network = rea
     }
 )
 
-_close_TcpListener(.self: $&TcpListener) -> (.result: Errable#(Void, (..socket_close_failed))) := {
+_close_TcpListener := (.self: $&TcpListener) -> (
+    .result: Errable<Void, (..socket_close_failed)>
+) {
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -351,19 +353,19 @@ _close_TcpListener(.self: $&TcpListener) -> (.result: Errable#(Void, (..socket_c
     result = ..ok Void()
 }
 
-implement Deinit#(TcpListener) (
+implement Deinit<TcpListener> (
     .deinit = (.self: $&TcpListener) -> () {
         _ = close(self)
     }
 )
 
-_is_open_TcpListener(.self: &TcpListener) -> (.ok: Bool) := { ok = self&._handle != 0 }
+_is_open_TcpListener := (.self: &TcpListener) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_local_address_TcpListener(.self: &TcpListener) -> (
-    .result : Errable#(NetworkAddress, (..socket_option_failed))
-) := {
+_local_address_TcpListener := (.self: &TcpListener) -> (
+    .result: Errable<NetworkAddress, (..socket_option_failed)>
+) {
     assume ffi := self&._network&._ffi
-    native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+    native :: _NetworkAddress = (._bytes = zeroed<.t: [128]UInt8>(), ._length = 0)
 
     if _network_local(.handle = self&._handle, .address = $&native).status != 0 {
         result = ..error(.reason = ..socket_option_failed)
@@ -373,12 +375,12 @@ _local_address_TcpListener(.self: &TcpListener) -> (
     result = ..ok(._native = native, ._datagram = false)
 }
 
-UdpSocket: Type = (._network: &Network, ._handle: UIntNative)
+UdpSocket := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(UdpSocket, (.address: NetworkAddress, .network: &Network = reach network)) (
-    .Result : Type = Errable#(
+implement Init<UdpSocket, (.address: NetworkAddress, .network: &Network = reach network)> (
+    .Result : Type = Errable<
         UdpSocket, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-    )
+    >
     .init = (.args: (.address: NetworkAddress, .network: &Network = reach network)) -> (
         .result : Result
     ) {
@@ -416,7 +418,7 @@ implement Init#(UdpSocket, (.address: NetworkAddress, .network: &Network = reach
     }
 )
 
-_close_UdpSocket(.self: $&UdpSocket) -> (.result: Errable#(Void, (..socket_close_failed))) := {
+_close_UdpSocket := (.self: $&UdpSocket) -> (.result: Errable<Void, (..socket_close_failed)>) {
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -429,19 +431,19 @@ _close_UdpSocket(.self: $&UdpSocket) -> (.result: Errable#(Void, (..socket_close
     result = ..ok Void()
 }
 
-implement Deinit#(UdpSocket) (
+implement Deinit<UdpSocket> (
     .deinit = (.self: $&UdpSocket) -> () {
         _ = close(self)
     }
 )
 
-_is_open_UdpSocket(.self: &UdpSocket) -> (.ok: Bool) := { ok = self&._handle != 0 }
+_is_open_UdpSocket := (.self: &UdpSocket) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_local_address_UdpSocket(.self: &UdpSocket) -> (
-    .result : Errable#(NetworkAddress, (..socket_option_failed))
-) := {
+_local_address_UdpSocket := (.self: &UdpSocket) -> (
+    .result: Errable<NetworkAddress, (..socket_option_failed)>
+) {
     assume ffi := self&._network&._ffi
-    native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+    native :: _NetworkAddress = (._bytes = zeroed<.t: [128]UInt8>(), ._length = 0)
 
     if _network_local(.handle = self&._handle, .address = $&native).status != 0 {
         result = ..error(.reason = ..socket_option_failed)
@@ -451,9 +453,9 @@ _local_address_UdpSocket(.self: &UdpSocket) -> (
     result = ..ok(._native = native, ._datagram = true)
 }
 
-accept(.self: $&TcpListener) -> (
-    .result : Errable#(TcpConnection, (..socket_accept_failed, ..out_of_memory))
-) := {
+accept := (.self: $&TcpListener) -> (
+    .result: Errable<TcpConnection, (..socket_accept_failed, ..out_of_memory)>
+) {
     assume ffi := self&._network&._ffi
     handle :: UIntNative = 0
     status ::= _network_accept(.handle = self&._handle, .accepted = $&handle).status
@@ -471,9 +473,9 @@ accept(.self: $&TcpListener) -> (
     result = ..ok(._network = self&._network, ._handle = handle)
 }
 
-_set_timeout_TcpConnection(.self: $&TcpConnection, .milliseconds: UInt32) -> (
-    .result : Errable#(Void, (..socket_option_failed))
-) := {
+_set_timeout_TcpConnection := (.self: $&TcpConnection, .milliseconds: UInt32) -> (
+    .result: Errable<Void, (..socket_option_failed)>
+) {
     assume ffi := self&._network&._ffi
 
     if _network_timeout(.handle = self&._handle, .milliseconds = milliseconds).status != 0 {
@@ -484,9 +486,9 @@ _set_timeout_TcpConnection(.self: $&TcpConnection, .milliseconds: UInt32) -> (
     result = ..ok Void()
 }
 
-_set_timeout_UdpSocket(.self: $&UdpSocket, .milliseconds: UInt32) -> (
-    .result : Errable#(Void, (..socket_option_failed))
-) := {
+_set_timeout_UdpSocket := (.self: $&UdpSocket, .milliseconds: UInt32) -> (
+    .result: Errable<Void, (..socket_option_failed)>
+) {
     assume ffi := self&._network&._ffi
 
     if _network_timeout(.handle = self&._handle, .milliseconds = milliseconds).status != 0 {
@@ -497,21 +499,21 @@ _set_timeout_UdpSocket(.self: $&UdpSocket, .milliseconds: UInt32) -> (
     result = ..ok Void()
 }
 
-_read_tcp(.self: $&TcpConnection, .buffer: MutableArrayView#(.t: UInt8)) -> (
-    .result : Errable#(UIntNative, (..socket_read_failed))
-) := {
+_read_tcp := (.self: $&TcpConnection, .buffer: MutableArrayView<.t: UInt8>) -> (
+    .result: Errable<UIntNative, (..socket_read_failed)>
+) {
     assume ffi := self&._network&._ffi
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = data(&buffer).pointer | convert#(.to: UIntNative)(_) }
+    if size != 0 { address = data(&buffer).pointer | convert<.to: UIntNative>(_) }
     received :: UIntNative = 0
-    peer :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+    peer :: _NetworkAddress = (._bytes = zeroed<.t: [128]UInt8>(), ._length = 0)
 
     if [
         _network_receive(
             .handle   = self&._handle
-            .bytes    = raw_pointer#(.t: UInt8)(.address = address).raw
+            .bytes    = raw_pointer<.t: UInt8>(.address = address).raw
             .capacity = size
             .peer     = $&peer
             .received = $&received
@@ -525,22 +527,22 @@ _read_tcp(.self: $&TcpConnection, .buffer: MutableArrayView#(.t: UInt8)) -> (
     result = ..ok received
 }
 
-_tcp_write(.self: $&TcpConnection, .value: ArrayView#(.t: UInt8)) -> (
-    .result : Errable#(UIntNative, (..socket_write_failed))
-) := {
+_tcp_write := (.self: $&TcpConnection, .value: ArrayView<.t: UInt8>) -> (
+    .result: Errable<UIntNative, (..socket_write_failed)>
+) {
     assume ffi := self&._network&._ffi
     size ::= length(&value).count
     address :: UIntNative = 0
 
-    if size != 0 { address = data(&value).pointer | convert#(.to: UIntNative)(_) }
+    if size != 0 { address = data(&value).pointer | convert<.to: UIntNative>(_) }
     sent :: UIntNative = 0
 
     if [
         _network_send(
             .handle = self&._handle
-            .bytes  = raw_pointer#(.t: UInt8)(.address = address).raw
+            .bytes  = raw_pointer<.t: UInt8>(.address = address).raw
             .length = size
-            .peer   = raw_pointer#(.t: _NetworkAddress)(.address = 0).raw
+            .peer   = raw_pointer<.t: _NetworkAddress>(.address = 0).raw
             .sent   = $&sent
         ).status
         != 0
@@ -552,12 +554,12 @@ _tcp_write(.self: $&TcpConnection, .value: ArrayView#(.t: UInt8)) -> (
     result = ..ok sent
 }
 
-implement WriteValue#(TcpConnection, ArrayView#(.t: UInt8)) (
-    .Result      : Type = Errable#(UIntNative, (..socket_write_failed))
+implement WriteValue<TcpConnection, ArrayView<.t: UInt8>> (
+    .Result      : Type = Errable<UIntNative, (..socket_write_failed)>
     .write_value = _tcp_write
 )
 
-shutdown_write(.self: $&TcpConnection) -> (.result: Errable#(Void, (..socket_write_failed))) := {
+shutdown_write := (.self: $&TcpConnection) -> (.result: Errable<Void, (..socket_write_failed)>) {
     assume ffi := self&._network&._ffi
 
     if _network_shutdown(.handle = self&._handle).status != 0 {
@@ -568,15 +570,15 @@ shutdown_write(.self: $&TcpConnection) -> (.result: Errable#(Void, (..socket_wri
     result = ..ok Void()
 }
 
-DatagramReceived: Type = (.count: UIntNative, .peer: NetworkAddress)
+DatagramReceived := (.count: UIntNative, .peer: NetworkAddress)
 
-implement ImplicitlyCopyable#(DatagramReceived) ()
+implement ImplicitlyCopyable<DatagramReceived> ()
 
-send_to(.self: $&UdpSocket, .peer: NetworkAddress, .buffer: ArrayView#(.t: UInt8)) -> (
-    .result : Errable#(
+send_to := (.self: $&UdpSocket, .peer: NetworkAddress, .buffer: ArrayView<.t: UInt8>) -> (
+    .result : Errable<
         UIntNative, (..invalid_network_argument, ..datagram_too_large, ..socket_write_failed)
-    )
-) := {
+    >
+) {
     assume ffi := self&._network&._ffi
 
     if peer._datagram == false {
@@ -587,14 +589,14 @@ send_to(.self: $&UdpSocket, .peer: NetworkAddress, .buffer: ArrayView#(.t: UInt8
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = data(&buffer).pointer | convert#(.to: UIntNative)(_) }
+    if size != 0 { address = data(&buffer).pointer | convert<.to: UIntNative>(_) }
     sent :: UIntNative = 0
     status ::= _network_send(
         .handle = self&._handle
-        .bytes  = raw_pointer#(.t: UInt8)(.address = address).raw
+        .bytes  = raw_pointer<.t: UInt8>(.address = address).raw
         .length = size
-        .peer   = raw_pointer#(.t: _NetworkAddress)(
-            .address = [&peer._native | convert#(.to: UIntNative)(_)]
+        .peer   = raw_pointer<.t: _NetworkAddress>(
+            .address = [&peer._native | convert<.to: UIntNative>(_)]
         ).raw
         .sent = $&sent
     ).status
@@ -612,19 +614,19 @@ send_to(.self: $&UdpSocket, .peer: NetworkAddress, .buffer: ArrayView#(.t: UInt8
     result = ..ok sent
 }
 
-receive_from(.self: $&UdpSocket, .buffer: MutableArrayView#(.t: UInt8)) -> (
-    .result : Errable#(DatagramReceived, (..datagram_truncated, ..socket_read_failed))
-) := {
+receive_from := (.self: $&UdpSocket, .buffer: MutableArrayView<.t: UInt8>) -> (
+    .result: Errable<DatagramReceived, (..datagram_truncated, ..socket_read_failed)>
+) {
     assume ffi := self&._network&._ffi
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = data(&buffer).pointer | convert#(.to: UIntNative)(_) }
+    if size != 0 { address = data(&buffer).pointer | convert<.to: UIntNative>(_) }
     received :: UIntNative = 0
-    peer :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+    peer :: _NetworkAddress = (._bytes = zeroed<.t: [128]UInt8>(), ._length = 0)
     status ::= _network_receive(
         .handle   = self&._handle
-        .bytes    = raw_pointer#(.t: UInt8)(.address = address).raw
+        .bytes    = raw_pointer<.t: UInt8>(.address = address).raw
         .capacity = size
         .peer     = $&peer
         .received = $&received
@@ -643,9 +645,9 @@ receive_from(.self: $&UdpSocket, .buffer: MutableArrayView#(.t: UInt8)) -> (
     result = ..ok(.count = received, .peer = (._native = peer, ._datagram = true))
 }
 
-implement Reader#(TcpConnection) (
+implement Reader<TcpConnection> (
     .read_byte = (.self: $&TcpConnection) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
+        .result: Errable<ReadByte, (..stream_read_failed)>
     ) {
         buffer :: [1]UInt8 = (0)
 
@@ -658,9 +660,9 @@ implement Reader#(TcpConnection) (
     }
 )
 
-implement BlockReader#(TcpConnection) (
-    .read_block = (.self: $&TcpConnection, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result : Errable#(UIntNative, (..stream_read_failed))
+implement BlockReader<TcpConnection> (
+    .read_block = (.self: $&TcpConnection, .buffer: MutableArrayView<.t: UInt8>) -> (
+        .result: Errable<UIntNative, (..stream_read_failed)>
     ) {
         match read(self, .buffer = buffer) {
             ..ok count { result = ..ok count }
@@ -669,9 +671,9 @@ implement BlockReader#(TcpConnection) (
     }
 )
 
-implement BlockWriter#(TcpConnection) (
-    .write_block = (.self: $&TcpConnection, .buffer: ArrayView#(.t: UInt8)) -> (
-        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+implement BlockWriter<TcpConnection> (
+    .write_block = (.self: $&TcpConnection, .buffer: ArrayView<.t: UInt8>) -> (
+        .result: Errable<UIntNative, (..stream_write_failed, ..stream_flush_failed)>
     ) {
         match write(self, .value = buffer) {
             ..ok count { result = ..ok count }
@@ -680,9 +682,9 @@ implement BlockWriter#(TcpConnection) (
     }
 )
 
-implement Writer#(TcpConnection) (
+implement Writer<TcpConnection> (
     .write_byte = (.self: $&TcpConnection, .byte: UInt8) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable<Void, (..stream_write_failed, ..stream_flush_failed)>
     ) {
         buffer: [1]UInt8 = (byte)
 
@@ -693,7 +695,7 @@ implement Writer#(TcpConnection) (
     }
 
     .flush = (.self: $&TcpConnection) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable<Void, (..stream_write_failed, ..stream_flush_failed)>
     ) {
         if self&._handle == 0 {
             result = ..error(.reason = ..stream_flush_failed)
@@ -704,28 +706,28 @@ implement Writer#(TcpConnection) (
     }
 )
 
-implement Closeable#(TcpConnection) (
-    .Result         : Type = Errable#(Void, (..socket_close_failed))
+implement Closeable<TcpConnection> (
+    .Result         : Type = Errable<Void, (..socket_close_failed)>
     .close_resource = _close_TcpConnection
 )
 
-implement OpenState#(TcpConnection) (.check_open = _is_open_TcpConnection)
+implement OpenState<TcpConnection> (.check_open = _is_open_TcpConnection)
 
-implement Closeable#(TcpListener) (
-    .Result         : Type = Errable#(Void, (..socket_close_failed))
+implement Closeable<TcpListener> (
+    .Result         : Type = Errable<Void, (..socket_close_failed)>
     .close_resource = _close_TcpListener
 )
 
-implement OpenState#(TcpListener) (.check_open = _is_open_TcpListener)
+implement OpenState<TcpListener> (.check_open = _is_open_TcpListener)
 
-implement Closeable#(UdpSocket) (
-    .Result         : Type = Errable#(Void, (..socket_close_failed))
+implement Closeable<UdpSocket> (
+    .Result         : Type = Errable<Void, (..socket_close_failed)>
     .close_resource = _close_UdpSocket
 )
 
-implement OpenState#(UdpSocket) (.check_open = _is_open_UdpSocket)
+implement OpenState<UdpSocket> (.check_open = _is_open_UdpSocket)
 
-implement BufferReading#(TcpConnection) (
-    .Result : Type = Errable#(UIntNative, (..socket_read_failed))
+implement BufferReading<TcpConnection> (
+    .Result : Type = Errable<UIntNative, (..socket_read_failed)>
     .read   = _read_tcp
 )

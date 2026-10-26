@@ -1,3 +1,3 @@
-Deinit#(.T: Type): Contract = (
+Deinit<.T: Type>: Contract = (
     .deinit : (.self: $&T) -> () where consumes(self)
 )

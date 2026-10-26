@@ -514,7 +514,7 @@ pub const Resolver = struct {
             if (literal == .struct_value_literal and literal.struct_value_literal.fields.len == 1) {
                 const field = self.graph.value_fields.items[literal.struct_value_literal.fields.start];
                 if (std.mem.eql(u8, self.graph.text(field.name), "value")) {
-                    self.generics.comptime_failure = .{ .source = self.sourceFor(module_index, reference.source), .reason = "numeric type-call conversions are unsupported; use convert#(.to: Target)(.value = source)" };
+                    self.generics.comptime_failure = .{ .source = self.sourceFor(module_index, reference.source), .reason = "numeric type-call conversions are unsupported; use convert<.to: Target>(.value = source)" };
                     return error.InvalidNumericTypeCall;
                 }
             }
@@ -3709,7 +3709,7 @@ pub const Resolver = struct {
                 }
             };
             if (module_path == null and arguments.len == 0 and primitives.integerRange(primitives.builtinTypeNamedForTarget(name, self.resolver.graph.target.stdTarget()) orelse .Void, self.resolver.graph.target.stdTarget()) != null) {
-                self.resolver.generics.comptime_failure = .{ .source = self.resolver.sourceFor(self.module_index, source), .reason = "numeric type-call conversions are unsupported; use convert#(.to: Target)(.value = source)" };
+                self.resolver.generics.comptime_failure = .{ .source = self.resolver.sourceFor(self.module_index, source), .reason = "numeric type-call conversions are unsupported; use convert<.to: Target>(.value = source)" };
                 return error.InvalidNumericTypeCall;
             }
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };

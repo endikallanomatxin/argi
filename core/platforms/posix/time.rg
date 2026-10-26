@@ -8,11 +8,11 @@
         .symbol = "nanosleep"
     )
     #if target_os("linux") {
-        _clock_errno() -> (.pointer: RawPointer#(.t: CInt)): CFunction(
+        _clock_errno() -> (.pointer: RawPointer<.t: CInt>): CFunction(
             .symbol = "__errno_location"
         )
     } #else {
-        _clock_errno() -> (.pointer: RawPointer#(.t: CInt)): CFunction(.symbol = "__error")
+        _clock_errno() -> (.pointer: RawPointer<.t: CInt>): CFunction(.symbol = "__error")
     }
 
     _platform_monotonic(.ffi: $&ForeignFunctionInterface = reach ffi) -> (
@@ -26,9 +26,9 @@
         if time.seconds < 0 or time.nanoseconds < 0 or time.nanoseconds >= 1000000000 {
             return
         }
-        seconds = unwrap_or_abort(.value = time.seconds | convert#(.to: UInt64)(_)).result
+        seconds = unwrap_or_abort(.value = time.seconds | convert<.to: UInt64>(_)).result
         nanoseconds = unwrap_or_abort(
-            .value = time.nanoseconds | convert#(.to: UInt32)(_)
+            .value = time.nanoseconds | convert<.to: UInt32>(_)
         ).result
         status = 0
     }
@@ -42,7 +42,7 @@
         if time.nanoseconds < 0 or time.nanoseconds >= 1000000000 { return }
         seconds = time.seconds
         nanoseconds = unwrap_or_abort(
-            .value = time.nanoseconds | convert#(.to: UInt32)(_)
+            .value = time.nanoseconds | convert<.to: UInt32>(_)
         ).result
         status = 0
     }
@@ -63,8 +63,8 @@
                 chunk_fraction = 0
             }
             request :: _PosixTimespec = (
-                .seconds     = unwrap_or_abort(.value = chunk | convert#(.to: Int64)(_)).result
-                .nanoseconds = chunk_fraction | convert#(.to: Int64)(_)
+                .seconds     = unwrap_or_abort(.value = chunk | convert<.to: Int64>(_)).result
+                .nanoseconds = chunk_fraction | convert<.to: Int64>(_)
             )
             remaining :: _PosixTimespec = (.seconds = 0, .nanoseconds = 0)
             while true {
@@ -75,7 +75,7 @@
                 -- call. Its FFI root bounds the borrow without acquiring storage.
                 raw ::= _clock_errno().pointer
                 root ::= erase_mutable_reference(.base = ffi).reference
-                error ::= trusted_establish_inherited_reference#(.t: CInt)(
+                error ::= trusted_establish_inherited_reference<.t: CInt>(
                     .raw = raw, .root = root
                 ).reference&
                 if error != 4 { return }

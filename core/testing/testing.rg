@@ -1,29 +1,29 @@
 ..test_failed
 ..test_skipped
 
-test_fail_impl() -> (.result: Errable#(Void, (..test_failed))) := {
+test_fail_impl := () -> (.result: Errable<Void, (..test_failed)>) {
     result = ..error(.reason = ..test_failed)
 }
 
-test_skip_impl() -> (.result: Errable#(Void, (..test_skipped))) := {
+test_skip_impl := () -> (.result: Errable<Void, (..test_skipped)>) {
     result = ..error(.reason = ..test_skipped)
 }
 
-fail_c_string(.message: &CChar) -> (.result: Errable#(Void, (..test_failed))) := {
+fail_c_string := (.message: &CChar) -> (.result: Errable<Void, (..test_failed)>) {
     test_fail_impl()!! message
 
     result = ..ok Void()
 }
 
-skip(.message: &CChar) -> (.result: Errable#(Void, (..test_skipped))) := {
+skip := (.message: &CChar) -> (.result: Errable<Void, (..test_skipped)>) {
     test_skip_impl()!! message
 
     result = ..ok Void()
 }
 
-expect(.condition: Bool, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) := {
+expect := (.condition: Bool, .message: StringView = "") -> (
+    .result: Errable<Void, (..test_failed)>
+) {
     if condition {
         result = ..ok Void()
         return
@@ -34,9 +34,9 @@ expect(.condition: Bool, .message: StringView = "") -> (
     )
 }
 
-_assert_equal_generic#(.t: Type)(.expected: t, .actual: t, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) := {
+_assert_equal_generic := <.t: Type> (.expected: t, .actual: t, .message: StringView = "") -> (
+    .result: Errable<Void, (..test_failed)>
+) {
     if expected == actual {
         result = ..ok Void()
         return
@@ -47,8 +47,8 @@ _assert_equal_generic#(.t: Type)(.expected: t, .actual: t, .message: StringView 
     )
 }
 
-expect_error#(.t: Type, .reasons: Type)(
-    .expected_reason: reasons, .actual_result: Errable#(t, reasons)
-) -> (.result: Errable#(Void, (..test_failed))) := {
+expect_error := <.t: Type, .reasons: Type> (
+    .expected_reason: reasons, .actual_result: Errable<t, reasons>
+) -> (.result: Errable<Void, (..test_failed)>) {
     fail(.message = "testing.expect_error must be lowered by the compiler")!
 }

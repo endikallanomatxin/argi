@@ -1,8 +1,8 @@
 CsvReasons: Type = (..invalid_csv, ..invalid_utf8, ..out_of_memory, ..size_limit_exceeded)
 
-CsvRecord: Type = (.fields: DynamicArray#(.t: String))
+CsvRecord := (.fields: DynamicArray<.t: String>)
 
-implement Deinit#(CsvRecord) (
+implement Deinit<CsvRecord> (
     .deinit = (.self: $&CsvRecord) -> () {
         while length(&self&.fields).count > 0 {
             discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&.fields))
@@ -16,7 +16,7 @@ implement Deinit#(CsvRecord) (
 -- embedded line breaks and doubled quotes. Accept CRLF and LF record endings;
 -- bare CR is invalid outside quotes. Empty input has no records; a blank line
 -- contains one empty field. Encoding and width validation belong to the consumer.
-CsvReader: Type = (
+CsvReader := (
     ._text               : StringView,
     ._position           : UIntNative,
     ._ended              : Bool,
@@ -24,14 +24,14 @@ CsvReader: Type = (
     .maximum_fields      : UIntNative
 )
 
-implement Init#(
+implement Init<
     CsvReader,
     (
         .text                : StringView,
         .maximum_field_bytes : UIntNative  = 1048576,
         .maximum_fields      : UIntNative  = 1024,
     )
-) (
+> (
     .Result : Type = CsvReader
     .init   = (
         .args : (
@@ -55,9 +55,9 @@ implement Init#(
 )
 
 -- Errors are terminal, and no partially decoded record escapes.
-next#(.AllocatorType: Type: Allocator#(AllocatorType))(
+next := <.AllocatorType: Type: Allocator<AllocatorType>> (
     .self: $&CsvReader, .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(?CsvRecord, CsvReasons)) := {
+) -> (.result: Errable<?CsvRecord, CsvReasons>) {
     assume allocator
 
     if self&._ended or self&._position == byte_length(&self&._text).count {
@@ -66,7 +66,7 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 
     self&._ended = true
-    fields ::= DynamicArray#(.t: String)(.capacity = 1)!
+    fields ::= DynamicArray<.t: String>(.capacity = 1)!
     record :: CsvRecord = (.fields = ~fields)
     position ::= self&._position
 
@@ -75,7 +75,7 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
             result = ..error(.reason = ..size_limit_exceeded)
             return
         }
-        field ::= DynamicArray#(UInt8)(.capacity = 16)!
+        field ::= DynamicArray<UInt8>(.capacity = 16)!
         quoted ::= false
         if position < byte_length(&self&._text).count {
             if [
@@ -160,23 +160,23 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
 }
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
-write_record#(.WriterType: Type: Writer#(WriterType))(
-    .writer: $&WriterType, .fields: ArrayView#(.t: StringView)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
+write_record := <.WriterType: Type: Writer<WriterType>> (
+    .writer: $&WriterType, .fields: ArrayView<.t: StringView>
+) -> (.result: Errable<Void, (..stream_write_failed, ..stream_flush_failed)> = ..ok Void()) {
     index :: UIntNative = 0
 
     while index < length(&fields).count {
-        if index > 0 { Writer#().write_byte(.self = writer, .byte = 44)! }
+        if index > 0 { Writer<>.write_byte(.self = writer, .byte = 44)! }
         text ::= unwrap_or_abort(.value = get(.self = &fields, .index = index))
-        Writer#().write_byte(.self = writer, .byte = 34)!
+        Writer<>.write_byte(.self = writer, .byte = 34)!
         cursor :: UIntNative = 0
         while cursor < byte_length(&text).count {
             byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = cursor))
-            Writer#().write_byte(.self = writer, .byte = byte)!
-            if byte == 34 { Writer#().write_byte(.self = writer, .byte = byte)! }
+            Writer<>.write_byte(.self = writer, .byte = byte)!
+            if byte == 34 { Writer<>.write_byte(.self = writer, .byte = byte)! }
             cursor = cursor + 1
         }
-        Writer#().write_byte(.self = writer, .byte = 34)!
+        Writer<>.write_byte(.self = writer, .byte = 34)!
         index = index + 1
     }
 
