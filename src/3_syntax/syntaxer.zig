@@ -2285,6 +2285,8 @@ pub const Syntaxer = struct {
     // Override parseStatement to support generics on function declarations
     fn parseStatement(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         const start_index = self.index;
+        const start_nodes = self.file.nodes.len;
+        const start_extras = self.file.extra_data.items.len;
         self.skipNewLinesAndComments();
 
         if (self.currentContent() == .binary_operator and self.currentContent().binary_operator != .subtraction) {
@@ -2662,6 +2664,8 @@ pub const Syntaxer = struct {
         }
 
         self.index = start_index;
+        self.file.nodes.len = start_nodes;
+        self.file.extra_data.shrinkRetainingCapacity(start_extras);
         const expr = try self.parseExpression();
         return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
     }
