@@ -560,7 +560,7 @@ pub const Syntaxer = struct {
     fn callExpression(self: *Syntaxer, callee: syn.NodeIndex, input: syn.NodeIndex) SyntaxerError!syn.NodeIndex {
         const base = if (self.file.tag(callee) == .specialization) self.file.data(callee).node_and_node.first else callee;
         const name = if (self.file.tag(base) == .struct_field_access) self.file.data(base).token_and_node.token else self.file.mainToken(base);
-        const contract = if (self.file.tag(callee) == .associated_type_projection) self.file.data(callee).node.optional() else syn.OptionalNodeIndex.none;
+        const contract = if (self.file.tag(base) == .associated_type_projection) self.file.data(base).node.optional() else syn.OptionalNodeIndex.none;
         return self.addNode(.function_call, name, .{ .extra = try self.addExtra(syn.CallExtra{ .contract_type = contract, .callee = callee, .input = input }) });
     }
 
@@ -1543,6 +1543,13 @@ pub const Syntaxer = struct {
                 continue;
             }
 
+            if (self.file.tag(node) == .associated_type_projection) {
+                if (try self.trySpecialization()) |arguments| {
+                    node = try self.addNode(.specialization, self.file.mainToken(node), .{ .node_and_node = .{ .first = node, .second = arguments } });
+                    if (self.tokenIs(.open_parenthesis)) node = try self.callExpression(node, try self.parseCollectionLiteral(true));
+                    continue;
+                }
+            }
             if (self.tokenIs(.open_parenthesis) and self.file.tag(node) == .associated_type_projection) {
                 node = try self.callExpression(node, try self.parseCollectionLiteral(true));
                 continue;

@@ -32,7 +32,7 @@ implement#(.Participant: Type) Factory#(Participant) (
 )
 
 computed ::= #run () -> (.result: Bool) {
-    result = Identity#(Owner).apply(.value = true).result
+    result = Identity<Owner>.apply<Bool>(.value = true).result
 }
 
 main := () -> () {
@@ -42,7 +42,7 @@ main := () -> () {
     if make(.owner = &owner, .value = true).result {} else { abort }
     if make(.owner = &owner).result {} else { abort }
     if Identity#(Owner).apply(.value = true).result {} else { abort }
-    number: Int32 = Identity#(Owner).apply(.value = 42).result
+    number: Int32 = Identity<Owner>.apply<.Value: Int32>(.value = 42).result
     if number != 42 { abort }
     if AliasIdentity#(Owner).alias_apply(.value = true).result {} else { abort }
     if computed {} else { abort }

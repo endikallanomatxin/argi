@@ -3261,7 +3261,7 @@ pub const Resolver = struct {
                         if (self.resolver.graph.node(input).content == .struct_value_literal)
                             context.global.assumed_fields = self.resolver.graph.node(input).content.struct_value_literal.assumed_fields;
                         const contracts = self.resolver.nested_call_context orelse return error.InvalidContractOperation;
-                        break :blk try contracts.makeScopedOperationCall(self.module_index, base, self.resolver.modules[self.module_index].text(name), input, context, self.resolver.sourceFor(self.module_index, value.source)) orelse error.InvalidContractOperation;
+                        break :blk try contracts.makeSpecializedScopedOperationCall(self.module_index, base, self.resolver.modules[self.module_index].text(name), args, input, context, self.resolver.sourceFor(self.module_index, value.source)) orelse error.InvalidContractOperation;
                     }
                     break :blk try self.makeNamedCall(name, value.module_path, args, input, value.source, if (value.expected_type) |ty|
                         try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions)

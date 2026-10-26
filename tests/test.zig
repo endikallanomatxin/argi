@@ -15724,3 +15724,11 @@ test "feature_tests/types/316_generic_operation_candidate_bounds" {
 test "feature_tests/types/317X_generic_operation_identity_ambiguity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/317X_generic_operation_identity_ambiguity", "multiple applicable operation identities", "without a diagnostic");
 }
+
+test "feature_tests/types/318X_unknown_operation_parameter" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/318X_unknown_operation_parameter", "unknown compile-time argument", "without a diagnostic");
+}
+
+test "feature_tests/types/319X_excess_operation_parameters" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/319X_excess_operation_parameters", "too many compile-time arguments", "without a diagnostic");
+}

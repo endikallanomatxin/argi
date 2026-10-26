@@ -1286,7 +1286,8 @@ pub const Resolver = struct {
     pub fn resolveScopedOperation(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
         const context = reach_context.Context.fromModule(module, offsets, call.visible_bindings, call.owner_function);
-        const node = try self.makeScopedOperationCall(module_index, globalizer.globalType(offsets, call.contract_type.?), module.text(reference.name), globalizer.globalNode(offsets, call.input), context, self.sourceFor(module_index, reference.source)) orelse
+        const arguments = if (reference.generic_arguments) |local| try self.generics.relocateModuleArguments(module_index, local) else primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
+        const node = try self.makeSpecializedScopedOperationCall(module_index, globalizer.globalType(offsets, call.contract_type.?), module.text(reference.name), arguments, globalizer.globalNode(offsets, call.input), context, self.sourceFor(module_index, reference.source)) orelse
             return if (self.participant_conformance_failure != null) .invalid else .deferred;
         try self.graph.setNode(self.allocator, globalizer.globalNode(offsets, call.node), node);
         return .resolved;
@@ -1512,6 +1513,10 @@ pub const Resolver = struct {
     }
 
     pub fn makeScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        return self.makeSpecializedScopedOperationCall(module_index, base, name, .{ .start = 0, .len = 0 }, input, context, source);
+    }
+
+    pub fn makeSpecializedScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const use = self.typeContractUse(base) orelse return null;
         const located = self.findContractDefinition(use.declaration) orelse return null;
         var failure: ParticipantConformanceFailure = .{
@@ -1551,7 +1556,7 @@ pub const Resolver = struct {
             const start: u32 = @intCast(self.graph.generic_arguments.items.len);
             try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
             const bound = try self.generics.internType(.{ .generic = .{ .base = use.declaration, .arguments = .{ .start = start, .len = 1 } } });
-            return self.makeScopedOperationCall(module_index, bound, name, input, context, source);
+            return self.makeSpecializedScopedOperationCall(module_index, bound, name, arguments, input, context, source);
         }
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
@@ -1590,6 +1595,17 @@ pub const Resolver = struct {
             return null;
         };
         const requirement = storage.contract_requirements.items[located.definition.requirements.start + method_index];
+        self.generics.bindGlobalArgumentsPartial(located.module_index, requirement.parameters, arguments, &bindings) catch |err| {
+            failure.reason = switch (err) {
+                error.TooManyGenericArguments => "too many compile-time arguments for contract operation",
+                error.UnknownGenericArgument => "unknown compile-time argument for contract operation",
+                error.DuplicateGenericArgument => "duplicate compile-time argument for contract operation",
+                error.GenericArgumentKindMismatch => "compile-time argument kind does not match the operation parameter",
+                else => return err,
+            };
+            self.participant_conformance_failure = failure;
+            return null;
+        };
         if (requirement.parameters.len != 0) {
             const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
             if (!try infer(self.function_context.?, located.module_index, requirement, input, &bindings, context)) return null;

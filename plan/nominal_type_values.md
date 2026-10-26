@@ -304,9 +304,15 @@ before adding implementation exceptions.
   Source construction of associated family values and their signature checking
   remain pending; the representation does not by itself complete that feature.
 
+- Qualified static operations accept their own explicit specialization arguments,
+  separately from contract participant arguments. Positional/named arguments bind
+  before input inference; concrete and staged bodies use the same selected-evidence
+  path. Parser and native/VM/`#run` tests cover both argument groups and reject
+  unknown/excess operation parameters with semantic diagnostics.
+
 Still pending:
 uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
-inference, explicit operation specialization, remaining generic-call inference parity,
+inference, explicit unqualified operation specialization, remaining generic-call inference parity,
 associated type-family signatures and associated Args migration. Remove
 remaining field-range-only consumers and legacy generic representation paths.
 Broad validation still exposes explicit argument-type identity and stale

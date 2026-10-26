@@ -374,3 +374,17 @@ test "modern and legacy test declarations share function payloads" {
         try std.testing.expectEqual(syntax_tree.Node.Tag.test_declaration, tree.tag(root));
     }
 }
+
+test "compact syntaxing keeps contract and operation specialization arguments distinct" {
+    const source = "value := Protocol<Owner>.apply<.Value: Bool>(.value = true)";
+    var tree = try parseTestSource("operation.rg", source);
+    defer tree.deinit(std.testing.allocator);
+    const call = tree.functionCall(tree.definitionValue(tree.roots[0]).?).?;
+    try std.testing.expect(call.contract_type != null);
+    try std.testing.expect(call.specialization_arguments != null);
+    try std.testing.expectEqual(syntax_tree.Node.Tag.specialization, tree.tag(call.contract_type.?));
+    const parameters = tree.specializationArguments(call.specialization_arguments.?).?;
+    try std.testing.expectEqual(@as(usize, 1), parameters.fields.len);
+    const field = tree.structTypeField(parameters.fields[0]).?;
+    try std.testing.expectEqualStrings("Value", tree.tokenTextFromSource(source, field.name_token));
+}
