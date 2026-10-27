@@ -257,7 +257,7 @@ pub const Resolver = struct {
                 .no_match => {
                     if (self.core.matchCallInput(fields, input) == .applicable) {
                         for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
-                            if (self.core.callArgumentNamed(supplied, position, self.graph.text(field.name)) != null) continue;
+                            if (self.core.recordFieldValue(supplied, position, self.graph.text(field.name)) != null) continue;
                             const fallback = field.default_value orelse continue;
                             if (self.graph.node(fallback).content != .reach_directive) continue;
                             if (try self.core.probeReachedDefault(reach, field, fallback) == .unavailable) {

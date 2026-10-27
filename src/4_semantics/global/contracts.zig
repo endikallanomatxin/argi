@@ -627,7 +627,7 @@ pub const Resolver = struct {
                     .applicable => {},
                     else => continue,
                 }
-                if (!try self.core.completeCallInputFieldsWithReach(input_fields, input, reach)) continue;
+                if (!try self.core.completeRecordFieldsWithContext(input_fields, input, reach)) continue;
 
                 var self_index: ?u32 = null;
                 var permission: primitives.PointerMutability = .read_only;
@@ -1616,7 +1616,7 @@ pub const Resolver = struct {
             if (!self.bindContractUseArguments(interface, located, &bindings)) return null;
             bindings.types[located.definition.participants.start] = participants[0];
             const required = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
-            if (!try self.core.completeCallInputFieldsWithReach(global_types.fields(self.graph, required).?, input, context)) return null;
+            if (!try self.core.completeRecordFieldsWithContext(global_types.fields(self.graph, required).?, input, context)) return null;
         }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         if (!candidate.virtual) for (participants) |participant|
@@ -1765,7 +1765,7 @@ pub const Resolver = struct {
             break :generic method;
         };
         const required_fields = global_types.fields(self.graph, required_type) orelse return error.InvalidContractRequirementInput;
-        if (!try self.core.completeCallInputFieldsWithReach(required_fields, input, context)) return null;
+        if (!try self.core.completeRecordFieldsWithContext(required_fields, input, context)) return null;
         const function = self.graph.function(method);
         switch (try self.core.matchCallInputWithReach(function.input, input, context)) {
             .deferred => return null,
@@ -1776,7 +1776,7 @@ pub const Resolver = struct {
             },
             .applicable => {},
         }
-        if (!try self.core.completeCallInputFieldsWithReach(function.input, input, context)) return null;
+        if (!try self.core.completeRecordFieldsWithContext(function.input, input, context)) return null;
         try self.core.trackReachedCall(method, input, context, false);
         return .{
             .source = source,

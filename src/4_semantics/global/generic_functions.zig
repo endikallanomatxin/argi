@@ -565,7 +565,7 @@ pub const Resolver = struct {
                 };
         };
         const completion_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-        const completed = try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach);
+        const completed = try self.core.completeRecordFieldsWithContext(self.graph.functions.items[@intFromEnum(function)].input, input, reach);
         if (self.profile_io) |io| self.profile_source_completion_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - completion_started;
         if (!completed)
             return .deferred;
@@ -904,7 +904,7 @@ pub const Resolver = struct {
 
         const fields = storage.fields.items[shape.fields.start + field_offset ..][0 .. shape.fields.len - field_offset];
         for (fields, 0..) |field, expected_position| {
-            const value = self.core.callArgumentNamed(literal, expected_position, module.text(field.name)) orelse continue;
+            const value = self.core.recordFieldValue(literal, expected_position, module.text(field.name)) orelse continue;
             // Reject unrelated nominal references before instantiating their
             // constraints; an inapplicable identity must not emit type diagnostics.
             if (self.graph.node(value).ty) |actual|
@@ -955,7 +955,7 @@ pub const Resolver = struct {
 
         const fields = storage.fields.items[shape.fields.start + field_offset ..][0 .. shape.fields.len - field_offset];
         for (fields, 0..) |field, expected_position| {
-            if (self.core.callArgumentNamed(literal, expected_position, candidate_module.text(field.name)) != null) continue;
+            if (self.core.recordFieldValue(literal, expected_position, candidate_module.text(field.name)) != null) continue;
 
             const default_id = field.default_value orelse continue;
             // A supplied input wins. Missing inputs may bind a direct parameter
@@ -1860,7 +1860,7 @@ pub const Resolver = struct {
         return false;
     }
 
-    fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {
+    fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.RecordMatch {
         var speculation = self.beginSpeculation();
         const saved_stats = self.generics.stats;
         defer {
@@ -1989,7 +1989,7 @@ pub const Resolver = struct {
                         error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                         else => return false,
                     };
-                    if (self.core.callTypesCompatible(actual, expected)) return true;
+                    if (self.core.valueTypesCompatible(actual, expected)) return true;
                     return false;
                 },
                 .structural => |shape| {
@@ -2320,7 +2320,7 @@ pub const Resolver = struct {
             },
             .applicable => {},
         }
-        if (!try self.core.completeCallInputFieldsWithReach(signature.input, input, reach)) return error.DeferredGenericFunction;
+        if (!try self.core.completeRecordFieldsWithContext(signature.input, input, reach)) return error.DeferredGenericFunction;
         try self.core.trackReachedCall(function, input, reach, false);
         return .{ .source = source, .ty = try self.core.functionOutputType(function), .content = .{ .function_call = .{ .callee = function, .input = input } } };
     }
@@ -3923,8 +3923,8 @@ pub const Resolver = struct {
                 if (!module.is_bundled_core or !std.mem.eql(u8, std.fs.path.basename(path), "scalar_arithmetic.rg")) return error.NoMatchingGenericFunction;
                 const literal = self.resolver.graph.node(input).content.struct_value_literal;
                 if (literal.fields.len != 2) return error.InvalidScalarComparisonPrimitive;
-                const left = self.resolver.core.callArgumentNamed(literal, 0, "left") orelse return error.InvalidScalarComparisonPrimitive;
-                const right = self.resolver.core.callArgumentNamed(literal, 1, "right") orelse return error.InvalidScalarComparisonPrimitive;
+                const left = self.resolver.core.recordFieldValue(literal, 0, "left") orelse return error.InvalidScalarComparisonPrimitive;
+                const right = self.resolver.core.recordFieldValue(literal, 1, "right") orelse return error.InvalidScalarComparisonPrimitive;
                 const left_type = self.resolver.graph.node(left).ty orelse return error.InvalidScalarComparisonPrimitive;
                 const right_type = self.resolver.graph.node(right).ty orelse return error.InvalidScalarComparisonPrimitive;
                 if (!self.resolver.core.isDirectComparison(operator, left_type, right_type)) return error.InvalidScalarComparisonPrimitive;
@@ -3936,8 +3936,8 @@ pub const Resolver = struct {
                 if (!module.is_bundled_core or !std.mem.eql(u8, std.fs.path.basename(path), "scalar_arithmetic.rg")) return error.NoMatchingGenericFunction;
                 const literal = self.resolver.graph.node(input).content.struct_value_literal;
                 if (literal.fields.len != 2) return error.InvalidScalarArithmeticPrimitive;
-                const left = self.resolver.core.callArgumentNamed(literal, 0, "left") orelse return error.InvalidScalarArithmeticPrimitive;
-                const right = self.resolver.core.callArgumentNamed(literal, 1, "right") orelse return error.InvalidScalarArithmeticPrimitive;
+                const left = self.resolver.core.recordFieldValue(literal, 0, "left") orelse return error.InvalidScalarArithmeticPrimitive;
+                const right = self.resolver.core.recordFieldValue(literal, 1, "right") orelse return error.InvalidScalarArithmeticPrimitive;
                 const left_type = self.resolver.graph.node(left).ty orelse return error.InvalidScalarArithmeticPrimitive;
                 const right_type = self.resolver.graph.node(right).ty orelse return error.InvalidScalarArithmeticPrimitive;
                 if (!self.resolver.core.isScalarArithmeticRepresentation(left_type, right_type)) return error.InvalidScalarArithmeticPrimitive;
@@ -4069,7 +4069,7 @@ pub const Resolver = struct {
                     };
                 };
             };
-            if (!try self.resolver.core.completeCallInputFieldsWithReach(
+            if (!try self.resolver.core.completeRecordFieldsWithContext(
                 self.resolver.graph.functions.items[@intFromEnum(function)].input,
                 input,
                 nested_reach,

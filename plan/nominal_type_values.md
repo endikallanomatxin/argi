@@ -280,3 +280,16 @@ Cleanup validation passes: 2,446 program cases and 1,045 Debug internal tests,
 with 11 optional program skips and one internal skip. Official formatting and
 zig fmt checks pass. The transactional catalog test includes concrete and generic
 entries and exercises allocation failures and rollback.
+
+Record literals and function arguments now share matchRecordFields for field/type
+compatibility and completeRecordFieldsWithContext for defaults and contextual
+construction. Call adapters add lexical capability lookup; output assignments use
+the ordinary value checks and initialization analysis. Contract signature
+compatibility remains a separate relation. Regression coverage rejects unknown
+record/call fields even when every declared field has a default, and compares
+record construction with named inputs and outputs across native/VM/#run execution.
+
+Shared-record validation passes the complete program suite (2,447 passed,
+11 optional skips), the complete prior internal set (1,045 passed, one skip) and
+the added unknown-field regression. The cross-context fixture also passes native,
+VM and #run execution; LLVM inspection confirms record inputs and outputs.

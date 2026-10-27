@@ -81,7 +81,7 @@ pub const Resolver = struct {
             .applicable => {},
             .no_match, .deferred => return null,
         }
-        if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return null;
+        if (!try self.core.completeRecordFieldsWithContext(fields, input, reach)) return null;
         try self.graph.setNodeType(self.core.allocator, input, ty);
         var node = self.graph.nodes.items[@intFromEnum(input)];
         node.source = source;
@@ -477,7 +477,7 @@ pub const Resolver = struct {
             .applicable => {},
             .no_match, .deferred => return .deferred,
         }
-        if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return .deferred;
+        if (!try self.core.completeRecordFieldsWithContext(fields, input, reach)) return .deferred;
 
         try self.graph.setNodeType(self.core.allocator, input, ty);
         const target = globalizer.globalNode(o, value.node);

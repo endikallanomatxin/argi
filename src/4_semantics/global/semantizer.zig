@@ -2241,7 +2241,7 @@ fn completePropagatedReachCalls(
 
             if (literal.fields.len == fields.len) continue;
             const context = reach_context.Context.fromModule(module, offset, call.visible_bindings, call.owner_function);
-            if (try core.completeCallInputFieldsWithReach(fields, input_id, context)) changed = true;
+            if (try core.completeRecordFieldsWithContext(fields, input_id, context)) changed = true;
         }
     }
     return changed;
@@ -3669,7 +3669,7 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            if (candidates.items.len == 1 and diagnostic_core.callInputNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
+            if (candidates.items.len == 1 and diagnostic_core.recordFieldNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
                 const function = graph.functions.items[@intFromEnum(candidates.items[0])];
                 var missing_contract: ?struct {
                     actual: global_sg.GlobalTypeId,
@@ -3696,7 +3696,7 @@ fn diagnoseUnresolvedCall(
                         other_mismatch = true;
                         continue;
                     };
-                    if (global_types.equal(graph, actual, field.ty) or diagnostic_core.callTypesCompatible(actual, field.ty)) continue;
+                    if (global_types.equal(graph, actual, field.ty) or diagnostic_core.valueTypesCompatible(actual, field.ty)) continue;
 
                     var expected_contract_type = field.ty;
                     var actual_concrete = actual;

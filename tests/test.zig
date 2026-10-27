@@ -16107,3 +16107,10 @@ test "feature_tests/types/355X_generic_scalar_input_signature" {
 test "feature_tests/types/356X_generic_scalar_output_signature" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/356X_generic_scalar_output_signature", "function output signature must be a record type", "failed without a diagnostic");
 }
+
+test "feature_tests/types/357_record_signature_validation" {
+    const path = "tests/feature_tests/types/357_record_signature_validation";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
