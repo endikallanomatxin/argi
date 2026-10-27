@@ -474,3 +474,9 @@ fields. Migrate to one Init conformance per target, with operation-level Provide
 parameters and associated argument families. Standard-policy defaults belong to
 the selected target's argument definition; custom policies remain explicit. Preserve
 partial target inference and the existing noncopyable policy transfer behavior.
+
+Validation update: all 219 registered `feature_tests/types/` cases pass after
+migrating trace expectations and giving the duplicate-conformance fixture one
+shared nominal Args family. Conformance validation diagnoses unresolved
+participants before checking ownership or associated results. This category run
+does not replace full-suite validation or complete the Init/arithmetic migration.

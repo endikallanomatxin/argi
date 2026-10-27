@@ -2078,6 +2078,13 @@ pub const Resolver = struct {
                 .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
                 .reason = "",
             };
+            for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+                if (self.graph.isTypeUnresolved(argument.value.type)) {
+                    failure.reason = "an implementation participant type is unknown or unresolved";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
+            }
             if (!self.core.sameDeclarationNamespace(located.module_index, module_index) and
                 !(self.modules[module_index].is_bundled_core and self.modules[located.module_index].is_bundled_core))
             {
@@ -2090,13 +2097,6 @@ pub const Resolver = struct {
                         };
                 }
                 if (!owns_participant) {
-                    for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
-                        if (self.graph.isTypeUnresolved(argument.value.type)) {
-                            failure.reason = "an implementation participant type is unknown or unresolved";
-                            self.participant_conformance_failure = failure;
-                            return;
-                        }
-                    }
                     failure.reason = "an implementation must belong to the contract module or a nominal participant module";
                     self.participant_conformance_failure = failure;
                     return;

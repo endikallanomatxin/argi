@@ -2151,7 +2151,7 @@ test "feature_tests/types/28X_match_omit_payload_pattern" {
 
 test "feature_tests/types/32X_match_value_noncopyable_payload" {
     try buildExpectFailExact("tests/feature_tests/types/32X_match_value_noncopyable_payload",
-        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:20:14: error: type '{...}' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:20:14: error: type '<anonymous>' cannot be copied implicitly; use '~value' to transfer ownership
         \\          ..ok payload {
         \\               ^
         \\
@@ -2656,9 +2656,9 @@ test "feature_tests/types/46_report_error_helper" {
     try runExpectStderr(test_path, 0,
         \\error: project build failed
         \\error trace (most recent first):
-        \\  at tests/feature_tests/types/46_report_error_helper/main.rg:13:23: loading project config
-        \\        value := middle() !! "loading project config"
-        \\                          ^
+        \\  at tests/feature_tests/types/46_report_error_helper/main.rg:13:22: loading project config
+        \\        value := middle()!! "loading project config"
+        \\                         ^
         \\  at tests/feature_tests/types/46_report_error_helper/main.rg:8:20
         \\        value := fail()!
         \\                       ^
@@ -6628,9 +6628,9 @@ test "feature_tests/types/66_error_tracer_context_copy" {
         \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:14:11: AB
         \\        fail()!! view
         \\              ^
-        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:3:31
-        \\    fail() -> !Void := { result = ..error(.reason = ..copy_test_failure) }
-        \\                                  ^
+        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:3:32
+        \\    fail := () -> !Void { result = ..error(.reason = ..copy_test_failure) }
+        \\                                   ^
         \\
     );
 }
@@ -6654,9 +6654,9 @@ test "feature_tests/types/69_error_tracer_truncation" {
         \\        add_context_text(.context = "latest")
         \\        ^
         \\  <context truncated>
-        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:3:31
-        \\    fail() -> !Void := { result = ..error(.reason = ..truncated_test_failure) }
-        \\                                  ^
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:3:32
+        \\    fail := () -> !Void { result = ..error(.reason = ..truncated_test_failure) }
+        \\                                   ^
         \\
     );
 }
