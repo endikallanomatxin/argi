@@ -20,7 +20,8 @@ implement Reader#(Source) (
     }
 )
 
-expect_byte := #(.Stream: Type: Reader#(Stream)) (.reader: $&Stream, .expected: UInt8 = 65) -> () {
+expect_byte := #(.Stream: Type: Reader#(Stream)) (.reader: $&Stream, .expected: UInt8 = 65) -> (
+) {
     match unwrap_or_abort(.value = Reader#().read_byte(reader)) {
         ..end { abort }
         ..ok byte { if byte != expected { abort } }
@@ -29,8 +30,7 @@ expect_byte := #(.Stream: Type: Reader#(Stream)) (.reader: $&Stream, .expected: 
 
 main := () -> () {
     -- Empty storage is a deliberate unbuffered adapter, without lookahead.
-    -- TODO: Contextual record literals must materialize omitted middle defaults.
-    source :: Source = (.position = 0, .calls = 0, .fail_once = false)
+    source :: Source = (.position = 0, .fail_once = false)
     empty: [0]UInt8 = ()
     direct ::= BufferedReader(.base = $&source, .buffer = view($&empty))
     expect_byte(.reader = $&direct)

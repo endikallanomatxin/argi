@@ -65,3 +65,18 @@ line records isolation, outcome, elapsed nanoseconds, Zig test name and leak
 status, separated by tabs. `-Dtest-progress=true` additionally records active
 cases before they run. Timings include all orchestration performed by a test;
 compare runs using the same optimization mode and environment.
+
+## Coverage maintenance
+
+Each test should establish a distinct rule, boundary or interaction. Before
+adding a regression, check nearby fixtures and extend an existing one when it
+can assert the new behavior independently. Keep failures isolated when an
+earlier diagnostic would mask the intended check. Prefer the stronger existing
+test when two fixtures execute the same program and assert the same behavior.
+
+Name fixtures after their current guarantees, not the syntax or limitation that
+originally motivated them. For negative tests, confirm that rejection exercises
+the intended rule; a matching generic diagnostic alone may hide another error.
+Positive counterparts can establish that the same mechanism accepts valid input.
+Preserve distinct aliasing, control-flow, module and backend interactions even
+when their programs look similar.
