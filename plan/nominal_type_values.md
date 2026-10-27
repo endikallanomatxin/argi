@@ -250,13 +250,18 @@ Contextual aggregate completion captures lexical assumptions alongside visible
 bindings, preserving caller-owned temporary storage and capability inference.
 Literal defaults retain the destination width for ordinary range validation.
 
+Operation bindings retain ordinary definition expressions, including deferred
+aliases and bound compile-time prefixes. Evidence checks both producer and
+captures, preserving `once` identity. Static aliases retained by the REPL are
+available to later implementations without exposing runtime storage to module
+definitions. Focused validation passes 357 program tests and 43 internal tests,
+covering fixed/open signatures, partial specialization, native/VM/comptime calls,
+REPL persistence and invalid aliases.
+
 Outstanding before completion:
 
-- Finish and validate generic selected-evidence queries: a generic operation can
-  have many concrete functions, and matching its family alone is insufficient.
-  Captured argument values must match the selected conformance. Implementation
-  members still reject bound function-value aliases such as `identity#(Int32)`;
-  retain their definition value and captures instead of just a declaration ID.
+- Generalize implementation member expressions where needed: specialized function
+  values currently require a named alias before reuse as an operation member.
 - Review remaining anonymous aggregate/choice identities, contextual literals,
   associated signature properties and generic operation inference against the
   design above. Remove obsolete representations rather than keep fallbacks.

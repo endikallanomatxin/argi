@@ -16011,3 +16011,35 @@ test "argi repl preserves inferred operation participants across rejected submis
     ;
     try expectReplFixtureWithDiagnostic("tests/feature_tests/contracts/342_open_operation_inference/main.rg", commands, "_0 = 42\n_1 = 7\n_2 = 5\n", "operator '+' is not defined");
 }
+
+test "feature_tests/contracts/346_bound_operation_values" {
+    const path = "tests/feature_tests/contracts/346_bound_operation_values";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/347X_bound_once_operation_reuse" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/347X_bound_once_operation_reuse", "is consumed more than once", "without a diagnostic");
+}
+
+test "feature_tests/contracts/348X_bound_operation_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/348X_bound_operation_signature", "the selected input signature does not match the generic operation alias", "without a diagnostic");
+}
+
+test "feature_tests/contracts/349X_non_function_operation_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/349X_non_function_operation_value", "implementation operation must be a compile-time function definition value", "without a diagnostic");
+}
+
+test "argi repl preserves bound operation definition values" {
+    const commands =
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
+        \\int_identity := identity#(Int32)
+        \\Bound#(.T: Type): Contract = (.bound_value: _)
+        \\implement Bound#(Int32) (.bound_value = int_identity)
+        \\bound_value(42)
+        \\bound_value(7)
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n_1 = 7\n");
+}

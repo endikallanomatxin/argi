@@ -44,6 +44,7 @@ pub const Resolver = struct {
     // Explicit interactive namespace; ordinary modules never acquire visibility
     // through this path merely because another module was loaded later.
     session_namespace: ?*SessionNamespace = null,
+    session_value_bindings: ?*const std.ArrayList(global_sg.GlobalBindingId) = null,
 
     // Instantiated bodies and cleanup calls have no module pending operation
     // to revisit when a callee gains a transitive reached input. Retain their
@@ -503,7 +504,7 @@ pub const Resolver = struct {
     /// The module owns the declaration-to-storage relation. Keep this lookup
     /// shared by all compile-time value classifications rather than teaching
     /// each resolver how module-local binding IDs are relocated.
-    fn declarationBinding(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalBindingId {
+    pub fn declarationBinding(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalBindingId {
         if (self.graph.declaration(id).kind != .binding) return null;
         const owner = self.graph.moduleForDeclaration(id) orelse return null;
         const module_index = @intFromEnum(owner);
@@ -527,12 +528,28 @@ pub const Resolver = struct {
         return types.staticTypeBinding(self.graph, binding);
     }
 
+    /// Interactive values keep their original lexical storage. Only static
+    /// entities may participate in module-level type/operation definitions.
+    pub fn staticSessionBinding(self: *const Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalBindingId {
+        const namespace = self.session_namespace orelse return null;
+        if (std.mem.indexOfScalar(global_sg.GlobalModuleId, namespace.modules.items, @enumFromInt(module_index)) == null) return null;
+        const bindings = self.session_value_bindings orelse return null;
+        for (bindings.items) |binding| {
+            if (std.mem.eql(u8, self.graph.text(self.graph.binding(binding).name), name) and types.isStaticBinding(self.graph, binding)) return binding;
+        }
+        return null;
+    }
+
     /// Resolve the visible binding first, then follow its definition value.
     /// Visibility applies to that binding; an exported alias may name a private
     /// underlying definition without changing its lexical context.
     pub fn resolveDefinitionAlias(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?global_sg.DefinitionValue {
         const id = self.resolveDeclaration(module_index, reference, &.{.binding}) catch |err| switch (err) {
-            error.UnknownGlobalDeclaration => return null,
+            error.UnknownGlobalDeclaration => {
+                if (reference.module_path != null) return null;
+                const binding = self.staticSessionBinding(module_index, self.modules[module_index].text(reference.name)) orelse return null;
+                return types.staticDefinitionBinding(self.graph, binding);
+            },
             else => return err,
         };
         const binding = self.declarationBinding(id) orelse return null;

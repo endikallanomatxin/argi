@@ -91,7 +91,7 @@ pub const Resolver = struct {
     function_context: ?*anyopaque = null,
     instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
 
-    instantiate_alias: ?*const fn (*anyopaque, global_sg.GlobalDeclId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
+    instantiate_alias: ?*const fn (*anyopaque, global_sg.DefinitionValue, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
     infer_operation_parameters: ?*const fn (*anyopaque, usize, parameterized_storage.ContractRequirement, global_sg.GlobalNodeId, *generic_mod.Resolver.Bindings, reach_context.Context) anyerror!bool = null,
     probe_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalFamilyDefinitionId, u32, []const u8, global_sg.GlobalNodeId, reach_context.Context, primitives.Range(global_sg.GlobalGenericArgId), *bool, *?ParticipantConformanceFailure) anyerror!?OperationCandidate = null,
     call_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, reach_context.Context, primitives.SourceRef) anyerror!global_sg.Node = null,
@@ -1727,7 +1727,10 @@ pub const Resolver = struct {
         const required_type = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
         const required_output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
         const method = if (requirement.parameters.len == 0)
-            try self.resolveOperationBinding(conformance, method_index)
+            self.resolveOperationBinding(conformance, method_index) catch |err| switch (err) {
+                error.DeferredGenericFunction, error.ComptimeExecutionPending => return null,
+                else => return err,
+            }
         else generic: {
             const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(method_index)) orelse return error.InvalidContractOperation;
             var captures: std.ArrayList(global_sg.GenericArgument) = .empty;
@@ -1735,11 +1738,14 @@ pub const Resolver = struct {
             if (evidence.binding.instantiate_associated) {
                 try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
                 try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
+            } else {
+                const bound = evidence.definitionValue(self.graph).?.captures;
+                try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[bound.start..][0..bound.len]);
             }
             const start: u32 = @intCast(self.graph.generic_arguments.items.len);
             try self.graph.generic_arguments.appendSlice(self.allocator, captures.items);
             const instantiate = self.instantiate_generic_operation orelse return error.MissingOperationInstantiator;
-            const method = instantiate(self.function_context.?, evidence.binding.declaration, .{ .start = start, .len = @intCast(captures.items.len) }, required_type, required_output, evidence.binding.instantiate_associated) catch |err| {
+            const method = instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), .{ .start = start, .len = @intCast(captures.items.len) }, required_type, required_output, evidence.binding.instantiate_associated) catch |err| {
                 failure.reason = switch (err) {
                     error.ContextualSignatureMismatch, error.OperationAliasInputMismatch => "implementation operation has an incompatible input signature",
                     error.ContextualOutputSignatureMismatch => "operation returns an incompatible associated result",
@@ -2046,7 +2052,7 @@ pub const Resolver = struct {
                 return error.InvalidContractConformance;
             };
             failure.operation = name;
-            const declaration = self.resolveFunctionRef(module_index, operation.function) catch |err| {
+            const definition = self.resolveFunctionValue(module_index, operation.function) catch |err| {
                 failure.source = self.sourceFor(module_index, operation.source);
                 failure.reason = switch (err) {
                     error.UnknownGlobalDeclaration => "unknown or inaccessible implementation function",
@@ -2065,9 +2071,8 @@ pub const Resolver = struct {
                     .module => null,
                 },
                 .name = try self.graph.addString(self.allocator, name),
-                .declaration = declaration,
+                .definition = definition,
                 .instantiate_associated = operation.instantiate_associated,
-                .parameter_count = if (requirement.signature == null) if (self.graph.familyForDeclaration(declaration)) |family| self.graph.familyDefinition(family).parameter_count else 0 else requirement.parameters.len,
             });
         }
         const start: u32 = @intCast(self.graph.contract_operation_bindings.items.len);
@@ -2080,16 +2085,20 @@ pub const Resolver = struct {
     fn makeImplementationOperationCall(self: *Resolver, module_index: usize, conformance_index: usize, operation_index: usize, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const conformance = self.graph.contract_conformances.items[conformance_index];
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(operation_index)) orelse return error.InvalidContractOperation;
+        _ = evidence.definitionValue(self.graph) orelse return null;
         var captures: std.ArrayList(global_sg.GenericArgument) = .empty;
         defer captures.deinit(self.allocator);
         if (evidence.binding.instantiate_associated) {
             try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
             try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
+        } else {
+            const bound = evidence.definitionValue(self.graph).?.captures;
+            try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[bound.start..][0..bound.len]);
         }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         try self.graph.generic_arguments.appendSlice(self.allocator, captures.items);
         const call = self.call_implementation_operation orelse return error.MissingOperationInstantiator;
-        var node = call(self.function_context.?, module_index, evidence.binding.declaration, .{ .start = start, .len = @intCast(captures.items.len) }, arguments, input, context, source) catch |err| switch (err) {
+        var node = call(self.function_context.?, module_index, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), .{ .start = start, .len = @intCast(captures.items.len) }, arguments, input, context, source) catch |err| switch (err) {
             error.DeferredGenericFunction, error.ComptimeExecutionPending => return null,
             error.InvalidGenericCallArguments => {
                 self.participant_conformance_failure = .{
@@ -2110,7 +2119,8 @@ pub const Resolver = struct {
             };
             return error.InvalidContractOperation;
         }
-        if (evidence.binding.parameter_count == 0) {
+        const definition = evidence.definitionValue(self.graph) orelse return error.DeferredGenericFunction;
+        if (self.graph.familyDefinition(definition.origin).parameter_count == definition.captures.len) {
             const binding_id: global_sg.ContractOperationBindingId = @enumFromInt(conformance.operation_bindings.start + @as(u32, @intCast(operation_index)));
             try self.graph.completeOperationBinding(self.allocator, binding_id, method);
         }
@@ -2140,7 +2150,8 @@ pub const Resolver = struct {
     fn resolveOperationBody(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(index)) orelse return error.InvalidContractOperation;
         const binding = evidence.binding;
-        if (self.graph.declaration(binding.declaration).function_id) |function| {
+        _ = evidence.definitionValue(self.graph) orelse return error.DeferredGenericFunction;
+        if (self.graph.declaration(self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin)).function_id) |function| {
             return function;
         }
         const located = self.findContractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
@@ -2154,7 +2165,7 @@ pub const Resolver = struct {
         const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
         if (!binding.instantiate_associated) {
             const instantiate_alias = self.instantiate_alias orelse return error.MissingOperationInstantiator;
-            return instantiate_alias(self.function_context.?, binding.declaration, input) catch |err| {
+            return instantiate_alias(self.function_context.?, evidence.definitionValue(self.graph) orelse return error.DeferredGenericFunction, input) catch |err| {
                 if (err == error.OutOfMemory) return err;
                 // Preserve a dependency's specific failure instead of masking
                 // it behind an alias-specialization error.
@@ -2175,14 +2186,14 @@ pub const Resolver = struct {
         }
         const instantiate = self.instantiate_function orelse return error.MissingOperationInstantiator;
         if (conformance.implementation_arguments.len == 0)
-            return instantiate(self.function_context.?, binding.declaration, conformance.associated_arguments, input, output);
+            return instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), conformance.associated_arguments, input, output);
         var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
         try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-        return instantiate(self.function_context.?, binding.declaration, .{ .start = start, .len = @intCast(arguments.items.len) }, input, output);
+        return instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), .{ .start = start, .len = @intCast(arguments.items.len) }, input, output);
     }
 
     pub fn validateParticipantConformances(self: *Resolver) !void {
@@ -2192,7 +2203,7 @@ pub const Resolver = struct {
         // Validating an operation body can select evidence for a dependency.
         // Include those new entries in this pass rather than publishing calls
         // whose selected conformance has never been checked.
-        while (index < self.graph.contract_conformances.items.len) : (index += 1) {
+        conformances: while (index < self.graph.contract_conformances.items.len) : (index += 1) {
             const conformance = self.graph.contract_conformances.items[index];
             if (conformance.declaration_validated) continue;
             const module_index: usize = @intFromEnum(conformance.context);
@@ -2275,6 +2286,19 @@ pub const Resolver = struct {
                     return;
                 }
             }
+            for (self.graph.contract_operation_bindings.items[conformance.operation_bindings.start..][0..conformance.operation_bindings.len]) |operation| {
+                if (global_types.definitionValue(self.graph, operation.definition)) |definition| {
+                    if (self.graph.familyDefinition(definition.origin).kind == .function) continue;
+                } else {
+                    const ty = self.graph.node(operation.definition).ty orelse continue :conformances;
+                    if (self.graph.isTypeUnresolved(ty)) continue :conformances;
+                }
+                failure.source = operation.implementation_source;
+                failure.operation = self.graph.text(operation.name);
+                failure.reason = "implementation operation must be a compile-time function definition value";
+                self.participant_conformance_failure = failure;
+                return;
+            }
             var operations: std.ArrayList(struct { index: u32, function: global_sg.GlobalFunctionId }) = .empty;
             defer operations.deinit(self.allocator);
             const first = bindings.types[located.definition.participants.start].?;
@@ -2285,6 +2309,7 @@ pub const Resolver = struct {
                 const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
                 const selected: MethodSelection = selected: {
                     const method = self.resolveOperationBinding(conformance, operation_index) catch |err| switch (err) {
+                        error.DeferredGenericFunction, error.ComptimeExecutionPending => continue :conformances,
                         error.ContextualSignatureMismatch => break :selected .missing,
                         error.ContextualOutputSignatureMismatch => break :selected .incompatible_output,
                         else => return err,
@@ -2995,11 +3020,58 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn resolveFunctionRef(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !global_sg.GlobalDeclId {
-        return switch (reference) {
+    pub const FunctionTarget = union(enum) {
+        definition: global_sg.DefinitionValue,
+        expression: global_sg.GlobalNodeId,
+
+        pub fn value(self: FunctionTarget, graph: *const global_sg.GlobalSemanticGraph) ?global_sg.DefinitionValue {
+            return switch (self) {
+                .definition => |definition| definition,
+                .expression => |expression| global_types.definitionValue(graph, expression),
+            };
+        }
+    };
+
+    /// Name lookup retains an existing compile-time expression when the name
+    /// denotes a binding. Probing a direct definition allocates no graph nodes.
+    pub fn resolveFunctionTarget(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !FunctionTarget {
+        if (reference == .external) {
+            const external = self.modules[module_index].semantic.external_refs.items[@intFromEnum(reference.external)];
+            if (external.module_path == null) {
+                if (self.core.staticSessionBinding(module_index, self.modules[module_index].text(external.name))) |binding|
+                    return .{ .expression = self.graph.binding(binding).initialization.? };
+            }
+            const alias = self.core.resolveDeclaration(module_index, external, &.{.binding}) catch |err| switch (err) {
+                error.UnknownGlobalDeclaration => null,
+                else => return err,
+            };
+            if (alias) |declaration| {
+                const binding_id = self.core.declarationBinding(declaration) orelse return error.UnknownGlobalDeclaration;
+                const binding = self.graph.binding(binding_id);
+                if (binding.mutability != .constant or binding.deferred_initialization) return error.UnknownGlobalDeclaration;
+                return .{ .expression = binding.initialization orelse return error.UnknownGlobalDeclaration };
+            }
+        }
+        const declaration = switch (reference) {
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
-            .external => |external| self.core.resolveDeclaration(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{.function}),
+            .external => |external| try self.core.resolveDeclaration(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{.function}),
         };
+        return .{ .definition = .{ .origin = self.graph.familyForDeclaration(declaration) orelse return error.UnknownGlobalDeclaration } };
+    }
+
+    /// Publish the ordinary expression once with the selected evidence. Deferred
+    /// aliases complete through their original binding, not a copied recipe.
+    fn resolveFunctionValue(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !global_sg.GlobalNodeId {
+        const target = try self.resolveFunctionTarget(module_index, reference);
+        if (target == .expression) return target.expression;
+        const definition = target.definition;
+        const node: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+        try self.graph.nodes.append(self.allocator, .{
+            .source = self.graph.familyDefinition(definition.origin).source,
+            .ty = try global_types.definitionClass(self.allocator, self.graph, definition.origin),
+            .content = .{ .definition_literal = definition },
+        });
+        return node;
     }
 
     pub fn sourceFor(self: *const Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {

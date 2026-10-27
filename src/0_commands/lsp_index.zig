@@ -87,11 +87,13 @@ pub const Index = struct {
         // Operations retain their contract identity even when several contracts
         // reuse one ordinary implementation. Navigation still follows the body.
         for (graph.contract_operation_bindings.items) |operation| {
-            const declaration = graph.declaration(operation.declaration);
-            const target: Target = if (declaration.function_id) |function| .{ .function = function } else .{ .declaration = operation.declaration };
+            const definition = @import("../4_semantics/global/types.zig").definitionValue(graph, operation.definition) orelse continue;
+            const declaration_id = graph.familyDeclaration(definition.origin);
+            const declaration = graph.declaration(declaration_id);
+            const target: Target = if (declaration.function_id) |function| .{ .function = function } else .{ .declaration = declaration_id };
             if (operation.alias_source) |source| try result.add(allocator, .{
                 .source = source,
-                .len = @intCast(graph.text(graph.declarationSourceName(operation.declaration)).len),
+                .len = @intCast(graph.text(graph.declarationSourceName(declaration_id)).len),
                 .target = target,
             });
             const identity: OperationIdentity = .{ .contract = operation.contract_definition, .index = operation.requirement_index };

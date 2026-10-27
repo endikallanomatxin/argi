@@ -110,8 +110,9 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
     for (graph.contract_operation_bindings.items) |binding| {
         try require(verify.optionalIdFits(binding.materialized_function, graph.functions.items.len));
         try require(verify.stringFits(binding.name, graph.strings.items));
-        try require(verify.idFits(binding.declaration, graph.declarations.items.len));
-        try require(graph.declaration(binding.declaration).kind == .function);
+        try require(verify.idFits(binding.definition, graph.nodes.items.len));
+        if (@import("types.zig").definitionValue(graph, binding.definition)) |definition|
+            try require(graph.familyDefinition(definition.origin).kind == .function);
     }
     for (graph.contract_safety_conformances.items) |value| {
         try require(value.selection.conformance < graph.contract_conformances.items.len);

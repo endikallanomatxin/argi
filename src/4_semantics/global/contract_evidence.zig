@@ -14,19 +14,23 @@ pub const SelectedOperation = struct {
     conformance: graph_mod.ContractConformance,
     binding: graph_mod.ContractOperationBinding,
 
+    pub fn definitionValue(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph) ?graph_mod.DefinitionValue {
+        const definition = @import("types.zig").definitionValue(graph, self.binding.definition) orelse return null;
+        return if (graph.familyDefinition(definition.origin).kind == .function) definition else null;
+    }
+
     pub fn materializedFunction(self: SelectedOperation) ?graph_mod.GlobalFunctionId {
         return self.binding.materialized_function;
     }
 
     pub fn acceptsFunction(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId) bool {
         if (self.materializedFunction()) |selected| return selected == function;
-        if (self.binding.parameter_count == 0) return false;
-        const family = graph.declaration(self.binding.declaration).family_definition orelse return false;
+        const definition = self.definitionValue(graph) orelse return false;
+        const family = definition.origin;
         for (graph.generic_function_instances.items) |instance| {
             if (instance.function != function or instance.parameterized_definition != family) continue;
-            if (!self.binding.instantiate_associated) return true;
-            const captures = self.conformance.implementation_arguments;
-            const associated = self.conformance.associated_arguments;
+            const captures = if (self.binding.instantiate_associated) self.conformance.implementation_arguments else definition.captures;
+            const associated = if (self.binding.instantiate_associated) self.conformance.associated_arguments else @as(primitives.Range(graph_mod.GlobalGenericArgId), .{ .start = 0, .len = 0 });
             if (instance.arguments.len < captures.len + associated.len) return false;
             for (0..captures.len + associated.len) |index| {
                 const expected = if (index < captures.len)
@@ -166,3 +170,46 @@ pub const PossibleVirtualMethods = struct {
         return null;
     }
 };
+
+test "selected operation evidence checks bound definition captures" {
+    const std = @import("std");
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.family_definitions.append(allocator, .{ .kind = .function, .source = source, .parameter_count = 1 });
+    const name = try graph.addString(allocator, "T");
+    try graph.types.appendSlice(allocator, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool } });
+    try graph.generic_arguments.appendSlice(allocator, &.{
+        .{ .name = name, .value = .{ .type = @enumFromInt(0) } },
+        .{ .name = name, .value = .{ .type = @enumFromInt(1) } },
+    });
+    try graph.nodes.append(allocator, .{
+        .source = source,
+        .ty = null,
+        .content = .{ .definition_literal = .{ .origin = @enumFromInt(0), .captures = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.generic_function_instances.appendSlice(allocator, &.{
+        .{ .function = @enumFromInt(0), .parameterized_definition = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } },
+        .{ .function = @enumFromInt(1), .parameterized_definition = @enumFromInt(0), .arguments = .{ .start = 1, .len = 1 } },
+    });
+    const evidence: SelectedOperation = .{
+        .identity = .{ .contract = @enumFromInt(0), .index = 0 },
+        .conformance = .{
+            .declaration = @enumFromInt(0),
+            .source = source,
+            .participants = .{ .start = 0, .len = 0 },
+            .associated_arguments = .{ .start = 0, .len = 0 },
+        },
+        .binding = .{
+            .contract_definition = @enumFromInt(0),
+            .requirement_index = 0,
+            .requirement_source = source,
+            .implementation_source = source,
+            .name = name,
+            .definition = @enumFromInt(0),
+        },
+    };
+    try std.testing.expect(evidence.acceptsFunction(&graph, @enumFromInt(0)));
+    try std.testing.expect(!evidence.acceptsFunction(&graph, @enumFromInt(1)));
+}

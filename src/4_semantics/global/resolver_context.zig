@@ -141,6 +141,7 @@ pub const Context = struct {
         self.constructors.contracts = &self.contracts;
         self.control.generic_functions = &self.generic_functions;
         self.control.contracts = &self.contracts;
+        self.core.session_value_bindings = &self.expressions.session_bindings;
         self.contracts.function_context = &self.generic_functions;
         self.contracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
         self.contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;

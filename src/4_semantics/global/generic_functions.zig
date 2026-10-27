@@ -1057,7 +1057,9 @@ pub const Resolver = struct {
         associated: primitives.Range(ir.ParameterizedGenericArgId),
     ) !?global_sg.GlobalTypeId {
         const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
-        const declaration = try contracts.resolveFunctionRef(module_index, operation.function);
+        const target = try contracts.resolveFunctionTarget(module_index, operation.function);
+        const definition = target.value(self.graph) orelse return error.DeferredGenericFunction;
+        const declaration = self.graph.familyDeclaration(definition.origin);
         const located = self.findParameterized(declaration) orelse {
             if (arguments.len != 0) return null;
             const function_id = self.graph.declaration(declaration).function_id orelse return null;
@@ -1068,6 +1070,7 @@ pub const Resolver = struct {
         if (operation.instantiate_associated and (located.module_index != module_index or function.captured_parameter_count < capture_count)) return null;
         var inferred = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer inferred.deinit(self.allocator);
+        if (!operation.instantiate_associated) _ = try self.generics.bindDefinitionCaptures(located.module_index, function.parameters, definition, &inferred);
         for (0..capture_count) |index| {
             const from = captures.start + index;
             const to = function.parameters.start + index;
@@ -1076,8 +1079,8 @@ pub const Resolver = struct {
             inferred.definitions[to] = bindings.definitions[from];
         }
         const own_parameters: primitives.Range(ir.ComptimeParameterId) = .{
-            .start = function.parameters.start + function.captured_parameter_count,
-            .len = function.parameters.len - function.captured_parameter_count,
+            .start = function.parameters.start + @max(function.captured_parameter_count, definition.captures.len),
+            .len = function.parameters.len - @max(function.captured_parameter_count, definition.captures.len),
         };
         self.generics.bindGlobalArgumentsPartial(located.module_index, own_parameters, arguments, &inferred) catch |err| switch (err) {
             error.OutOfMemory => return err,
@@ -2213,7 +2216,10 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage.ir;
         const representation = storage.representation(pattern);
         if (representation == .resolved and representation.resolved == .generic)
-            return self.inferFamilyApplication(module_index, representation.resolved.generic, .{ .signature_type = required }, bindings, 0, null);
+            return self.inferFamilyApplication(module_index, representation.resolved.generic, .{ .signature_type = required }, bindings, 0, null) catch |err| switch (err) {
+                error.ConflictingGenericArgument => false,
+                else => return err,
+            };
         if (representation != .resolved or representation.resolved != .structural) {
             const actual = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
                 error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
@@ -2228,7 +2234,10 @@ pub const Resolver = struct {
             const wanted = storage.fields.items[fields.start + position];
             const given = self.graph.fields.items[inputs.start + position];
             if (!std.mem.eql(u8, module.text(wanted.name), self.graph.text(given.name))) return false;
-            if (!try self.inferInputType(module_index, wanted.ty, given.ty, bindings)) return false;
+            if (!(self.inferInputType(module_index, wanted.ty, given.ty, bindings) catch |err| switch (err) {
+                error.ConflictingGenericArgument => return false,
+                else => return err,
+            })) return false;
         }
         for (inputs.len..fields.len) |position|
             if (storage.fields.items[fields.start + position].default_value == null) return false;
@@ -2281,7 +2290,7 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        if (contextual) try self.generics.bindGlobalArguments(located.module_index, .{ .start = located.parameterized.parameters.start, .len = located.parameterized.captured_parameter_count }, captures, &bindings);
+        try self.generics.bindGlobalArgumentsPartial(located.module_index, .{ .start = located.parameterized.parameters.start, .len = captures.len }, captures, &bindings);
         if (!try self.inferSignatureBindings(located.module_index, located.parameterized.input, input, &bindings)) return error.OperationAliasInputMismatch;
         if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) return error.OperationAliasConstraintMismatch;
         const arguments = try self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings);
@@ -2291,8 +2300,9 @@ pub const Resolver = struct {
         return self.instantiateWithSignature(declaration, arguments, if (contextual) .{ .input = input, .output = output } else null);
     }
 
-    pub fn instantiateOperationAlias(context: *anyopaque, declaration: global_sg.GlobalDeclId, input: global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId {
+    pub fn instantiateOperationAlias(context: *anyopaque, definition: global_sg.DefinitionValue, input: global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId {
         const self: *Resolver = @ptrCast(@alignCast(context));
+        const declaration = self.graph.familyDeclaration(definition.origin);
         const saved_publication = self.publishing_signature;
         self.publishing_signature = true;
         defer self.publishing_signature = saved_publication;
@@ -2300,6 +2310,7 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
+        _ = try self.generics.bindDefinitionCaptures(located.module_index, located.parameterized.parameters, definition, &bindings);
         if (!try self.inferSignatureBindings(located.module_index, located.parameterized.input, input, &bindings)) return error.OperationAliasInputMismatch;
         if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) return error.OperationAliasConstraintMismatch;
         const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch |err| {

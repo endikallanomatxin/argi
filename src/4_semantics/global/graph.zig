@@ -111,10 +111,11 @@ pub const ContractOperationBinding = struct {
     implementation_source: primitives.SourceRef,
     alias_source: ?primitives.SourceRef = null,
     name: StringRange,
-    declaration: GlobalDeclId,
+    // The ordinary compile-time expression retains aliases and deferred
+    // specialization captures without a second resolution mechanism.
+    definition: GlobalNodeId,
     instantiate_associated: bool = false,
     materialized_function: ?GlobalFunctionId = null,
-    parameter_count: u32 = 0,
 };
 pub const ContractConformance = struct {
     // Declaration/signature validation is separate from the later safety proof.
@@ -668,8 +669,10 @@ pub const GlobalSemanticGraph = struct {
     }
 
     pub fn declarationSourceName(self: *const GlobalSemanticGraph, id: GlobalDeclId) StringRange {
-        for (self.contract_operation_bindings.items) |operation_binding|
-            if (operation_binding.instantiate_associated and operation_binding.declaration == id) return operation_binding.name;
+        for (self.contract_operation_bindings.items) |operation_binding| {
+            const definition = @import("types.zig").definitionValue(self, operation_binding.definition) orelse continue;
+            if (operation_binding.instantiate_associated and self.familyDeclaration(definition.origin) == id) return operation_binding.name;
+        }
         return self.declaration(id).name;
     }
 

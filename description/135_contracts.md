@@ -383,9 +383,12 @@ parameterized bodies. The source protocol and CLI view adapter live separately
 from option-tokenization and schema code.
 
 Generic operation aliases infer their ordinary function parameters from the
-selected requirement's input signature. The aliased declaration is fixed; no
-second overload search or result-directed inference occurs. Selected bounds and
-result compatibility remain checked. Equivalent generic implementation patterns
+selected requirement's input signature. A named alias can retain a completely
+or partially specialized function value; its captured arguments stay fixed, and
+only remaining parameters are inferred. Reuse preserves the producer identity
+and `once` restriction. No second overload search or result-directed inference
+occurs. Selected bounds and result compatibility remain checked. Equivalent
+generic implementation patterns
 and extension ownership are checked even for dormant templates.
 
 ImplicitlyCopyable and InfalliblyCopyable now have explicit Value participants.

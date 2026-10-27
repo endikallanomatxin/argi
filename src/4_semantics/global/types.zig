@@ -628,7 +628,7 @@ test "cleanup queries require selected Deinit evidence" {
         .requirement_source = source,
         .implementation_source = source,
         .name = name,
-        .declaration = @enumFromInt(1),
+        .definition = @enumFromInt(0),
         .materialized_function = @enumFromInt(0),
     });
     try graph.contract_conformances.append(allocator, .{

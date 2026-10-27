@@ -235,7 +235,7 @@ pub const Resolver = struct {
                 defer substitutions.deinit(self.allocator);
                 const remaining = try self.bindDefinitionCaptures(owner, template.parameters, definition, &substitutions);
                 const arguments = try self.instantiateParameterizedArguments(module_index, application.arguments, bindings);
-                self.bindGlobalArguments(owner, remaining, arguments, &substitutions) catch |err| {
+                self.bindGlobalArgumentsPartial(owner, remaining, arguments, &substitutions) catch |err| {
                     const reason = switch (err) {
                         error.TooManyGenericArguments => "too many compile-time arguments in definition specialization",
                         error.UnknownGenericArgument => "unknown compile-time argument in definition specialization",
@@ -248,9 +248,28 @@ pub const Resolver = struct {
                     self.comptime_failure = .{ .source = source, .reason = reason };
                     return error.InvalidGenericCallArguments;
                 };
+                try self.applyParameterDefaults(owner, remaining, &substitutions);
+                // Definition values retain a canonical bound prefix. A trailing
+                // suffix stays available for later specialization/input inference;
+                // named arguments cannot create holes in that prefix.
+                var bound_count: u32 = 0;
+                var missing = false;
+                for (template.parameters.start..template.parameters.start + template.parameters.len) |raw| {
+                    const bound = switch (storage.comptime_parameters.items[raw].kind) {
+                        .type => substitutions.types[raw] != null,
+                        .comptime_int => substitutions.ints[raw] != null,
+                        .definition => substitutions.definitions[raw] != null,
+                    };
+                    if (!bound) {
+                        missing = true;
+                    } else if (missing) {
+                        self.comptime_failure = .{ .source = source, .reason = "definition specialization arguments must bind a contiguous parameter prefix" };
+                        return error.InvalidGenericCallArguments;
+                    } else bound_count += 1;
+                }
                 return .{ .definition = .{
                     .origin = definition.origin,
-                    .captures = try self.appendBoundArguments(owner, template.parameters, &substitutions),
+                    .captures = try self.appendBoundArguments(owner, .{ .start = template.parameters.start, .len = bound_count }, &substitutions),
                 } };
             }
         }
