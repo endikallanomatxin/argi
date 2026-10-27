@@ -30,12 +30,11 @@ _pcg_seed_state := (.seed: UInt64) -> (.state: UInt64) {
     state = _pcg_advance(.state = combined).next
 }
 
-implement Init#(Pcg32, (.seed: UInt64)) (
-    .Result : Type = Pcg32
-    .init   = (.args: (.seed: UInt64)) -> (.result: Result) {
-        seed ::= args.seed
+implement Init#(Pcg32) (
+    .init = (.seed: UInt64) -> (.result: Pcg32) {
+        _init_seed ::= seed
 
-        result = (._state = _pcg_seed_state(.seed = seed).state)
+        result = (._state = _pcg_seed_state(.seed = _init_seed).state)
     }
 )
 

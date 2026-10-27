@@ -914,7 +914,7 @@ test "interactive once consumption survives commands and rejected candidates" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    const definition = "once acquire := () -> (.result: Int32) { result = 42 }";
+    const definition = "acquire := once () -> (.result: Int32) { result = 42 }";
     try session.submit(definition);
     try std.testing.expectError(error.Reported, session.submitInput("#run () -> (.answer: Int32) { answer = acquire() }"));
     // Neither unresolved commands nor repeated uses in a rejected candidate
@@ -942,7 +942,7 @@ test "interactive once capabilities retain deferred temporary storage" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Token := (.value: Int32)\nonce acquire := () -> (.result: Token) { result = (.value = 42) }\nobserve := (.capability: &Token) -> (.result: Int32) { result = capability&.value }");
+    try session.submitDefinitions("Token := (.value: Int32)\nacquire := once () -> (.result: Token) { result = (.value = 42) }\nobserve := (.capability: &Token) -> (.result: Int32) { result = capability&.value }");
     try session.submitStatements("assume capability ::= $&acquire()");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
@@ -962,7 +962,7 @@ test "interactive deferred owners retain their checked cleanup" {
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Resource := (.value: Int32)\nonce acquire := () -> (.result: Resource) { result = (.value = 42) }\nobserve := (.resource: &Resource) -> (.result: Int32) { result = resource&.value }");
+    try session.submitDefinitions("Resource := (.value: Int32)\nacquire := once () -> (.result: Resource) { result = (.value = 42) }\nobserve := (.resource: &Resource) -> (.result: Int32) { result = resource&.value }");
     try session.submitDefinitions("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})");
     try session.submitStatements("assume resource ::= $&acquire()");
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("observe()")).?.value.runtime.integer);
@@ -992,7 +992,7 @@ test "interactive once defaults consume only completed call arguments" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("once acquire := () -> (.result: Int32) { result = 42 }\nwith_default := (.value: Int32 = acquire()) -> (.result: Int32) { result = value }");
+    try session.submitDefinitions("acquire := once () -> (.result: Int32) { result = 42 }\nwith_default := (.value: Int32 = acquire()) -> (.result: Int32) { result = value }");
     try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("with_default(.value = 7)")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("with_default()")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
@@ -1530,13 +1530,13 @@ test "interactive Init wrappers retain assumed capabilities from earlier command
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Init#(.T: Type, .Args: Type): Contract = (.Result: Type\n.init: (.args: Args) -> (.result: Result))");
+    const loaded = try sources.loadModule(&diagnostics, "Init#(.T: Type): Contract = (.init: _)");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Capability := (.value: Int32)\nBox := (.value: Int32)\nread_capability := (.permission: &Capability = reach permission) -> (.value: Int32) { value = permission&.value }\nimplement Init#(Box, ()) (.Result: Type = Box\n.init = (.args: ()) -> (.result: Result) { result = (.value = read_capability()) })");
+    try session.submitDefinitions("Capability := (.value: Int32)\nBox := (.value: Int32)\nread_capability := (.permission: &Capability = reach permission) -> (.value: Int32) { value = permission&.value }\nimplement Init#(Box) (.init = () -> (.result: Box) { result = (.value = read_capability()) })");
     try session.submitStatements("token :: Capability = (.value = 42)\nassume permission ::= &token");
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Box().value")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("missing_capability_command"));
@@ -1768,6 +1768,12 @@ test "interactive Init selects target before inferring implementation parameters
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitDefinitions(
+        \\Pair := #(.Left: Type, .Right: Type) (.left: Left, .right: Right)
+        \\implement#(.Left: Type, .Right: Type) Init#(Pair#(Left, Right)) (
+        \\    .init = (.left: Left, .right: Right) -> (.result: Pair#(Left, Right)) {
+        \\        result = (.left = ~left, .right = ~right)
+        \\    }
+        \\)
         \\Point := (.value: Int32)
         \\Other := (.value: Int32)
         \\Provider := (.flag: Bool)
@@ -1791,6 +1797,9 @@ test "interactive Init selects target before inferring implementation parameters
     try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("Other().value")).?.value.runtime.integer);
     try session.submitStatements("container ::= Container#(Int32)(.provider = &provider, .value = 19)");
     try std.testing.expectEqual(@as(u64, 19), (try session.submitInput("container.value")).?.value.runtime.integer);
+    try session.submitStatements("inferred ::= Container(.provider = &provider, .value = 23)\npair ::= Pair#(.Left: Int32)(.left = 1, .right = false)");
+    try std.testing.expectEqual(@as(u64, 23), (try session.submitInput("inferred.value")).?.value.runtime.integer);
+    try std.testing.expectEqual(false, (try session.submitInput("pair.right")).?.value.runtime.boolean);
     try session.submitStatements("known ::= #run () -> (.result: Int32) { result = Other().value }");
     try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("known")).?.value.runtime.integer);
     const revision = session.compiler.revision;

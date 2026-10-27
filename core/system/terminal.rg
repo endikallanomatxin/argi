@@ -8,17 +8,16 @@ Terminal := (
     .stderr : File
 )
 
-once _acquire_terminal := (.args: _TerminalInitArgs) -> (.result: Terminal) {
-    assume ffi := args.ffi
+_acquire_terminal := once _TerminalInitArgs -> (.result: Terminal) {
+    assume ffi := ffi
 
     init_stdin(.p = $&result.stdin)
     init_stdout(.p = $&result.stdout)
     init_stderr(.p = $&result.stderr)
 }
 
-implement Init#(Terminal, _TerminalInitArgs) (
-    .Result : Type = Terminal
-    .init   = _acquire_terminal
+implement Init#(Terminal) (
+    .init = _acquire_terminal
 )
 
 implement Deinit#(Terminal) (

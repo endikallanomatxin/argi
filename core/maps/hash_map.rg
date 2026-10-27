@@ -79,48 +79,37 @@ _init_hash_map := #(
     result = ..ok ~constructed
 }
 
-implement#(
-    .key      : Type,
-    .value    : Type,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator
-) Init#(
-    HashMap#(.key: key, .value: value, .policy: policy),
-    (.policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8)
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) Init#(
+    HashMap#(.key: key, .value: value, .policy: policy)
 ) (
-    .Result : Type = Errable#(
-        HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory)
-    )
-    .init = (.args: (.policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8)) -> (
-        .result : Result
+    .init = #(.Provider: Type: Allocator) (
+        .policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8
+    ) -> (
+        .result : Errable#(
+            HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory)
+        )
     ) {
         constructed ::= _init_hash_map#(.key: key, .value: value)(
-            .policy = ~args.policy, .allocator = args.allocator, .capacity = args.capacity
+            .policy = ~policy, .allocator = allocator, .capacity = capacity
         )!
         result = ..ok ~constructed
     }
 )
 
-implement#(.key: Type: _StandardHashKey#(key), .value: Type, .Provider: Type: Allocator) Init#(
-    HashMap#(.key: key, .value: value, .policy: StandardHashPolicy),
-    (
+implement#(.key: Type: _StandardHashKey#(key), .value: Type) Init#(
+    HashMap#(.key: key, .value: value, .policy: StandardHashPolicy)
+) (
+    .init = #(.Provider: Type: Allocator) (
         .policy    : StandardHashPolicy = StandardHashPolicy(),
         .allocator : $&Provider,
         .capacity  : UIntNative         = 8
-    )
-) (
-    .Result : Type = Errable#(
-        HashMap#(.key: key, .value: value, .policy: StandardHashPolicy), (..out_of_memory)
-    )
-    .init = (
-        .args : (
-            .policy    : StandardHashPolicy = StandardHashPolicy(),
-            .allocator : $&Provider,
-            .capacity  : UIntNative         = 8
+    ) -> (
+        .result : Errable#(
+            HashMap#(.key: key, .value: value, .policy: StandardHashPolicy), (..out_of_memory)
         )
-    ) -> (.result: Result) {
+    ) {
         constructed ::= _init_hash_map#(.key: key, .value: value)(
-            .policy = ~args.policy, .allocator = args.allocator, .capacity = args.capacity
+            .policy = ~policy, .allocator = allocator, .capacity = capacity
         )!
         result = ..ok ~constructed
     }

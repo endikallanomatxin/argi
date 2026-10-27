@@ -4,10 +4,9 @@ FailFirstAllocator := (
     .deallocations : Int32
 )
 
-implement Init#(FailFirstAllocator, (.ffi: $&ForeignFunctionInterface)) (
-    .Result : Type = FailFirstAllocator
-    .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        assume ffi := ~args.ffi
+implement Init#(FailFirstAllocator) (
+    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: FailFirstAllocator) {
+        assume ffi := ~ffi
 
         result = (.ffi = ffi, .allocations = 0, .deallocations = 0)
     }
@@ -28,7 +27,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
 implement Allocator#(FailFirstAllocator) (
     .allocate = (.self: $&FailFirstAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.allocations = self&.allocations + 1
         if self&.allocations > 0 {

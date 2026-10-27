@@ -8,9 +8,8 @@ _ArenaBlock := (
 -- reset. Updating only the marker would leave the former generation ended.
 ArenaDomain := (.marker: Bool)
 
-implement Init#(ArenaDomain, ()) (
-    .Result : Type = ArenaDomain
-    .init   = (.args: ()) -> (.result: Result) {
+implement Init#(ArenaDomain) (
+    .init = () -> (.result: ArenaDomain) {
         result = (.marker = false)
     }
 )
@@ -31,23 +30,20 @@ ArenaAllocator := (
     ._current_block_offset : UIntNative
 )
 
-implement#(.Provider: Type: Allocator) Init#(
-    ArenaAllocator, (.allocator: $&Provider = reach allocator, .block_size: UIntNative = 4096)
-) (
-    .Result : Type = Errable#(ArenaAllocator, (..out_of_memory))
-    .init   = (
-        .args : (.allocator: $&Provider = reach allocator, .block_size: UIntNative = 4096)
-    ) -> (.result: Result) {
-        allocator ::= args.allocator
-        block_size ::= args.block_size
+implement Init#(ArenaAllocator) (
+    .init = #(.Provider: Type: Allocator) (
+        .allocator : $&Provider = reach allocator, .block_size: UIntNative = 4096
+    ) -> (.result: Errable#(ArenaAllocator, (..out_of_memory))) {
+        _init_allocator ::= allocator
+        _init_block_size ::= block_size
 
         constructed :: ArenaAllocator
 
-        actual_block_size ::= block_size
+        actual_block_size ::= _init_block_size
 
         if actual_block_size == 0 { actual_block_size = 1 }
         constructed = (
-            ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = allocator)
+            ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = _init_allocator)
             .domain                = ArenaDomain()
             ._block_head           = 0
             .block_count           = 0

@@ -10,7 +10,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     info ::= metadata(.path = directory_path)!!!
     if info.kind != ..directory { abort }
     file_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample/bytes.bin"
-    file ::= File(
+    file ::= open_file(
         .file_system = file_system, .path = file_path, .allocator = allocator, .mode = ..write
     )!!!
     input: [4]UInt8 = (65, 0, 66, 67)

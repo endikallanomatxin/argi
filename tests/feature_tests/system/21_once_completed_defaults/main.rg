@@ -1,4 +1,4 @@
-once acquire := () -> (.result: Int32) {
+acquire := once () -> (.result: Int32) {
     result = 42
 }
 

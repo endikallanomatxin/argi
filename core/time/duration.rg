@@ -3,12 +3,11 @@ Duration := (._nanoseconds: UInt64)
 
 implement ImplicitlyCopyable#(Duration) ()
 
-implement Init#(Duration, (.nanoseconds: UInt64)) (
-    .Result : Type = Duration
-    .init   = (.args: (.nanoseconds: UInt64)) -> (.result: Result) {
-        nanoseconds ::= args.nanoseconds
+implement Init#(Duration) (
+    .init = (.nanoseconds: UInt64) -> (.result: Duration) {
+        _init_nanoseconds ::= nanoseconds
 
-        result = (._nanoseconds = nanoseconds)
+        result = (._nanoseconds = _init_nanoseconds)
     }
 )
 
@@ -70,9 +69,9 @@ subtract := (.left: Duration, .right: Duration) -> (
     ).result
 }
 
-implement Equal#(Duration, Duration, (.left: Duration, .right: Duration)) (
-    .equal = (.args: (.left: Duration, .right: Duration)) -> (.ok: Bool) {
-        ok = args.left._nanoseconds == args.right._nanoseconds
+implement Equal#(Duration, Duration) (
+    .equal = (.left: Duration, .right: Duration) -> (.ok: Bool) {
+        ok = left._nanoseconds == right._nanoseconds
     }
 )
 

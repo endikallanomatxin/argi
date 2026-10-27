@@ -2,18 +2,17 @@
 -- byte zero. Construction clears only the bytes needed for the requested bits.
 BitSetView := (._bytes: MutableArrayView#(.t: UInt8), ._count: UIntNative)
 
-implement Init#(BitSetView, (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative)) (
-    .Result : Type = Errable#(BitSetView, (..out_of_bounds))
-    .init   = (.args: (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative)) -> (
-        .result : Result
+implement Init#(BitSetView) (
+    .init = (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative) -> (
+        .result : Errable#(BitSetView, (..out_of_bounds))
     ) {
-        bytes ::= args.bytes
-        count ::= args.count
+        _init_bytes ::= bytes
+        _init_count ::= count
 
-        needed ::= count / 8
+        needed ::= _init_count / 8
 
-        if count % 8 != 0 { needed = needed + 1 }
-        if needed > length(&bytes).count {
+        if _init_count % 8 != 0 { needed = needed + 1 }
+        if needed > length(&_init_bytes).count {
             result = ..error(.reason = ..out_of_bounds)
             return
         }
@@ -21,12 +20,14 @@ implement Init#(BitSetView, (.bytes: MutableArrayView#(.t: UInt8), .count: UIntN
         index :: UIntNative = 0
 
         while index < needed {
-            target ::= unwrap_or_abort(.value = get_mutable_reference($&bytes, .index = index))
+            target ::= unwrap_or_abort(
+                .value = get_mutable_reference($&_init_bytes, .index = index)
+            )
             target&= 0
             index = index + 1
         }
 
-        result = ..ok(._bytes = bytes, ._count = count)
+        result = ..ok(._bytes = _init_bytes, ._count = _init_count)
     }
 )
 

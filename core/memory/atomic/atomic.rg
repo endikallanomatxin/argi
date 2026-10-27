@@ -30,25 +30,22 @@ _atomic_compare(.handle: UIntNative, .expected: UInt32, .desired: UInt32) -> (.p
 -- across threads; that requires the language's separate transfer contracts.
 AtomicUInt32 := (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
 
-implement Init#(
-    AtomicUInt32, (.initial: UInt32 = 0, .ffi: $&ForeignFunctionInterface = reach ffi)
-) (
-    .Result : Type = Errable#(AtomicUInt32, (..out_of_memory))
-    .init   = (.args: (.initial: UInt32 = 0, .ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-        .result : Result
+implement Init#(AtomicUInt32) (
+    .init = (.initial: UInt32 = 0, .ffi: $&ForeignFunctionInterface = reach ffi) -> (
+        .result : Errable#(AtomicUInt32, (..out_of_memory))
     ) {
-        initial ::= args.initial
-        ffi ::= args.ffi
+        _init_initial ::= initial
+        _init_ffi ::= ffi
 
-        assume ffi
-        handle ::= _atomic_create(.initial = initial).handle
+        assume ffi := _init_ffi
+        handle ::= _atomic_create(.initial = _init_initial).handle
 
         if handle == 0 {
             result = ..error(.reason = ..out_of_memory)
             return
         }
 
-        result = ..ok(._handle = handle, ._ffi = ffi)
+        result = ..ok(._handle = handle, ._ffi = _init_ffi)
     }
 )
 

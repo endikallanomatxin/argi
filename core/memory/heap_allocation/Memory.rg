@@ -14,8 +14,8 @@ _trusted_acquisition_subaddress := (.base: UIntNative, .address: UIntNative) -> 
     result = address
 }
 
-once _acquire_memory := (.args: _MemoryInitArgs) -> (.result: Memory) {
-    assume ffi := args.ffi
+_acquire_memory := once _MemoryInitArgs -> (.result: Memory) {
+    assume ffi := ffi
 
     result._ffi = ffi
     result._page_size = _memory_getpagesize().size
@@ -23,9 +23,8 @@ once _acquire_memory := (.args: _MemoryInitArgs) -> (.result: Memory) {
     if result._page_size == 0 { result._page_size = 4096 }
 }
 
-implement Init#(Memory, _MemoryInitArgs) (
-    .Result : Type = Memory
-    .init   = _acquire_memory
+implement Init#(Memory) (
+    .init = _acquire_memory
 )
 
 _memory_map_aligned := (.size: UIntNative, .alignment: UIntNative, .page_size: UIntNative) -> (

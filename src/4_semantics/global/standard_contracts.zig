@@ -54,7 +54,19 @@ test "standard contract lookup preserves ownership with complete and stale index
 }
 
 pub fn initializedType(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId) ?graph_mod.GlobalTypeId {
-    return participantOfOperation(graph, function, "Init");
+    const declaration = standardDefinition(graph, "Init") orelse return null;
+    for (graph.contract_conformances.items) |conformance| {
+        if (conformance.declaration != declaration) continue;
+        for (0..conformance.operation_bindings.len) |index| {
+            const selected = evidence.operationInConformance(graph, conformance, @intCast(index)) orelse continue;
+            if (!selected.acceptsFunction(graph, function)) continue;
+            // An ordinary generic alias can serve several conformances. Its
+            // family alone cannot establish which nominal value it constructs.
+            if (operationResultFailure(graph, conformance, function) != null) continue;
+            return selected.participant(graph, 0);
+        }
+    }
+    return null;
 }
 
 pub fn deinitializedType(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId) ?graph_mod.GlobalTypeId {

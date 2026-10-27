@@ -2,17 +2,15 @@ _EnvironmentVariablesInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
 
 EnvironmentVariables := (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_environment_variables := (.args: _EnvironmentVariablesInitArgs) -> (
+_acquire_environment_variables := once _EnvironmentVariablesInitArgs -> (
     .result : EnvironmentVariables
 ) {
-    ffi ::= args.ffi
 
     result._ffi = ffi
 }
 
-implement Init#(EnvironmentVariables, _EnvironmentVariablesInitArgs) (
-    .Result : Type = EnvironmentVariables
-    .init   = _acquire_environment_variables
+implement Init#(EnvironmentVariables) (
+    .init = _acquire_environment_variables
 )
 
 environment_variables_get_c_string := (.key: &CChar) -> (

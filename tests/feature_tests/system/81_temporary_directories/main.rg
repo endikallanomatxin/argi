@@ -15,7 +15,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     child_path ::= concat(
         .left = path(.self = &first).view, .right = "/child", .allocator = allocator
     )!!!
-    child ::= File(
+    child ::= open_file(
         .file_system = file_system
         .path        = view(.self = &child_path).view
         .allocator   = allocator

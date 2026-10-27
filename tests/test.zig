@@ -2324,7 +2324,7 @@ test "feature_tests/types/20_struct_initializer_without_init" {
 }
 
 test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "construction arguments do not match the selected Init.Args");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "construction arguments do not match the selected Init operation signature");
 }
 
 test "feature_tests/collections/16_dynamic_array_iterator_manual" {
@@ -6467,7 +6467,7 @@ test "feature_tests/system/48X_general_purpose_backing_ended" {
 }
 
 test "feature_tests/system/49X_initializer_temporary_ends_backing" {
-    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:31:30: error: reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:30:30: error: reference depends on a root that has ended");
 }
 
 test "feature_tests/system/49_general_purpose_allocator_on_arena" {
@@ -6577,7 +6577,7 @@ test "feature_tests/ownership/294X_fallible_constructor_preserves_root" {
 test "feature_tests/types/267X_initializer_wrong_result" {
     try buildExpectFail(
         "tests/feature_tests/types/267X_initializer_wrong_result",
-        "operation returns an incompatible associated result",
+        "Init.Result must be its participant type",
     );
 }
 
@@ -6814,13 +6814,11 @@ test "feature_tests/basics/27X_mixed_width_arithmetic" {
     );
 }
 
-test "feature_tests/basics/28X_unsupported_initializer_expression" {
-    try buildExpectFailExact("tests/feature_tests/basics/28X_unsupported_initializer_expression",
-        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:4:18: error: choice option '..first_reason' needs a concrete choice type
-        \\  Wrong: Choice = (..first_reason, ..second_reason)
-        \\                   ^
-        \\
-    );
+test "feature_tests/basics/28_choice_type_initializer" {
+    const path = "tests/feature_tests/basics/28_choice_type_initializer";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
 }
 
 test "safety statistics preserve composed allocator behavior" {
@@ -7497,7 +7495,7 @@ test "feature_tests/collections/84_collection_search" {
 }
 
 test "feature_tests/collections/85X_collection_search_missing_equality" {
-    try buildExpectFail("tests/feature_tests/collections/85X_collection_search_missing_equality", "no matching comparison operator '==' for 'Record' and 'Record'");
+    try buildExpectFail("tests/feature_tests/collections/85X_collection_search_missing_equality", "no conformance for the qualified operation's participants");
 }
 
 test "feature_tests/collections/86_ring_buffer" {
@@ -12039,7 +12037,7 @@ test "feature_tests/contracts/86_constant_projection_concrete_arithmetic" {
 }
 
 test "feature_tests/contracts/87X_constant_projection_constructor_unknown_member" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/87X_constant_projection_constructor_unknown_member", "unknown associated constant", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/87X_constant_projection_constructor_unknown_member", "unknown associated element", "failed without a diagnostic");
 }
 
 test "feature_tests/contracts/88X_constant_projection_constructor_missing_tuple" {
@@ -12516,11 +12514,11 @@ test "feature_tests/contracts/193X_init_legacy_collision" {
 }
 
 test "feature_tests/contracts/194X_init_scalar_arguments" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "Init.Args must be a record type");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "construction arguments do not match the selected Init operation signature");
 }
 
 test "feature_tests/contracts/195X_init_generic_default_type" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "default value is incompatible with its selected Init.Args field type");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "distinct nominal types require explicit conversion");
 }
 
 test "feature_tests/contracts/196_init_generic_defaults" {
@@ -12660,7 +12658,7 @@ test "feature_tests/contracts/221_init_generic_choice_defaults" {
 }
 
 test "feature_tests/contracts/222X_init_generic_default_out_of_range" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/222X_init_generic_default_out_of_range", "default value is incompatible with its selected Init.Args field type");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/222X_init_generic_default_out_of_range", "integer literal 128 does not fit");
 }
 
 test "feature_tests/contracts/223_deinit_collection_reached_capability" {
@@ -12730,7 +12728,7 @@ test "feature_tests/contracts/233_init_argument_specialization" {
 }
 
 test "feature_tests/contracts/234X_init_literal_shapes_ambiguous" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous Init argument shapes");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous conformances for the same participant tuple");
 }
 
 test "feature_tests/contracts/235_init_target_inferred_from_args" {
@@ -12740,7 +12738,7 @@ test "feature_tests/contracts/235_init_target_inferred_from_args" {
 }
 
 test "feature_tests/contracts/236X_init_target_not_inferred_from_result" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/236X_init_target_not_inferred_from_result", "construction arguments do not match");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/236X_init_target_not_inferred_from_result", "construction arguments cannot infer a matching Init target");
 }
 
 test "feature_tests/contracts/237_init_owned_policy_failure_cleanup" {
@@ -12756,7 +12754,7 @@ test "feature_tests/contracts/238_init_target_inferred_in_generic_body" {
 }
 
 test "feature_tests/contracts/239X_init_inferred_target_ambiguous" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/239X_init_inferred_target_ambiguous", "ambiguous Init argument shapes");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/239X_init_inferred_target_ambiguous", "ambiguous Init participants");
 }
 
 test "feature_tests/contracts/240_init_once_operation_alias" {
@@ -12892,6 +12890,7 @@ test "feature_tests/contracts/266X_add_missing_reached_argument" {
 test "feature_tests/contracts/267_equal_scoped_specialization" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/267_equal_scoped_specialization");
     try runExpect("tests/feature_tests/contracts/267_equal_scoped_specialization", 0);
+    try vmExpect("tests/feature_tests/contracts/267_equal_scoped_specialization", 0, null);
 }
 
 test "feature_tests/contracts/268X_legacy_equal_operator" {
@@ -12907,11 +12906,11 @@ test "feature_tests/contracts/270X_equal_result_must_be_bool" {
 }
 
 test "feature_tests/contracts/271X_equal_missing_reached_argument" {
-    try buildExpectFail("tests/feature_tests/contracts/271X_equal_missing_reached_argument", "Equal.Args requires a reachable capability");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/271X_equal_missing_reached_argument", "required reachable capabilities", "without a diagnostic");
 }
 
 test "feature_tests/contracts/272X_equal_argument_shapes_ambiguous" {
-    try buildExpectFail("tests/feature_tests/contracts/272X_equal_argument_shapes_ambiguous", "ambiguous Equal argument shapes");
+    try buildExpectFail("tests/feature_tests/contracts/272X_equal_argument_shapes_ambiguous", "ambiguous conformances for the same participant tuple");
 }
 
 test "feature_tests/contracts/273_scalar_arithmetic_evidence" {
@@ -12945,6 +12944,7 @@ test "feature_tests/contracts/278X_diagonal_product_dimension_mismatch" {
 test "feature_tests/contracts/279_scalar_equality_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/279_scalar_equality_evidence");
     try runExpect("tests/feature_tests/contracts/279_scalar_equality_evidence", 0);
+    try vmExpect("tests/feature_tests/contracts/279_scalar_equality_evidence", 0, null);
 }
 
 test "feature_tests/contracts/280_linear_algebra_add_evidence" {
@@ -13411,7 +13411,7 @@ test "feature_tests/collections/164_standard_hasher_vectors" {
 }
 
 test "feature_tests/collections/163X_custom_hash_policy_required" {
-    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "construction arguments do not match the selected Init.Args");
+    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "construction arguments do not match the selected Init operation signature");
 }
 
 test "feature_tests/contracts/338X_partial_constructor_unknown_parameter" {
@@ -15906,4 +15906,37 @@ test "feature_tests/contracts/333X_virtual_implementation_signature" {
 
 test "feature_tests/contracts/334X_implementation_operation_local_escape" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/334X_implementation_operation_local_escape", "local storage", "panic");
+}
+
+test "feature_tests/basics/130X_once_declaration_prefix" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/basics/130X_once_declaration_prefix", "place once after :=, before the function definition", "without a diagnostic");
+}
+
+test "feature_tests/polymorphism/340X_once_value_alias_reuse" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/340X_once_value_alias_reuse", "once function 'acquire' is consumed more than once", "without a diagnostic");
+}
+
+test "feature_tests/c_interop/130_c_function_definition_value" {
+    const path = "tests/feature_tests/c_interop/130_c_function_definition_value";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+}
+
+test "feature_tests/polymorphism/341_once_and_function_alias_values" {
+    const path = "tests/feature_tests/polymorphism/341_once_and_function_alias_values";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/c_interop/131X_generic_c_function_definition_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/131X_generic_c_function_definition_value", "CFunction requires a concrete non-generic definition", "without a diagnostic");
+}
+
+test "feature_tests/contracts/337X_inline_once_init_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/337X_inline_once_init_value", "is consumed more than once", "without a diagnostic");
+}
+
+test "feature_tests/polymorphism/342X_once_generic_value_reuse" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/342X_once_generic_value_reuse", "is consumed more than once", "without a diagnostic");
 }

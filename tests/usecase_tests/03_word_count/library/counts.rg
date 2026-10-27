@@ -41,7 +41,7 @@ count_directory := (
                 info ::= metadata(file_system, full_path)!! full_path
 
                 if info.kind == ..file {
-                    file_reader ::= File(
+                    file_reader ::= open_file(
                         .file_system = file_system, .path = full_path, .mode = ..read
                     )!! full_path
                     text ::= read_all_limited($&file_reader, buffer, limit)!! full_path

@@ -1,6 +1,6 @@
 main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
-    file ::= File(.stream_address = 0, .should_close = 0 == 1)
+    file ::= file_from_stream(.stream_address = 0, .should_close = 0 == 1)
     #if target_os("windows") {
         path ::= from_literal(.data = "NUL")
     } #else {

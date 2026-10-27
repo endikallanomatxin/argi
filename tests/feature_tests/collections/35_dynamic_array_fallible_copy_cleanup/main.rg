@@ -6,7 +6,7 @@ implement ErrorTracer#(Counter) (
     }
     .reset_context = (.self: $&Counter) -> () { self&.count = 0 }
     .report        = (.self: $&Counter, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
         result = ..ok Void()
     }
@@ -20,10 +20,9 @@ FailFourthAllocator := (
     .backing_freed_after_elements : Bool
 )
 
-implement Init#(FailFourthAllocator, (.ffi: $&ForeignFunctionInterface)) (
-    .Result : Type = FailFourthAllocator
-    .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        assume ffi := ~args.ffi
+implement Init#(FailFourthAllocator) (
+    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: FailFourthAllocator) {
+        assume ffi := ~ffi
 
         result.ffi = ffi
         result.allocation_attempts = 0
@@ -43,9 +42,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     first ::= unwrap_or_abort(.value = String(.length = 1))
     second ::= unwrap_or_abort(.value = String(.length = 1))
     third ::= unwrap_or_abort(.value = String(.length = 1))
-    push_assume_capacity#(.t: String) (.self = $&source, .value = ~first)
-    push_assume_capacity#(.t: String) (.self = $&source, .value = ~second)
-    push_assume_capacity#(.t: String) (.self = $&source, .value = ~third)
+    push_assume_capacity#(.t: String)(.self = $&source, .value = ~first)
+    push_assume_capacity#(.t: String)(.self = $&source, .value = ~second)
+    push_assume_capacity#(.t: String)(.self = $&source, .value = ~third)
 
     tracer ::= Counter(.count = 7)
     erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
@@ -75,7 +74,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
 implement Allocator#(FailFourthAllocator) (
     .allocate = (.self: $&FailFourthAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.allocation_attempts = self&.allocation_attempts + 1
         if self&.allocation_attempts == 4 {

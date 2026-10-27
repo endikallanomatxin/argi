@@ -152,12 +152,11 @@ parse := (.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input
     )
 }
 
-implement Init#(VersionView, (.text: StringView)) (
-    .Result : Type = Errable#(VersionView, (..invalid_input))
-    .init   = (.args: (.text: StringView)) -> (.result: Result) {
-        text ::= args.text
+implement Init#(VersionView) (
+    .init = (.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) {
+        _init_text ::= text
 
-        result = parse(.text = text)
+        result = parse(.text = _init_text)
     }
 )
 
@@ -339,9 +338,9 @@ equals := (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) {
     ok = left&._text == right&._text
 }
 
-implement Equal#(VersionView, VersionView, (.left: &VersionView, .right: &VersionView)) (
-    .equal = (.args: (.left: &VersionView, .right: &VersionView)) -> (.ok: Bool) {
-        ok = equals(.left = args.left, .right = args.right).ok
+implement Equal#(&VersionView, &VersionView) (
+    .equal = (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) {
+        ok = equals(.left = left, .right = right).ok
     }
 )
 

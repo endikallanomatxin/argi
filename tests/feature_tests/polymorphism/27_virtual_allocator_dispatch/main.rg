@@ -1,8 +1,7 @@
 NoopDeallocator: Type = ()
 
-implement Init#(NoopDeallocator, ()) (
-    .Result : Type = NoopDeallocator
-    .init   = (.args: ()) -> (.result: Result) {
+implement Init#(NoopDeallocator) (
+    .init = () -> (.result: NoopDeallocator) {
         result = ()
     }
 )
@@ -13,7 +12,8 @@ main := () -> (.status_code: Int32) {
         .value = $&noop
     )
     byte :: UInt8 = 7
-    Deallocator#().deallocate(
+    Deallocator#(
+    ).deallocate(
         .self = $&deallocator
         .data = raw_pointer#(.t: UInt8)(
             .address = [$&byte | convert#(.to: UIntNative)(_)]

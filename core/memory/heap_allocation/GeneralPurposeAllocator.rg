@@ -32,15 +32,14 @@ GeneralPurposeAllocator := (
     ._large_head        : UIntNative
 )
 
-implement#(.Provider: Type: Allocator) Init#(
-    GeneralPurposeAllocator, (.allocator: $&Provider = reach allocator)
-) (
-    .Result : Type = GeneralPurposeAllocator
-    .init   = (.args: (.allocator: $&Provider = reach allocator)) -> (.result: Result) {
-        allocator ::= args.allocator
+implement Init#(GeneralPurposeAllocator) (
+    .init = #(.Provider: Type: Allocator) (.allocator: $&Provider = reach allocator) -> (
+        .result : GeneralPurposeAllocator
+    ) {
+        _init_allocator ::= allocator
 
         result = (
-            ._backing_allocator = to_virtual#(.contract: Allocator)(.value = allocator)
+            ._backing_allocator = to_virtual#(.contract: Allocator)(.value = _init_allocator)
             ._bucket_size       = 4096
             ._bucket_head       = 0
             ._large_head        = 0

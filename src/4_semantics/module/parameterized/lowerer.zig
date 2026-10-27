@@ -263,6 +263,7 @@ pub const Context = struct {
                     const template_index: u32 = @intCast(self.graph.semantic.parameterized_storage.parameterized_functions.items.len);
                     try self.writer.addParameterizedFunction(.{
                         .captured_parameter_count = function.captured_parameter_count,
+                        .is_once = function.is_once,
                         .declaration = decl_id,
                         .concrete_function = if (params.len == 0 and (staged_body or deferred_signature)) declaration.function_id else null,
                         .parameters = params,

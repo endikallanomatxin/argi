@@ -112,11 +112,15 @@ associated value does not infer an otherwise unknown participant.
 
 ## Standard operations
 
-Construction uses `Init#(T, Args)`, with an associated `Result` and an `init`
-operation. `T(...)` supplies fields of `Args`, including their defaults. `Result`
-is `T` or an `Errable` containing `T`; eligible types without a custom Init retain
-structural construction. Alternative construction uses explicitly named functions
-or conversions instead of constructor overloads.
+Construction uses `Init#(T)`. Its `.init: _` requirement reserves the operation
+identity while the selected implementation supplies the signature, including
+operation-local compile-time parameters. `T(...)` supplies its ordinary inputs
+and defaults. The result must be `T` or an `Errable` containing `T`; it does not
+participate in selection. Eligible types without a custom Init retain structural
+construction. Alternative factories use explicitly named functions or contracts,
+rather than multiple Init conformances distinguished only by argument signatures.
+Implementation-owned signatures require static selection; virtual interfaces need
+a fixed declared signature.
 
 Conversion uses `Convert#(Source, Target)` and its associated `Result`. The result
 must be `Target` or an `Errable` containing it. Explicit conversion syntax is
@@ -148,11 +152,15 @@ selection remains static without adding a provider to every arithmetic contract
 or erasing the allocator. Operand participants and Args are inferred together
 from implementation input patterns; Result contributes no inference bindings.
 The selected Args record completes defaults and reached capabilities before
-invoking the scoped operation, following the same selection rules as Init.
+invoking the scoped operation. These arithmetic contracts still include Args
+as a participant; Init instead selects by target before inferring its signature.
 Addition now uses this lowering for concrete and specialized generic expressions.
 Bundled string concatenation implementations retain a statically selected allocator.
-Equality uses `Equal#(Left, Right, Args)` with an `equal` operation returning
-Bool. The `!=` symbol negates the same selected operation and evaluates it once.
+Equality uses `Equal#(Left, Right)` with an `equal` operation taking the two
+operand types directly and returning `(.ok: Bool)`. Borrowed equality uses
+reference participants, such as `Equal#(&Key, &Key)`. Auxiliary inputs belong
+to the operation signature and cannot distinguish conformances for one tuple.
+The `!=` symbol negates the same selected operation and evaluates it once.
 Bundled StringView, time values, Path and semver comparisons use Equal; auxiliary
 capabilities can be fields with reach defaults, including in generic bodies.
 Both addition and equality require explicit references for borrowed operands;

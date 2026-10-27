@@ -27,12 +27,12 @@ pub const arithmetic_core_source =
     \\    .Result: Type = Int32
     \\    .multiply = (.args: (.left: Int32, .right: Int32)) -> (.result: Result) { result = __scalar_multiply(.left = args.left, .right = args.right) }
     \\)
-    \\Equal#(.Left: Type, .Right: Type, .Args: Type): Contract = (.equal: (.args: Args) -> (.ok: Bool))
+    \\Equal#(.Left: Type, .Right: Type): Contract = (.equal: (.left: Left, .right: Right) -> (.ok: Bool))
     \\_TestEquality#(.Value: Type): Contract = ()
     \\implement _TestEquality#(Int32) ()
     \\implement _TestEquality#(UInt8) ()
-    \\implement#(.Value: Type: _TestEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
-    \\    .equal = (.args: (.left: Value, .right: Value)) -> (.ok: Bool) { ok = __scalar_equal(.left = args.left, .right = args.right) }
+    \\implement#(.Value: Type: _TestEquality) Equal#(Value, Value) (
+    \\    .equal = (.left: Value, .right: Value) -> (.ok: Bool) { ok = __scalar_equal(.left = left, .right = right) }
     \\)
     \\CompareRelations#(.Left: Type, .Right: Type): Contract = (
     \\    .less_than: (.left: Left, .right: Right) -> (.ok: Bool)

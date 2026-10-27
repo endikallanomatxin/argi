@@ -6,10 +6,9 @@ default_value := #(.Item: Type = Int32) (.value: Item = 7) -> (.result: Item) {
 
 Pair := #(.Left: Type, .Right: Type = Left) (.left: Left, .right: Right)
 
-implement#(.Left: Type, .Right: Type) Init#(Pair#(Left, Right), (.left: Left, .right: Right)) (
-    .Result : Type = Pair#(Left, Right)
-    .init   = (.args: (.left: Left, .right: Right)) -> (.result: Result) {
-        result = (.left = args.left, .right = args.right)
+implement#(.Left: Type, .Right: Type) Init#(Pair#(Left, Right)) (
+    .init = (.left: Left, .right: Right) -> (.result: Pair#(Left, Right)) {
+        result = (.left = left, .right = right)
     }
 )
 

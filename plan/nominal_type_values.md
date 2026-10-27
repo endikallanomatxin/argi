@@ -95,6 +95,13 @@ must not change resolution.
 Initially support parameterized type, function, and contract definitions. Do not
 treat the prefix as arbitrary compile-time execution or introduce runtime closures.
 
+The `once` modifier also belongs to the function definition value:
+`acquire := once Args -> Result { ... }`, or `generic := once #(...) ...`.
+Aliases preserve its function identity and consumption restriction. Declaration-
+prefix once syntax and its dedicated declaration node are removed. Concrete functions also have
+stable definition identities, so ordinary and once aliases retain the original
+FunctionId rather than creating wrappers or fresh single-use state.
+
 ## Contextual construction and function signatures
 
 Value literals construct values of an expected concrete type; they do not define
@@ -196,359 +203,66 @@ multiple-output construction/destructuring; classification of compile-time famil
 parameters; and phase-safe introspection. Settle these at the relevant boundary
 before adding implementation exceptions.
 
-## Progress
+## Current state and remaining work
 
-- Discovery and later lowering share canonical type, field, variant, and
-  generic-argument pools. One interface constructor handles local/imported types;
-  the early duplicate builder, prefix offsets, field/variant overlays, and final
-  canonicalization copy are removed. Functions also use one canonical record;
-  the interface/body metadata overlay and its linear lookups are removed.
-  Declaration metadata still needs consolidation.
-- Syntax stores function definitions and parameterized definitions independently
-  of their binding names. Calls reference callee expressions; type and function
-  applications share specialization nodes. Parameter and specialization lists
-  are distinct from struct type literals.
-- Hash-parenthesized compile-time syntax, named signature syntax, and formatter
-  spacing are implemented. Definition values retain the nominal model while
-  ordinary comparisons use their regular expression grammar.
+The branch uses `#(...)` throughout. Definition expressions own generic
+parameters; type/function families and aliases retain stable originating IDs and
+captures. Struct and payload-choice identity is separate from representation.
+ModuleSema uses shared canonical pools instead of discovery/body overlays and a
+final canonicalization copy. Definition completion remains transactional.
 
-- Concrete type values can be aliased across bindings and modules, used in
-  signatures and construction, and evaluated through `#run`. Deferred type uses
-  participate in the ordinary pending-work mechanism.
-- Unspecialized type/function families have a distinct compile-time value
-  classification, without runtime storage. Binding and module aliases preserve
-  their original templates and specialize through ordinary resolution. Concrete
-  types and families share alias traversal but remain distinct classifications.
-- Concrete nominal types reference independent type-definition IDs. Definitions
-  own layouts, fields, variants and callback prototypes; declarations bind their
-  type values. Source-name associations are optional and do not determine equality
-  or module ownership.
-- Generic types, function specializations, contracts, operations, and selected
-  evidence use independent family-definition IDs. Definitions locate their
-  templates directly; declaration associations provide names and navigation.
-  Anonymous type definitions still need migration. Legacy spellings still parse
-  into the common definition representation during migration.
+Named, imported and deferred function signatures retain their input/output type
+identities, defaults and dependencies. Contextual construction, generic aliases,
+associated families and compile-time entries use the common resolution pipeline.
+Existing focused coverage includes native, VM, REPL and `#run`; that coverage is
+not proof that the complete migration passes.
 
-### Current aggregate migration boundary
+Implementation-owned operation signatures use `.operation: _`. Their definitions
+or aliases use ordinary function inference, defaults, reached capabilities and
+Safety. Qualified static calls work; erased virtual interfaces require fixed
+signatures. General unqualified inference and projected signature properties
+remain to be completed where required by the final contract design.
 
-- Concrete and parameterized records and closed choices with payloads retain
-  their source definition identity.
-  Dependent instances include captured compile-time arguments; repeated lowering
-  reuses identities. Diagnostic source remapping does not affect identity.
-- Definition completion is journaled. Speculative type recipes preserve origin,
-  arguments, representation and defaults, including completion of retained IDs.
-  Compile-time entries capture demanded ambient bindings; own parameter defaults
-  do not acquire unused self-dependencies through signature record identities.
-- Concrete and specialized function interfaces retain input/output Type IDs.
-  Local named records supply signatures and defaults; explicitly specialized
-  functions also bind fields from named generic signature types. Input inference
-  follows those definitions and maps their parameter bindings back to the caller,
-  including ordinary reached defaults. Inline implementations are
-  constructed against their selected required signature. Ordinary operation
-  aliases infer parameters from corresponding inputs and retain their own types.
-- Named once capability constructors share explicit Args definitions with Init.
-  A native/VM fixture covers named signatures, defaults and calls through #run.
+Init now has only T as participant. The constructor resolver selects its evidence
+before inferring operation-local parameters and passes ordinary inputs directly.
+There is no two-participant Init or wrapping of construction inputs in Args.
+Partial-target inference maps the operation's captured parameter IDs back to the
+implementation by capture position. Different inferred targets are ambiguous;
+conformance specificity only compares candidates for one concrete tuple.
 
-- Imported and deferred record signatures complete through ordinary pending work,
-  retaining their concrete function identity. Their bodies bind the completed
-  fields and defaults; qualified and closed specialized signatures share this
-  path. Non-record signatures receive semantic diagnostics. Integration coverage
-  exercises native execution, VM and `#run`.
+Core, more and 104 former fixture implementations have been migrated. Auxiliary
+providers belong to the init function unless they are part of the target type.
+Named once acquisition functions retain their identity and named input types.
+Utf8Decoder takes byte views; text explicitly projects its bytes. File retains
+its once empty-handle Init, uses file_from_stream for native stream handles, and
+FileOpening/AllocatingFileOpening for fallible path factories.
 
-- Input inference traverses composed signature families and carries inferred
-  bindings back through each lexical parameter list. Explicit type declarations
-  accept parameterized definition expressions as their value.
+Outstanding before completion:
 
-- Parameterized aliases complete their provisional application with the returned
-  semantic type rather than acquiring a family-based nominal identity. Input
-  inference follows their definition body using the same lexical binding transfer
-  as composed signatures; pointer prefilters do not reject transparent aliases by
-  their family name. Native/VM coverage includes round-trip assignments, alias
-  parameters and an identity type family.
+- Finish and validate generic selected-evidence queries: a generic operation can
+  have many concrete functions, and matching its family alone is insufficient.
+  Captured argument values must match the selected conformance.
+- Complete the arithmetic migration away from incidental Args participants.
+  Equality now uses two operand participants, direct operation inputs and the
+  common comparison evidence path. Borrowed equality uses reference participants;
+  independent Args identities no longer participate in its conformance lookup.
+- Review remaining anonymous aggregate/choice identities, contextual literals,
+  associated signature properties and generic operation inference against the
+  design above. Remove obsolete representations rather than keep fallbacks.
+- Check shorthand assume on named signatures whose fields become known late;
+  current acquisition functions retain explicit assume bindings.
+- Finish fixture diagnostics, editor navigation and declaration metadata cleanup;
+  synchronize examples and documentation with the final APIs.
+- Run complete internal/program suites, official formatting and differential
+  native/VM/REPL/comptime coverage, including ownership, defaults, rejected
+  transactions, imports, caches and generic cleanup.
 
-- Type-valued declarations, including parameterized aliases, use ordinary
-  constant binding syntax regardless of whether `: Type` is written. Family
-  classification comes from the definition expression; aliases whose bodies are
-  type parameters, references, arrays or other specializations need no annotation.
-  The separate ordinary type-declaration AST node is removed; C representation
-  declarations retain their explicit foreign forms.
-- Closed `Name: Type = value` declarations use ordinary constant bindings, just
-  like inferred type-valued declarations. Explicit annotations do not nominalize
-  an existing type. The nominal `underlying_type` representation and its separate
-  lowering, validation and backend paths are removed; scalar wrappers require a
-  record definition.
-
-- Nominal assignment checks cover whole values and typed aggregate children,
-  rather than only scalar wrappers. The old wrapper fixtures now distinguish
-  transparent annotated aliases from independent one-field record definitions.
-  Cyclic closed aliases are diagnosed after pending resolution stalls. Context
-  cannot retag an already constructed nominal value; this is checked before
-  record completion as well as during ordinary literal coercion.
-
-- Contract requirement syntax and ModuleSema retain operation-local compile-time
-  parameter ranges independently of participants and associated elements. Their
-  bounds and signature types are lowered in a scoped environment, and the module
-  verifier checks those ranges. Scoped static calls infer local parameters from
-  inputs/reached defaults, check bounds, and instantiate the selected definition
-  through the ordinary generic-function engine. Required outputs never infer them.
-
-- Selected operation bindings retain their optional materialized function
-  directly. The parallel per-conformance function-reference list is removed.
-  Completion is monotonic and journaled, including nested transactions and
-  allocation-failure rollback; reachability and verification use the same evidence.
-  Generic bindings retain their definition instead of one materialized function;
-  the verifier checks each called instance's selected definition origin.
-
-- Inline operation definitions preserve their own parameter lists after captured
-  conformance/associated bindings. The captured prefix is explicit in syntax and
-  ModuleSema; local parameters retain normal bounds/default lowering and cannot
-  shadow captures. Selected instances check callable input/output compatibility
-  and ordinary Safety before execution, including implementations that alias
-  ordinary generic functions. Safety proof selection keys both operation identity
-  and specialized function; proofs from another instance are not reused.
-  Native/VM/`#run` coverage combines ordinary and generic operations, differing
-  parameter names, captured conformance bindings and incompatible output rejection.
-- Unqualified candidates check operation parameter bounds/defaults before choosing
-  an operation identity. Distinct applicable identities remain ambiguous. Generic
-  operations are rejected explicitly at the virtual boundary. Interactive coverage
-  retains accepted instances across rejected submissions; declaration Safety
-  metadata is freed recursively, including partially built outcomes on allocation
-  failure.
-
-- Definition values retain origin plus captured argument ranges through aliases,
-  relocation and specialized IR. Type/function application binds the lexical prefix
-  before explicit arguments; bound-argument publication is shared. Internal tests
-  cover distinct environments, pool growth and rejection of capture rebinding.
-  Signature/body inference binds the same captured prefix, propagates only local
-  arguments back to the caller and checks nominal application captures before
-  inferring remaining parameters.
-  Source construction of associated family values and their signature checking
-  remain pending; the representation does not by itself complete that feature.
-
-- Qualified static operations accept their own explicit specialization arguments,
-  separately from contract participant arguments. Positional/named arguments bind
-  before input inference; concrete and staged bodies use the same selected-evidence
-  path. Parser and native/VM/`#run` tests cover both argument groups and reject
-  unknown/excess operation parameters with semantic diagnostics.
-
-- Multiple-output calls retain the signature's nominal output type rather than
-  reconstructing a structural record from its field range. Static and virtual
-  result typing share that rule; named-output assignments are covered in concrete
-  and generic functions across native, VM and `#run`. Single-output unpacking
-  remains an explicit outstanding part of the result-model consolidation.
-
-- Safety selector lowering and ModuleSema verification consult read-only semantic
-  signature field views, including closed named records, rather than assuming
-  syntax literals. Views retain concrete/parameterized field namespaces without
-  copying representations. Joint-output virtual Safety fixtures now share a named
-  result type and retain their original correlated-borrow diagnostics. Locally
-  available signature families expose their declared fields without instantiation,
-  including symbolic participants. Imported/deferred fields still need late selector
-  resolution.
-
-- Static contract calls accept closed named input/output records and infer
-  participants through named signature families using the existing function
-  inference path. Receiver indices for Safety come from the selected concrete
-  function signature. Native/VM/`#run` coverage preserves returned loans, and a
-  negative case rejects escape after the source lifetime ends. Named signature
-  families with declared Safety also work through virtual handles in native, VM
-  and `#run`, using the existing interface and evidence selection.
-
-- Repeated generic-binding conflicts discard only the losing operation candidate;
-  they do not abort selection of another contract identity. Qualified calls retain
-  their explicit conflict diagnostic. Native/VM/`#run` regressions cover losing
-  patterns alongside bound filtering and genuine identity ambiguities. Universal
-  compatibility of generic definitions remains separate from per-instance checks.
-
-- Nominal specialization lookup shares the existing generic identity index,
-  distinguishing nominal-definition and family origins in its keys. Validated
-  hits avoid the definition-pool scan; semantic equality remains the fallback for
-  recursively equivalent arguments and spelling differences. Existing cache
-  checkpoints cover rollback, with tests for repeated hits, ID reuse and wrong
-  entries. This reduces repeated lookup work without another persistent cache.
-
-- Compile-time parameter and specialization lists share ordinary parenthesis
-  pairing and the 96-column formatting policy. Hash markers stay attached to
-  their lists; definition parameters remain separated from runtime signatures.
-
-- Compile-time argument pools now distinguish definition values from concrete
-  types and integers. Inference, relocation, equality and argument publication
-  preserve their origins and captures. Deferred defaults and speculative type
-  recipes retain the same environment through rollback; allocation-failure tests
-  cover reconstruction. Type-family parameter signatures use `#(.Item: Type) Type`
-  in annotations and associated declarations. Their nested binders have separate
-  scopes and do not add arguments to the enclosing definition. Module verification
-  checks their ranges and parameter kinds. Associated family construction,
-  application and implementation-signature compatibility remain open.
-
-- Type-family parameters can be passed explicitly, forwarded and specialized in
-  function signatures/bodies; family defaults use the same captured values.
-  Retained definition references distinguish lexical family parameters from named
-  declarations. Explicit binding checks remaining arity and parameter kinds;
-  Bound compatibility rejects extra restrictions on an unrestricted signature
-  and compares explicit contract identities and symbolic arguments under
-  alpha-renaming. Unrestricted supplied families remain usable where a bound
-  is promised. General implication through contract composition remains pending.
-  Concrete call arguments now share the retained-IR lowering path, removing the
-  separate literal-only evaluator. Scoped operation and virtual-evidence consumers
-  resolve those arguments through the common resolver. Native, VM and `#run`
-  fixtures cover application, forwarding, defaults and arity rejection.
-
-- Associated family implementations can provide a named parameterized type value
-  with a family signature annotation. Operations specialize that selected family
-  through their own parameters; captured associated-family signatures retain their
-  metadata without becoming operation defaults. Native/VM/`#run` cases exercise
-  multiple operation instances, and invalid family arity produces a conformance
-  diagnostic. Associated projections as family arguments and universal bound
-  compatibility are still outstanding.
-
-- Associated family projections can be specialized directly in type annotations,
-  including generic signatures and `#run`. Resolution selects ordinary conformance
-  evidence and retains the provided family's nominal identity; it creates no new
-  family or nominal wrapper. A definition-reference projection carries its source,
-  contract base and member through retained IR. Tests distinguish concrete type
-  members from family members and preserve identity against the named family.
-  Unspecialized projections in compile-time argument position now retain a
-  value-projection recipe until conformance selection determines whether the
-  associated element is a type, integer or family. Ordinary specialization,
-  signature inference and constraint matching consume the same selected value;
-  they do not infer participants backwards from an associated result.
-  Native/VM/`#run` fixtures cover all three kinds and generic forwarding; a REPL
-  regression checks rejection rollback and continued use of accepted values.
-
-- Inline associated type-family definitions share private declaration discovery,
-  nominal type lowering and ordinary specialization with named definitions. Generic
-  implementation parameters form the family's captured prefix; local family
-  parameters remain its public specialization arguments. Internal verification
-  checks retained lexical IDs, and native/VM/`#run` fixtures cover captures and
-  projected layouts. Equal field representations from different captured
-  conformances remain nominally distinct. No associated-family template registry
-  or separate identity cache is introduced.
-
-- Unqualified operation calls accept positional/named explicit operation arguments.
-  Candidate probes bind them before input inference, bounds and conformance
-  selection; distinct applicable identities remain ambiguous. Concrete, staged and
-  interactive calls use the same selection path. Ordinary generic applicability
-  reuses explicit selection without materializing bodies during probes. Native,
-  VM, `#run` and REPL rollback tests cover explicit operation instances.
-
-- Family signature shape checking descends recursively through family-valued
-  parameters, with a bounded depth. Matching outer parameter kinds alone no longer
-  accepts incompatible nested arities. Positive nested application and negative
-  nested-signature fixtures complement the existing top-level arity checks.
-  Integer parameter types are compared by semantic identity, including aliases,
-  nested signatures and captured lexical environments. Explicit bounds compare
-  symbolic parameter positions, reference types and fixed arguments rather than
-  testing a representative instance. Contract-composition implication remains
-  outside this check; this does not claim universal signature compatibility.
-
-- Specialization in value position uses a shared entity-application recipe.
-  Type producers yield Type values; function producers retain their origin and
-  canonical captured arguments without executing or duplicating a template.
-  Module, lexical and retained interactive aliases invoke ordinary specialization
-  and argument completion. Parameterized bodies and compile-time entries share
-  that application path. Rebinding captured arguments and mismatched runtime
-  inputs are rejected. Rejection diagnostics borrow static messages rather than
-  leaking formatted strings outside transaction ownership.
-
-- MatrixProduct now selects only Left/Right; Args is an associated nominal record
-  shared by the general algorithm, diagonal specialization and Multiply adapters.
-  Native/VM matrix-shape coverage and weighted regression exercise the same result
-  projection. Init and the standard arithmetic protocols still require migration.
-
-Still pending:
-uniform classification of payloadless choice definitions versus referenced option sets, general contextual aggregate
-inference, remaining generic-call inference parity,
-associated type-family signatures and associated Args migration. Remove
-remaining field-range-only consumers and legacy generic representation paths.
-Bundled core/more sources, generated entrypoints, REPL preludes, scaffolding,
-primitive signature specifications and editor type displays use hash-parenthesized specialization
-and definition values. Constructor and operation fixtures must share nominal Args
-identities; editor parameter classification uses signature binding references as
-well as field origins. Full internal validation reached 1,027 passes with one
-skip and one editor failure; the subsequent focused checks pass after correcting
-that failure. The test syntax migration is consolidated in one commit. Broad program validation
-remains incomplete; the last full serial fixture group exposed constructor
-inference and associated-projection failures, with other diagnosed failures
-subsequently repaired. Init/arithmetic Args still need their associated-family migration;
-syntax migration alone does not complete that semantic change.
-
-Concrete constructor migration case: explicit StandardHashPolicy input makes both
-HashMap Init implementations applicable. Their independently defined nominal Args
-records prevent tuple coverage from establishing specialization. Reproduced with
-`argi build tests/feature_tests/system/86_word_count_consumer --no-cache`.
-Do not restore structural Args identity or rank unrelated nominal records by their
-fields. Migrate to one Init conformance per target, with operation-level Provider
-parameters and associated argument families. Standard-policy defaults belong to
-the selected target's argument definition; custom policies remain explicit. Preserve
-partial target inference and the existing noncopyable policy transfer behavior.
-
-Validation update: all 219 registered `feature_tests/types/` cases pass after
-migrating trace expectations and giving the duplicate-conformance fixture one
-shared nominal Args family. Conformance validation diagnoses unresolved
-participants before checking ownership or associated results. This category run
-does not replace full-suite validation or complete the Init/arithmetic migration.
-
-Compile-time entry lowering now retains nominal input/output signature types.
-Multi-output calls and System host wrappers share the original output identity;
-captured inputs use an explicit internal transport record. Deinit alias wrappers
-also preserve their delegated function's signature types instead of rebuilding
-identity from field ranges. Module-graph tests inspect these identities directly,
-complementing execution tests.
-
-## Implementation-owned operation signatures
-
-A contract can reserve an operation identity without prescribing one universal
-signature:
-
-```argi
-Factory#(.Target: Type): Contract = (.make: _)
-
-implement Factory#(Point) (
-    .make = (.x: Int32 = 0) -> (.result: Point) {
-        result = (.x = x)
-    }
-)
-```
-
-The selected implementation supplies the ordinary function definition or alias.
-Its compile-time parameters, input inference, defaults, reached capabilities and
-Safety analysis use the existing function pipeline. Generic implementations bind
-their captured participants before inferring operation-local parameters. Signature
-freedom does not create additional conformances for the same participant tuple.
-
-Static qualified calls now support this form, including generic operations inside
-generic implementations, aliases and compile-time execution. Interactive tests
-cover retained selected signatures across rejected submissions. Virtualization
-rejects this form explicitly: an erased interface needs a fixed declared signature.
-Unqualified participant inference, projected signature properties and migration of
-Init/arithmetic remain pending; the old Args participant has not yet been removed.
-
-The broad contracts/types/polymorphism validation also identifies outstanding
-migration cases: independently declared Args records previously matched through
-structural equality, duplicate constructor argument shapes remain ambiguous, and
-some negative tests still expect pre-migration diagnostics. Do not restore
-structural type equality to make these tests pass; migrate the protocols and their
-fixtures to the nominal model, then repeat the complete validation.
-
-Validation for implementation-owned signatures: selected internal contract,
-associated-element and interactive tests pass. Three dedicated program fixtures
-pass: generic/captured/aliased calls with defaults and borrowed results (native,
-VM and compile time), rejection of virtual erasure, and rejection of a local
-reference escaping through the selected operation. This does not establish
-completion of the broader nominal migration.
-
-The constructor resolver now also supports a single-participant Init definition:
-known targets select evidence first and pass the user's argument literal directly
-to the implementation-owned ordinary signature. Operation parameters are inferred
-after that selection. Result guarantees for Init and Convert share one check for
-fixed and implementation-owned signatures. The bundled core and its callers still
-use the old two-participant Init pending their coordinated migration; remove that
-constructor path when partial-target inference and library migration are complete.
-The focused interactive constructor test covers independent targets, a generic
-provider, defaults and successful execution after an invalid argument submission.
-The single-participant constructor path also passes focused interactive coverage
-for captured generic targets with operation-local providers, compile-time
-construction, and rejection rollback. This is a migration step: partial target
-inference and the bundled Init definitions still use the old argument-pattern
-selection and must be replaced before this objective is complete.
+The full internal suite passes after the function identity changes. Focused
+program coverage passes for definition-value once syntax, alias reuse rejection,
+generic and inline Init once consumption, C callback rejection and concrete
+C-ABI definition values. Function aliases execute in native, VM and compile-time
+contexts. Parameterized functions preserve the once property when materialized.
+The focused equality program suite passes, including missing-capability and
+duplicate-conformance diagnostics. The word-count use case also passes after
+restoring standard hash-policy resolution through borrowed Equal evidence.
+No full program-suite success is claimed.

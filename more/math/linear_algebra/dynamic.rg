@@ -28,46 +28,35 @@ _extent := (.rows: UIntNative, .cols: UIntNative) -> (
     result = ..ok rows * cols
 }
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
-    DynamicMatrix#(.t: t),
-    (
+implement#(.t: Type: Scalar) Init#(DynamicMatrix#(.t: t)) (
+    .init = #(.Provider: Type: Allocator) (
         .rows      : UIntNative,
         .cols      : UIntNative,
         .values    : ArrayView#(.t: t),
         .allocator : $&Provider         = reach allocator,
-    )
-) (
-    .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
-    .init   = (
-        .args : (
-            .rows      : UIntNative,
-            .cols      : UIntNative,
-            .values    : ArrayView#(.t: t),
-            .allocator : $&Provider         = reach allocator,
-        )
-    ) -> (.result: Result) {
-        rows ::= args.rows
-        cols ::= args.cols
-        values ::= args.values
-        allocator ::= args.allocator
+    ) -> (.result: Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))) {
+        _init_rows ::= rows
+        _init_cols ::= cols
+        _init_values ::= values
+        _init_allocator ::= allocator
 
-        count ::= _extent(.rows = rows, .cols = cols)!
+        count ::= _extent(.rows = _init_rows, .cols = _init_cols)!
 
-        if count != length(&values).count {
+        if count != length(&_init_values).count {
             result = ..error(.reason = ..dimension_mismatch)
             return
         }
 
-        storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+        storage ::= DynamicArray#(.t: t)(.allocator = _init_allocator, .capacity = count)!
         i :: UIntNative = 0
 
         while i < count {
-            item ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
-            push(.self = $&storage, .value = item, .allocator = allocator)!
+            item ::= unwrap_or_abort(.value = get(.self = &_init_values, .index = i)).result
+            push(.self = $&storage, .value = item, .allocator = _init_allocator)!
             i = i + 1
         }
 
-        result = ..ok(._rows = rows, ._cols = cols, ._values = ~storage)
+        result = ..ok(._rows = _init_rows, ._cols = _init_cols, ._values = ~storage)
     }
 )
 
@@ -233,24 +222,20 @@ _math_transpose_dynamic_matrix := #(.t: Type: Scalar, .Provider: Type: Allocator
 
 DynamicVector := #(.t: Type: Scalar) (._values: DynamicArray#(.t: t))
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
-    DynamicVector#(.t: t),
-    (.values: ArrayView#(.t: t), .allocator: $&Provider = reach allocator)
-) (
-    .Result : Type = Errable#(DynamicVector#(.t: t), (..out_of_memory))
-    .init   = (.args: (.values: ArrayView#(.t: t), .allocator: $&Provider = reach allocator)) -> (
-        .result : Result
-    ) {
-        values ::= args.values
-        allocator ::= args.allocator
+implement#(.t: Type: Scalar) Init#(DynamicVector#(.t: t)) (
+    .init = #(.Provider: Type: Allocator) (
+        .values: ArrayView#(.t: t), .allocator: $&Provider = reach allocator
+    ) -> (.result: Errable#(DynamicVector#(.t: t), (..out_of_memory))) {
+        _init_values ::= values
+        _init_allocator ::= allocator
 
-        count ::= length(&values).count
-        storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+        count ::= length(&_init_values).count
+        storage ::= DynamicArray#(.t: t)(.allocator = _init_allocator, .capacity = count)!
         i :: UIntNative = 0
 
         while i < count {
-            value ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
-            push(.self = $&storage, .value = value, .allocator = allocator)!
+            value ::= unwrap_or_abort(.value = get(.self = &_init_values, .index = i)).result
+            push(.self = $&storage, .value = value, .allocator = _init_allocator)!
             i = i + 1
         }
 

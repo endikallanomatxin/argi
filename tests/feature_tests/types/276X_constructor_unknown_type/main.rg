@@ -1,6 +1,5 @@
-implement Init#(Missing, ()) (
-    .Result : Type = Int32
-    .init   = (.args: ()) -> (.result: Result) {
+implement Init#(Missing) (
+    .init = () -> (.result: Int32) {
         result = 0
     }
 )

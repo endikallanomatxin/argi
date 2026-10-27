@@ -418,6 +418,15 @@ const Layout = struct {
                 if (tokens.contents[open] == .open_bracket) layout.scalar_groups[open] = false;
             }
         }
+        for (tokens.contents, 0..) |content, index| {
+            if (content != .keyword_once) continue;
+            var next = index + 1;
+            while (next < tokens.contents.len and tokens.contents[next] == .new_line) : (next += 1) {}
+            if (next < tokens.contents.len and tokens.contents[next] != .comment)
+                for (index + 1..next) |newline| {
+                    layout.suppress_newlines[newline] = true;
+                };
+        }
         for (tree.roots, 0..) |root, index| {
             if (index != 0 and (isGlobalDeclaration(&tree, root) or isGlobalDeclaration(&tree, tree.roots[index - 1]))) {
                 var start = firstToken(&tree, root);
@@ -725,10 +734,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
         .projection => |projection| first = @min(first, firstToken(tree, projection.base)),
         else => {},
     };
-    if (tree.functionDeclaration(node)) |function| {
-        if (function.is_once and first != 0) first -= 1;
-        return first;
-    }
+    if (tree.functionDeclaration(node) != null) return first;
     const child: ?syn.NodeIndex = switch (tree.tag(node)) {
         .expression_statement, .error_propagation, .error_report_return, .error_report_return_block, .nullable_test, .dereference => tree.unaryOperand(node),
         .handle_expression => tree.extraData(syn.HandleExtra, tree.data(node).extra).value,
@@ -1192,8 +1198,8 @@ test "formatter preserves prefixes and grouping at statement boundaries" {
 
 test "formatter separates scoped cleanup implementations from ordinary declarations" {
     try expectFormat(
-        "Point := (.value:Int32)\nonce acquire := (.value:Int32)->(.result:Point){result=(.value=value)}\nimplement Deinit#(Point)(.deinit=(.self:$&Point)->(){})\n",
-        "Point := (.value: Int32)\n\nonce acquire := (.value: Int32) -> (.result: Point) { result = (.value = value) }\n\nimplement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})\n",
+        "Point := (.value:Int32)\nacquire := once (.value:Int32)->(.result:Point){result=(.value=value)}\nimplement Deinit#(Point)(.deinit=(.self:$&Point)->(){})\n",
+        "Point := (.value: Int32)\n\nacquire := once (.value: Int32) -> (.result: Point) { result = (.value = value) }\n\nimplement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})\n",
     );
 }
 
@@ -1543,4 +1549,11 @@ test "formatter attaches parameters to contract and implementation headers" {
 
 test "formatter preserves implementation-defined operation requirements" {
     try expectFormat("Factory#(.T:Type):Contract=(.make:_)\n", "Factory#(.T: Type): Contract = (.make: _)\n");
+}
+
+test "formatter retains once with a named input signature across whitespace" {
+    try expectFormat(
+        "Args := (.value:Int32)\nacquire := once\n\nArgs -> (.result:Int32){result=value}\n",
+        "Args := (.value: Int32)\n\nacquire := once Args -> (.result: Int32) { result = value }\n",
+    );
 }

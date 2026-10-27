@@ -1,182 +1,54 @@
-# Once Functions
+# Once functions
 
-`once` marks a named function as globally single-use from the perspective of
-the compiled entrypoint.
-
-An `Init` implementation may reuse a named `once` function as its `init`
-operation. Construction calls preserve that function identity, so repeated
-construction is checked by the same entrypoint analysis. The contract itself
-does not carry a separate single-use state.
-
-This is a compile-time restriction. It is not a runtime guard, hidden flag, or
-idempotence mechanism.
-
-A retained REPL session extends one consumption history across accepted commands.
-Preparing a rejected command does not consume its functions. Reset starts a new
-history, including any calls made by the ordinary REPL prelude.
-
-
-## Core idea
-
-If a function is defined with `once`, the reachable call graph rooted at the
-compiled entrypoint may consume that function at most one time.
-
-Example:
+`once` is a property of a function definition value. The reachable call graph
+of the compiled entrypoint may consume that function at most once.
 
 ```argi
-once init_terminal() -> () := {
+init_terminal := once () -> () {
     ...
 }
 
-main := () -> (.status_code: Int32) {
-    init_terminal()
-    status_code = 0
-}
-```
-
-This is valid.
-
-```argi
-once init_terminal() -> () := {
-    ...
-}
-
-main := () -> (.status_code: Int32) {
-    init_terminal()
-    init_terminal()
-    status_code = 0
-}
-```
-
-This is invalid, because the same `once` function is consumed twice from the
-same entrypoint.
-
-
-## Reachability matters
-
-The restriction is not checked textually across the whole repository.
-
-It is checked only on the subgraph that is reachable from the entrypoint being
-compiled.
-
-That means a library may define multiple helpers that consume the same `once`
-function, as long as a concrete entrypoint does not reach more than one of
-those consumptions.
-
-Valid library shape:
-
-```argi
-once init_terminal() -> () := {
-    ...
-}
-
-path_a := () -> ()  {
-    init_terminal()
-}
-
-path_b := () -> ()  {
+main := () -> (.status_code: Int32 = 0) {
     init_terminal()
 }
 ```
 
-Valid entrypoint:
+The modifier also supports named input types and parameterized definitions:
 
 ```argi
-main := () -> (.status_code: Int32) {
-    path_a()
-    status_code = 0
-}
+acquire := once Args -> (.result: Resource) { ... }
+generic := once #(.T: Type) (.value: T) -> (.result: T) { result = ~value }
 ```
 
-Invalid entrypoint:
+Declarations only bind names. `alias := acquire` preserves the same function
+and its once restriction; it creates no additional permission to call it.
+The legacy `once acquire := ...` spelling is rejected.
 
-```argi
-main := () -> (.status_code: Int32) {
-    path_a()
-    path_b()
-    status_code = 0
-}
-```
+An Init implementation can reuse a once function as its init operation, or
+provide an inline once definition. Construction preserves the selected function
+identity, so it participates in the same analysis. Contracts do not carry a
+separate single-use state.
 
+## Reachability and consumption
 
-## Static, not runtime
+The check is relative to the compiled entrypoint, rather than textual across
+the repository. A library can define several helpers that call one once function;
+compilation fails if an entrypoint reaches more than one such consumption.
+Diagnostics identify the repeated function and the paths that consume it.
 
-`once` does not mean “execute only the first time at runtime”.
+The analysis is conservative across branches. Calling the same once function
+in both arms of an if still counts as duplicate consumption, even though those
+arms are mutually exclusive at runtime. This restriction is checked statically;
+there is no runtime flag, guard or automatic idempotence.
 
-This first design means:
-
-- the compiler tracks which `once` functions may be consumed
-- if the same `once` function appears more than once in the reachable call
-  graph of the entrypoint, compilation fails
-
-As a consequence, mutually exclusive branches still count as duplicate
-consumption in this first model:
-
-```argi
-once init_terminal() -> () := {
-    ...
-}
-
-main := (.cond: Bool) -> (.status_code: Int32) {
-    if cond {
-        init_terminal()
-    } else {
-        init_terminal()
-    }
-    status_code = 0
-}
-```
-
-This is intended to be invalid in the first iteration.
-
+Each test has its own compiled entrypoint and consumption history. A retained
+REPL session extends one history across accepted commands. Rejected preparation
+does not consume functions. Reset starts a new history, including calls made by
+the ordinary REPL prelude.
 
 ## Intended use
 
-`once` is meant for operations that should have exactly one consumer in the
-compiled program shape, such as:
-
-- initialization that must happen from a single path
-- bootstrap/setup steps that should not be duplicated accidentally
-- unique construction of process-wide capabilities
-
-It is not primarily an ergonomics shortcut for idempotent initialization.
-If the desired meaning is “safe to call many times, but only the first one
-does work”, that is a different runtime feature.
-
-
-## First iteration scope
-
-The first implementation should stay intentionally narrow:
-
-- only named functions can be marked `once`
-- `once` applies to function definitions, not arbitrary declarations
-- the main check is performed from the compiled entrypoint
-- diagnostics should explain both the repeated `once` function and the path
-  that causes the duplicate consumption
-
-Possible restrictions that are reasonable in the first version:
-
-- disallow overload sets involving `once`
-- disallow generic `once` functions
-- disallow taking `once` functions as ordinary first-class values
-
-Those restrictions are not part of the long-term goal, but they may simplify
-the first implementation.
-
-
-## Mental model
-
-A normal function may be called any number of times.
-
-A `once` function behaves more like a unique semantic resource:
-
-- it can be consumed by at most one reachable call path set
-- duplication is a compile error
-- the check is global relative to the chosen entrypoint, not local to a single
-  function body
-
-This keeps the feature aligned with Argi's general direction:
-
-- explicit capabilities
-- compile-time semantic restrictions
-- avoiding hidden runtime state when the intent can be modeled statically
+Once functions express a unique consumer in the compiled program shape, such
+as process-wide capability acquisition or bootstrap steps. They do not implement
+an operation that may be called repeatedly but performs work only on its first
+runtime invocation.

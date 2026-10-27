@@ -3,21 +3,17 @@ ByteReader := (._bytes: ArrayView#(.t: UInt8), ._position: UIntNative)
 
 ByteWriter := (._bytes: MutableArrayView#(.t: UInt8), ._position: UIntNative)
 
-implement Init#(ByteReader, (.bytes: ArrayView#(.t: UInt8))) (
-    .Result : Type = ByteReader
-
-    .init = (.args: (.bytes: ArrayView#(.t: UInt8))) -> (.result: Result) {
-        bytes ::= args.bytes
-        result = (._bytes = bytes, ._position = 0)
+implement Init#(ByteReader) (
+    .init = (.bytes: ArrayView#(.t: UInt8)) -> (.result: ByteReader) {
+        _init_bytes ::= bytes
+        result = (._bytes = _init_bytes, ._position = 0)
     }
 )
 
-implement Init#(ByteWriter, (.bytes: MutableArrayView#(.t: UInt8))) (
-    .Result : Type = ByteWriter
-
-    .init = (.args: (.bytes: MutableArrayView#(.t: UInt8))) -> (.result: Result) {
-        bytes ::= args.bytes
-        result = (._bytes = bytes, ._position = 0)
+implement Init#(ByteWriter) (
+    .init = (.bytes: MutableArrayView#(.t: UInt8)) -> (.result: ByteWriter) {
+        _init_bytes ::= bytes
+        result = (._bytes = _init_bytes, ._position = 0)
     }
 )
 

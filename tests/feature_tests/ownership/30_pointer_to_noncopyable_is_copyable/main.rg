@@ -1,8 +1,7 @@
 Resource: Type = ()
 
-implement Init#(Resource, ()) (
-    .Result : Type = Resource
-    .init   = (.args: ()) -> (.result: Result) {
+implement Init#(Resource) (
+    .init = () -> (.result: Resource) {
         result = ()
     }
 )

@@ -1,17 +1,15 @@
 FirstWriter: Type = ()
 
-implement Init#(FirstWriter, ()) (
-    .Result : Type = FirstWriter
-    .init   = (.args: ()) -> (.result: Result) {
+implement Init#(FirstWriter) (
+    .init = () -> (.result: FirstWriter) {
         result = ()
     }
 )
 
 SecondWriter := (.marker: Int32 = 0)
 
-implement Init#(SecondWriter, ()) (
-    .Result : Type = SecondWriter
-    .init   = (.args: ()) -> (.result: Result) {
+implement Init#(SecondWriter) (
+    .init = () -> (.result: SecondWriter) {
         result = ()
     }
 )

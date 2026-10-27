@@ -19,7 +19,8 @@ pub const Participant = union(enum) {
 };
 
 pub const Selection = struct {
-    /// Owned by the caller; the final participant is the completed Args record.
+    /// Owned by the caller. Legacy argument-record inference appends Args;
+    /// operation-signature inference retains only the contract participants.
     participants: []const graph_mod.GlobalTypeId,
 };
 
@@ -194,6 +195,16 @@ pub const Resolver = struct {
     }
 
     pub fn infer(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
+        return self.inferSignature(declaration, prefix, null, input, reach);
+    }
+
+    /// Infer unknown participants from a selected operation identity, without
+    /// adding its argument record to the conformance's participant tuple.
+    pub fn inferOperation(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, participants: []const Participant, name: []const u8, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
+        return self.inferSignature(declaration, participants, name, input, reach);
+    }
+
+    fn inferSignature(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, operation_name: ?[]const u8, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
         const allocator = self.core.allocator;
         const Candidate = struct { module: usize, template: storage_mod.ContractConformance, participants: []const graph_mod.GlobalTypeId };
         var candidates: std.ArrayList(Candidate) = .empty;
@@ -218,7 +229,7 @@ pub const Resolver = struct {
         for (self.modules, 0..) |*module, module_index| {
             const storage = &module.semantic.parameterized_storage;
             templates: for (storage.contract_conformances.items) |template| {
-                if (template.participants.len != prefix.len + 1) continue;
+                if (template.participants.len != prefix.len + @as(usize, if (operation_name == null) 1 else 0)) continue;
                 if (try self.contracts.resolveDeclarationRef(module_index, template.contract_ref, .contract_type) != declaration) continue;
                 const patterns = storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len];
                 for (patterns) |pattern| if (pattern.value != .type) continue :templates;
@@ -246,16 +257,25 @@ pub const Resolver = struct {
                     .inferred => {},
                 };
                 has_prefix = true;
-                const args_pattern = patterns[prefix.len].value.type;
-                if (storage.ir.types.items[@intFromEnum(args_pattern)] != .concrete) {
-                    const matches = self.functions.inferArgumentRecordBindings(module_index, args_pattern, input, reach, &bindings) catch |err| switch (err) {
-                        // A repeated binding conflict rejects this pattern; it
-                        // cannot abort selection of another applicable tuple.
-                        error.ConflictingGenericArgument => false,
+                const operation_input: ?graph_mod.GlobalTypeId = if (operation_name) |name| blk: {
+                    const operation = for (storage.contract_operations.items[template.operations.start..][0..template.operations.len]) |candidate| {
+                        if (std.mem.eql(u8, module.text(candidate.name), name)) break candidate;
+                    } else continue :templates;
+                    break :blk self.functions.inferImplementationInput(module_index, operation, template.parameters, input, reach, &bindings) catch |err| switch (err) {
+                        error.ConflictingGenericArgument => null,
                         else => return err,
-                    };
-                    if (!matches) continue;
-                }
+                    } orelse continue :templates;
+                } else blk: {
+                    const args_pattern = patterns[prefix.len].value.type;
+                    if (storage.ir.types.items[@intFromEnum(args_pattern)] != .concrete) {
+                        const matches = self.functions.inferArgumentRecordBindings(module_index, args_pattern, input, reach, &bindings) catch |err| switch (err) {
+                            error.ConflictingGenericArgument => false,
+                            else => return err,
+                        };
+                        if (!matches) continue;
+                    }
+                    break :blk null;
+                };
                 for (prefix, 0..) |participant, index| {
                     if (participant == .partial) {
                         const partial = participant.partial;
@@ -272,7 +292,7 @@ pub const Resolver = struct {
                         else => return err,
                     };
                 }
-                const fields = types.fields(self.graph, participants[prefix.len]) orelse continue;
+                const fields = types.fields(self.graph, operation_input orelse participants[prefix.len]) orelse continue;
                 switch (try self.core.matchCallInputWithReach(fields, input, reach)) {
                     .applicable => {},
                     .deferred => {
@@ -303,6 +323,9 @@ pub const Resolver = struct {
             var dominated = false;
             for (candidates.items, 0..) |other, other_index| {
                 if (index == other_index) continue;
+                // Specificity selects a conformance for one concrete tuple;
+                // it cannot choose between different inferred destinations.
+                if (operation_name != null and !sameParticipants(self.graph, candidate.participants, other.participants)) continue;
                 if (candidate.template.parameters.len != 0 and other.template.parameters.len == 0 and sameParticipants(self.graph, candidate.participants, other.participants)) {
                     dominated = true;
                     break;

@@ -313,7 +313,7 @@ fn predeclareFamilies(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph,
         const count = if (file.tree.contractDeclaration(node)) |contract|
             @as(?u32, @intCast(contract.generic_params.len))
         else if (file.tree.functionDeclaration(node)) |function|
-            genericParameterCount(file.tree, node) orelse if (function.contract_member) @as(?u32, 0) else null
+            genericParameterCount(file.tree, node) orelse if (declaration.kind == .function and !function.c_function_pointer) @as(?u32, 0) else null
         else
             genericParameterCount(file.tree, node);
         const parameter_count = count orelse continue;
@@ -378,7 +378,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .contract_declaration => .contract_type,
             .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration => .type,
             .choice_option_declaration => .choice_option,
-            .function_declaration, .function_declaration_once => .function,
+            .function_declaration => .function,
             .test_declaration => .test_function,
             else => continue,
         };

@@ -1,4 +1,4 @@
-once setup := () -> () {
+setup := once () -> () {
 }
 
 main := () -> (.status_code: Int32) {

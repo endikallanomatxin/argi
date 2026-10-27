@@ -1,13 +1,12 @@
 Point := (._x: Int32)
 
-implement Init#(Point, (.x: Int32)) (
-    .Result : Type = Errable#(Point, (..invalid_point))
-    .init   = (.args: (.x: Int32)) -> (.result: Result) {
-        if args.x < 0 {
+implement Init#(Point) (
+    .init = (.x: Int32) -> (.result: Errable#(Point, (..invalid_point))) {
+        if x < 0 {
             result = ..error(.reason = ..invalid_point)
             return
         }
-        result = ..ok(._x = args.x)
+        result = ..ok(._x = x)
     }
 )
 

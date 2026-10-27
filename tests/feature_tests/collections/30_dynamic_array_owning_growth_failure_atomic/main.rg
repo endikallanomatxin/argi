@@ -35,10 +35,9 @@ FailSecondAllocator := (
     .deallocations : Int32
 )
 
-implement Init#(FailSecondAllocator, (.ffi: $&ForeignFunctionInterface)) (
-    .Result : Type = FailSecondAllocator
-    .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        assume ffi := ~args.ffi
+implement Init#(FailSecondAllocator) (
+    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: FailSecondAllocator) {
+        assume ffi := ~ffi
 
         result.ffi = ffi
         result.allocations = 0
@@ -112,7 +111,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
 implement Allocator#(FailSecondAllocator) (
     .allocate = (.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         if self&.allocations != 0 {
             result = ..error(.reason = ..out_of_memory)

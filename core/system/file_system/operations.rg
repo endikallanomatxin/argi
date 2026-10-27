@@ -166,18 +166,17 @@ Directory := (._filesystem: &FileSystem, ._handle: UIntNative, ._ended: Bool)
 
 DirectoryEntry := (.name: String)
 
-implement Init#(Directory, (.self: &FileSystem = reach file_system, .path: StringView)) (
-    .Result : Type = Errable#(Directory, _FilesystemReasons)
-    .init   = (.args: (.self: &FileSystem = reach file_system, .path: StringView)) -> (
-        .result : Result
+implement Init#(Directory) (
+    .init = (.self: &FileSystem = reach file_system, .path: StringView) -> (
+        .result : Errable#(Directory, _FilesystemReasons)
     ) {
-        self ::= args.self
-        path ::= args.path
+        _init_self ::= self
+        _init_path ::= path
 
-        assume ffi := self&._ffi
+        assume ffi := _init_self&._ffi
         handle :: UIntNative = 0
         status ::= _fs_directory_open(
-            .bytes = path._data, .length = path._length, .handle = $&handle
+            .bytes = _init_path._data, .length = _init_path._length, .handle = $&handle
         ).status
 
         if status != 0 {
@@ -185,7 +184,7 @@ implement Init#(Directory, (.self: &FileSystem = reach file_system, .path: Strin
             return
         }
 
-        result = ..ok(._filesystem = self, ._handle = handle, ._ended = false)
+        result = ..ok(._filesystem = _init_self, ._handle = handle, ._ended = false)
     }
 )
 
@@ -315,37 +314,26 @@ _fs_temp_cleanup(.handle: UIntNative) -> (): CFunction(.symbol = "_argi_fs_temp_
 
 TemporaryDirectory := (._filesystem: &FileSystem, ._handle: UIntNative, ._path: String)
 
-implement#(.Provider: Type: Allocator) Init#(
-    TemporaryDirectory,
-    (
+implement Init#(TemporaryDirectory) (
+    .init = #(.Provider: Type: Allocator) (
         .self      : &FileSystem = reach file_system,
         .parent    : StringView,
         .prefix    : StringView  = "argi-",
         .allocator : $&Provider  = reach allocator,
-    )
-) (
-    .Result : Type = Errable#(TemporaryDirectory, _FilesystemReasons)
-    .init   = (
-        .args : (
-            .self      : &FileSystem = reach file_system,
-            .parent    : StringView,
-            .prefix    : StringView  = "argi-",
-            .allocator : $&Provider  = reach allocator,
-        )
-    ) -> (.result: Result) {
-        self ::= args.self
-        parent ::= args.parent
-        prefix ::= args.prefix
-        allocator ::= args.allocator
+    ) -> (.result: Errable#(TemporaryDirectory, _FilesystemReasons)) {
+        _init_self ::= self
+        _init_parent ::= parent
+        _init_prefix ::= prefix
+        _init_allocator ::= allocator
 
-        assume ffi := self&._ffi
-        assume allocator
+        assume ffi := _init_self&._ffi
+        assume allocator := _init_allocator
         handle :: UIntNative = 0
         status ::= _fs_temp_create(
-            .parent        = parent._data
-            .parent_length = parent._length
-            .prefix        = prefix._data
-            .prefix_length = prefix._length
+            .parent        = _init_parent._data
+            .parent_length = _init_parent._length
+            .prefix        = _init_prefix._data
+            .prefix_length = _init_prefix._length
             .handle        = $&handle
         ).status
 
@@ -356,7 +344,7 @@ implement#(.Provider: Type: Allocator) Init#(
 
         count ::= _fs_temp_length(.handle = handle).length
 
-        match string_with_length(.allocator = allocator, .length = count) {
+        match string_with_length(.allocator = _init_allocator, .length = count) {
             ..error _ {
                 _fs_temp_cleanup(.handle = handle)
                 result = ..error(.reason = ..out_of_memory)
@@ -380,7 +368,7 @@ implement#(.Provider: Type: Allocator) Init#(
                         return
                     }
                 }
-                result = ..ok(._filesystem = self, ._handle = handle, ._path = ~name)
+                result = ..ok(._filesystem = _init_self, ._handle = handle, ._path = ~name)
             }
         }
     }

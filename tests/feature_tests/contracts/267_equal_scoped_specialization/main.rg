@@ -4,17 +4,17 @@ implement#(.T: Type: ImplicitlyCopyable) ImplicitlyCopyable#(Value#(T)) ()
 
 calls :: Int32 = 0
 
-implement#(.T: Type) Equal#(Value#(T), Value#(T), (.left: Value#(T), .right: Value#(T))) (
-    .equal = (.args: (.left: Value#(T), .right: Value#(T))) -> (.ok: Bool) {
+implement#(.T: Type) Equal#(Value#(T), Value#(T)) (
+    .equal = (.left: Value#(T), .right: Value#(T)) -> (.ok: Bool) {
         calls = calls + 1
-        ok = args.left.number == args.right.number
+        ok = left.number == right.number
     }
 )
 
-implement Equal#(Value#(Int32), Value#(Int32), (.left: Value#(Int32), .right: Value#(Int32))) (
-    .equal = (.args: (.left: Value#(Int32), .right: Value#(Int32))) -> (.ok: Bool) {
+implement Equal#(Value#(Int32), Value#(Int32)) (
+    .equal = (.left: Value#(Int32), .right: Value#(Int32)) -> (.ok: Bool) {
         calls = calls + 10
-        ok = args.left.number == args.right.number
+        ok = left.number == right.number
     }
 )
 

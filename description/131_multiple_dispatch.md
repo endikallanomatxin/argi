@@ -33,9 +33,11 @@ supplied participants establish selection before associated results are resolved
 
 ## Constructors and destruction
 
-A call to `T(...)` supplies T and infers its Args record, then selects the most
-specific applicable `Init#(T, Args)` implementation. The associated Result is
-validated after selection. Structural construction remains available without Init.
+A call to `T(...)` selects the most specific `Init#(T)` implementation for its
+target, then infers operation-local parameters from the selected init signature.
+Inputs can infer missing target parameters; different inferred targets require
+explicit disambiguation. The result is checked after selection and never supplies
+missing participant bindings. Structural construction remains available without Init.
 
 Explicit destruction and automatic cleanup use the same selected `Deinit#(T)`
 evidence. Ordinary functions named `deinit` retain ordinary call effects and do

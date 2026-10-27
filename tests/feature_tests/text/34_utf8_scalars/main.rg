@@ -67,7 +67,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     again :: UIntNative = 0
     for scalar in validated { again = again + 1 }
     if again != 4 { abort }
-    decoder ::= Utf8Decoder(.text = text)
+    decoder ::= Utf8Decoder(.bytes = string_bytes(.text = text))
     index = 0
     while index < 4 {
         match next_codepoint(.self = $&decoder)!!! {

@@ -38,10 +38,9 @@ BackingAllocator := (
 backing_deallocations :: Int32 = 0
 backing_freed_after_elements :: Bool = false
 
-implement Init#(BackingAllocator, (.ffi: $&ForeignFunctionInterface)) (
-    .Result : Type = BackingAllocator
-    .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        assume ffi := ~args.ffi
+implement Init#(BackingAllocator) (
+    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: BackingAllocator) {
+        assume ffi := ~ffi
 
         result.ffi = ffi
     }
@@ -71,11 +70,11 @@ main := (.system: System) -> (.status_code: Int32) {
                         ..error _ { status_code = 12 }
                         ..ok ~third_payload {
                             third ::= ~third_payload
-                            push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~first)
-                            push_assume_capacity#(.t: Tracked) (
+                            push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~first)
+                            push_assume_capacity#(.t: Tracked)(
                                 .self = $&array, .value = ~second
                             )
-                            push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~third)
+                            push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~third)
 
                             if first_drops != 0 or second_drops != 0 or third_drops != 0 {
                                 status_code = 20
@@ -105,7 +104,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
 implement Allocator#(BackingAllocator) (
     .allocate = (.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         address :: UIntNative = storage | convert#(.to: UIntNative)(_)

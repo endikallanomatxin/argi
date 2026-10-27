@@ -1,4 +1,4 @@
-once setup := () -> () {
+setup := once () -> () {
 }
 
 path_a := () -> () {

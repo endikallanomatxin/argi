@@ -22,8 +22,22 @@ pub const SelectedOperation = struct {
         if (self.materializedFunction()) |selected| return selected == function;
         if (self.binding.parameter_count == 0) return false;
         const family = graph.declaration(self.binding.declaration).family_definition orelse return false;
-        for (graph.generic_function_instances.items) |instance|
-            if (instance.function == function and instance.parameterized_definition == family) return true;
+        for (graph.generic_function_instances.items) |instance| {
+            if (instance.function != function or instance.parameterized_definition != family) continue;
+            if (!self.binding.instantiate_associated) return true;
+            const captures = self.conformance.implementation_arguments;
+            const associated = self.conformance.associated_arguments;
+            if (instance.arguments.len < captures.len + associated.len) return false;
+            for (0..captures.len + associated.len) |index| {
+                const expected = if (index < captures.len)
+                    graph.generic_arguments.items[captures.start + index]
+                else
+                    graph.generic_arguments.items[associated.start + index - captures.len];
+                const actual = graph.generic_arguments.items[instance.arguments.start + index];
+                if (!@import("types.zig").genericArgumentValuesEqual(graph, expected.value, actual.value)) return false;
+            }
+            return true;
+        }
         return false;
     }
 
@@ -121,9 +135,12 @@ pub fn materializedOperations(graph: *const graph_mod.GlobalSemanticGraph, contr
 }
 
 pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalFamilyDefinitionId, function: graph_mod.GlobalFunctionId) ?SelectedOperation {
-    var operations = materializedOperations(graph, contract);
-    while (operations.next()) |selected| {
-        if (selected.materializedFunction() == function) return selected;
+    for (graph.contract_conformances.items) |conformance| {
+        if (conformance.declaration != contract) continue;
+        for (0..conformance.operation_bindings.len) |index| {
+            const selected = operationInConformance(graph, conformance, @intCast(index)) orelse continue;
+            if (selected.acceptsFunction(graph, function)) return selected;
+        }
     }
     return null;
 }

@@ -40,9 +40,8 @@ run := (.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_mem
 -- conversion, independently of the infallible fixed-buffer tracer.
 FailTracer := (.marker: UInt8)
 
-implement Init#(FailTracer, ()) (
-    .Result : Type = Errable#(.t: FailTracer, .reasons: (..out_of_memory))
-    .init   = (.args: ()) -> (.result: Result) {
+implement Init#(FailTracer) (
+    .init = () -> (.result: Errable#(.t: FailTracer, .reasons: (..out_of_memory))) {
         constructed :: FailTracer
 
         result = ..error(.reason = ..out_of_memory)
@@ -125,7 +124,7 @@ implement ErrorTracer#(FailTracer) (
     .reset_context = (.self: $&FailTracer) -> () {}
 
     .report = (.self: $&FailTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         result = ..ok Void()
     }

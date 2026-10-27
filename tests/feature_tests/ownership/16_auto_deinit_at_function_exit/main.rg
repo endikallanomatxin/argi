@@ -3,14 +3,13 @@ Resource: Type = ()
 dummy_counter :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 
-implement Init#(Resource, (.counter: $&Int32)) (
-    .Result : Type = Resource
-    .init   = (.args: (.counter: $&Int32)) -> (.result: Result) {
-        counter ::= ~args.counter
+implement Init#(Resource) (
+    .init = (.counter: $&Int32) -> (.result: Resource) {
+        _init_counter ::= ~counter
 
         result = ()
 
-        global_counter_ptr = counter
+        global_counter_ptr = _init_counter
     }
 )
 

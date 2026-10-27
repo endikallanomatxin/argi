@@ -6,14 +6,11 @@ Holder := #(.WriterType: Type: Writer#(WriterType)) (
     .writer : $&WriterType
 )
 
-implement#(.WriterType: Type: Writer#(WriterType)) Init#(
-    Holder#(WriterType), (.writer: $&WriterType)
-) (
-    .Result : Type = Holder#(WriterType)
-    .init   = (.args: (.writer: $&WriterType)) -> (.result: Result) {
-        writer ::= ~args.writer
+implement#(.WriterType: Type: Writer#(WriterType)) Init#(Holder#(WriterType)) (
+    .init = (.writer: $&WriterType) -> (.result: Holder#(WriterType)) {
+        _init_writer ::= ~writer
 
-        result.writer = writer
+        result.writer = _init_writer
     }
 )
 
@@ -36,14 +33,14 @@ main := () -> (.status_code: Int32) {
 
 implement Writer#(DummyWriter) (
     .write_byte = (.self: $&DummyWriter, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         _ ::= byte
         result = ..ok(.value = Void())
     }
 
     .flush = (.self: $&DummyWriter) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         self&.flush_count = self&.flush_count + 1
         result = ..ok(.value = Void())

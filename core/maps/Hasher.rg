@@ -8,10 +8,9 @@ Hasher#(.State: Type): Contract = (
 -- https://www.ietf.org/archive/id/draft-eastlake-fnv-25.html
 StandardHasher := (._state: UInt64)
 
-implement Init#(StandardHasher, (.seed: UInt64 = 14695981039346656037)) (
-    .Result : Type = StandardHasher
-    .init   = (.args: (.seed: UInt64 = 14695981039346656037)) -> (.result: Result) {
-        result = (._state = args.seed)
+implement Init#(StandardHasher) (
+    .init = (.seed: UInt64 = 14695981039346656037) -> (.result: StandardHasher) {
+        result = (._state = seed)
     }
 )
 

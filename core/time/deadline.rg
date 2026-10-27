@@ -2,12 +2,11 @@ Deadline := (._instant: MonotonicInstant)
 
 implement ImplicitlyCopyable#(Deadline) ()
 
-implement Init#(Deadline, (.at: MonotonicInstant)) (
-    .Result : Type = Deadline
-    .init   = (.args: (.at: MonotonicInstant)) -> (.result: Result) {
-        at ::= args.at
+implement Init#(Deadline) (
+    .init = (.at: MonotonicInstant) -> (.result: Deadline) {
+        _init_at ::= at
 
-        result = (._instant = at)
+        result = (._instant = _init_at)
     }
 )
 

@@ -1,43 +1,31 @@
 Box := #(.t: Type) (.value: t, .tag: Int32)
 
-implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (
-    .Result : Type = Box#(.t: t)
-    .init   = (.args: (.value: t)) -> (.result: Result) {
-        value ::= ~args.value
+implement#(.t: Type) Init#(Box#(.t: t)) (
+    .init = (.value: t, .tag: Int32 = 1) -> (.result: Box#(.t: t)) {
+        _init_value ::= ~value
+        _init_tag ::= ~tag
 
-        result = (.value = value, .tag = 1)
-    }
-)
-
-implement#(.t: Type) Init#(Box#(.t: t), (.value: t, .tag: Int32)) (
-    .Result : Type = Box#(.t: t)
-    .init   = (.args: (.value: t, .tag: Int32)) -> (.result: Result) {
-        value ::= ~args.value
-        tag ::= ~args.tag
-
-        result = (.value = value, .tag = tag)
+        result = (.value = _init_value, .tag = _init_tag)
     }
 )
 
 Other := #(.t: Type) (.value: t)
 
-implement#(.t: Type) Init#(Other#(.t: t), (.value: t)) (
-    .Result : Type = Other#(.t: t)
-    .init   = (.args: (.value: t)) -> (.result: Result) {
-        value ::= ~args.value
+implement#(.t: Type) Init#(Other#(.t: t)) (
+    .init = (.value: t) -> (.result: Other#(.t: t)) {
+        _init_value ::= ~value
 
-        result = (.value = value)
+        result = (.value = _init_value)
     }
 )
 
 Record := (.tag: Int32)
 
-implement#(.sample: Type) Init#(Record, (.value: sample)) (
-    .Result : Type = Record
-    .init   = (.args: (.value: sample)) -> (.result: Result) {
-        value ::= ~args.value
+implement Init#(Record) (
+    .init = #(.sample: Type) (.value: sample) -> (.result: Record) {
+        _init_value ::= ~value
 
-        _ ::= value
+        _ ::= _init_value
         result = (.tag = 42)
     }
 )

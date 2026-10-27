@@ -3443,7 +3443,7 @@ test "virtual once analysis deduplicates handles and checks repeated calls" {
     const declarations =
         \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
         \\Box := (.value: Int32)
-        \\once acquire := () -> () {}
+        \\acquire := once () -> () {}
         \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) {
         \\    acquire()
         \\    result = source&.value

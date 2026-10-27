@@ -1,8 +1,7 @@
 Widget := (.value: Int32)
 
-implement Init#(Widget, ()) (
-    .Result: Type = Int32
-    .init = (.args: ()) -> (.value: Int32) {
+implement Init#(Widget) (
+    .init = () -> (.value: Int32) {
         value = 1
     }
 )

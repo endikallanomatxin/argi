@@ -16,40 +16,30 @@ File := (
     .should_close   : Bool                       = 0 == 1
 )
 
-once _acquire_file := (.args: _FileInitArgs) -> (.result: File) {
-    ffi ::= args.ffi
+_acquire_file := once _FileInitArgs -> (.result: File) {
 
     result = (._ffi = ffi, .stream_address = 0, .should_close = false)
 }
 
-implement Init#(File, _FileInitArgs) (
-    .Result : Type = File
-    .init   = _acquire_file
+implement Init#(File) (
+    .init = _acquire_file
 )
 
-implement Init#(
-    File,
-    (
-        .ffi            : $&ForeignFunctionInterface = reach ffi,
-        .stream_address : UIntNative,
-        .should_close   : Bool
+file_from_stream := (
+    .ffi            : $&ForeignFunctionInterface = reach ffi,
+    .stream_address : UIntNative,
+    .should_close   : Bool
+) -> (.result: File) {
+    _init_ffi ::= ffi
+    _init_stream_address ::= stream_address
+    _init_should_close ::= should_close
+
+    result = (
+        ._ffi           = _init_ffi
+        .stream_address = _init_stream_address
+        .should_close   = _init_should_close
     )
-) (
-    .Result : Type = File
-    .init   = (
-        .args : (
-            .ffi            : $&ForeignFunctionInterface = reach ffi,
-            .stream_address : UIntNative,
-            .should_close   : Bool
-        )
-    ) -> (.result: Result) {
-        ffi ::= args.ffi
-        stream_address ::= args.stream_address
-        should_close ::= args.should_close
-
-        result = (._ffi = ffi, .stream_address = stream_address, .should_close = should_close)
-    }
-)
+}
 
 _is_open_File := (.self: &File) -> (.ok: Bool) {
     ok = self&.stream_address != 0

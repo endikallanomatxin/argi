@@ -12,8 +12,6 @@ main := () -> (.status_code: Int32 = 0) {
     zero :: Float32 = 0.0
     nan :: Float32 = zero / zero
     if nan == nan or nan != nan == false { status_code = 5 }
-    qualified ::= Equal#(UInt8, UInt8, (.left: UInt8, .right: UInt8)).equal(
-        .args = (.left = narrow, .right = 7)
-    )
+    qualified ::= Equal#(UInt8, UInt8).equal(.left = narrow, .right = 7)
     if qualified == false { status_code = 6 }
 }

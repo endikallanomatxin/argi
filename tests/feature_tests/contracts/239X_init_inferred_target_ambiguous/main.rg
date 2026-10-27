@@ -1,13 +1,11 @@
 Box := #(.T: Type) (.value: T)
 
-implement#(.T: Type) Init#(Box#(T), (.value: T)) (
-    .Result : Type = Box#(T)
-    .init   = (.args: (.value: T)) -> (.result: Result) { result = (.value = args.value) }
+implement#(.T: Type) Init#(Box#(T)) (
+    .init = (.value: T) -> (.result: Box#(T)) { result = (.value = value) }
 )
 
-implement Init#(Box#(Int32), (.value: UInt8)) (
-    .Result : Type = Box#(Int32)
-    .init   = (.args: (.value: UInt8)) -> (.result: Result) { result = (.value = 0) }
+implement Init#(Box#(Int32)) (
+    .init = (.value: UInt8) -> (.result: Box#(Int32)) { result = (.value = 0) }
 )
 
 main := () -> () {

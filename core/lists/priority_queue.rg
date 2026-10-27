@@ -5,22 +5,20 @@ PriorityQueue := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
     ._order : &order
 )
 
-implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) Init#(
-    PriorityQueue#(.t: t, .order: order),
-    (.order: &order, .allocator: $&Provider, .capacity: UIntNative = 8)
+implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) Init#(
+    PriorityQueue#(.t: t, .order: order)
 ) (
-    .Result : Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
-    .init   = (.args: (.order: &order, .allocator: $&Provider, .capacity: UIntNative = 8)) -> (
-        .result : Result
-    ) {
-        order ::= args.order
-        allocator ::= args.allocator
-        capacity ::= args.capacity
+    .init = #(.Provider: Type: Allocator) (
+        .order: &order, .allocator: $&Provider, .capacity: UIntNative = 8
+    ) -> (.result: Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))) {
+        _init_order ::= order
+        _init_allocator ::= allocator
+        _init_capacity ::= capacity
 
-        assume allocator
-        items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+        assume allocator := _init_allocator
+        items ::= DynamicArray#(.t: t)(.allocator = _init_allocator, .capacity = _init_capacity)!
 
-        result = ..ok(._items = ~items, ._order = order)
+        result = ..ok(._items = ~items, ._order = _init_order)
     }
 )
 

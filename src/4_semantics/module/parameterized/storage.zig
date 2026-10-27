@@ -33,6 +33,7 @@ pub const ContractConstraint = struct {
 
 pub const ParameterizedFunction = struct {
     captured_parameter_count: u32 = 0,
+    is_once: bool = false,
     // A concrete identity may retain its body here when conditional compilation
     // needs staged materialization; it is never a generic dispatch candidate.
     is_comptime_entry: bool = false,

@@ -1,8 +1,7 @@
 Point := (.value: Int32)
 
-implement Init#(Point, Int32) (
-    .Result : Type = Point
-    .init   = (.args: Int32) -> (.result: Result) { result = (.value = args) }
+implement Init#(Point) (
+    .init = Int32 -> (.result: Point) { result = (.value = 0) }
 )
 
-main := () -> () {}
+main := () -> () { Point() }

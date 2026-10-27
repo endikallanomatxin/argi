@@ -1,22 +1,21 @@
 Owned := (.allocation: Allocation)
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(
-    Owned, (.allocator: $&AllocatorProvider, .fail: Bool)
-) (
-    .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
-    .init   = (.args: (.allocator: $&AllocatorProvider, .fail: Bool)) -> (.result: Result) {
-        allocator ::= ~args.allocator
-        fail ::= ~args.fail
+implement Init#(Owned) (
+    .init = #(.AllocatorProvider: Type: Allocator) (
+        .allocator: $&AllocatorProvider, .fail: Bool
+    ) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) {
+        _init_allocator ::= ~allocator
+        _init_fail ::= ~fail
 
         constructed :: Owned
 
-        allocated ::= allocate_bytes(.self = allocator, .size = 1)
+        allocated ::= allocate_bytes(.self = _init_allocator, .size = 1)
         match allocated {
             ..error _ {
                 result = ..error(.reason = ..out_of_memory)
             }
             ..ok ~payload {
-                if fail {
+                if _init_fail {
                     deinit(.self = $&payload)
                     result = ..error(.reason = ..out_of_memory)
                     return

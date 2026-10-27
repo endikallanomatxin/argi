@@ -8,12 +8,11 @@ UnixTimestamp := (._seconds: Int64, ._nanoseconds: UInt32)
 
 implement ImplicitlyCopyable#(UnixTimestamp) ()
 
-implement Init#(UnixTimestamp, (.seconds: Int64)) (
-    .Result : Type = UnixTimestamp
-    .init   = (.args: (.seconds: Int64)) -> (.result: Result) {
-        seconds ::= args.seconds
+implement Init#(UnixTimestamp) (
+    .init = (.seconds: Int64) -> (.result: UnixTimestamp) {
+        _init_seconds ::= seconds
 
-        result = (._seconds = seconds, ._nanoseconds = 0)
+        result = (._seconds = _init_seconds, ._nanoseconds = 0)
     }
 )
 
@@ -50,20 +49,15 @@ elapsed := (.start: MonotonicInstant, .end: MonotonicInstant) -> (
     result = ..ok Duration(.nanoseconds = end._nanoseconds - start._nanoseconds)
 }
 
-implement Equal#(
-    MonotonicInstant, MonotonicInstant, (.left: MonotonicInstant, .right: MonotonicInstant)
-) (
-    .equal = (.args: (.left: MonotonicInstant, .right: MonotonicInstant)) -> (.ok: Bool) {
-        ok = args.left._nanoseconds == args.right._nanoseconds
+implement Equal#(MonotonicInstant, MonotonicInstant) (
+    .equal = (.left: MonotonicInstant, .right: MonotonicInstant) -> (.ok: Bool) {
+        ok = left._nanoseconds == right._nanoseconds
     }
 )
 
-implement Equal#(UnixTimestamp, UnixTimestamp, (.left: UnixTimestamp, .right: UnixTimestamp)) (
-    .equal = (.args: (.left: UnixTimestamp, .right: UnixTimestamp)) -> (.ok: Bool) {
-        ok = [
-            args.left._seconds == args.right._seconds
-            and args.left._nanoseconds == args.right._nanoseconds
-        ]
+implement Equal#(UnixTimestamp, UnixTimestamp) (
+    .equal = (.left: UnixTimestamp, .right: UnixTimestamp) -> (.ok: Bool) {
+        ok = [left._seconds == right._seconds and left._nanoseconds == right._nanoseconds]
     }
 )
 
@@ -99,15 +93,13 @@ Clock := (._ffi: $&ForeignFunctionInterface)
 
 _ClockInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
 
-once _acquire_clock := (.args: _ClockInitArgs) -> (.result: Clock) {
-    ffi ::= args.ffi
+_acquire_clock := once _ClockInitArgs -> (.result: Clock) {
 
     result = (._ffi = ffi)
 }
 
-implement Init#(Clock, _ClockInitArgs) (
-    .Result : Type = Clock
-    .init   = _acquire_clock
+implement Init#(Clock) (
+    .init = _acquire_clock
 )
 
 monotonic_now := (.self: &Clock = reach clock) -> (

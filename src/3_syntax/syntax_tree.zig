@@ -84,7 +84,6 @@ pub const Node = struct {
         function_declaration,
         function_definition,
         parameterized_definition,
-        function_declaration_once,
         test_declaration,
         assignment,
         expression_statement,
@@ -552,7 +551,7 @@ pub const FileSyntaxTree = struct {
     /// A binding refers to its definition value; names never belong to the value.
     pub fn definitionValue(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
         return switch (tree.tag(node)) {
-            .function_declaration, .function_declaration_once, .c_function_pointer_declaration, .test_declaration, .contract_function_requirement => tree.data(node).token_and_node.node,
+            .function_declaration, .c_function_pointer_declaration, .test_declaration, .contract_function_requirement => tree.data(node).token_and_node.node,
             .c_struct_declaration, .c_enum_declaration, .c_union_declaration, .c_incomplete_declaration => tree.data(node).node,
             .symbol_declaration_constant => (tree.symbolDeclaration(node) orelse return null).value,
             else => null,
@@ -581,7 +580,7 @@ pub const FileSyntaxTree = struct {
 
     pub fn functionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
         return switch (tree.tag(node)) {
-            .function_declaration, .function_declaration_once, .c_function_pointer_declaration, .symbol_declaration_constant => tree.boundFunction(node),
+            .function_declaration, .c_function_pointer_declaration, .symbol_declaration_constant => tree.boundFunction(node),
             else => null,
         };
     }

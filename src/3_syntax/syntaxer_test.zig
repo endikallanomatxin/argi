@@ -477,3 +477,16 @@ test "compact syntaxing retains implementation-defined operation declarations" {
     try std.testing.expectEqual(@as(usize, 1), contract.requires_functions.len);
     try std.testing.expectEqual(.contract_inferred_operation_requirement, tree.tag(contract.requires_functions[0]));
 }
+
+test "compact syntaxing preserves once on named and parameterized signatures" {
+    var tree = try parseTestSource("once_signatures.rg",
+        \\Args := (.value: Int32)
+        \\acquire := once Args -> (.result: Int32) { result = value }
+        \\generic := once #(.T: Type) (.value: T) -> (.result: T) { result = ~value }
+    );
+    defer tree.deinit(std.testing.allocator);
+    try std.testing.expect(tree.functionDeclaration(tree.roots[1]).?.is_once);
+    const generic = tree.functionDeclaration(tree.roots[2]).?;
+    try std.testing.expect(generic.is_once);
+    try std.testing.expectEqual(@as(usize, 1), generic.generic_params.len);
+}

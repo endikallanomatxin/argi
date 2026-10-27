@@ -40,12 +40,11 @@ string_view_slice := (.view: &StringView, .start: UIntNative, .length: UIntNativ
     out = _string_view_subrange(view&, .start = start, .count = length).view
 }
 
-implement Init#(Path, (.text: String)) (
-    .Result : Type = Path
-    .init   = (.args: (.text: String)) -> (.result: Result) {
-        text ::= ~args.text
+implement Init#(Path) (
+    .init = (.text: String) -> (.result: Path) {
+        _init_text ::= ~text
 
-        result = (.text = ~text)
+        result = (.text = ~_init_text)
     }
 )
 
@@ -278,9 +277,9 @@ join := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)
 }
 
-implement Equal#(Path, Path, (.left: &Path, .right: &Path)) (
-    .equal = (.args: (.left: &Path, .right: &Path)) -> (.ok: Bool) {
-        ok = path_equals(.left = args.left, .right = args.right).ok
+implement Equal#(&Path, &Path) (
+    .equal = (.left: &Path, .right: &Path) -> (.ok: Bool) {
+        ok = path_equals(.left = left, .right = right).ok
     }
 )
 

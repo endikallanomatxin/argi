@@ -99,9 +99,9 @@ implement _BuiltinEquality#(Bool) ()
 
 implement#(.Element: Type) _BuiltinEquality#(RawPointer#(.t: Element)) ()
 
-implement#(.Value: Type: _BuiltinEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
-    .equal = (.args: (.left: Value, .right: Value)) -> (.ok: Bool) {
-        ok = __scalar_equal(.left = args.left, .right = args.right)
+implement#(.Value: Type: _BuiltinEquality) Equal#(Value, Value) (
+    .equal = (.left: Value, .right: Value) -> (.ok: Bool) {
+        ok = __scalar_equal(.left = left, .right = right)
     }
 )
 

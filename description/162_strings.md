@@ -361,7 +361,8 @@ UTF-8 encoding to initialized mutable byte storage and returns its width. It
 checks the whole destination first; `out_of_bounds` leaves every byte unchanged,
 including for oversized offsets. These operations allocate no storage.
 
-`Utf8Decoder(.text)` or `Utf8Decoder(.bytes)` starts at offset zero.
+`Utf8Decoder(.bytes)` starts at offset zero. For validated text, explicitly
+pass `string_bytes(.text = text)` as its bytes.
 `next_codepoint(.self)` returns an errable optional scalar: none at end,
 `invalid_utf8` on malformed input, or a scalar and an advanced byte position on
 success. `position(.self)` reports that byte position. Failure preserves the

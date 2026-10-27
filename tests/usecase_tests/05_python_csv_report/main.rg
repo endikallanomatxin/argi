@@ -3,7 +3,7 @@ p := import ("python")
 ..invalid_arguments
 ..invalid_duration
 
-main := (.system: System) -> (.status_code: Int32 = 0)  {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([4096]UInt8)()))
@@ -27,7 +27,7 @@ main := (.system: System) -> (.status_code: Int32 = 0)  {
     column ::= "duration_ms"
     if argc == 3 { column = unwrap_or_abort(.value = argument_view_at(system.args, 2)) }
 
-    file_reader ::= File(.file_system = system.file_system, .path = path, .mode = ..read) handle error, value {
+    file_reader ::= open_file(.file_system = system.file_system, .path = path, .mode = ..read) handle error, value {
         add_context(.context = path, .error_tracer = error.tracer)
         report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         status_code = 1
@@ -125,10 +125,10 @@ print_python_error := (.interpreter: &p.Python, .writer: $&File, .allocator: $&P
     if message_view != "" { print(message_view)! }
 }
 
-invalid_arguments := () -> (.result: Errable#(Void, (..invalid_arguments)))  {
+invalid_arguments := () -> (.result: Errable#(Void, (..invalid_arguments))) {
     result = ..error(.reason = ..invalid_arguments)
 }
 
-invalid_duration := () -> (.result: Errable#(Void, (..invalid_duration)))  {
+invalid_duration := () -> (.result: Errable#(Void, (..invalid_duration))) {
     result = ..error(.reason = ..invalid_duration)
 }

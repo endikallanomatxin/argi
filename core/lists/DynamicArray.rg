@@ -46,20 +46,19 @@ _trusted_dynamic_array_mark_empty := #(.t: Type) (.self: $&DynamicArray#(.t: t))
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
 }
 
-implement#(.t: Type, .A: Type: Allocator) Init#(
-    DynamicArray#(t), (.allocator: $&A = reach allocator, .capacity: UIntNative = 0)
-) (
-    .Result : Type = Errable#(DynamicArray#(t), (..out_of_memory))
-    .init   = (.args: (.allocator: $&A, .capacity: UIntNative)) -> (.result: Result) {
-        allocator ::= args.allocator
-        capacity ::= args.capacity
+implement#(.t: Type) Init#(DynamicArray#(t)) (
+    .init = #(.A: Type: Allocator) (
+        .allocator : $&A = reach allocator, .capacity: UIntNative = 0
+    ) -> (.result: Errable#(DynamicArray#(t), (..out_of_memory))) {
+        _init_allocator ::= allocator
+        _init_capacity ::= capacity
 
         constructed :: DynamicArray#(.t: t)
 
-        assume allocator
+        assume allocator := _init_allocator
 
         element_size :: UIntNative = size_of(.type = t)
-        actual_capacity ::= capacity
+        actual_capacity ::= _init_capacity
 
         if actual_capacity == 0 {
             actual_capacity = 1
@@ -72,7 +71,7 @@ implement#(.t: Type, .A: Type: Allocator) Init#(
             return
         }
 
-        allocated ::= allocate#(.t: t)(allocator, .count = actual_capacity)
+        allocated ::= allocate#(.t: t)(_init_allocator, .count = actual_capacity)
 
         match allocated {
             ..ok ~payload {

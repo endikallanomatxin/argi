@@ -1,8 +1,7 @@
 Box := #(.T: Type) (.value: T)
 
-implement#(.T: Type) Init#(Box#(T), (.value: T)) (
-    .Result : Type = Box#(T)
-    .init   = (.args: (.value: T)) -> (.result: Result) { result = (.value = args.value) }
+implement#(.T: Type) Init#(Box#(T)) (
+    .init = (.value: T) -> (.result: Box#(T)) { result = (.value = value) }
 )
 
 wrap := #(.T: Type) (.value: T) -> (.result: Box#(T)) {

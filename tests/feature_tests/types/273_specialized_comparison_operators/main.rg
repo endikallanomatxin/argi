@@ -2,9 +2,9 @@ Box := #(.t: Type) (.value: t)
 
 implement#(.t: Type: ImplicitlyCopyable) ImplicitlyCopyable#(Box#(.t: t)) ()
 
-implement#(.t: Type) Equal#(Box#(.t: t), Box#(.t: t), (.left: Box#(.t: t), .right: Box#(.t: t))) (
-    .equal = (.args: (.left: Box#(.t: t), .right: Box#(.t: t))) -> (.ok: Bool) {
-        ok = args.left.value == args.right.value
+implement#(.t: Type) Equal#(Box#(.t: t), Box#(.t: t)) (
+    .equal = (.left: Box#(.t: t), .right: Box#(.t: t)) -> (.ok: Bool) {
+        ok = left.value == right.value
     }
 )
 

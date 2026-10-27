@@ -1,10 +1,24 @@
--- Canonical file opening selects path representation and allocation evidence
--- through Init Args. Borrowed terminated paths do not allocate temporary text.
+-- Opening is a fallible factory; Init retains the canonical empty file handle.
+FileOpening#(.PathValue: Type): Contract = (
+    .open_file : (.file_system: &FileSystem, .path: PathValue, .mode: FileOpenMode = ..read) -> (
+        .result : Errable#(File, (..path_open_failed))
+    )
+)
+
+AllocatingFileOpening#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+    .open_file : (
+        .file_system : &FileSystem,
+        .path        : PathValue,
+        .mode        : FileOpenMode = ..read,
+        .allocator   : $&Provider   = reach allocator
+    ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory)))
+)
+
 _open_c_file := (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode) -> (
     .result : Errable#(File, (..path_open_failed))
 ) {
     assume ffi := file_system&._ffi
-    file ::= File(.stream_address = 0, .should_close = false)
+    file ::= file_from_stream(.stream_address = 0, .should_close = false)
     opened ::= open(.p = $&file, .path = path, .mode = mode)
     if is(.value = opened, .variant = ..ok) {
         result = ..ok ~file
@@ -13,66 +27,48 @@ _open_c_file := (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode) 
     result = ..error(.reason = ..path_open_failed)
 }
 
-implement Init#(File, (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read)) (
-    .Result : Type = Errable#(File, (..path_open_failed))
-    .init   = (.args: (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read)) -> (
-        .result : Result
+implement FileOpening#(&CChar) (
+    .open_file = (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read) -> (
+        .result : Errable#(File, (..path_open_failed))
+    ) {
+        result = _open_c_file(.file_system = file_system, .path = path, .mode = mode)
+    }
+)
+
+implement FileOpening#(&String) (
+    .open_file = (.file_system: &FileSystem, .path: &String, .mode: FileOpenMode = ..read) -> (
+        .result : Errable#(File, (..path_open_failed))
     ) {
         result = _open_c_file(
-            .file_system = args.file_system, .path = args.path, .mode = args.mode
+            .file_system = file_system, .path = as_c_string(path), .mode = mode
         )
     }
 )
 
-implement Init#(File, (.file_system: &FileSystem, .path: &String, .mode: FileOpenMode = ..read)) (
-    .Result : Type = Errable#(File, (..path_open_failed))
-    .init   = (.args: (.file_system: &FileSystem, .path: &String, .mode: FileOpenMode = ..read)) -> (
-        .result : Result
+implement FileOpening#(&Path) (
+    .open_file = (.file_system: &FileSystem, .path: &Path, .mode: FileOpenMode = ..read) -> (
+        .result : Errable#(File, (..path_open_failed))
     ) {
         result = _open_c_file(
-            .file_system = args.file_system, .path = as_c_string(args.path), .mode = args.mode
+            .file_system = file_system, .path = as_c_string(&path&.text), .mode = mode
         )
     }
 )
 
-implement Init#(File, (.file_system: &FileSystem, .path: &Path, .mode: FileOpenMode = ..read)) (
-    .Result : Type = Errable#(File, (..path_open_failed))
-    .init   = (.args: (.file_system: &FileSystem, .path: &Path, .mode: FileOpenMode = ..read)) -> (
-        .result : Result
-    ) {
-        result = _open_c_file(
-            .file_system = args.file_system
-            .path        = as_c_string(&args.path&.text)
-            .mode        = args.mode
-        )
-    }
-)
-
-implement#(.Provider: Type: Allocator#(Provider)) Init#(
-    File,
-    (
+implement#(.Provider: Type: Allocator#(Provider)) AllocatingFileOpening#(StringView, Provider) (
+    .open_file = (
         .file_system : &FileSystem,
         .path        : StringView,
         .mode        : FileOpenMode = ..read,
         .allocator   : $&Provider   = reach allocator
-    )
-) (
-    .Result : Type = Errable#(File, (..path_open_failed, ..out_of_memory))
-    .init   = (
-        .args : (
-            .file_system : &FileSystem,
-            .path        : StringView,
-            .mode        : FileOpenMode = ..read,
-            .allocator   : $&Provider   = reach allocator
-        )
-    ) -> (.result: Result) {
-        assume ffi := args.file_system&._ffi
-        assume allocator := args.allocator
-        converted ::= copy_c_string(args.path, .allocator = allocator)
+    ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory))) {
+        assume ffi := file_system&._ffi
+        assume allocator
+        converted ::= copy_c_string(path, .allocator = allocator)
         match converted {
             ..ok ~payload {
                 match _open_c_file(
-                    .file_system = args.file_system, .path = payload.text, .mode = args.mode
+                    .file_system = file_system, .path = payload.text, .mode = mode
                 ) {
                     ..ok ~file { result = ..ok ~file }
                     ..error _ { result = ..error(.reason = ..path_open_failed) }

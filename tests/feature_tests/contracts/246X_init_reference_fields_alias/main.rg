@@ -4,11 +4,10 @@ Witness: Type = ()
 
 implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () {})
 
-implement Init#(Witness, (.left: $&Owner, .right: $&Owner)) (
-    .Result : Type = Witness
-    .init   = (.args: (.left: $&Owner, .right: $&Owner)) -> (.result: Result) {
-        Deinit#(Owner).deinit(.self = args.left)
-        Deinit#(Owner).deinit(.self = args.right)
+implement Init#(Witness) (
+    .init = (.left: $&Owner, .right: $&Owner) -> (.result: Witness) {
+        Deinit#(Owner).deinit(.self = left)
+        Deinit#(Owner).deinit(.self = right)
         result = ()
     }
 )

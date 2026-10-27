@@ -6,15 +6,13 @@ FileSystem := (._ffi: $&ForeignFunctionInterface)
 ..path_remove_failed
 ..path_rename_failed
 
-once _acquire_file_system := (.args: _FileSystemInitArgs) -> (.result: FileSystem) {
-    ffi ::= args.ffi
+_acquire_file_system := once _FileSystemInitArgs -> (.result: FileSystem) {
 
     result._ffi = ffi
 }
 
-implement Init#(FileSystem, _FileSystemInitArgs) (
-    .Result : Type = FileSystem
-    .init   = _acquire_file_system
+implement Init#(FileSystem) (
+    .init = _acquire_file_system
 )
 
 _read_c_file := #(.Provider: Type: Allocator#(Provider)) (

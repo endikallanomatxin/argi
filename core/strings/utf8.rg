@@ -3,17 +3,16 @@ UnicodeScalar := (._value: UInt32)
 
 implement ImplicitlyCopyable#(UnicodeScalar) ()
 
-implement Init#(UnicodeScalar, (.value: UInt32)) (
-    .Result : Type = Errable#(UnicodeScalar, (..invalid_codepoint))
-    .init   = (.args: (.value: UInt32)) -> (.result: Result) {
-        value ::= args.value
+implement Init#(UnicodeScalar) (
+    .init = (.value: UInt32) -> (.result: Errable#(UnicodeScalar, (..invalid_codepoint))) {
+        _init_value ::= value
 
-        if value > 1114111 or [value >= 55296 and value <= 57343] {
+        if _init_value > 1114111 or [_init_value >= 55296 and _init_value <= 57343] {
             result = ..error(.reason = ..invalid_codepoint)
             return
         }
 
-        result = ..ok(._value = value)
+        result = ..ok(._value = _init_value)
     }
 )
 
@@ -201,15 +200,6 @@ utf8_encode := (
 
 Utf8Decoder := (._bytes: ArrayView#(UInt8), ._offset: UIntNative)
 
-implement Init#(Utf8Decoder, (.text: StringView)) (
-    .Result : Type = Utf8Decoder
-    .init   = (.args: (.text: StringView)) -> (.result: Result) {
-        text ::= args.text
-
-        result = (._bytes = string_bytes(.text = text), ._offset = 0)
-    }
-)
-
 position := (.self: &Utf8Decoder) -> (.count: UIntNative) { count = self&._offset }
 
 next_codepoint := (.self: $&Utf8Decoder) -> (
@@ -230,10 +220,9 @@ next_codepoint := (.self: $&Utf8Decoder) -> (
     }
 }
 
-implement Init#(Utf8Decoder, (.bytes: ArrayView#(UInt8))) (
-    .Result : Type = Utf8Decoder
-    .init   = (.args: (.bytes: ArrayView#(UInt8))) -> (.result: Result) {
-        result = (._bytes = args.bytes, ._offset = 0)
+implement Init#(Utf8Decoder) (
+    .init = (.bytes: ArrayView#(UInt8)) -> (.result: Utf8Decoder) {
+        result = (._bytes = bytes, ._offset = 0)
     }
 )
 
@@ -243,10 +232,9 @@ CodepointView := (._text: StringView)
 
 implement ImplicitlyCopyable#(CodepointView) ()
 
-implement Init#(CodepointView, (.text: StringView)) (
-    .Result : Type = CodepointView
-    .init   = (.args: (.text: StringView)) -> (.result: Result) {
-        result = (._text = args.text)
+implement Init#(CodepointView) (
+    .init = (.text: StringView) -> (.result: CodepointView) {
+        result = (._text = text)
     }
 )
 
@@ -315,9 +303,9 @@ utf8_decode_bytes := (.bytes: ArrayView#(UInt8), .offset: UIntNative = 0) -> (
     }
 }
 
-implement Equal#(UnicodeScalar, UnicodeScalar, (.left: UnicodeScalar, .right: UnicodeScalar)) (
-    .equal = (.args: (.left: UnicodeScalar, .right: UnicodeScalar)) -> (.ok: Bool) {
-        ok = args.left._value == args.right._value
+implement Equal#(UnicodeScalar, UnicodeScalar) (
+    .equal = (.left: UnicodeScalar, .right: UnicodeScalar) -> (.ok: Bool) {
+        ok = left._value == right._value
     }
 )
 

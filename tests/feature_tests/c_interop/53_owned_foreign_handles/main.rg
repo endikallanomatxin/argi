@@ -2,7 +2,7 @@ owned := import ("../../_support/owned_foreign_handle")
 ..operation_failed
 
 _return_early := (.ffi: $&ForeignFunctionInterface = reach ffi) -> (.value: CInt) {
-    assume ffi := ffi
+    assume ffi
     handle ::= unwrap_or_abort(.value = owned.OwnedHandle(.value = 17))
     value = owned.read(.self = &handle)
     return
@@ -13,9 +13,9 @@ _fail := () -> (.result: Errable#(.t: Void, .reasons: (..operation_failed))) {
 }
 
 _propagate_failure := (.ffi: $&ForeignFunctionInterface = reach ffi) -> (
-    .result: Errable#(.t: Void, .reasons: (..operation_failed))
+    .result : Errable#(.t: Void, .reasons: (..operation_failed))
 ) {
-    assume ffi := ffi
+    assume ffi
     handle ::= unwrap_or_abort(.value = owned.OwnedHandle(.value = 23))
     _fail()!
     result = ..ok Void()

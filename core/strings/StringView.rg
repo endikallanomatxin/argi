@@ -47,9 +47,9 @@ equals := (.left: StringView, .right: StringView) -> (.ok: Bool) {
     ok = true
 }
 
-implement Equal#(StringView, StringView, (.left: StringView, .right: StringView)) (
-    .equal = (.args: (.left: StringView, .right: StringView)) -> (.ok: Bool) {
-        ok = equals(.left = args.left, .right = args.right).ok
+implement Equal#(StringView, StringView) (
+    .equal = (.left: StringView, .right: StringView) -> (.ok: Bool) {
+        ok = equals(.left = left, .right = right).ok
     }
 )
 
@@ -66,8 +66,8 @@ byte_data := (.text: StringView) -> (.reference: &UInt8) {
     reference = text._data
 }
 
-implement Equal#(StringView, StringView, (.left: &StringView, .right: &StringView)) (
-    .equal = (.args: (.left: &StringView, .right: &StringView)) -> (.ok: Bool) {
-        ok = args.left&== args.right&
+implement Equal#(&StringView, &StringView) (
+    .equal = (.left: &StringView, .right: &StringView) -> (.ok: Bool) {
+        ok = left&== right&
     }
 )

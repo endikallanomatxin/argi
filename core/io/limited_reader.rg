@@ -2,15 +2,12 @@
 -- reading ahead; the source can be used again after the adapter loan ends.
 LimitedReader := #(.t: Type: BlockReader#(t)) (._source: $&t, ._remaining: UIntNative)
 
-implement#(.t: Type: BlockReader#(t)) Init#(
-    LimitedReader#(.t: t), (.source: $&t, .limit: UIntNative)
-) (
-    .Result : Type = LimitedReader#(.t: t)
-    .init   = (.args: (.source: $&t, .limit: UIntNative)) -> (.result: Result) {
-        source ::= args.source
-        limit ::= args.limit
+implement#(.t: Type: BlockReader#(t)) Init#(LimitedReader#(.t: t)) (
+    .init = (.source: $&t, .limit: UIntNative) -> (.result: LimitedReader#(.t: t)) {
+        _init_source ::= source
+        _init_limit ::= limit
 
-        result = (._source = source, ._remaining = limit)
+        result = (._source = _init_source, ._remaining = _init_limit)
     }
 )
 
@@ -58,15 +55,12 @@ implement#(.t: Type: BlockReader#(t)) Reader#(LimitedReader#(.t: t)) (
 -- Byte-only sources need no block protocol. The budget counts delivered bytes.
 LimitedByteReader := #(.t: Type: Reader#(t)) (._source: $&t, ._remaining: UIntNative)
 
-implement#(.t: Type: Reader#(t)) Init#(
-    LimitedByteReader#(.t: t), (.source: $&t, .limit: UIntNative)
-) (
-    .Result : Type = LimitedByteReader#(.t: t)
-    .init   = (.args: (.source: $&t, .limit: UIntNative)) -> (.result: Result) {
-        source ::= args.source
-        limit ::= args.limit
+implement#(.t: Type: Reader#(t)) Init#(LimitedByteReader#(.t: t)) (
+    .init = (.source: $&t, .limit: UIntNative) -> (.result: LimitedByteReader#(.t: t)) {
+        _init_source ::= source
+        _init_limit ::= limit
 
-        result = (._source = source, ._remaining = limit)
+        result = (._source = _init_source, ._remaining = _init_limit)
     }
 )
 

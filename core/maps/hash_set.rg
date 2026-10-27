@@ -17,41 +17,31 @@ _init_hash_set := #(
     result = ..ok(._map = ~map)
 }
 
-implement#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator) Init#(
-    HashSet#(.key: key, .policy: policy),
-    (.policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8)
+implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) Init#(
+    HashSet#(.key: key, .policy: policy)
 ) (
-    .Result : Type = Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
-    .init   = (.args: (.policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8)) -> (
-        .result : Result
-    ) {
+    .init = #(.Provider: Type: Allocator) (
+        .policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8
+    ) -> (.result: Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))) {
         constructed ::= _init_hash_set#(.key: key)(
-            .policy = ~args.policy, .allocator = args.allocator, .capacity = args.capacity
+            .policy = ~policy, .allocator = allocator, .capacity = capacity
         )!
         result = ..ok ~constructed
     }
 )
 
-implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#(
-    HashSet#(.key: key, .policy: StandardHashPolicy),
-    (
+implement#(.key: Type: _StandardHashKey#(key)) Init#(
+    HashSet#(.key: key, .policy: StandardHashPolicy)
+) (
+    .init = #(.Provider: Type: Allocator) (
         .policy    : StandardHashPolicy = StandardHashPolicy(),
         .allocator : $&Provider,
         .capacity  : UIntNative         = 8
-    )
-) (
-    .Result : Type = Errable#(
-        HashSet#(.key: key, .policy: StandardHashPolicy), (..out_of_memory)
-    )
-    .init = (
-        .args : (
-            .policy    : StandardHashPolicy = StandardHashPolicy(),
-            .allocator : $&Provider,
-            .capacity  : UIntNative         = 8
-        )
-    ) -> (.result: Result) {
+    ) -> (
+        .result : Errable#(HashSet#(.key: key, .policy: StandardHashPolicy), (..out_of_memory))
+    ) {
         constructed ::= _init_hash_set#(.key: key)(
-            .policy = ~args.policy, .allocator = args.allocator, .capacity = args.capacity
+            .policy = ~policy, .allocator = allocator, .capacity = capacity
         )!
         result = ..ok ~constructed
     }

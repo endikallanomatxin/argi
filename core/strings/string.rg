@@ -73,12 +73,11 @@ string_with_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok ~out
 }
 
-implement#(.A: Type: Allocator) Init#(
-    String, (.allocator: $&A = reach allocator, .length: UIntNative = 0)
-) (
-    .Result : Type = Errable#(String, (..out_of_memory))
-    .init   = (.args: (.allocator: $&A, .length: UIntNative)) -> (.result: Result) {
-        result = string_with_length(.allocator = args.allocator, .length = args.length)
+implement Init#(String) (
+    .init = #(.A: Type: Allocator) (.allocator: $&A = reach allocator, .length: UIntNative = 0) -> (
+        .result : Errable#(String, (..out_of_memory))
+    ) {
+        result = string_with_length(.allocator = allocator, .length = length)
     }
 )
 
@@ -738,8 +737,8 @@ append_text_assume_capacity := (.self: $&String, .text: StringView) -> () {
     _string_append_bytes(self, .source = string_bytes(.text = text))
 }
 
-implement Equal#(String, String, (.left: &String, .right: &String)) (
-    .equal = (.args: (.left: &String, .right: &String)) -> (.ok: Bool) {
-        ok = view(args.left) == view(args.right)
+implement Equal#(&String, &String) (
+    .equal = (.left: &String, .right: &String) -> (.ok: Bool) {
+        ok = view(left) == view(right)
     }
 )

@@ -85,32 +85,22 @@ _tuple_set(
     .object  : RawPointer#(.t: _PyObject)
 ) -> (.status: Int32): CFunction(.symbol = "_argi_python_tuple_set")
 
-implement Init#(
-    Python,
-    (
+implement Init#(Python) (
+    .init = (
         .ffi          : $&ForeignFunctionInterface,
         .program_name : StringView                  = "python3",
         .home         : StringView                  = "",
-    )
-) (
-    .Result : Type = Errable#(Python, (..python_initialization_failed))
-    .init   = (
-        .args : (
-            .ffi          : $&ForeignFunctionInterface,
-            .program_name : StringView                  = "python3",
-            .home         : StringView                  = "",
-        )
-    ) -> (.result: Result) {
-        ffi ::= args.ffi
-        program_name ::= args.program_name
-        home ::= args.home
+    ) -> (.result: Errable#(Python, (..python_initialization_failed))) {
+        _init_ffi ::= ffi
+        _init_program_name ::= program_name
+        _init_home ::= home
 
-        assume ffi
+        assume ffi := _init_ffi
         handle ::= _start(
-            .program        = byte_data(.text = program_name).reference
-            .program_length = byte_length(&program_name).count
-            .home           = byte_data(.text = home).reference
-            .home_length    = byte_length(&home).count
+            .program        = byte_data(.text = _init_program_name).reference
+            .program_length = byte_length(&_init_program_name).count
+            .home           = byte_data(.text = _init_home).reference
+            .home_length    = byte_length(&_init_home).count
         ).handle
 
         if handle == 0 {
@@ -118,7 +108,7 @@ implement Init#(
             return
         }
 
-        result = ..ok(._handle = handle, ._ffi = ffi)
+        result = ..ok(._handle = handle, ._ffi = _init_ffi)
     }
 )
 

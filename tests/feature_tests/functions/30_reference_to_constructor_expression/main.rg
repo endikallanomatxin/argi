@@ -2,15 +2,14 @@ Box := (.counter: $&Int32, .created: $&Int32)
 
 NumberBox := (.value: Int32)
 
-implement Init#(Box, (.counter: $&Int32, .created: $&Int32)) (
-    .Result : Type = Box
-    .init   = (.args: (.counter: $&Int32, .created: $&Int32)) -> (.result: Result) {
-        counter ::= ~args.counter
-        created ::= ~args.created
+implement Init#(Box) (
+    .init = (.counter: $&Int32, .created: $&Int32) -> (.result: Box) {
+        _init_counter ::= ~counter
+        _init_created ::= ~created
 
-        result.counter = counter
-        result.created = created
-        created&= created&+ 1
+        result.counter = _init_counter
+        result.created = _init_created
+        _init_created&= _init_created&+ 1
     }
 )
 

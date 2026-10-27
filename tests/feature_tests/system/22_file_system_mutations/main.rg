@@ -32,7 +32,7 @@ main := (.system: System) -> (.status_code: Int32) {
         return
     }
 
-    created_file_result ::= File(
+    created_file_result ::= open_file(
         .file_system = system.file_system, .path = src_path, .mode = ..write
     )
     if is(.value = created_file_result, .variant = ..ok) {

@@ -26,7 +26,7 @@ _path_write_file_c := (.self: &FileSystem, .path: &CChar, .text: &String) -> (
     )
 ) {
     assume ffi := self&._ffi
-    open_result ::= File(.file_system = self, .path = path, .mode = ..write)
+    open_result ::= open_file(.file_system = self, .path = path, .mode = ..write)
     file :: File
 
     match open_result {

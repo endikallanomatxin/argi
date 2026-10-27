@@ -2,14 +2,13 @@ unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 Owned := (.allocation: Allocation)
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, (.allocator: $&AllocatorProvider)) (
-    .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
-    .init   = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
-        allocator ::= ~args.allocator
+implement Init#(Owned) (
+    .init = #(.AllocatorProvider: Type: Allocator) (.allocator: $&AllocatorProvider) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) {
+        _init_allocator ::= ~allocator
 
         constructed :: Owned
 
-        allocated ::= allocate_bytes(.self = allocator, .size = 1)
+        allocated ::= allocate_bytes(.self = _init_allocator, .size = 1)
         match allocated {
             ..error _ { result = ..error(.reason = ..out_of_memory) }
             ..ok ~payload {

@@ -38,10 +38,9 @@ BackingAllocator := (
 backing_deallocations :: Int32 = 0
 backing_freed_after_elements :: Bool = false
 
-implement Init#(BackingAllocator, (.ffi: $&ForeignFunctionInterface)) (
-    .Result : Type = BackingAllocator
-    .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        assume ffi := ~args.ffi
+implement Init#(BackingAllocator) (
+    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: BackingAllocator) {
+        assume ffi := ~ffi
 
         result.ffi = ffi
     }
@@ -103,7 +102,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
 implement Allocator#(BackingAllocator) (
     .allocate = (.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         address :: UIntNative = storage | convert#(.to: UIntNative)(_)

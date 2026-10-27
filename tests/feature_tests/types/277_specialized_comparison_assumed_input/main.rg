@@ -2,17 +2,11 @@ Box := #(.t: Type) (.value: t)
 
 implement#(.t: Type: ImplicitlyCopyable) ImplicitlyCopyable#(Box#(.t: t)) ()
 
-implement#(.t: Type) Equal#(
-    Box#(.t: t), Box#(.t: t), (
-        .left  : Box#(.t: t),
-        .right : Box#(.t: t),
-        .bias  : Int32       = reach bias
-    )
-) (
-    .equal = (.args: (.left: Box#(.t: t), .right: Box#(.t: t), .bias: Int32 = reach bias)) -> (
+implement#(.t: Type) Equal#(Box#(.t: t), Box#(.t: t)) (
+    .equal = (.left: Box#(.t: t), .right: Box#(.t: t), .bias: Int32 = reach bias) -> (
         .ok : Bool
     ) {
-        ok = args.left.value == args.right.value and args.bias == 7
+        ok = left.value == right.value and bias == 7
     }
 )
 

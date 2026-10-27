@@ -1,24 +1,24 @@
-Alpha : Type = ()
-Beta : Type = ()
+Alpha: Type = ()
+
+Beta: Type = ()
 
 implement ImplicitlyCopyable#(Alpha) ()
+
 implement ImplicitlyCopyable#(Beta) ()
 
-implement Init#(Alpha, ()) (
-    .Result: Type = Alpha
-    .init = (.args: ()) -> (.result: Result) {
+implement Init#(Alpha) (
+    .init = () -> (.result: Alpha) {
         result = ()
     }
 )
 
-implement Init#(Beta, ()) (
-    .Result: Type = Beta
-    .init = (.args: ()) -> (.result: Result) {
+implement Init#(Beta) (
+    .init = () -> (.result: Beta) {
         result = ()
     }
 )
 
-main := () -> (.status_code: Int32)  {
+main := () -> (.status_code: Int32) {
     alpha ::= Alpha()
     beta ::= Beta()
     _ ::= alpha

@@ -1701,10 +1701,10 @@ pub const Resolver = struct {
         const required_fields = global_types.fields(self.graph, required_type) orelse return error.InvalidContractRequirementInput;
         if (!try self.core.completeCallInputFieldsWithReach(required_fields, input, context)) return null;
         const function = self.graph.function(method);
-        switch (self.core.matchCallInput(function.input, input)) {
+        switch (try self.core.matchCallInputWithReach(function.input, input, context)) {
             .deferred => return null,
             .no_match => {
-                failure.reason = "arguments do not match the selected contract operation";
+                failure.reason = "arguments do not match the selected contract operation, including its required reachable capabilities";
                 self.participant_conformance_failure = failure;
                 return null;
             },
@@ -2224,16 +2224,6 @@ pub const Resolver = struct {
                     };
                     self.participant_conformance_failure = failure;
                     return;
-                }
-                if (standard_contracts.standardDefinition(self.graph, "Init") == conformance.declaration) {
-                    const required_inputs = global_types.fields(self.graph, input).?;
-                    const arguments = self.graph.fields.items[required_inputs.start].ty;
-                    _ = try self.generics.ensureGenericInstance(arguments);
-                    if (global_types.fields(self.graph, arguments) == null) {
-                        failure.reason = "Init.Args must be a record type describing construction arguments";
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
                 }
                 if (standard_contracts.operationResultFailure(self.graph, conformance, selected.function)) |reason| {
                     failure.reason = reason;

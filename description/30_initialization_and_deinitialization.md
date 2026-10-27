@@ -5,20 +5,21 @@ contains a value, and raw allocated bytes do not yet contain a `T`. A value
 becomes live only after it has been fully initialized. Reading it beforehand
 is an error.
 
-Canonical construction uses `Init#(T, Args)`. The target and argument record
-are participants; their selected conformance determines `T` or `Errable#(T, R)`
-as its associated Result.
-Calling `T(...)` completes that record and invokes the selected `init` operation.
+Canonical construction uses `Init#(T)`. The target identifies the conformance;
+its implementation supplies the ordinary signature of `init`, including any
+operation-local compile-time parameters. `T(...)` calls that signature with the
+written arguments and completes its defaults and reached capabilities. The result
+must be `T` or `Errable#(T, R)`.
+
 No uninitialized destination is passed into it: the successful value is returned
 directly or transferred into `..ok`. Ordinary ownership and automatic cleanup
 apply to intermediate values on every exit.
 
 ```rg
 Point := (.x: Int32, .y: Int32)
-implement Init#(Point, (.x: Int32, .y: Int32 = 0)) (
-    .Result: Type = Point
-    .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
-        result = (.x = args.x, .y = args.y)
+implement Init#(Point) (
+    .init = (.x: Int32, .y: Int32 = 0) -> (.result: Point) {
+        result = (.x = x, .y = y)
     }
 )
 
@@ -29,35 +30,34 @@ Generic implementations declare their compile-time parameters after `implement`:
 
 ```rg
 Box := #(.T: Type) (.value: T)
-implement#(.T: Type) Init#(Box#(T), (.value: T)) (
-    .Result: Type = Box#(T)
-    .init = (.args: (.value: T)) -> (.result: Result) { result = (.value = args.value) }
+implement#(.T: Type) Init#(Box#(T)) (
+    .init = (.value: T) -> (.result: Box#(T)) { result = (.value = ~value) }
 )
 ```
 
-The requested type, such as `Box#(Int32)`, and input argument types select the
-conformance together. Generic argument fields can retain a concrete allocator
-without adding it to the target type. Constructor syntax contextualizes literals
-and completes defaults against applicable argument patterns, then uses contract
-specificity. Incomparable applicable patterns are ambiguous. The result never
-selects a conformance, and an incompatible selected result cannot bypass custom
-construction.
+The requested type, such as `Box#(Int32)`, fixes the target participant. Allocator
+types can be parameters of the init definition itself, inferred from its inputs
+without becoming part of every constructor or its target type. A different
+argument signature does not permit a second conformance for the same target.
+Conformance specialization depends on target patterns, not argument shapes.
+The result never selects a conformance, and an incompatible selected result
+cannot bypass custom construction.
 Record defaults retain scalar literals, payload-free choice variants and lexical
 reach directives without executing runtime expressions during type materialization.
 The selected operation preserves argument loans and projected output dependencies.
-References carried inside Args retain effects on their referents, including
-consumption and invalidation. Copying Args does not let its local field-slot
+References carried inside input records retain effects on their referents, including
+consumption and invalidation. Copying an input record does not let its local field-slot
 updates overwrite caller slots. Repeated consumption and aliasing between
 consumed reference fields are checked across that boundary.
 
-When Args determines every parameter of a nominal family, its application can
+When inputs determine every parameter of a nominal family, its application can
 be omitted: `Box(.value = byte)` infers the same target as `Box#(UInt8)` for a
 UInt8 input. This inference also applies inside generic bodies. If several
-conformances infer different targets and none dominates, specify the target
+conformances infer different targets, specify the target
 explicitly; Result is never used to choose its missing parameters.
 
 All bundled core and official more constructors use this contract. `Range`
-uses one Args record with default start and step. Scaled durations, relative
+uses one input signature with default start and step. Scaled durations, relative
 deadlines, precise Unix timestamps, and paths copied from views use ordinary
 named factories. Single-use capabilities reuse named `once` functions as their
 `init` members, preserving entrypoint call-graph checks.

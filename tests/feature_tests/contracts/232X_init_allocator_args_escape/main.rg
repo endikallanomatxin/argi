@@ -1,14 +1,11 @@
 Owner := (.allocation: Allocation)
 
-implement#(.A: Type: Allocator) Init#(
-    Owner, (.allocator: $&A = reach allocator, .length: UIntNative = 4)
-) (
-    .Result : Type = Errable#(Owner, (..out_of_memory))
-    .init   = (.args: (.allocator: $&A = reach allocator, .length: UIntNative = 4)) -> (
-        .result : Result
+implement Init#(Owner) (
+    .init = #(.A: Type: Allocator) (.allocator: $&A = reach allocator, .length: UIntNative = 4) -> (
+        .result : Errable#(Owner, (..out_of_memory))
     ) {
         allocation ::= Allocator#(A).allocate(
-            .self = args.allocator, .size = args.length, .alignment = 1
+            .self = allocator, .size = length, .alignment = 1
         )!
         result = ..ok(.allocation = ~allocation)
     }

@@ -3,13 +3,12 @@ Point := (
     .y: Int32,
 )
 
-implement Init#(Point, (.sum: Int32)) (
-    .Result: Type = Point
-    .init = (.args: (.sum: Int32)) -> (.result: Result) {
-        sum ::= ~args.sum
+implement Init#(Point) (
+    .init = (.sum: Int32) -> (.result: Point) {
+        _init_sum ::= ~sum
 
         result = (
-            .x = sum,
+            .x = _init_sum,
             .y = 0,
         )
     }

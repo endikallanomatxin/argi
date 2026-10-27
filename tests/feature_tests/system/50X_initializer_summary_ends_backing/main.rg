@@ -12,13 +12,12 @@ EndBacking := (
     .marker : Bool
 )
 
-implement Init#(EndBacking, (.backing: $&BackingAllocator)) (
-    .Result : Type = EndBacking
-    .init   = (.args: (.backing: $&BackingAllocator)) -> (.result: Result) {
-        backing ::= ~args.backing
+implement Init#(EndBacking) (
+    .init = (.backing: $&BackingAllocator) -> (.result: EndBacking) {
+        _init_backing ::= ~backing
 
         result = (.marker = false)
-        deinit(.self = backing)
+        deinit(.self = _init_backing)
     }
 )
 

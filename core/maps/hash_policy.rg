@@ -15,7 +15,7 @@ implement ImplicitlyCopyable#(StandardHashPolicy) ()
 
 _StandardHashKey#(.Key: Type): Contract = (
     Hashable#(Key, StandardHasher)
-    Equal#(Key, Key, (.left: &Key, .right: &Key))
+    Equal#(&Key, &Key)
 )
 
 implement#(.Key: Type: Hashable#(Key, StandardHasher)) _StandardHashKey#(Key) ()
@@ -29,9 +29,7 @@ implement#(.Key: Type: _StandardHashKey#(Key)) HashPolicy#(StandardHashPolicy, K
         hash = Hasher#(StandardHasher).finish(&hasher)
     }
     .equal = (.self: &StandardHashPolicy, .left: &Key, .right: &Key) -> (.ok: Bool) {
-        ok = Equal#(
-            Key, Key, (.left: &Key, .right: &Key)
-        ).equal(.args = (.left = left, .right = right))
+        ok = Equal#(&Key, &Key).equal(.left = left, .right = right)
     }
 )
 

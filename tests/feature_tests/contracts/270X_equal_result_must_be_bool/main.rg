@@ -1,7 +1,7 @@
 Value := (.number: Int32)
 
-implement Equal#(Value, Value, (.left: &Value, .right: &Value)) (
-    .equal = (.args: (.left: &Value, .right: &Value)) -> (.ok: Int32) { ok = 1 }
+implement Equal#(&Value, &Value) (
+    .equal = (.left: &Value, .right: &Value) -> (.ok: Int32) { ok = 1 }
 )
 
 main := () -> () {

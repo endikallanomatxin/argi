@@ -16,35 +16,32 @@ RingBuffer := #(.t: Type) (
     ._shape      : _RingBufferShape
 )
 
-implement#(.t: Type, .Provider: Type: Allocator) Init#(
-    RingBuffer#(.t: t), (.capacity: UIntNative, .allocator: $&Provider = reach allocator)
-) (
-    .Result : Type = Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
-    .init   = (.args: (.capacity: UIntNative, .allocator: $&Provider = reach allocator)) -> (
-        .result : Result
-    ) {
-        capacity ::= args.capacity
-        allocator ::= args.allocator
+implement#(.t: Type) Init#(RingBuffer#(.t: t)) (
+    .init = #(.Provider: Type: Allocator) (
+        .capacity: UIntNative, .allocator: $&Provider = reach allocator
+    ) -> (.result: Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))) {
+        _init_capacity ::= capacity
+        _init_allocator ::= allocator
 
         constructed :: RingBuffer#(.t: t)
 
-        if capacity == 0 {
+        if _init_capacity == 0 {
             result = ..error(.reason = ..invalid_capacity)
             return
         }
 
         element_size ::= size_of(.type = t)
-        maximum ::= integer_limits(.value = capacity).maximum
+        maximum ::= integer_limits(.value = _init_capacity).maximum
 
-        if element_size != 0 and capacity > maximum / element_size {
+        if element_size != 0 and _init_capacity > maximum / element_size {
             result = ..error(.reason = ..out_of_memory)
             return
         }
 
-        allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
+        allocation ::= allocate#(.t: t)(_init_allocator, .count = _init_capacity)!
         constructed = (
             ._allocation = ~allocation
-            ._capacity   = capacity
+            ._capacity   = _init_capacity
             ._head       = 0
             ._length     = 0
             ._shape      = (.marker = 0)

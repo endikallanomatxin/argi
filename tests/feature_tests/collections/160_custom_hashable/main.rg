@@ -2,9 +2,9 @@ Key := (.id: Int32)
 
 implement ImplicitlyCopyable#(Key) ()
 
-implement Equal#(Key, Key, (.left: &Key, .right: &Key)) (
-    .equal = (.args: (.left: &Key, .right: &Key)) -> (.ok: Bool) {
-        ok = args.left&.id == args.right&.id
+implement Equal#(&Key, &Key) (
+    .equal = (.left: &Key, .right: &Key) -> (.ok: Bool) {
+        ok = left&.id == right&.id
     }
 )
 

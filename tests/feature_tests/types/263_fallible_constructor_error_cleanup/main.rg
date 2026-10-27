@@ -1,21 +1,21 @@
 Widget := (.cleanups: $&Int32)
+
 implement Deinit#(Widget) (
     .deinit = (.self: $&Widget) -> () {
-        self&.cleanups& = self&.cleanups& + 1
+        self&.cleanups&= self&.cleanups&+ 1
     }
 )
 
-implement Init#(Widget, (.cleanups: $&Int32)) (
-    .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))
-    .init = (.args: (.cleanups: $&Int32)) -> (.result: Result) {
-        cleanups ::= ~args.cleanups
+implement Init#(Widget) (
+    .init = (.cleanups: $&Int32) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) {
+        _init_cleanups ::= ~cleanups
 
-        constructed :: Widget = (.cleanups = cleanups)
+        constructed :: Widget = (.cleanups = _init_cleanups)
         result = ..error(.reason = ..rejected)
     }
 )
 
-main := () -> (.status_code: Int32 = 0)  {
+main := () -> (.status_code: Int32 = 0) {
     cleanups :: Int32 = 0
     outcome ::= Widget(.cleanups = $&cleanups)
     match outcome {

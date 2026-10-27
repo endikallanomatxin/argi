@@ -24,32 +24,22 @@ CsvReader := (
     .maximum_fields      : UIntNative
 )
 
-implement Init#(
-    CsvReader,
-    (
+implement Init#(CsvReader) (
+    .init = (
         .text                : StringView,
         .maximum_field_bytes : UIntNative  = 1048576,
         .maximum_fields      : UIntNative  = 1024,
-    )
-) (
-    .Result : Type = CsvReader
-    .init   = (
-        .args : (
-            .text                : StringView,
-            .maximum_field_bytes : UIntNative  = 1048576,
-            .maximum_fields      : UIntNative  = 1024,
-        )
-    ) -> (.result: Result) {
-        text ::= args.text
-        maximum_field_bytes ::= args.maximum_field_bytes
-        maximum_fields ::= args.maximum_fields
+    ) -> (.result: CsvReader) {
+        _init_text ::= text
+        _init_maximum_field_bytes ::= maximum_field_bytes
+        _init_maximum_fields ::= maximum_fields
 
         result = (
-            ._text               = text
+            ._text               = _init_text
             ._position           = 0
             ._ended              = false
-            .maximum_field_bytes = maximum_field_bytes
-            .maximum_fields      = maximum_fields
+            .maximum_field_bytes = _init_maximum_field_bytes
+            .maximum_fields      = _init_maximum_fields
         )
     }
 )

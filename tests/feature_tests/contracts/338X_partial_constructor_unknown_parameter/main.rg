@@ -1,8 +1,7 @@
 Box := #(.Value: Type, .Tag: Type = Int32) (.value: Value)
 
-implement#(.Value: Type, .Tag: Type) Init#(Box#(Value, Tag), (.value: Value)) (
-    .Result : Type = Box#(Value, Tag)
-    .init   = (.args: (.value: Value)) -> (.result: Result) { result = (.value = args.value) }
+implement#(.Value: Type, .Tag: Type) Init#(Box#(Value, Tag)) (
+    .init = (.value: Value) -> (.result: Box#(Value, Tag)) { result = (.value = value) }
 )
 
 main := () -> () {

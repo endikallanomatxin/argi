@@ -87,17 +87,15 @@ _network_shutdown(.handle: UIntNative) -> (.status: Int32): CFunction(
 
 Network := (._ffi: $&ForeignFunctionInterface, ._ready: Bool)
 
-once _acquire_network := (.args: _NetworkInitArgs) -> (.result: Network) {
-    ffi ::= args.ffi
+_acquire_network := once _NetworkInitArgs -> (.result: Network) {
 
-    assume ffi
+    assume ffi := ffi
 
     result = (._ffi = ffi, ._ready = _network_init().status == 0)
 }
 
-implement Init#(Network, _NetworkInitArgs) (
-    .Result : Type = Network
-    .init   = _acquire_network
+implement Init#(Network) (
+    .init = _acquire_network
 )
 
 implement Deinit#(Network) (
@@ -217,31 +215,30 @@ port := (.self: &NetworkAddress, .network: &Network = reach network) -> (.value:
 
 TcpConnection := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(TcpConnection, (.address: NetworkAddress, .network: &Network = reach network)) (
-    .Result : Type = Errable#(
-        TcpConnection, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-    )
-    .init = (.args: (.address: NetworkAddress, .network: &Network = reach network)) -> (
-        .result : Result
+implement Init#(TcpConnection) (
+    .init = (.address: NetworkAddress, .network: &Network = reach network) -> (
+        .result : Errable#(
+            TcpConnection, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
+        )
     ) {
-        address ::= args.address
-        network ::= args.network
+        _init_address ::= address
+        _init_network ::= network
 
-        assume ffi := network&._ffi
+        assume ffi := _init_network&._ffi
 
-        if address._datagram != false {
+        if _init_address._datagram != false {
             result = ..error(.reason = ..invalid_network_argument)
             return
         }
 
-        if network&._ready == false {
+        if _init_network&._ready == false {
             result = ..error(.reason = ..socket_open_failed)
             return
         }
 
         handle :: UIntNative = 0
         status ::= _network_socket(
-            .address = &address._native, .operation = 0, .handle = $&handle
+            .address = &_init_address._native, .operation = 0, .handle = $&handle
         ).status
 
         if status == -3 {
@@ -254,7 +251,7 @@ implement Init#(TcpConnection, (.address: NetworkAddress, .network: &Network = r
             return
         }
 
-        result = ..ok(._network = network, ._handle = handle)
+        result = ..ok(._network = _init_network, ._handle = handle)
     }
 )
 
@@ -297,31 +294,30 @@ _local_address_TcpConnection := (.self: &TcpConnection) -> (
 
 TcpListener := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(TcpListener, (.address: NetworkAddress, .network: &Network = reach network)) (
-    .Result : Type = Errable#(
-        TcpListener, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-    )
-    .init = (.args: (.address: NetworkAddress, .network: &Network = reach network)) -> (
-        .result : Result
+implement Init#(TcpListener) (
+    .init = (.address: NetworkAddress, .network: &Network = reach network) -> (
+        .result : Errable#(
+            TcpListener, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
+        )
     ) {
-        address ::= args.address
-        network ::= args.network
+        _init_address ::= address
+        _init_network ::= network
 
-        assume ffi := network&._ffi
+        assume ffi := _init_network&._ffi
 
-        if address._datagram != false {
+        if _init_address._datagram != false {
             result = ..error(.reason = ..invalid_network_argument)
             return
         }
 
-        if network&._ready == false {
+        if _init_network&._ready == false {
             result = ..error(.reason = ..socket_open_failed)
             return
         }
 
         handle :: UIntNative = 0
         status ::= _network_socket(
-            .address = &address._native, .operation = 1, .handle = $&handle
+            .address = &_init_address._native, .operation = 1, .handle = $&handle
         ).status
 
         if status == -3 {
@@ -334,7 +330,7 @@ implement Init#(TcpListener, (.address: NetworkAddress, .network: &Network = rea
             return
         }
 
-        result = ..ok(._network = network, ._handle = handle)
+        result = ..ok(._network = _init_network, ._handle = handle)
     }
 )
 
@@ -377,31 +373,30 @@ _local_address_TcpListener := (.self: &TcpListener) -> (
 
 UdpSocket := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(UdpSocket, (.address: NetworkAddress, .network: &Network = reach network)) (
-    .Result : Type = Errable#(
-        UdpSocket, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-    )
-    .init = (.args: (.address: NetworkAddress, .network: &Network = reach network)) -> (
-        .result : Result
+implement Init#(UdpSocket) (
+    .init = (.address: NetworkAddress, .network: &Network = reach network) -> (
+        .result : Errable#(
+            UdpSocket, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
+        )
     ) {
-        address ::= args.address
-        network ::= args.network
+        _init_address ::= address
+        _init_network ::= network
 
-        assume ffi := network&._ffi
+        assume ffi := _init_network&._ffi
 
-        if address._datagram != true {
+        if _init_address._datagram != true {
             result = ..error(.reason = ..invalid_network_argument)
             return
         }
 
-        if network&._ready == false {
+        if _init_network&._ready == false {
             result = ..error(.reason = ..socket_open_failed)
             return
         }
 
         handle :: UIntNative = 0
         status ::= _network_socket(
-            .address = &address._native, .operation = 2, .handle = $&handle
+            .address = &_init_address._native, .operation = 2, .handle = $&handle
         ).status
 
         if status == -3 {
@@ -414,7 +409,7 @@ implement Init#(UdpSocket, (.address: NetworkAddress, .network: &Network = reach
             return
         }
 
-        result = ..ok(._network = network, ._handle = handle)
+        result = ..ok(._network = _init_network, ._handle = handle)
     }
 )
 

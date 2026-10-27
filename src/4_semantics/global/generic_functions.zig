@@ -341,8 +341,6 @@ pub const Resolver = struct {
 
     fn makeComparisonCall(self: *Resolver, module_index: usize, operator: primitives.ComparisonOperator, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
         const identity = standard_contracts.comparisonOperation(operator);
-        if (operator == .equal or operator == .not_equal)
-            return self.makeContractOperator(module_index, identity.contract, identity.operation, operands, reach, assumed);
         const declaration = standard_contracts.standardDefinition(self.graph, identity.contract) orelse return null;
         const contracts = self.nested_call_context orelse return null;
         for (operands) |operand| {
@@ -365,6 +363,11 @@ pub const Resolver = struct {
         });
         const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 2 } } });
         const input = try self.makePositionalInput(operands);
+        if (assumed) |node| {
+            var completed_input = self.graph.node(input);
+            completed_input.content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
+            try self.graph.setNode(self.allocator, input, completed_input);
+        }
         const call = contracts.makeScopedOperationCall(module_index, contract, identity.operation, input, reach, self.graph.node(operands[0]).source) catch |err| {
             failure = contracts.participant_conformance_failure;
             if (failure) |*value| {
@@ -499,6 +502,13 @@ pub const Resolver = struct {
     }
 
     pub fn makeDefinitionCall(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, definition: global_sg.DefinitionValue, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !global_sg.Node {
+        const family = self.graph.familyDefinition(definition.origin);
+        if (family.kind == .function and family.template_index == null) {
+            if (arguments.len != 0 or definition.captures.len != 0) return error.TooManyGenericArguments;
+            const function = self.graph.declaration(self.graph.familyDeclaration(definition.origin)).function_id orelse return error.DeferredGenericFunction;
+            return self.makeConcreteFunctionCall(function, input, reach, source);
+        }
+        if (self.core.callInputHasPendingTypes(input)) return error.DeferredGenericFunction;
         const input_value = self.graph.node(input).content;
         if (input_value == .struct_value_literal) {
             const fields = input_value.struct_value_literal.fields;
@@ -1084,6 +1094,55 @@ pub const Resolver = struct {
                 return selected;
             },
         }
+    }
+
+    /// Inline operations capture implementation parameters by position. Infer
+    /// in the callable's own parameter pool, then transfer the captured prefix
+    /// back to the conformance; equal parameter names do not establish identity.
+    pub fn inferImplementationInput(
+        self: *Resolver,
+        module_index: usize,
+        operation: parameterized_storage.ContractOperation,
+        captures: primitives.Range(ir.ComptimeParameterId),
+        input: global_sg.GlobalNodeId,
+        context: ReachInferenceContext,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !?global_sg.GlobalTypeId {
+        if (!operation.instantiate_associated) return null;
+        const local = switch (operation.function) {
+            .module => |declaration| declaration,
+            .external => return null,
+        };
+        const declaration = globalizer.globalDecl(self.offsets[module_index], local);
+        const located = self.findParameterized(declaration) orelse {
+            const function_id = self.graph.declaration(declaration).function_id orelse return null;
+            return self.graph.function(function_id).input_type;
+        };
+        std.debug.assert(located.module_index == module_index);
+        const function = located.parameterized;
+        if (function.captured_parameter_count != captures.len) return null;
+        var inferred = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer inferred.deinit(self.allocator);
+        for (0..captures.len) |index| {
+            const from = captures.start + index;
+            const to = function.parameters.start + index;
+            inferred.types[to] = bindings.types[from];
+            inferred.ints[to] = bindings.ints[from];
+            inferred.definitions[to] = bindings.definitions[from];
+        }
+        if (!try self.inferBindingsFromInput(module_index, function.input, input, &inferred)) return null;
+        if (!try self.inferBindingsFromReachDefaults(module_index, function.input, input, &inferred, context)) return null;
+        if (!try self.inferAndValidateConstraints(module_index, function.parameters, &inferred)) return null;
+        if (!self.parametersBound(module_index, function.parameters, &inferred)) return null;
+        const signature = try self.generics.instantiateParameterizedType(module_index, function.input, &inferred);
+        for (0..captures.len) |index| {
+            const from = function.parameters.start + index;
+            const to = captures.start + index;
+            bindings.types[to] = inferred.types[from];
+            bindings.ints[to] = inferred.ints[from];
+            bindings.definitions[to] = inferred.definitions[from];
+        }
+        return signature;
     }
 
     pub fn inferArgumentRecordBindings(
@@ -2159,11 +2218,17 @@ pub const Resolver = struct {
         }
         if (arguments.len != 0) return error.TooManyGenericArguments;
         const function = self.graph.declaration(declaration).function_id orelse return error.DeferredGenericFunction;
+        return self.makeConcreteFunctionCall(function, input, reach, source);
+    }
+
+    fn makeConcreteFunctionCall(self: *Resolver, function: global_sg.GlobalFunctionId, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !global_sg.Node {
+        if (self.core.functionSignaturePending(function)) return error.DeferredGenericFunction;
         const signature = self.graph.function(function);
+        if (self.core.callInputHasPendingTypes(input)) return error.DeferredGenericFunction;
         switch (self.core.matchCallInput(signature.input, input)) {
             .deferred => return error.DeferredGenericFunction,
             .no_match => {
-                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match the selected implementation operation" };
+                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match the selected function definition" };
                 return error.InvalidGenericCallArguments;
             },
             .applicable => {},
@@ -2351,6 +2416,7 @@ pub const Resolver = struct {
             .safety_primitive = located.parameterized.safety_primitive,
             .flags = .{
                 .has_declared_body = located.parameterized.body != null,
+                .is_once = located.parameterized.is_once,
                 .is_generic_instantiation = true,
                 .is_comptime_entry = located.parameterized.is_comptime_entry,
                 .is_comptime_host_entry = located.parameterized.is_comptime_host_entry,

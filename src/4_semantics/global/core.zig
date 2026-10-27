@@ -745,6 +745,41 @@ pub const Resolver = struct {
     ) !FunctionMatch {
         var selected: ?global_sg.GlobalFunctionId = null;
         var saw_deferred = false;
+        // A constant alias names the same compile-time function value. Its
+        // visibility belongs to the alias; the function's identity stays intact.
+        const declarations = try self.graph.declarationsNamed(self.allocator, name);
+        for (declarations) |declaration_id| {
+            const declaration = self.graph.declaration(declaration_id);
+            if (declaration.kind != .binding or !self.declarationVisible(current_module, declaration_id, module_filter)) continue;
+            const binding = self.declarationBinding(declaration_id) orelse continue;
+            if (self.graph.isBindingTypeUnresolved(binding)) {
+                saw_deferred = true;
+                continue;
+            }
+            const definition = types.staticDefinitionBinding(self.graph, binding) orelse continue;
+            const family = self.graph.familyDefinition(definition.origin);
+            if (family.kind != .function or family.template_index != null) continue;
+            const id = self.graph.declaration(self.graph.familyDeclaration(definition.origin)).function_id orelse {
+                saw_deferred = true;
+                continue;
+            };
+            if (self.functionSignaturePending(id)) {
+                saw_deferred = true;
+                continue;
+            }
+            const applicability = if (context) |reach|
+                try self.matchCallInputWithReach(self.graph.function(id).input, input_node, reach)
+            else
+                self.matchCallInput(self.graph.function(id).input, input_node);
+            switch (applicability) {
+                .no_match => continue,
+                .deferred => saw_deferred = true,
+                .applicable => {
+                    if (selected != null and selected.? != id) return .ambiguous;
+                    selected = id;
+                },
+            }
+        }
         const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
             const function = self.graph.function(id);
@@ -1376,6 +1411,28 @@ pub const Resolver = struct {
 
     pub fn callArgumentType(self: *const Resolver, node_id: global_sg.GlobalNodeId) ?global_sg.GlobalTypeId {
         return self.graph.node(node_id).ty;
+    }
+
+    /// Contextual aggregate literals need no type of their own, but computed
+    /// leaves must finish resolution before a signature can reject them.
+    pub fn callInputHasPendingTypes(self: *const Resolver, input: global_sg.GlobalNodeId) bool {
+        const node = self.graph.node(input);
+        switch (node.content) {
+            .struct_value_literal => |literal| {
+                for ([_]@TypeOf(literal.fields){ literal.fields, literal.assumed_fields }) |fields|
+                    for (self.graph.value_fields.items[fields.start..][0..fields.len]) |field|
+                        if (self.callInputHasPendingTypes(field.value)) return true;
+                return false;
+            },
+            .list_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
+                    if (self.callInputHasPendingTypes(element)) return true;
+                return false;
+            },
+            .choice_literal => |literal| return if (literal.payload) |payload| self.callInputHasPendingTypes(payload) else false,
+            .int_literal, .float_literal, .char_literal, .bool_literal, .string_literal => return node.ty == null,
+            else => return if (node.ty) |ty| self.graph.isTypeUnresolved(ty) else true,
+        }
     }
 
     pub fn matchCallInput(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) CallInputMatch {

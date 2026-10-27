@@ -5,9 +5,8 @@ Resource: Type = ()
 
 dummy_counter :: Int32 = 0
 
-implement Init#(Resource, ()) (
-    .Result : Type = Resource
-    .init   = (.args: ()) -> (.result: Result) {
+implement Init#(Resource) (
+    .init = () -> (.result: Resource) {
         result = ()
     }
 )

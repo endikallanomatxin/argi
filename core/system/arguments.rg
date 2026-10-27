@@ -15,8 +15,8 @@ ArgumentsIterator := (
     .index : UIntNative
 )
 
-once _acquire_arguments := (.args: _ArgumentsInitArgs) -> (.result: Arguments) {
-    assume ffi := args.ffi
+_acquire_arguments := once _ArgumentsInitArgs -> (.result: Arguments) {
+    assume ffi := ffi
 
     result = (
         ._ffi    = ffi
@@ -25,9 +25,8 @@ once _acquire_arguments := (.args: _ArgumentsInitArgs) -> (.result: Arguments) {
     )
 }
 
-implement Init#(Arguments, _ArgumentsInitArgs) (
-    .Result : Type = Arguments
-    .init   = _acquire_arguments
+implement Init#(Arguments) (
+    .init = _acquire_arguments
 )
 
 has_argument := (.self: &Arguments, .index: UIntNative) -> (.ok: Bool) {

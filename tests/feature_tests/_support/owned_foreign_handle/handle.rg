@@ -30,21 +30,17 @@ violations() -> (.count: CInt): CFunction(.symbol = "argi_c_owned_violations")
 -- The C binding transfers one handle on success; a null result acquires
 -- nothing. The wrapper keeps it private, provides no copy operation, and
 -- retains the caller's capability for every access and release.
-implement Init#(
-    OwnedHandle,
-    (.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi)
-) (
-    .Result : Type = Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))
-    .init   = (
-        .args : (.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi)
-    ) -> (.result: Result) {
-        value ::= ~args.value
-        fail ::= ~args.fail
-        assume ffi := ~args.ffi
+implement Init#(OwnedHandle) (
+    .init = (.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi) -> (
+        .result : Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))
+    ) {
+        _init_value ::= ~value
+        _init_fail ::= ~fail
+        assume ffi := ~ffi
 
         constructed :: OwnedHandle
 
-        handle := _create(.value = value, .fail = fail, .ffi = ffi)
+        handle := _create(.value = _init_value, .fail = _init_fail, .ffi = ffi)
         if handle.address == 0 {
             result = ..error(.reason = ..handle_creation_failed)
             return
@@ -70,15 +66,12 @@ GenericHandle := #(.t: Type) (
     .tag     : t
 )
 
-implement#(.t: Type) Init#(
-    GenericHandle#(.t: t), (.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi)
-) (
-    .Result : Type = Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))
-    .init   = (.args: (.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-        .result : Result
+implement#(.t: Type) Init#(GenericHandle#(.t: t)) (
+    .init = (.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi) -> (
+        .result : Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))
     ) {
-        tag ::= ~args.tag
-        assume ffi := ~args.ffi
+        _init_tag ::= ~tag
+        assume ffi := ~ffi
 
         constructed :: GenericHandle#(.t: t)
 
@@ -87,7 +80,7 @@ implement#(.t: Type) Init#(
             result = ..error(.reason = ..handle_creation_failed)
             return
         }
-        constructed = (._handle = handle, ._ffi = ffi, .tag = tag)
+        constructed = (._handle = handle, ._ffi = ffi, .tag = _init_tag)
         result = ..ok ~constructed
     }
 )
