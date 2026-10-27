@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/system/63X_process_missing_capability" {
-    try buildExpectFail("tests/feature_tests/system/63X_process_missing_capability", ".self uses reach [proc_man] expected as '&ProcessManager'");
+    try expectFrontendFailure("tests/feature_tests/system/63X_process_missing_capability", ".self uses reach [proc_man] expected as '&ProcessManager'");
 }

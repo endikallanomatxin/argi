@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/python/12X_numeric_readonly" {
-    try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no generic function named 'copy_numeric'");
+    try expectFrontendFailure("tests/feature_tests/python/12X_numeric_readonly", "no generic function named 'copy_numeric'");
 }

@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/ownership/292X_nested_aggregate_copy_after_projected_write" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/ownership/292X_nested_aggregate_copy_after_projected_write",
         "reference depends on a root that has ended",
     );

@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFailWithoutNoise = support.buildExpectFailWithoutNoise;
+const expectFrontendFailureWithoutNoise = support.expectFrontendFailureWithoutNoise;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/polymorphism/268X_internal_storage_reference_mapping" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/268X_internal_storage_reference_mapping", "opaque storage domain mappings cannot select reference fields", "failed without a diagnostic");
+    try expectFrontendFailureWithoutNoise("tests/feature_tests/polymorphism/268X_internal_storage_reference_mapping", "opaque storage domain mappings cannot select reference fields", "failed without a diagnostic");
 }

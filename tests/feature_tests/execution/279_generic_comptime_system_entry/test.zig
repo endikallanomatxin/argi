@@ -3,7 +3,7 @@ const expectSuccessfulBuild = support.expectSuccessfulBuild;
 const runExpect = support.runExpect;
 const vmExpect = support.vmExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/279_generic_comptime_system_entry" {
     try expectSuccessfulBuild("tests/feature_tests/execution/279_generic_comptime_system_entry");

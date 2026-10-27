@@ -9,3 +9,7 @@ test "feature_tests/polymorphism/41_recursive_virtual_summaries" {
     try expectSuccessfulBuild(path);
     try run(path);
 }
+
+test "tests/feature_tests/polymorphism/41_recursive_virtual_summaries wrapper parity" {
+    try support.expectSafetyWrapperParity("tests/feature_tests/polymorphism/41_recursive_virtual_summaries", null);
+}

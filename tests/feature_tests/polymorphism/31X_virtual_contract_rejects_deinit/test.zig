@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/polymorphism/31X_virtual_contract_rejects_deinit" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/polymorphism/31X_virtual_contract_rejects_deinit",
         "violates its safety contract",
     );

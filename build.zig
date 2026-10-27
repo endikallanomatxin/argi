@@ -95,12 +95,21 @@ pub fn build(b: *std.Build) void {
     //
     // TEST -------------------------------------------------------------------
 
+    const compiler_test_frontend = b.createModule(.{
+        .root_source_file = b.path("src/frontend_test_support.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    compiler_test_frontend.addImport("llvm_c", llvm_c_mod);
+    compiler_test_frontend.addOptions("frontend_build_options", frontend_build_options);
+
     const tests_mod = b.createModule(.{
         .root_source_file = @import("build_support/program_tests.zig").discover(b) catch @panic("cannot discover program tests"),
         .target = target,
         .optimize = optimize,
     });
     tests_mod.addImport("llvm_c", llvm_c_mod);
+    tests_mod.addImport("compiler_test_frontend", compiler_test_frontend);
     linkLlvmModule(tests_mod, llvm_lib_path, llvm_libs_raw);
     if (target.result.os.tag == .linux) tests_mod.linkSystemLibrary("util", .{});
 

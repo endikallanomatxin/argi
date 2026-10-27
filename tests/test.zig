@@ -43,6 +43,7 @@ const pathInTest = test_support.pathInTest;
 const fileHasSubstantiveContent = test_support.fileHasSubstantiveContent;
 const argi_bin = test_support.argi_bin;
 const vmExpect = test_support.vmExpect;
+const checkNativeCFixture = test_support.checkNativeCFixture;
 test "feature test harness covers all substantive feature mains" {
     var root = try std.Io.Dir.cwd().openDir(std.testing.io, compilerRoot(), .{ .iterate = true });
     defer root.close(std.testing.io);
@@ -991,15 +992,6 @@ test "parser errors do not print parse error noise" {
     );
 }
 
-test "feature_tests/testing/01_simple_pass" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/01_simple_pass",
-        &.{},
-        0,
-        "PASS simple_pass\n",
-    );
-}
-
 test "feature_tests/testing/01_simple_pass_uses_local_cache" {
     var root = try std.Io.Dir.cwd().openDir(std.testing.io, compilerRoot(), .{});
     defer root.close(std.testing.io);
@@ -1057,148 +1049,6 @@ test "feature_tests/testing/01_simple_pass_cleans_module_test_cache" {
         else => return err,
     };
     return error.StaleTestCacheSurvived;
-}
-
-test "feature_tests/testing/02_skip" {
-    try argiTestExpectStderrContains(
-        "tests/feature_tests/testing/02_skip",
-        &.{},
-        0,
-        "SKIP skipped_case\n",
-    );
-}
-
-test "feature_tests/testing/03_once_isolated_per_test" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/03_once_isolated_per_test",
-        &.{},
-        0,
-        "PASS first\nPASS second\n",
-    );
-}
-
-test "feature_tests/testing/03_once_isolated_per_test_filter" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/03_once_isolated_per_test",
-        &.{ "--filter", "second" },
-        0,
-        "PASS second\n",
-    );
-}
-
-test "feature_tests/testing/04_expect_equal" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/04_expect_equal",
-        &.{},
-        0,
-        "PASS equality\n",
-    );
-}
-
-test "feature_tests/testing/05_assertion_failure" {
-    try argiTestExpectStderrContains(
-        "tests/feature_tests/testing/05_assertion_failure",
-        &.{},
-        1,
-        "FAIL assertion_failure\n",
-    );
-}
-
-test "feature_tests/testing/06_direct_propagated_error" {
-    try argiTestExpectStderrContains(
-        "tests/feature_tests/testing/06_direct_propagated_error",
-        &.{},
-        1,
-        "FAIL direct_propagation\n",
-    );
-}
-
-test "feature_tests/testing/22_optional_system" {
-    try argiTestExpectStderr("tests/feature_tests/testing/22_optional_system", &.{}, 0, "PASS without_system\nPASS with_system\n");
-}
-
-test "feature_tests/testing/23_no_system_failure" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/23_no_system_failure", &.{}, 1, "FAIL fails_without_system\n");
-}
-
-test "feature_tests/testing/24_no_system_skip" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/24_no_system_skip", &.{}, 0, "SKIP skips_without_system\n");
-}
-
-test "feature_tests/testing/25X_wrong_system_type" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/25X_wrong_system_type", &.{}, 1, "no function named 'wrong_system_type'");
-}
-
-test "feature_tests/testing/08X_test_signature_requires_v1_shape" {
-    try argiTestExpectStderrContains(
-        "tests/feature_tests/testing/08X_test_signature_requires_v1_shape",
-        &.{},
-        1,
-        "tests accept no inputs or one '.system: System'",
-    );
-}
-
-test "feature_tests/testing/09_expected_error" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/09_expected_error",
-        &.{},
-        0,
-        "PASS expected_error\n",
-    );
-}
-
-test "feature_tests/testing/10_expected_error_mismatch" {
-    try argiTestExpectStderrContains(
-        "tests/feature_tests/testing/10_expected_error_mismatch",
-        &.{},
-        1,
-        "FAIL expected_error_mismatch\n",
-    );
-}
-
-test "feature_tests/testing/11_expected_error_unexpected_ok" {
-    try argiTestExpectStderrContains(
-        "tests/feature_tests/testing/11_expected_error_unexpected_ok",
-        &.{},
-        1,
-        "FAIL expected_error_unexpected_ok\n",
-    );
-}
-
-test "feature_tests/testing/12_language_regression_slice" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/12_language_regression_slice",
-        &.{},
-        0,
-        "PASS language_regression_slice\n",
-    );
-}
-
-test "feature_tests/testing/13_collections_text_regression_slice" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/13_collections_text_regression_slice",
-        &.{},
-        0,
-        "PASS collections_text_array_slice\nPASS collections_text_format_slice\n",
-    );
-}
-
-test "feature_tests/testing/14_core_path_regression_slice" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/14_core_path_regression_slice",
-        &.{},
-        0,
-        "PASS core_path_regression_slice\n",
-    );
-}
-
-test "feature_tests/testing/15_named_optional_view_return" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/15_named_optional_view_return",
-        &.{},
-        0,
-        "PASS named_optional_view_return\n",
-    );
 }
 
 test "argi help lists supported commands" {
@@ -1725,118 +1575,6 @@ test "argi check validates dormant function bodies" {
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
 }
 
-// Reuse the same scenario as an entry body and behind one extra call boundary.
-// Concrete checking visits both bodies, while the caller observes only the
-// inferred summary. This catches lost cleanup/dependency effects in wrappers.
-fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !void {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-    const source_path = try std.fs.path.join(allocator, &.{ case_path, "main.rg" });
-    defer allocator.free(source_path);
-    const source = try std.Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(1024 * 1024));
-    defer allocator.free(source);
-    const entry = std.mem.indexOf(u8, source, "main :=") orelse return error.MissingParityEntry;
-    const renamed = try std.fmt.allocPrint(allocator, "{s}parity_body{s}", .{ source[0..entry], source[entry + 4 ..] });
-    defer allocator.free(renamed);
-    const relocated = try std.mem.replaceOwned(u8, allocator, renamed, "../../_support/unsafe_allocation", "./support");
-    defer allocator.free(relocated);
-    // Add summary boundaries around transfers whose effects are observed later
-    // in the same scenario; merely wrapping the entry would hide local effects.
-    const cleanup_calls = try std.mem.replaceOwned(u8, allocator, relocated, "deinit(.self =", "parity_deinit(.self =");
-    defer allocator.free(cleanup_calls);
-    const opaque_calls = try std.mem.replaceOwned(u8, allocator, cleanup_calls, "trusted_opaque_drop(.slot =", "parity_drop(.slot =");
-    defer allocator.free(opaque_calls);
-    const constructor_calls = try std.mem.replaceOwned(u8, allocator, opaque_calls, "Owned(.allocator =", "parity_owned(.allocator =");
-    defer allocator.free(constructor_calls);
-    const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned :=") != null)
-        if (std.mem.indexOf(u8, relocated, ".fail =") != null)
-            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) { result = Owned(.allocator = allocator, .fail = fail) }\n"
-        else
-            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) { result = Owned(.allocator = allocator) }\n"
-    else
-        "";
-    const arguments = if (std.mem.startsWith(u8, source[entry..], "main := (.system: System")) ".system = system" else "";
-    const wrapped = try std.fmt.allocPrint(
-        allocator,
-        "{s}\nmain := (.system: System) -> (.status_code: Int32) {{\n    status_code = parity_body({s})\n}}\n",
-        .{ constructor_calls, arguments },
-    );
-    defer allocator.free(wrapped);
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "module/support");
-    try tmp.dir.writeFile(io, .{ .sub_path = "module/main.rg", .data = wrapped });
-    const transfers = try std.fmt.allocPrint(
-        allocator,
-        "parity_deinit := #(.t: Type) (.self: $&t) -> () {{ deinit(.self = self) }}\n" ++
-            "parity_drop := #(.t: Type) (.slot: $&t) -> () {{ trusted_opaque_drop(.slot = slot) }}\n{s}",
-        .{constructor_wrapper},
-    );
-    defer allocator.free(transfers);
-    try tmp.dir.writeFile(io, .{ .sub_path = "module/transfers.rg", .data = transfers });
-    const support = try std.Io.Dir.cwd().readFileAlloc(io, "tests/feature_tests/_support/unsafe_allocation/helpers.rg", allocator, .limited(1024 * 1024));
-    defer allocator.free(support);
-    try tmp.dir.writeFile(io, .{ .sub_path = "module/support/helpers.rg", .data = support });
-    const tmp_root = try tmpDirRootPath(&tmp);
-    defer allocator.free(tmp_root);
-    const module_path = try std.fs.path.join(allocator, &.{ tmp_root, "module" });
-    defer allocator.free(module_path);
-    const original = try buildResult(case_path);
-    defer allocator.free(original.stdout);
-    defer allocator.free(original.stderr);
-    const caller = try buildResult(module_path);
-    defer allocator.free(caller.stdout);
-    defer allocator.free(caller.stderr);
-    if (!std.meta.eql(original.term, caller.term)) {
-        std.debug.print("safety parity mismatch for {s}:\n{s}\n{s}\n", .{ case_path, original.stderr, caller.stderr });
-    }
-    try expectEqual(original.term, caller.term);
-    if (diagnostic) |message| {
-        try expectEqual(std.process.Child.Term{ .exited = 1 }, original.term);
-        try expect(std.mem.indexOf(u8, original.stderr, message) != null);
-        if (std.mem.indexOf(u8, caller.stderr, message) == null)
-            std.debug.print("missing parity diagnostic for {s}:\n{s}\n", .{ case_path, caller.stderr });
-        try expect(std.mem.indexOf(u8, caller.stderr, message) != null);
-    } else {
-        try expectEqual(std.process.Child.Term{ .exited = 0 }, original.term);
-        const original_exe = try outputPathFor(case_path);
-        defer allocator.free(original_exe);
-        const caller_exe = try outputPathFor(module_path);
-        defer allocator.free(caller_exe);
-        const direct = try runChild(&.{original_exe});
-        defer allocator.free(direct.stdout);
-        defer allocator.free(direct.stderr);
-        const indirect = try runChild(&.{caller_exe});
-        defer allocator.free(indirect.stdout);
-        defer allocator.free(indirect.stderr);
-        try expectEqual(std.process.Child.Term{ .exited = 0 }, direct.term);
-        try expectEqual(direct.term, indirect.term);
-        try expectEqualStrings(direct.stdout, indirect.stdout);
-        try expectEqualStrings(direct.stderr, indirect.stderr);
-    }
-}
-
-test "safety wrapper parity for move and cleanup" {
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/13_move_operator", null);
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/59X_branch_deinit_then_use", "maybe_initialized and cannot be used");
-}
-
-test "safety wrapper parity for opaque storage and generations" {
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_ownership", null);
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/162X_opaque_read_through_identity_wrapper_keeps_generation", "reference depends on a root that has ended");
-}
-
-test "safety wrapper parity for fallible initialization outcomes" {
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/293_fallible_constructor_owns_success", null);
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/294X_fallible_constructor_preserves_root", "reference depends on a root that has ended");
-}
-
-test "safety wrapper parity for recursion and virtual dispatch" {
-    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/41_recursive_virtual_summaries", null);
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency", "violates its safety contract");
-    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_declared_dependency_escape", "function output cannot depend on a local storage generation that ends before return");
-}
-
 test "safety statistics preserve composed allocator behavior" {
     const path = "tests/feature_tests/system/49_general_purpose_allocator_on_arena";
     const result = try runArgiCommand(&.{ "build", path, "--stats" });
@@ -2004,7 +1742,6 @@ test "C interop symbol aliases reuse one external symbol across cached builds" {
 }
 
 test "C interop diagnoses invalid symbol options and conflicting declarations" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/06X_invalid_symbol_options", "CFunction '.symbol' requires a string literal", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/07X_conflicting_symbols", "C symbol 'abs' is declared with incompatible signatures", "failed without a diagnostic");
 }
 
@@ -2044,8 +1781,6 @@ test "C interop exports are reachable from native code without Argi callers" {
 }
 
 test "C interop validates exported bodies and signatures" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/09X_export_without_body", "an exported CFunction requires a body", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/10X_export_aggregate", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/11X_duplicate_exports", "C symbol 'argi_duplicate' has multiple definitions", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/12X_reserved_export", "C export symbol 'main' is reserved", "failed without a diagnostic");
 }
@@ -2055,73 +1790,6 @@ test "C interop checks reached and explicit authorization without ABI arguments"
     try run("tests/feature_tests/c_interop/13_foreign_capability");
     try expectSuccessfulBuild("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
     try run("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
-}
-
-test "C interop rejects missing invalid and stale authorization" {
-    const cases = .{
-        .{ "tests/feature_tests/c_interop/14X_missing_foreign_capability", ".ffi uses reach [ffi]" },
-        .{ "tests/feature_tests/c_interop/15X_wrong_foreign_capability", "ForeignFunctionInterface" },
-        .{ "tests/feature_tests/c_interop/16X_stale_foreign_capability", "binding 'storage' was moved" },
-        .{ "tests/feature_tests/c_interop/17X_export_missing_capability", ".ffi uses reach [ffi]" },
-        .{ "tests/feature_tests/c_interop/18X_extern_missing_capability", ".ffi uses reach [ffi]" },
-        .{ "tests/feature_tests/c_interop/19X_stale_wrapper_capability", "binding 'storage' was moved" },
-        .{ "tests/feature_tests/c_interop/20X_reserved_capability_parameter", "reserve '.ffi' for the checked capability" },
-        .{ "tests/feature_tests/c_interop/21X_counterfeit_foreign_capability", "ForeignFunctionInterface" },
-        .{ "tests/feature_tests/c_interop/23X_memory_stale_capability", "binding 'storage' was moved" },
-    };
-    inline for (cases) |case| {
-        try buildExpectFailWithoutNoise(case[0], case[1], "failed without a diagnostic");
-    }
-}
-
-fn checkNativeCFixture(path: []const u8, ir_needles: []const []const u8) !void {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const root = try tmpDirRootPath(&tmp);
-    defer allocator.free(root);
-    const argi = try installedArgiPath();
-    defer allocator.free(argi);
-    const repo = try repoRootPrefix();
-    defer allocator.free(repo);
-    const fixture = try std.fs.path.join(allocator, &.{ repo, path });
-    defer allocator.free(fixture);
-    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
-    defer allocator.free(source);
-    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
-    defer allocator.free(compiled.stdout);
-    defer allocator.free(compiled.stderr);
-    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
-    for (0..2) |_| {
-        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o", "--emit-llvm", "app.ll" }, root);
-        defer allocator.free(built.stdout);
-        defer allocator.free(built.stderr);
-        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
-        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
-        const executed = try runChildInCwd(&.{"./app"}, root);
-        defer allocator.free(executed.stdout);
-        defer allocator.free(executed.stderr);
-        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
-        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(1024 * 1024));
-        defer allocator.free(ir);
-        for (ir_needles) |needle| try expect(std.mem.indexOf(u8, ir, needle) != null);
-    }
-}
-
-test "C interop adapts raw pointers for imports bodies and exports" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/24_raw_pointer_abi", &.{
-        "declare ptr @argi_c_static()",
-        "declare ptr @argi_c_echo(ptr)",
-        "define ptr @argi_pointer_export(ptr",
-    });
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/25X_counterfeit_raw_pointer", "input 'pointer' has an unsupported C ABI type", "failed without a diagnostic");
-}
-
-test "C interop resolves target scalar aliases" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/26_c_scalar_aliases", &.{
-        "declare i32 @argi_c_int(i32)",
-        "declare double @argi_c_double(double)",
-    });
 }
 
 test "C interop uses a bounded zlib checksum wrapper and manifest linking" {
@@ -2138,48 +1806,6 @@ test "C interop uses a bounded zlib checksum wrapper and manifest linking" {
         defer allocator.free(executed.stderr);
         try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
     }
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/28X_zlib_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
-}
-
-test "C interop preserves explicit record layouts through native pointers" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/29_c_struct_layout", &.{
-        "declare i32 @argi_c_payload_verify(ptr)",
-        "declare void @argi_c_payload_fill(ptr)",
-        "define i32 @argi_c_payload_export(ptr",
-    });
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/30X_c_struct_non_c_field", "field 'ordinary' has no supported C representation", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/31X_c_struct_by_value", "input 'record' has an unsupported C ABI type", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/32X_generic_c_struct_non_c_field", "field 'value' has no supported C representation", "failed without a diagnostic");
-}
-
-test "C interop extends narrow scalars according to the platform ABI" {
-    const target = @import("builtin").target;
-    const extends = (target.cpu.arch == .x86_64 and target.os.tag != .windows) or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
-    try checkNativeCFixture("tests/feature_tests/c_interop/33_narrow_scalar_abi", if (extends) &.{
-        "define signext i8 @argi_c_small_signed(i8 signext",
-        "define zeroext i8 @argi_c_small_unsigned(i8 zeroext",
-        "call signext i16 @argi_c_short_import(i16 signext",
-        "declare zeroext i1 @argi_c_bool_import(i1 zeroext",
-    } else &.{
-        "define i8 @argi_c_small_signed(i8",
-        "define i1 @argi_c_bool(i1",
-    });
-}
-
-test "C interop adapts integer record arguments and results" {
-    const x64 = @import("builtin").target.cpu.arch == .x86_64;
-    try checkNativeCFixture("tests/feature_tests/c_interop/34_integer_record_abi", if (x64) &.{
-        "declare i64 @argi_c_pair(i64)",
-        "declare { i64, i64 } @argi_c_words(i64, i64)",
-        "byval({ i64, i64 }) align 8",
-        "sret({ i64, i64, i64 }) align 8",
-        "define i24 @argi_c_tiny_export(i24",
-    } else &.{
-        "declare i64 @argi_c_pair(i64)",
-        "declare [2 x i64] @argi_c_words([2 x i64])",
-        "sret({ i64, i64, i64 }) align 8",
-        "define i24 @argi_c_tiny_export(i64",
-    });
 }
 
 test "C interop diagnoses conflicting function ABI attributes" {
@@ -2262,299 +1888,10 @@ test "C interop selects static and shared named libraries without fallback" {
     try expect(std.mem.indexOf(u8, missing_shared.stderr, "shared native library 'argi_mode_fixture' was not found") != null);
 }
 
-test "C interop adapts floating and mixed record arguments and results" {
-    const target = @import("builtin").target;
-    try checkNativeCFixture("tests/feature_tests/c_interop/37_numeric_record_abi", if (target.cpu.arch == .x86_64) &.{
-        "declare float @argi_c_one(float)",
-        "declare { <2 x float>, float } @argi_c_floats(<2 x float>, float)",
-        "declare { i32, double } @argi_c_mixed(i32, double)",
-        "declare { double, i32 } @argi_c_reverse(double, i32)",
-        "byval({ float, float, float }) align 8",
-        "sret({ [4 x double] }) align 8",
-    } else if (target.os.tag.isDarwin()) &.{
-        "declare { float } @argi_c_one([1 x float])",
-        "declare { float, float, float } @argi_c_floats([3 x float])",
-        "declare { double, double, double, double } @argi_c_doubles([4 x double])",
-        "declare [2 x i64] @argi_c_mixed([2 x i64])",
-    } else &.{
-        "declare { float } @argi_c_one([1 x float] alignstack(8))",
-        "declare { float, float, float } @argi_c_floats([3 x float] alignstack(8))",
-        "declare { double, double, double, double } @argi_c_doubles([4 x double] alignstack(8))",
-        "declare [2 x i64] @argi_c_mixed([2 x i64])",
-    });
-}
-
-test "C interop adapts overlapping numeric union arguments and results" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/39X_safe_reference_union_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
-    const target = @import("builtin").target;
-    try checkNativeCFixture("tests/feature_tests/c_interop/38_numeric_union_abi", if (target.cpu.arch == .x86_64) &.{
-        "declare i64 @argi_c_union_number(i64)",
-        "declare float @argi_c_union_single(float)",
-        "declare { <2 x float>, float } @argi_c_union_floats(<2 x float>, float)",
-        "declare { double, float } @argi_c_union_mixed(double, float)",
-        "sret({ [4 x double] }) align 8",
-        "byval({ [3 x float] }) align 8",
-    } else if (target.os.tag.isDarwin()) &.{
-        "declare { float } @argi_c_union_single([1 x float])",
-        "declare { float, float, float } @argi_c_union_floats([3 x float])",
-        "declare { double, double, double, double } @argi_c_union_doubles([4 x double])",
-        "declare [2 x i64] @argi_c_union_mixed([2 x i64])",
-    } else &.{
-        "declare { float } @argi_c_union_single([1 x float] alignstack(8))",
-        "declare { float, float, float } @argi_c_union_floats([3 x float] alignstack(8))",
-        "declare { double, double, double, double } @argi_c_union_doubles([4 x double] alignstack(8))",
-        "declare [2 x i64] @argi_c_union_mixed([2 x i64])",
-    });
-}
-
-test "C interop adapts raw pointer fields without accepting safe reference fields" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/41X_safe_reference_array_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
-    try checkNativeCFixture("tests/feature_tests/c_interop/40_raw_pointer_record_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
-        "declare { i64, i64 } @argi_c_buffer_get()",
-        "declare { i64, float } @argi_c_buffer_weighted(i64, float)",
-        "byval({ { i64 }, i64 }) align 8",
-        "sret({ { i64 }, i64, { i64 } }) align 8",
-    } else &.{
-        "declare [2 x i64] @argi_c_buffer_get()",
-        "declare [2 x i64] @argi_c_buffer_weighted([2 x i64])",
-        "sret({ { i64 }, i64, { i64 } }) align 8",
-    });
-}
-
-test "C interop adapts raw pointer arrays and union alternatives" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/42_raw_pointer_aggregate_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
-        "declare { i64, i64 } @argi_c_pointers_get()",
-        "declare i64 @argi_c_address_get()",
-        "declare { i64, i64 } @argi_c_alternatives_get()",
-        "byval({ [2 x { i64 }] }) align 8",
-        "sret({ [2 x { { i64 }, i64 }] }) align 8",
-    } else &.{
-        "declare [2 x i64] @argi_c_pointers_get()",
-        "declare i64 @argi_c_address_get()",
-        "declare [2 x i64] @argi_c_alternatives_get()",
-        "sret({ [2 x { { i64 }, i64 }] }) align 8",
-    });
-}
-
-test "C interop preserves incomplete handle identities through raw pointers" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/43_incomplete_handles", &.{
-        "declare ptr @argi_c_handle_create()",
-        "define ptr @argi_c_handle_export(ptr",
-    });
-}
-
-test "C interop rejects incomplete values construction layout and definitions" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/44X_incomplete_by_value", "has no value representation", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/45X_incomplete_size", "has no size or alignment", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/46X_incomplete_construction", "cannot be constructed", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/47X_incomplete_definition", "omit the definition", "failed without a diagnostic");
-}
-
-test "C interop rejects incompatible incomplete handles and safe references" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/48X_incomplete_handle_identity", "no function named '_read' accepts arguments", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/49X_incomplete_safe_reference", "cannot form a safe reference", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/50X_incomplete_alignment", "has no size or alignment", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/51X_incomplete_value_storage", "has no value representation", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/52X_incomplete_parameters", "cannot have compile-time parameters", "failed without a diagnostic");
-}
-
-test "C interop pairs owned handle acquisition and automatic cleanup" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/53_owned_foreign_handles", &.{
-        "declare ptr @argi_c_owned_create(i32",
-        "declare void @argi_c_owned_destroy(ptr",
-    });
-}
-
-test "C interop protects owned handles and their retained capabilities" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/54X_owned_handle_copy", "cannot be copied implicitly", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/55X_owned_handle_after_cleanup", "reference depends on a root that has ended", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/56X_owned_handle_stale_capability", "binding 'capability' was moved", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/57X_owned_handle_private_storage", "field '_handle' is private to its module", "failed without a diagnostic");
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/58X_owned_handle_stale_cleanup", "binding 'capability' was moved", "failed without a diagnostic");
-}
-
-test "C interop invokes host-managed scalar and record callbacks" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/59_host_managed_callbacks", &.{
-        "define i32 @argi_callback_add(i32",
-        "@argi_callback_packet(",
-        "define void @argi_callback_packet(ptr sret(",
-    });
-}
-
-test "C interop preserves explicit enum values across modules and caching" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/60_explicit_enum_values", &.{
-        "define i32 @argi_enum_next(i32",
-        "i32 -2147483648",
-        "i32 2147483647",
-    });
-}
-
-test "C interop rejects 61X_enum_value_overflow" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/61X_enum_value_overflow", "CEnum value is outside", "failed without a diagnostic");
-}
-
-test "C interop rejects 62X_enum_implicit_overflow" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/62X_enum_implicit_overflow", "CEnum value is outside", "failed without a diagnostic");
-}
-
-test "C interop rejects 63X_enum_value_not_integer" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/63X_enum_value_not_integer", "CEnum value must be an Int32 integer literal", "failed without a diagnostic");
-}
-
-test "C interop rejects 64X_enum_duplicate_value" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/64X_enum_duplicate_value", "duplicate CEnum numeric values", "failed without a diagnostic");
-}
-
-test "C interop diagnoses unsupported enum constant expressions" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/65X_enum_constant_expression", "constant expressions are not supported", "failed without a diagnostic");
-}
-
-test "C interop transports nominal callback pointers and record fields" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/66_typed_callback_transport", &.{
-        "declare ptr @argi_callback_lookup()",
-        "define ptr @argi_callback_echo(ptr",
-        "declare i32 @argi_callback_apply(ptr",
-    });
-}
-
-test "C interop rejects 67X_callback_wrong_body_signature" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/67X_callback_wrong_body_signature", "no visible concrete CFunction body matches", "failed without a diagnostic");
-}
-
-test "C interop rejects 68X_callback_argi_body" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/68X_callback_argi_body", "no visible concrete CFunction body matches", "failed without a diagnostic");
-}
-
-test "C interop rejects 69X_callback_numeric_construction" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/69X_callback_numeric_construction", "construction requires '.function = name'", "failed without a diagnostic");
-}
-
-test "C interop rejects 70X_callback_safe_reference" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/70X_callback_safe_reference", "parameters require RawPointer", "failed without a diagnostic");
-}
-
-test "C interop rejects 71X_callback_declared_body" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/71X_callback_declared_body", "without symbol options or a body", "failed without a diagnostic");
-}
-
-test "C interop rejects 72X_callback_nominal_identity" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/72X_callback_nominal_identity", "no function named", "failed without a diagnostic");
-}
-
-test "C interop rejects 73X_callback_missing_capability" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/73X_callback_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
-}
-
-test "C interop rejects 74X_callback_body_missing_capability" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/74X_callback_body_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
-}
-
-test "C interop rejects 75X_callback_multiple_outputs" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/75X_callback_multiple_outputs", "must have zero or one output", "failed without a diagnostic");
-}
-
-test "C interop rejects 76X_callback_once_body" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/76X_callback_once_body", "no visible concrete CFunction body matches", "failed without a diagnostic");
-}
-
-test "C interop selects typed record callbacks with indirect results" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/77_typed_record_callback", &.{
-        "declare i32 @argi_typed_callback_probe(ptr",
-        "sret({ double, i32, { i64 } })",
-    });
-}
-
-test "C interop checks null callback values" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/78_callback_null", &.{
-        "declare ptr @argi_callback_lookup(i32",
-        "icmp eq ptr",
-        "ptr null",
-    });
-}
-
-test "C interop checks indirect callback invocation arguments and capabilities" {
-    const cases = .{
-        .{ "tests/feature_tests/c_interop/79X_callback_invocation_missing_capability", ".ffi uses reach [ffi]" },
-        .{ "tests/feature_tests/c_interop/80X_callback_invocation_wrong_argument", "arguments do not match the C callback signature" },
-        .{ "tests/feature_tests/c_interop/81X_callback_invocation_non_callable", "expected a CFunctionPointer value" },
-        .{ "tests/feature_tests/c_interop/82X_callback_invocation_moved_value", "binding 'callback' was moved" },
-        .{ "tests/feature_tests/c_interop/84X_callback_invocation_stale_capability", "binding 'storage' was moved" },
-        .{ "tests/feature_tests/c_interop/86X_callback_wrapper_stale_capability", "binding 'storage' was moved" },
-        .{ "tests/feature_tests/c_interop/87X_callback_body_invocation_missing_capability", ".ffi uses reach [ffi]" },
-    };
-    inline for (cases) |case| {
-        try buildExpectFailWithoutNoise(case[0], case[1], "failed without a diagnostic");
-    }
-}
-
 test "C interop traps null callback invocation" {
     const path = "tests/feature_tests/c_interop/83X_callback_invocation_null";
     try expectSuccessfulBuild(path);
     try runExpectFailure(path);
-}
-
-test "C interop invokes narrow floating and void callbacks" {
-    const target = @import("builtin").target;
-    const extends = (target.cpu.arch == .x86_64 and target.os.tag != .windows) or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
-    try checkNativeCFixture("tests/feature_tests/c_interop/85_callback_invocation_scalar_signatures", if (extends) &.{
-        "callback.nonnull",
-        "call signext i16 %",
-        "i8 signext",
-        "call double %",
-        "call void %",
-    } else &.{
-        "callback.nonnull",
-        "call i16 %",
-        "(i8 ",
-        "call double %",
-        "call void %",
-    });
-}
-
-test "feature_tests/basics/49_release_ir_optimization" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const root = try tmpDirRootPath(&tmp);
-    defer allocator.free(root);
-    const fixture = "tests/feature_tests/basics/49_release_ir_optimization";
-    const debug_ir = try std.fs.path.join(allocator, &.{ root, "debug.ll" });
-    defer allocator.free(debug_ir);
-    const release_ir = try std.fs.path.join(allocator, &.{ root, "release.ll" });
-    defer allocator.free(release_ir);
-    try expectArgiBuildSuccess(&.{ "build", fixture, "--emit-llvm", debug_ir });
-    try runExpect(fixture, 0);
-    try expectArgiBuildSuccess(&.{ "build", fixture, "--release", "--emit-llvm", release_ir });
-    try runExpect(fixture, 0);
-    const before = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, debug_ir, allocator, .limited(1024 * 1024));
-    defer allocator.free(before);
-    const after = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, release_ir, allocator, .limited(1024 * 1024));
-    defer allocator.free(after);
-    try expect(std.mem.count(u8, before, "alloca ") > std.mem.count(u8, after, "alloca "));
-    try expect(std.mem.count(u8, before, "store i32 ") > std.mem.count(u8, after, "store i32 "));
-}
-
-test "feature_tests/cross_compilation/01_aarch64_data_model" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const root = try tmpDirRootPath(&tmp);
-    defer allocator.free(root);
-    const object_path = try std.fs.path.join(allocator, &.{ root, "arm64.o" });
-    defer allocator.free(object_path);
-    const fixture = "tests/feature_tests/cross_compilation/01_aarch64_data_model";
-    // The second process exercises durable ModuleSG reuse for this target.
-    for (0..2) |_| try expectArgiBuildSuccess(&.{ "build", fixture, "--target", "aarch64-linux-gnu", "--just-emit-obj", object_path });
-    const object = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, object_path, allocator, .limited(1024 * 1024));
-    defer allocator.free(object);
-    try expectEqualStrings("\x7fELF", object[0..4]);
-    try expectEqual(@as(u16, 183), std.mem.readInt(u16, object[18..20], .little));
-    // The same sources cannot reuse ARM64's unsigned CChar decision on x86_64.
-    const other = try runArgiCommand(&.{ "build", fixture, "--target", "x86_64-linux-gnu", "--just-emit-obj", object_path });
-    defer allocator.free(other.stdout);
-    defer allocator.free(other.stderr);
-    try expectEqual(std.process.Child.Term{ .exited = 1 }, other.term);
-    try expect(std.mem.indexOf(u8, other.stderr, "255") != null);
 }
 
 test "cross compilation rejects incompatible run targets" {
@@ -2623,13 +1960,6 @@ test "cross compilation rejects the host C driver" {
     defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, "incompatible with") != null);
-}
-
-test "feature_tests/system/48_windows_path_roots" {
-    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
-    const test_path = "tests/feature_tests/system/48_windows_path_roots";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 0);
 }
 
 test "diagnostic path normalization preserves code excerpt spelling" {
@@ -2879,50 +2209,6 @@ test "feature_tests/python/11_numeric_buffers" {
     try checkPythonFixture("tests/feature_tests/python/11_numeric_buffers");
 }
 
-test "feature_tests/basics/76_fallible_main_trace" {
-    const path = "tests/feature_tests/basics/76_fallible_main_trace";
-    try expectSuccessfulBuild(path);
-    const output = try outputPathFor(path);
-    defer std.testing.allocator.free(output);
-    const result = try runChild(&.{output});
-    defer std.testing.allocator.free(result.stdout);
-    defer std.testing.allocator.free(result.stderr);
-    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectEqualStrings("", result.stdout);
-    try expect(std.mem.indexOf(u8, result.stderr, "error trace") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
-    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:4:" else "76_fallible_main_trace/main.rg:4:";
-    try expect(std.mem.indexOf(u8, result.stderr, location) != null);
-}
-
-test "feature_tests/basics/79_fallible_main_custom_tracer" {
-    const path = "tests/feature_tests/basics/79_fallible_main_custom_tracer";
-    try expectSuccessfulBuild(path);
-    const output = try outputPathFor(path);
-    defer std.testing.allocator.free(output);
-    const result = try runChild(&.{output});
-    defer std.testing.allocator.free(result.stdout);
-    defer std.testing.allocator.free(result.stderr);
-    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectEqualStrings("custom trace\n", result.stderr);
-}
-
-test "feature_tests/basics/83_fallible_main_local_tracer" {
-    const path = "tests/feature_tests/basics/83_fallible_main_local_tracer";
-    try expectSuccessfulBuild(path);
-    const output = try outputPathFor(path);
-    defer std.testing.allocator.free(output);
-    const result = try runChild(&.{output});
-    defer std.testing.allocator.free(result.stdout);
-    defer std.testing.allocator.free(result.stderr);
-    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectEqualStrings("", result.stdout);
-    try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
-    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:5:" else "83_fallible_main_local_tracer/main.rg:5:";
-    try expect(std.mem.indexOf(u8, result.stderr, location) != null);
-}
-
 test "feature_tests/python/13_numpy_vector" {
     var environment = try std.testing.environ.createMap(std.testing.allocator);
     defer environment.deinit();
@@ -2936,54 +2222,6 @@ test "feature_tests/system/79_network_native" {
 
 test "feature_tests/system/85_filesystem_native" {
     try checkNativeCFixture("tests/feature_tests/system/85_filesystem_native", &.{"declare i32 @argi_filesystem_probe()"});
-}
-
-test "feature_tests/testing/16_equality_helpers" {
-    try argiTestExpectStderr("tests/feature_tests/testing/16_equality_helpers", &.{}, 0, "PASS equality_helpers\n");
-}
-
-test "feature_tests/testing/17_numeric_diagnostics signed_value" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "signed_value" }, 1, "expected -9223372036854775808, actual 9223372036854775807");
-}
-
-test "feature_tests/testing/17_numeric_diagnostics unsigned_value" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "unsigned_value" }, 1, "expected 18446744073709551615, actual 0");
-}
-
-test "feature_tests/testing/17_numeric_diagnostics float_value" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "float_value" }, 1, "expected 1.5, actual 2.5");
-}
-
-test "feature_tests/testing/17_numeric_diagnostics bool_value" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "bool_value" }, 1, "expected true, actual false");
-}
-
-test "feature_tests/testing/18_string_diagnostics string_mismatch" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_mismatch" }, 1, "strings differ at byte 1: expected 98, actual 120; lengths expected 3, actual 3");
-}
-
-test "feature_tests/testing/18_string_diagnostics string_prefix" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_prefix" }, 1, "strings differ at byte 2: expected 99, actual <end>; lengths expected 3, actual 2");
-}
-
-test "feature_tests/testing/18_string_diagnostics string_empty" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_empty" }, 1, "strings differ at byte 0: expected <end>, actual 120; lengths expected 0, actual 1");
-}
-
-test "feature_tests/testing/18_string_diagnostics string_embedded_nul" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_embedded_nul" }, 1, "strings differ at byte 2: expected 90, actual 91; lengths expected 3, actual 3");
-}
-
-test "feature_tests/testing/19_view_diagnostics view_mismatch" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/19_view_diagnostics", &.{ "--filter", "view_mismatch" }, 1, "views differ at index 1; lengths expected 3, actual 3");
-}
-
-test "feature_tests/testing/19_view_diagnostics byte_prefix" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/19_view_diagnostics", &.{ "--filter", "byte_prefix" }, 1, "bytes differ at byte 1: expected 2, actual <end>; lengths expected 2, actual 1");
-}
-
-test "feature_tests/testing/20_bounded_diagnostics bounded_message" {
-    try argiTestExpectStderrContains("tests/feature_tests/testing/20_bounded_diagnostics", &.{ "--filter", "bounded_message" }, 1, "<context truncated>");
 }
 
 test "usecase_tests/03_word_count" {
@@ -3140,24 +2378,6 @@ test "discovered fixture groups preserve published namespaces" {
     }
 }
 
-test "feature_tests/contracts/321X_unused_conformance_consumption" {
-    try expectSuccessfulBuild("tests/feature_tests/contracts/321X_unused_conformance_consumption");
-    const result = try runChild(&.{ argi_bin, "check", "tests/feature_tests/contracts/321X_unused_conformance_consumption" });
-    defer std.testing.allocator.free(result.stdout);
-    defer std.testing.allocator.free(result.stderr);
-    try expect(result.term == .exited and result.term.exited != 0);
-    try expect(std.mem.indexOf(u8, result.stderr, "cannot prove consumes") != null);
-}
-
-test "feature_tests/contracts/325_deferred_operation_body" {
-    try expectSuccessfulBuild("tests/feature_tests/contracts/325_deferred_operation_body");
-    const result = try runChild(&.{ argi_bin, "check", "tests/feature_tests/contracts/325_deferred_operation_body" });
-    defer std.testing.allocator.free(result.stdout);
-    defer std.testing.allocator.free(result.stderr);
-    try expect(result.term == .exited and result.term.exited != 0);
-    try expect(std.mem.indexOf(u8, result.stderr, "cannot materialize function body") != null);
-}
-
 test "compiler fixture frontend policy preserves explicit workers and run selection" {
     const allocator = std.testing.allocator;
     const normal = try compilerTestArgs(&.{ argi_bin, "build", "module" });
@@ -3180,60 +2400,6 @@ test "compiler fixture frontend policy preserves explicit workers and run select
 test "usecase_tests/06_weighted_regression" {
     try expectSuccessfulBuild("tests/usecase_tests/06_weighted_regression");
     try runExpect("tests/usecase_tests/06_weighted_regression", 0);
-}
-
-test "feature_tests/execution/14_integer_boundaries_vm" {
-    try expectSuccessfulBuild("tests/feature_tests/execution/14_integer_boundaries_vm");
-    try runExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42);
-    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/14_integer_boundaries_vm", "--release" });
-    try runExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42);
-    try vmExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42, null);
-}
-
-test "feature_tests/execution/15_native_constant_wrapping" {
-    try expectSuccessfulBuild("tests/feature_tests/execution/15_native_constant_wrapping");
-    try runExpect("tests/feature_tests/execution/15_native_constant_wrapping", 42);
-    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/15_native_constant_wrapping", "--release" });
-    try runExpect("tests/feature_tests/execution/15_native_constant_wrapping", 42);
-}
-
-test "feature_tests/execution/16X_integer_division_zero" {
-    try expectSuccessfulBuild("tests/feature_tests/execution/16X_integer_division_zero");
-    try runExpectFailure("tests/feature_tests/execution/16X_integer_division_zero");
-    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/16X_integer_division_zero", "--release" });
-    try runExpectFailure("tests/feature_tests/execution/16X_integer_division_zero");
-    try vmExpect("tests/feature_tests/execution/16X_integer_division_zero", 1, "ExecutionDivisionByZero");
-}
-
-test "feature_tests/execution/17X_integer_remainder_zero" {
-    try expectSuccessfulBuild("tests/feature_tests/execution/17X_integer_remainder_zero");
-    try runExpectFailure("tests/feature_tests/execution/17X_integer_remainder_zero");
-    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/17X_integer_remainder_zero", "--release" });
-    try runExpectFailure("tests/feature_tests/execution/17X_integer_remainder_zero");
-    try vmExpect("tests/feature_tests/execution/17X_integer_remainder_zero", 1, "ExecutionDivisionByZero");
-}
-
-test "feature_tests/execution/34X_destination_checked_before_rhs" {
-    const fixture = "tests/feature_tests/execution/34X_destination_checked_before_rhs";
-    try expectSuccessfulBuild(fixture);
-    const path = try outputPathFor(fixture);
-    defer std.testing.allocator.free(path);
-    const result = try runChild(&.{path});
-    defer std.testing.allocator.free(result.stdout);
-    defer std.testing.allocator.free(result.stderr);
-    try expect(result.term != .exited or result.term.exited != 0);
-    try expect(std.mem.indexOf(u8, result.stderr, "runtime error: array index is out of bounds") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "explicit abort") == null);
-    try vmExpect("tests/feature_tests/execution/34X_destination_checked_before_rhs", 1, "ExecutionIndexOutOfBounds");
-}
-
-test "feature_tests/execution/77_computed_test_condition" {
-    try argiTestExpectStderr("tests/feature_tests/execution/77_computed_test_condition", &.{}, 0, "PASS selected\n");
-}
-
-test "feature_tests/testing/31_computed_module_selection" {
-    try argiTestExpectStderr("tests/feature_tests/testing/31_computed_module_selection", &.{}, 0, "PASS selected\n");
-    try argiTestExpectStderr("tests/feature_tests/testing/31_computed_module_selection", &.{ "--filter", "discarded" }, 1, "No tests found\n");
 }
 
 test "bytecode CLI execution budgets" {
@@ -3350,17 +2516,6 @@ test "argi repl supplies persistent allocator capabilities across reset" {
         "text ::= unwrap_or_abort(.value = String(.length = 3))\nbyte_length(.self = &text)\nnumbers ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))\npush_assume_capacity(.self = $&numbers, .value = 42)\nunwrap_or_abort(.value = get(.self = &numbers, .index = 0))\n:reset\ntext ::= unwrap_or_abort(.value = String(.length = 4))\nbyte_length(.self = &text)\n",
         "_0 = 3\n_1 = ()\n_2 = 42\n_0 = 4\n",
     );
-}
-
-test "feature_tests/execution/169X_acquired_slot_index_mismatch" {
-    try expectSuccessfulBuild("tests/feature_tests/execution/169X_acquired_slot_index_mismatch");
-    try runExpectFailure("tests/feature_tests/execution/169X_acquired_slot_index_mismatch");
-    const result = try runArgiCommand(&.{ "run", "--vm", "tests/feature_tests/execution/169X_acquired_slot_index_mismatch" });
-    defer std.testing.allocator.free(result.stdout);
-    defer std.testing.allocator.free(result.stderr);
-    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectDiagnostic("tests/feature_tests/execution/169X_acquired_slot_index_mismatch", result.stderr, "ExecutionAborted");
-    try expectDiagnostic("tests/feature_tests/execution/169X_acquired_slot_index_mismatch", result.stderr, "allocation_slots.rg:");
 }
 
 test "argi repl retains prepared generic resource slots across submissions" {
@@ -3564,16 +2719,6 @@ test "argi repl renews borrowed argument references without renewing copies" {
     try expectReplFixtureWithDiagnostic("tests/feature_tests/ownership/364_projected_call_reinitialization/main.rg", commands, "_0 = ()\n_1 = 1\n_3 = 1\n_4 = 2\n", "reference depends on a root that has ended");
 }
 
-test "feature_tests/execution/275_comptime_system_entry" {
-    const built = try buildResult("tests/feature_tests/execution/275_comptime_system_entry");
-    defer std.testing.allocator.free(built.stdout);
-    defer std.testing.allocator.free(built.stderr);
-    try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
-    try expect(std.mem.count(u8, built.stdout, "compile-time host") == 1);
-    try runExpect("tests/feature_tests/execution/275_comptime_system_entry", 42);
-    try vmExpect("tests/feature_tests/execution/275_comptime_system_entry", 42, null);
-}
-
 test "argi repl evaluates independent System entries" {
     const commands =
         \\first ::= #run (.system: System) -> (.value: Int32) { value = 40 }
@@ -3607,15 +2752,6 @@ test "argi repl recovers from aborted allocated System evaluations" {
         \\
     ;
     try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n", "#run evaluation aborted");
-}
-
-test "feature_tests/testing/21_modern_test_syntax" {
-    try argiTestExpectStderr(
-        "tests/feature_tests/testing/21_modern_test_syntax",
-        &.{},
-        0,
-        "PASS modern\nPASS multiline\nPASS explicit\n",
-    );
 }
 
 test "argi test runs configured modules and explicit target overrides suite" {

@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/114X_generic_inaccessible_global" {
-    try buildExpectFail("tests/feature_tests/execution/114X_generic_inaccessible_global", "unknown name 'foreign_value' in this scope");
+    try expectFrontendFailure("tests/feature_tests/execution/114X_generic_inaccessible_global", "unknown name 'foreign_value' in this scope");
 }

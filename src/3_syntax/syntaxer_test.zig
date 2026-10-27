@@ -321,7 +321,7 @@ test "compact syntaxing preserves adversarial grammar distinctions" {
     try expectTags("tests/feature_tests/control_flow/04_for_dynamic_array/main.rg", &.{.for_value});
     try expectTags("tests/feature_tests/control_flow/13_for_borrowed_array/main.rg", &.{.for_borrow});
     try expectTags("tests/feature_tests/control_flow/14_for_mut_borrowed_dynamic_array/main.rg", &.{.for_mut_borrow});
-    try expectTags("tests/feature_tests/types/07_choice_match_payload_binding/main.rg", &.{
+    try expectTags("tests/feature_tests/types/01_choice/main.rg", &.{
         .choice_type_literal,
         .choice_type_variant,
         .choice_literal,
@@ -346,7 +346,7 @@ test "compact syntaxing preserves adversarial grammar distinctions" {
 test "compact syntax views preserve semantic distinctions" {
     const MatchExpectation = struct { path: []const u8, tag: syntax_tree.Node.Tag, mode: syntax_tree.MatchCaseMode };
     const match_expectations = [_]MatchExpectation{
-        .{ .path = "tests/feature_tests/types/07_choice_match_payload_binding/main.rg", .tag = .match_case_value, .mode = .value },
+        .{ .path = "tests/feature_tests/types/01_choice/main.rg", .tag = .match_case_value, .mode = .value },
         .{ .path = "tests/feature_tests/types/29_match_borrowed_payload/main.rg", .tag = .match_case_borrow, .mode = .borrow },
         .{ .path = "tests/feature_tests/types/30_match_mut_borrowed_payload/main.rg", .tag = .match_case_mut_borrow, .mode = .mut_borrow },
         .{ .path = "tests/feature_tests/types/31_match_move_payload/main.rg", .tag = .match_case_move, .mode = .move },
@@ -358,7 +358,7 @@ test "compact syntax views preserve semantic distinctions" {
         try std.testing.expectEqual(expected.mode, tree.matchCase(node).?.mode);
     }
 
-    var accesses = try parseTestFile("tests/feature_tests/types/03_choice_payloads/main.rg");
+    var accesses = try parseTestFile("tests/feature_tests/types/01_choice/main.rg");
     defer accesses.deinit(std.testing.allocator);
     const payload_access = firstNodeWithTag(&accesses, .choice_payload_access);
     const field_access = firstNodeWithTag(&accesses, .struct_field_access);

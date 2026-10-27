@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/errors/90X_handle_without_result_value" {
-    try buildExpectFail("tests/feature_tests/errors/90X_handle_without_result_value", "handle without a value binding produces Void");
+    try expectFrontendFailure("tests/feature_tests/errors/90X_handle_without_result_value", "handle without a value binding produces Void");
 }

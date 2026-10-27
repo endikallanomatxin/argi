@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFailWithoutNoise = support.buildExpectFailWithoutNoise;
+const expectFrontendFailureWithoutNoise = support.expectFrontendFailureWithoutNoise;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/contracts/30X_tuple_borrow_dependency" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/30X_tuple_borrow_dependency", "undeclared output dependency", "panic");
+    try expectFrontendFailureWithoutNoise("tests/feature_tests/contracts/30X_tuple_borrow_dependency", "undeclared output dependency", "panic");
 }

@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/ownership/123X_opaque_relocate_self_reference" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/ownership/123X_opaque_relocate_self_reference",
         "opaque ownership storage cannot hide dependencies on external roots",
     );

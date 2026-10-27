@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/ownership/225X_virtual_contract_nonleading_receiver" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/ownership/225X_virtual_contract_nonleading_receiver",
         "violates its safety contract",
     );

@@ -1,4 +1,5 @@
 const std = @import("std");
+pub const frontend_context = @import("frontend_context.zig");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
@@ -556,3 +557,153 @@ pub fn vmExpect(path: []const u8, status: u8, diagnostic: ?[]const u8) !void {
 }
 
 pub const Isolation = enum { fixture, exclusive };
+
+/// Semantic rejection through the real frontend and Safety, without a CLI process.
+pub fn expectFrontendFailure(name: []const u8, diagnostic: []const u8) !void {
+    return @import("frontend_context.zig").check(name, .{ .message = diagnostic });
+}
+
+pub fn expectFrontendFailureWithoutNoise(name: []const u8, diagnostic: []const u8, forbidden: []const u8) !void {
+    return @import("frontend_context.zig").check(name, .{ .message = diagnostic, .forbidden = &.{forbidden} });
+}
+
+pub fn expectFrontendFailureWithoutParseNoise(name: []const u8, diagnostic: []const u8) !void {
+    return @import("frontend_context.zig").check(name, .{ .message = diagnostic, .no_syntax_noise = true });
+}
+
+pub fn expectSyntaxFailure(name: []const u8, diagnostic: []const u8) !void {
+    return @import("frontend_context.zig").check(name, .{ .message = diagnostic, .kind = .syntax });
+}
+
+pub fn expectSyntaxFailureWithoutNoise(name: []const u8, diagnostic: []const u8, forbidden: []const u8) !void {
+    return @import("frontend_context.zig").check(name, .{ .message = diagnostic, .kind = .syntax, .forbidden = &.{forbidden} });
+}
+
+pub fn expectFrontendDiagnostic(name: []const u8, expected: @import("compiler_test_frontend").ExpectedDiagnostic) !void {
+    return @import("frontend_context.zig").check(name, expected);
+}
+
+pub fn checkNativeCFixture(path: []const u8, ir_needles: []const []const u8) !void {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, path });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o", "--emit-llvm", "app.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(ir);
+        for (ir_needles) |needle| try expect(std.mem.indexOf(u8, ir, needle) != null);
+    }
+}
+
+// Reuse the same scenario as an entry body and behind one extra call boundary.
+// Concrete checking visits both bodies, while the caller observes only the
+// inferred summary. This catches lost cleanup/dependency effects in wrappers.
+pub fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !void {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const source_path = try std.fs.path.join(allocator, &.{ case_path, "main.rg" });
+    defer allocator.free(source_path);
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(source);
+    const entry = std.mem.indexOf(u8, source, "main :=") orelse return error.MissingParityEntry;
+    const renamed = try std.fmt.allocPrint(allocator, "{s}parity_body{s}", .{ source[0..entry], source[entry + 4 ..] });
+    defer allocator.free(renamed);
+    const relocated = try std.mem.replaceOwned(u8, allocator, renamed, "../../_support/unsafe_allocation", "./support");
+    defer allocator.free(relocated);
+    // Add summary boundaries around transfers whose effects are observed later
+    // in the same scenario; merely wrapping the entry would hide local effects.
+    const cleanup_calls = try std.mem.replaceOwned(u8, allocator, relocated, "deinit(.self =", "parity_deinit(.self =");
+    defer allocator.free(cleanup_calls);
+    const opaque_calls = try std.mem.replaceOwned(u8, allocator, cleanup_calls, "trusted_opaque_drop(.slot =", "parity_drop(.slot =");
+    defer allocator.free(opaque_calls);
+    const constructor_calls = try std.mem.replaceOwned(u8, allocator, opaque_calls, "Owned(.allocator =", "parity_owned(.allocator =");
+    defer allocator.free(constructor_calls);
+    const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned :=") != null)
+        if (std.mem.indexOf(u8, relocated, ".fail =") != null)
+            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) { result = Owned(.allocator = allocator, .fail = fail) }\n"
+        else
+            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) { result = Owned(.allocator = allocator) }\n"
+    else
+        "";
+    const arguments = if (std.mem.startsWith(u8, source[entry..], "main := (.system: System")) ".system = system" else "";
+    const wrapped = try std.fmt.allocPrint(
+        allocator,
+        "{s}\nmain := (.system: System) -> (.status_code: Int32) {{\n    status_code = parity_body({s})\n}}\n",
+        .{ constructor_calls, arguments },
+    );
+    defer allocator.free(wrapped);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "module/support");
+    try tmp.dir.writeFile(io, .{ .sub_path = "module/main.rg", .data = wrapped });
+    const transfers = try std.fmt.allocPrint(
+        allocator,
+        "parity_deinit := #(.t: Type) (.self: $&t) -> () {{ deinit(.self = self) }}\n" ++
+            "parity_drop := #(.t: Type) (.slot: $&t) -> () {{ trusted_opaque_drop(.slot = slot) }}\n{s}",
+        .{constructor_wrapper},
+    );
+    defer allocator.free(transfers);
+    try tmp.dir.writeFile(io, .{ .sub_path = "module/transfers.rg", .data = transfers });
+    const support = try std.Io.Dir.cwd().readFileAlloc(io, "tests/feature_tests/_support/unsafe_allocation/helpers.rg", allocator, .limited(1024 * 1024));
+    defer allocator.free(support);
+    try tmp.dir.writeFile(io, .{ .sub_path = "module/support/helpers.rg", .data = support });
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer allocator.free(tmp_root);
+    const module_path = try std.fs.path.join(allocator, &.{ tmp_root, "module" });
+    defer allocator.free(module_path);
+    const original = try buildResult(case_path);
+    defer allocator.free(original.stdout);
+    defer allocator.free(original.stderr);
+    const caller = try buildResult(module_path);
+    defer allocator.free(caller.stdout);
+    defer allocator.free(caller.stderr);
+    if (!std.meta.eql(original.term, caller.term)) {
+        std.debug.print("safety parity mismatch for {s}:\n{s}\n{s}\n", .{ case_path, original.stderr, caller.stderr });
+    }
+    try expectEqual(original.term, caller.term);
+    if (diagnostic) |message| {
+        try expectEqual(std.process.Child.Term{ .exited = 1 }, original.term);
+        try expect(std.mem.indexOf(u8, original.stderr, message) != null);
+        if (std.mem.indexOf(u8, caller.stderr, message) == null)
+            std.debug.print("missing parity diagnostic for {s}:\n{s}\n", .{ case_path, caller.stderr });
+        try expect(std.mem.indexOf(u8, caller.stderr, message) != null);
+    } else {
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, original.term);
+        const original_exe = try outputPathFor(case_path);
+        defer allocator.free(original_exe);
+        const caller_exe = try outputPathFor(module_path);
+        defer allocator.free(caller_exe);
+        const direct = try runChild(&.{original_exe});
+        defer allocator.free(direct.stdout);
+        defer allocator.free(direct.stderr);
+        const indirect = try runChild(&.{caller_exe});
+        defer allocator.free(indirect.stdout);
+        defer allocator.free(indirect.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, direct.term);
+        try expectEqual(direct.term, indirect.term);
+        try expectEqualStrings(direct.stdout, indirect.stdout);
+        try expectEqualStrings(direct.stderr, indirect.stderr);
+    }
+}

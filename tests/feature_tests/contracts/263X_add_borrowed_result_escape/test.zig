@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/contracts/263X_add_borrowed_result_escape" {
-    try buildExpectFail("tests/feature_tests/contracts/263X_add_borrowed_result_escape", "function output cannot depend on a local storage generation");
+    try expectFrontendFailure("tests/feature_tests/contracts/263X_add_borrowed_result_escape", "function output cannot depend on a local storage generation");
 }

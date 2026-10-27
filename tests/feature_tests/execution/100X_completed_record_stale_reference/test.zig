@@ -2,7 +2,7 @@ const support = @import("../../../support.zig");
 const buildExpectFail = support.buildExpectFail;
 const vmExpect = support.vmExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/100X_completed_record_stale_reference" {
     try buildExpectFail("tests/feature_tests/execution/100X_completed_record_stale_reference", "reference depends on a root that has ended");

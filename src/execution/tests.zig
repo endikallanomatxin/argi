@@ -39,6 +39,12 @@ fn execute(source: []const u8, limits: vm.Limits) !i128 {
     return error.MissingEntry;
 }
 
+fn executeWithCore(source: []const u8, limits: vm.Limits) !i128 {
+    var environment = try @import("../4_semantics/frontend_test_support.zig").Environment.init(std.testing.allocator, std.testing.io);
+    defer environment.deinit();
+    return environment.execute(.{ .name = "bytecode_execution", .files = &.{.{ .path = "main.rg", .code = source }} }, limits);
+}
+
 test "bytecode executes selected arithmetic contracts and loops" {
     try std.testing.expectEqual(@as(i128, 55), try execute(
         \\main := () -> (.status_code: Int32 = 0)  {
@@ -73,6 +79,24 @@ test "bytecode wraps integer arithmetic at its declared width" {
     , .{}));
 }
 
+test "bytecode wraps narrow and unsigned arithmetic and signed division overflow" {
+    try std.testing.expectEqual(@as(i128, 42), try executeWithCore(
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    value :: Int32 = 2147483647
+        \\    wrapped ::= value + 1
+        \\    if wrapped != -2147483648 { abort }
+        \\    narrow :: Int8 = 127
+        \\    if narrow + 1 != -128 { abort }
+        \\    unsigned :: UInt64 = 18446744073709551615
+        \\    if unsigned * unsigned != 1 { abort }
+        \\    minimum :: Int64 = -9223372036854775808
+        \\    if minimum / -1 != minimum { abort }
+        \\    if minimum % -1 != 0 { abort }
+        \\    status_code = 42
+        \\}
+    , .{}));
+}
+
 test "bytecode calls specialize generic functions and short circuit" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
@@ -91,6 +115,19 @@ test "bytecode limits recursive calls and allocation" {
     ;
     try std.testing.expectError(error.ExecutionCallDepthLimit, execute(recursive, .{ .call_depth = 8 }));
     try std.testing.expectError(error.ExecutionMemoryLimit, execute(recursive, .{ .value_cells = 4 }));
+}
+
+test "bytecode returns record values through recursive frames" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Pair := (.left: Int32, .right: Int32)
+        \\recurse := (.remaining: Int32) -> (.result: Pair = (.left = 20, .right = 22)) {
+        \\    if remaining > 0 { result = recurse(.remaining = remaining - 1) }
+        \\}
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    pair ::= recurse(.remaining = 32)
+        \\    status_code = pair.left + pair.right
+        \\}
+    , .{}));
 }
 
 test "bytecode preserves break continue and early return" {
@@ -695,6 +732,26 @@ test "bytecode multiple outputs retain caller reference lifetimes" {
         \\    value :: Int32 = 42
         \\    result ::= inspect(.value = &value)
         \\    if result.present { status_code = result.reference& }
+        \\}
+    , .{}));
+}
+
+test "bytecode projects and discards multiple call outputs" {
+    try std.testing.expectEqual(@as(i128, 42), try executeWithCore(
+        \\split_number := (.value: Int32) -> (.quotient: Int32, .remainder: Int32) {
+        \\    quotient = value / 10
+        \\    remainder = value % 10
+        \\}
+        \\inspect := (.value: &Int32) -> (.reference: &Int32, .present: Bool = true) {
+        \\    reference = value
+        \\}
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    result ::= split_number(.value = 402)
+        \\    total :: Int32 = result.quotient + result.remainder
+        \\    if inspect(.value = &total).reference& != 42 { abort }
+        \\    borrowed ::= inspect(.value = &total)
+        \\    if borrowed.present { status_code = borrowed.reference& }
+        \\    split_number(.value = 17)
         \\}
     , .{}));
 }

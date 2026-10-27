@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFailWithoutNoise = support.buildExpectFailWithoutNoise;
+const expectFrontendFailureWithoutNoise = support.expectFrontendFailureWithoutNoise;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/280X_generic_system_runtime_capture" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/execution/280X_generic_system_runtime_capture", "#run arguments must be compile-time constants", "failed without a diagnostic");
+    try expectFrontendFailureWithoutNoise("tests/feature_tests/execution/280X_generic_system_runtime_capture", "#run arguments must be compile-time constants", "failed without a diagnostic");
 }

@@ -57,9 +57,11 @@ pub fn discover(b: *std.Build) !std.Build.LazyPath {
     const files = b.addWriteFiles();
     _ = files.addCopyFile(b.path("tests/test.zig"), "tests/test.zig");
     _ = files.addCopyFile(b.path("tests/support.zig"), "tests/support.zig");
+    _ = files.addCopyFile(b.path("tests/frontend_context.zig"), "tests/frontend_context.zig");
     _ = files.addCopyFile(b.path("tests/terminal_probe.zig"), "tests/terminal_probe.zig");
     var source: std.ArrayList(u8) = .empty;
     try source.appendSlice(allocator,
+        \\pub const support = @import("tests/support.zig");
         \\pub const central = @import("tests/test.zig");
         \\pub const central_prefix = @typeName(central) ++ ".test.";
         \\pub const Group = struct { prefix: []const u8, fixture: []const u8, isolation: @import("tests/support.zig").Isolation };

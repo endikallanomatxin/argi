@@ -9,3 +9,7 @@ test "feature_tests/ownership/293_fallible_constructor_owns_success" {
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
+
+test "tests/feature_tests/ownership/293_fallible_constructor_owns_success wrapper parity" {
+    try support.expectSafetyWrapperParity("tests/feature_tests/ownership/293_fallible_constructor_owns_success", null);
+}

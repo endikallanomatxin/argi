@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/ownership/149X_field_read_through_stale_pointer_fails" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/ownership/149X_field_read_through_stale_pointer_fails",
         "reference depends on a root that has ended",
     );

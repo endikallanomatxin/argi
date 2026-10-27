@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/polymorphism/219X_conditional_relocates_preserved_destination" {
-    try buildExpectFail("tests/feature_tests/polymorphism/219X_conditional_relocates_preserved_destination", "value was deinitialized");
+    try expectFrontendFailure("tests/feature_tests/polymorphism/219X_conditional_relocates_preserved_destination", "value was deinitialized");
 }

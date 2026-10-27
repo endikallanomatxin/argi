@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/basics/70X_array_store_range" {
-    try buildExpectFail("tests/feature_tests/basics/70X_array_store_range", "integer literal 256 does not fit in 'UInt8'");
+    try expectFrontendFailure("tests/feature_tests/basics/70X_array_store_range", "integer literal 256 does not fit in 'UInt8'");
 }

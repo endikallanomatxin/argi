@@ -3,7 +3,7 @@ const expectSuccessfulBuild = support.expectSuccessfulBuild;
 const runExpect = support.runExpect;
 const vmExpect = support.vmExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "tests/feature_tests/execution/224_zero_sized_allocation_slots" {
     try expectSuccessfulBuild("tests/feature_tests/execution/224_zero_sized_allocation_slots");

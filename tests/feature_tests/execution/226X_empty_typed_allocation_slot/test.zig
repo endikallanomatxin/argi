@@ -3,7 +3,7 @@ const expectSuccessfulBuild = support.expectSuccessfulBuild;
 const runExpectFailure = support.runExpectFailure;
 const vmExpect = support.vmExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "tests/feature_tests/execution/226X_empty_typed_allocation_slot" {
     try expectSuccessfulBuild("tests/feature_tests/execution/226X_empty_typed_allocation_slot");

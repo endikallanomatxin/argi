@@ -2,7 +2,7 @@ const support = @import("../../../support.zig");
 const buildExpectFail = support.buildExpectFail;
 const vmExpect = support.vmExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target" {
     try buildExpectFail("tests/feature_tests/execution/200X_returned_symbolic_reference_keeps_written_target", "root that has ended");

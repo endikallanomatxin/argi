@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/63X_comptime_projection_bounds" {
-    try buildExpectFail("tests/feature_tests/execution/63X_comptime_projection_bounds", "#run array index is out of bounds");
+    try expectFrontendFailure("tests/feature_tests/execution/63X_comptime_projection_bounds", "#run array index is out of bounds");
 }

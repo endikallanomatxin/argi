@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFailWithoutParseNoise = support.buildExpectFailWithoutParseNoise;
+const expectFrontendFailureWithoutParseNoise = support.expectFrontendFailureWithoutParseNoise;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/io/32X_zeroed_reference" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/io/32X_zeroed_reference", "zeroed requires a numeric type or a fixed array of numeric types");
+    try expectFrontendFailureWithoutParseNoise("tests/feature_tests/io/32X_zeroed_reference", "zeroed requires a numeric type or a fixed array of numeric types");
 }

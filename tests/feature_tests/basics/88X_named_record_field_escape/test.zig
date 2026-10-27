@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/basics/88X_named_record_field_escape" {
-    try buildExpectFail("tests/feature_tests/basics/88X_named_record_field_escape", "local storage generation");
+    try expectFrontendFailure("tests/feature_tests/basics/88X_named_record_field_escape", "local storage generation");
 }

@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/system/64X_process_private_handle" {
-    try buildExpectFail("tests/feature_tests/system/64X_process_private_handle", "field '_handle' is private to its module");
+    try expectFrontendFailure("tests/feature_tests/system/64X_process_private_handle", "field '_handle' is private to its module");
 }

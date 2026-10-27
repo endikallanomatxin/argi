@@ -5,4 +5,5 @@ pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/contracts/134_generic_implementation_selection" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/134_generic_implementation_selection");
+    try support.runExpect("tests/feature_tests/contracts/134_generic_implementation_selection", 0);
 }

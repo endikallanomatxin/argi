@@ -1,8 +1,0 @@
-const support = @import("../../../support.zig");
-const buildExpectFailWithoutNoise = support.buildExpectFailWithoutNoise;
-
-pub const isolation: support.Isolation = .fixture;
-
-test "feature_tests/contracts/148X_incomparable_nominal_patterns" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/148X_incomparable_nominal_patterns", "overlapping generic implementations have ambiguous maximal patterns", "panic");
-}

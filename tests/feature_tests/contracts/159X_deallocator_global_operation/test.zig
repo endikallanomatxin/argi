@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFailWithoutNoise = support.buildExpectFailWithoutNoise;
+const expectFrontendFailureWithoutNoise = support.expectFrontendFailureWithoutNoise;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/contracts/159X_deallocator_global_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/159X_deallocator_global_operation", "no function named 'deallocate' exists", "panic");
+    try expectFrontendFailureWithoutNoise("tests/feature_tests/contracts/159X_deallocator_global_operation", "no function named 'deallocate' exists", "panic");
 }

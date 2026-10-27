@@ -95,6 +95,12 @@ comptime {
     _ = semantic_literals;
     _ = @import("4_semantics/numeric_diagnostics_test.zig");
     _ = @import("4_semantics/nominal_diagnostics_test.zig");
+    _ = @import("4_semantics/type_rules_test.zig");
+    _ = @import("4_semantics/contract_rules_test.zig");
+    _ = @import("4_semantics/source_rules_test.zig");
+    _ = @import("4_semantics/other_rules_test.zig");
+    _ = @import("4_semantics/frontend_environment_test.zig");
+    _ = @import("4_semantics/choice_rules_test.zig");
     _ = source_files;
     _ = @import("1_base/conditional_source.zig");
     _ = @import("1_base/lexical.zig");

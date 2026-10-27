@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/errors/107X_defer_report_return_block" {
-    try buildExpectFail("tests/feature_tests/errors/107X_defer_report_return_block", "cannot return or propagate errors from a deferred action");
+    try expectFrontendFailure("tests/feature_tests/errors/107X_defer_report_return_block", "cannot return or propagate errors from a deferred action");
 }

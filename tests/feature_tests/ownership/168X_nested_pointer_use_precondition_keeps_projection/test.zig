@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/ownership/168X_nested_pointer_use_precondition_keeps_projection" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/ownership/168X_nested_pointer_use_precondition_keeps_projection",
         "reference depends on a root that has ended",
     );

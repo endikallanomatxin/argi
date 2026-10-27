@@ -2,7 +2,7 @@ const support = @import("../../../support.zig");
 const buildExpectFail = support.buildExpectFail;
 const vmExpect = support.vmExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/209X_symbolic_match_payload_keeps_consumption" {
     try buildExpectFail("tests/feature_tests/execution/209X_symbolic_match_payload_keeps_consumption", "root that has ended");

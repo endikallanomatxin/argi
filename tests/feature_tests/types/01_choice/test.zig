@@ -1,11 +1,10 @@
 const support = @import("../../../support.zig");
-const expectSuccessfulBuild = support.expectSuccessfulBuild;
-const run = support.run;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/types/01_choice" {
-    const test_path = "tests/feature_tests/types/01_choice";
-    try expectSuccessfulBuild(test_path);
-    try run(test_path);
+    const path = "tests/feature_tests/types/01_choice";
+    try support.expectSuccessfulBuild(path);
+    try support.runExpect(path, 0);
+    try support.vmExpect(path, 0, null);
 }

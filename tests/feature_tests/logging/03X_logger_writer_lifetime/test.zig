@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFailWithoutParseNoise = support.buildExpectFailWithoutParseNoise;
+const expectFrontendFailureWithoutParseNoise = support.expectFrontendFailureWithoutParseNoise;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/logging/03X_logger_writer_lifetime" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/logging/03X_logger_writer_lifetime", "function output cannot depend on a local storage generation that ends before return");
+    try expectFrontendFailureWithoutParseNoise("tests/feature_tests/logging/03X_logger_writer_lifetime", "function output cannot depend on a local storage generation that ends before return");
 }

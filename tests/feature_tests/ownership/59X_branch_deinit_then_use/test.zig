@@ -11,3 +11,7 @@ test "feature_tests/ownership/59X_branch_deinit_then_use" {
         \\
     );
 }
+
+test "tests/feature_tests/ownership/59X_branch_deinit_then_use wrapper parity" {
+    try support.expectSafetyWrapperParity("tests/feature_tests/ownership/59X_branch_deinit_then_use", "maybe_initialized and cannot be used");
+}

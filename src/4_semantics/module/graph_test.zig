@@ -1003,8 +1003,11 @@ test "unary and tuple conformances publish canonical static evidence" {
 
 test "qualified operation statements preserve contract identity" {
     const allocator = std.testing.allocator;
-    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/125X_qualified_operation_argument_mismatch/main.rg", allocator, .limited(64 * 1024));
-    defer allocator.free(source);
+    const source =
+        \\Cell := (.value: Int32)
+        \\Reader#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32))
+        \\main := () -> () { Reader#(Cell).read(7) }
+    ;
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var calls: usize = 0;

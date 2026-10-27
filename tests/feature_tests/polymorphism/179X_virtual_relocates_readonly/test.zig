@@ -1,8 +1,8 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/polymorphism/179X_virtual_relocates_readonly" {
-    try buildExpectFail("tests/feature_tests/polymorphism/179X_virtual_relocates_readonly", "relocates requires mutable reference");
+    try expectFrontendFailure("tests/feature_tests/polymorphism/179X_virtual_relocates_readonly", "relocates requires mutable reference");
 }

@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/ownership/279X_infallible_copy_is_not_implicit" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/ownership/279X_infallible_copy_is_not_implicit",
         "type 'LargeValue' cannot be copied implicitly",
     );

@@ -9,3 +9,7 @@ test "feature_tests/ownership/13_move_operator" {
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
+
+test "tests/feature_tests/ownership/13_move_operator wrapper parity" {
+    try support.expectSafetyWrapperParity("tests/feature_tests/ownership/13_move_operator", null);
+}

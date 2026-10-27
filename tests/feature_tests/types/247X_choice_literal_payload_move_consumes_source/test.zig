@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/types/247X_choice_literal_payload_move_consumes_source" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/types/247X_choice_literal_payload_move_consumes_source",
         "reference depends on a root that has ended",
     );

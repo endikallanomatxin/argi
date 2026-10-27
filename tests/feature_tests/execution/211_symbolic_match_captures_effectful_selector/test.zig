@@ -3,7 +3,7 @@ const expectSuccessfulBuild = support.expectSuccessfulBuild;
 const runExpect = support.runExpect;
 const vmExpect = support.vmExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/211_symbolic_match_captures_effectful_selector" {
     try expectSuccessfulBuild("tests/feature_tests/execution/211_symbolic_match_captures_effectful_selector");

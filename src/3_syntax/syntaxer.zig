@@ -1789,6 +1789,10 @@ pub const Syntaxer = struct {
 
         const grouped = self.tokenIs(.open_bracket);
         const base: syn.NodeIndex = switch (content) {
+            .keyword_abort => {
+                try self.diags.add(self.tokenLocation(), .syntax, "'abort' is a statement and cannot be used as a value", .{});
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            },
             .double_dot => blk: {
                 const dots_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();

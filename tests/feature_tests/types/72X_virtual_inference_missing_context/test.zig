@@ -1,8 +1,0 @@
-const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
-
-pub const isolation: support.Isolation = .fixture;
-
-test "feature_tests/types/72X_virtual_inference_missing_context" {
-    try buildExpectFail("tests/feature_tests/types/72X_virtual_inference_missing_context", "cannot infer the contract parameter");
-}

@@ -3,7 +3,7 @@ const expectSuccessfulBuild = support.expectSuccessfulBuild;
 const runExpect = support.runExpect;
 const vmExpect = support.vmExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/210_symbolic_match_payload_preserves_sibling" {
     try expectSuccessfulBuild("tests/feature_tests/execution/210_symbolic_match_payload_preserves_sibling");

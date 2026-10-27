@@ -5,6 +5,7 @@ const builtin = @import("builtin");
 const options = @import("program_test_options");
 const sharding = @import("program_test_sharding");
 const suite = @import("program_tests");
+const frontend_context = @import("program_tests").support.frontend_context;
 
 pub const std_options: std.Options = .{ .logFn = log };
 var log_errors: usize = 0;
@@ -52,6 +53,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     };
 
+    var frontend_owner: frontend_context.Context = .{ .io = runner_io };
+    defer _ = frontend_owner.deinit();
+    frontend_context.install(&frontend_owner);
+    defer frontend_context.install(null);
+
     var passed: usize = 0;
     var skipped: usize = 0;
     var failed: usize = 0;
@@ -62,6 +68,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const exclusive = if (group) |g| g.isolation == .exclusive else true;
         if (!try sharding.selected(fixture, exclusive, args[1], options.workers)) continue;
         const started = std.Io.Timestamp.now(runner_io, .boot).nanoseconds;
+        const frontend_before = frontend_owner.checks;
         var outcome: []const u8 = "passed";
         std.testing.allocator_instance = .{};
         std.testing.io_instance = .init(std.testing.allocator, .{
@@ -97,9 +104,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
         if (leaked) leaks += 1;
         if (progress_writer) |*writer| {
             const elapsed = std.Io.Timestamp.now(runner_io, .boot).nanoseconds - started;
-            try writer.interface.print("case\t{s}\t{s}\t{d} ns\t{s}\tleak={}\n", .{ if (exclusive) "exclusive" else "fixture", outcome, elapsed, test_fn.name, leaked });
+            try writer.interface.print("case\t{s}\t{s}\t{d} ns\t{s}\tleak={}\tfrontend_checks={d}\n", .{ if (exclusive) "exclusive" else "fixture", outcome, elapsed, test_fn.name, leaked, frontend_owner.checks - frontend_before });
             try writer.interface.flush();
         }
+    }
+    if (frontend_owner.deinit()) {
+        leaks += 1;
+        std.debug.print("[programs {s}] frontend context leaked\n", .{args[1]});
     }
     var stdout_buffer: [1024]u8 = undefined;
     var stdout = std.Io.File.stdout().writerStreaming(runner_io, &stdout_buffer);

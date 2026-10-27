@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/types/257X_abstract_impl_template_checks_associated_args" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/types/257X_abstract_impl_template_checks_associated_args",
         "contract constraint 'Other' required by generic function parameter '.t' of 'require_other'",
     );

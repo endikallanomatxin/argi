@@ -1,10 +1,10 @@
 const support = @import("../../../support.zig");
-const buildExpectFail = support.buildExpectFail;
+const expectFrontendFailure = support.expectFrontendFailure;
 
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/types/266X_direct_fallible_init_error_leaves_empty" {
-    try buildExpectFail(
+    try expectFrontendFailure(
         "tests/feature_tests/types/266X_direct_fallible_init_error_leaves_empty",
         "value was deinitialized",
     );
