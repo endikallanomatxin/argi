@@ -80,3 +80,13 @@ the intended rule; a matching generic diagnostic alone may hide another error.
 Positive counterparts can establish that the same mechanism accepts valid input.
 Preserve distinct aliasing, control-flow, module and backend interactions even
 when their programs look similar.
+
+Group small positive cases by the operation or protocol they exercise, using
+named functions or separate scopes and checking each result. For example, range
+iteration covers default bounds, signed steps and integer widths in one fixture;
+error propagation covers statement, argument, condition and assignment contexts
+in one fixture. Keep independent generic definitions when the test needs both
+inferred and explicit specialization to be materialized separately. Retain
+separate process tests when startup, cache state or failure isolation is itself
+the behavior being checked. Put a fixture's native/VM checks and runtime error
+expectations together rather than rebuilding it from an unrelated central test.

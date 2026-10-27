@@ -7,4 +7,5 @@ pub const isolation: support.Isolation = .exclusive;
 test "feature_tests/execution/281_nominal_scalar_representations" {
     try expectSuccessfulBuild("tests/feature_tests/execution/281_nominal_scalar_representations");
     try run("tests/feature_tests/execution/281_nominal_scalar_representations");
+    try support.vmExpect("tests/feature_tests/execution/281_nominal_scalar_representations", 0, null);
 }

@@ -2647,7 +2647,6 @@ test "diagnostic path normalization handles related source locations" {
 test "runtime safety diagnostics include cause and source location" {
     const cases = .{
         .{ "tests/feature_tests/basics/66X_runtime_abort_diagnostic", "main.rg:2:5: runtime error: explicit abort" },
-        .{ "tests/feature_tests/collections/38X_fixed_array_index_out_of_bounds", "runtime error: array index is out of bounds" },
         .{ "tests/feature_tests/c_interop/83X_callback_invocation_null", "runtime error: cannot call a null C function pointer" },
     };
     inline for (cases) |case| {
@@ -3657,11 +3656,6 @@ test "argi test runs configured modules and explicit target overrides suite" {
     defer std.testing.allocator.free(invalid.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, invalid.term);
     try expect(std.mem.indexOf(u8, invalid.stderr, "configure [test] modules") != null);
-}
-
-test "bytecode nominal underlying scalar and aggregate representations" {
-    try vmExpect("tests/feature_tests/execution/281_nominal_scalar_representations", 0, null);
-    try vmExpect("tests/feature_tests/types/294_annotated_alias_shapes", 0, null);
 }
 
 test "argi repl discovers public submodules from retained import aliases" {

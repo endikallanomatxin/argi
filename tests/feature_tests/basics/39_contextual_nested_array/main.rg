@@ -4,4 +4,9 @@ main := () -> (.status_code: Int32 = 0) {
         (3, 4)
     )
     if first[0][0] != 1 or first[1][1] != 4 { status_code = 1 }
+    inferred := (
+        (1, 2),
+        (3, 4)
+    )
+    if inferred[0][0] != 1 or inferred[1][1] != 4 { status_code = 2 }
 }

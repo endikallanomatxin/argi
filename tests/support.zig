@@ -334,6 +334,14 @@ pub fn runExpect(name: []const u8, expected_code: u8) !void {
 }
 
 pub fn runExpectFailure(name: []const u8) !void {
+    try runFailure(name, null);
+}
+
+pub fn runExpectFailureContaining(name: []const u8, diagnostic: []const u8) !void {
+    try runFailure(name, diagnostic);
+}
+
+fn runFailure(name: []const u8, diagnostic: ?[]const u8) !void {
     const output_path = try outputPathFor(name);
     defer std.testing.allocator.free(output_path);
 
@@ -346,6 +354,7 @@ pub fn runExpectFailure(name: []const u8) !void {
         .signal, .stopped => {},
         .unknown => return error.UnexpectedProcessTermination,
     }
+    if (diagnostic) |text| try expectDiagnostic(name, result.stderr, text);
 }
 
 pub fn run(name: []const u8) !void {

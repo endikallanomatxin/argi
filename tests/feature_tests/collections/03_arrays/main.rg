@@ -27,5 +27,27 @@ main := () -> (.status_code: Int32) {
         return
     }
 
+    if length(.value = (10, 20, 30)) != 3 {
+        status_code = 5
+        return
+    }
+
+    values: Array#(.n = 3, .t: Int32) = (4, 5, 6)
+    if length(.value = values) != 3 or values[1] != 5 {
+        status_code = 6
+        return
+    }
+
+    idx :: UIntNative = 1
+    if arr[idx] != 99 {
+        status_code = 7
+        return
+    }
+    arr[idx] = 42
+    if arr[idx] != 42 {
+        status_code = 8
+        return
+    }
+
     status_code = 0
 }
