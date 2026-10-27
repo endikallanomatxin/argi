@@ -871,12 +871,12 @@ pub const Resolver = struct {
                 return .{ .tuple = index };
             }
         }
-        // Native C identities have no source-level declaration in bundled core.
-        // Publish only their checked, operation-free representation fact; Equal
-        // still selects its ordinary generic implementation and operation.
+        // Payloadless choices and native C identities compare their tags or
+        // addresses. Publish only the private representation fact; Equal still
+        // selects its ordinary generic implementation and operation.
         if (participants.len == 1 and located.definition.requirements.len == 0 and located.definition.parameters.len == 0 and
             standard_contracts.standardDefinition(self.graph, "_BuiltinEquality") == declaration and
-            self.core.isForeignEqualityRepresentation(participants[0], participants[0]))
+            self.core.isTagOrForeignEqualityRepresentation(participants[0], participants[0]))
         {
             const definition = self.graph.familyDefinition(declaration);
             const file = self.graph.files.items[definition.source.file_index];

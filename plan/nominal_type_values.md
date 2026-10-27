@@ -106,6 +106,8 @@ FunctionId rather than creating wrappers or fresh single-use state.
 
 Value literals construct values of an expected concrete type; they do not define
 new types or convert between independent nominal types.
+Generic specialization must preserve this rule instead of synthesizing a
+structural type from the fields of an uncontextualized value literal.
 
 ```argi
 point: Point = (.x = 10)
@@ -278,5 +280,10 @@ The complete contract program suite passes after the arithmetic migration,
 including static provider inference in native, VM and #run execution. Required
 operation results are checked against Result; auxiliary inputs cannot create
 another conformance for one operand tuple. Former structural argument fixtures
-now use explicit nominal argument families. Full program validation is underway;
+now use explicit nominal argument families. The general run's shared phase passed
+762 cases with 11 optional skips. Its reported worker failures now pass together
+in a focused batch, including diagnostic locations, nominal signature reuse,
+StringView concatenation and reason-set comparisons. Payloadless choice equality
+selects ordinary Equal evidence through a private representation fact; distinct
+nominal choices remain incompatible. A fresh complete run is still required;
 no full program-suite success is claimed.

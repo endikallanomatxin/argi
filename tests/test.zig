@@ -1528,27 +1528,27 @@ test "feature_tests/basics/08_struct_field_store" {
 
 test "feature_tests/basics/09X_integer_literal_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/09X_integer_literal_overflow",
-        \\tests/feature_tests/basics/09X_integer_literal_overflow/main.rg:2:21: error: integer literal 300 does not fit in 'UInt8' (max 255)
+        \\tests/feature_tests/basics/09X_integer_literal_overflow/main.rg:2:20: error: integer literal 300 does not fit in 'UInt8' (max 255)
         \\      value: UInt8 = 300
-        \\                      ^
+        \\                     ^
         \\
     );
 }
 
 test "feature_tests/basics/10X_signed_integer_literal_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/10X_signed_integer_literal_overflow",
-        \\tests/feature_tests/basics/10X_signed_integer_literal_overflow/main.rg:2:20: error: integer literal 128 does not fit in 'Int8' (min -128, max 127)
+        \\tests/feature_tests/basics/10X_signed_integer_literal_overflow/main.rg:2:19: error: integer literal 128 does not fit in 'Int8' (min -128, max 127)
         \\      value: Int8 = 128
-        \\                     ^
+        \\                    ^
         \\
     );
 }
 
 test "feature_tests/basics/11X_negative_integer_literal_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/11X_negative_integer_literal_overflow",
-        \\tests/feature_tests/basics/11X_negative_integer_literal_overflow/main.rg:2:20: error: integer literal -129 does not fit in 'Int8' (min -128, max 127)
+        \\tests/feature_tests/basics/11X_negative_integer_literal_overflow/main.rg:2:19: error: integer literal -129 does not fit in 'Int8' (min -128, max 127)
         \\      value: Int8 = -129
-        \\                     ^
+        \\                    ^
         \\
     );
 }
@@ -1661,9 +1661,9 @@ test "feature_tests/functions/15_output_default_implicit_return" {
 
 test "feature_tests/functions/16X_function_signature_requires_explicit_types" {
     try buildExpectFailExact("tests/feature_tests/functions/16X_function_signature_requires_explicit_types",
-        \\tests/feature_tests/functions/16X_function_signature_requires_explicit_types/main.rg:1:30: error: function output field '.result' requires an explicit type
+        \\tests/feature_tests/functions/16X_function_signature_requires_explicit_types/main.rg:1:34: error: function output field '.result' requires an explicit type
         \\  identity := (.value: Int32) -> (.result) {
-        \\                               ^
+        \\                                   ^
         \\
     );
 }
@@ -1719,9 +1719,9 @@ test "feature_tests/pointers/03X_assign_through_readonly_pointer" {
 
 test "feature_tests/pointers/04X_read-write_pointer_to_constant" {
     try buildExpectFailExact("tests/feature_tests/pointers/04X_read-write_pointer_to_constant",
-        \\tests/feature_tests/pointers/04X_read-write_pointer_to_constant/main.rg:4:32: error: binding 'value' is immutable; declare it with '::' or use '&value'
+        \\tests/feature_tests/pointers/04X_read-write_pointer_to_constant/main.rg:4:31: error: binding 'value' is immutable; declare it with '::' or use '&value'
         \\      mutable_view: $&Int32 = $&value
-        \\                                 ^
+        \\                                ^
         \\
     );
 }
@@ -1730,7 +1730,7 @@ test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
     try buildExpectFailExact("tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param",
         \\tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param/main.rg:9:14: error: no function named 'increment' accepts arguments (.ptr: &Int32). Available signatures:
         \\  - increment (.ptr: $&Int32) -> ()
-        \\      increment(.ptr=reader)
+        \\      increment(.ptr = reader)
         \\               ^
         \\
     );
@@ -1899,7 +1899,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
-        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:18:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:17:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      second := first
         \\                ^
         \\
@@ -1908,7 +1908,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:22:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:21:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1917,7 +1917,7 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:22:32: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:21:32: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      wrapped: Wrapper = (.res = handle)
         \\                                 ^
         \\
@@ -1926,7 +1926,7 @@ test "feature_tests/ownership/07X_noncopyable_struct_field" {
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:17:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:16:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      out = res
         \\            ^
         \\
@@ -1959,7 +1959,7 @@ test "feature_tests/ownership/13_move_operator" {
 
 test "feature_tests/ownership/14X_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/14X_use_after_move",
-        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:23:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:22:34)
+        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:22:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:21:34)
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1968,7 +1968,7 @@ test "feature_tests/ownership/14X_use_after_move" {
 
 test "feature_tests/ownership/15X_reassign_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/15X_reassign_after_move",
-        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:23:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:22:34)
+        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:22:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:21:34)
         \\      handle = Resource()
         \\      ^
         \\
@@ -2324,7 +2324,7 @@ test "feature_tests/types/20_struct_initializer_without_init" {
 }
 
 test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "construction arguments do not match the selected Init operation signature");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "arguments do not match this specialized function definition");
 }
 
 test "feature_tests/collections/16_dynamic_array_iterator_manual" {
@@ -2613,7 +2613,7 @@ test "feature_tests/control_flow/14_for_mut_borrowed_dynamic_array" {
 
 test "feature_tests/types/14X_errable_match_unknown_variant" {
     try buildExpectFailExact("tests/feature_tests/types/14X_errable_match_unknown_variant",
-        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable<.t: Int32, .reasons: (..test_error)>' has no variant '..none'
+        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable#(.t: Int32, .reasons: (..test_error))' has no variant '..none'
         \\          ..none {
         \\            ^
         \\
@@ -3087,7 +3087,7 @@ test "feature_tests/ownership/35_system_move_by_value" {
 
 test "feature_tests/ownership/36X_double_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/36X_double_move",
-        \\tests/feature_tests/ownership/36X_double_move/main.rg:23:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:22:34)
+        \\tests/feature_tests/ownership/36X_double_move/main.rg:22:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:21:34)
         \\      status_code = consume(.res = ~handle)
         \\                                    ^
         \\
@@ -4480,7 +4480,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
-        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:18:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:17:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := resources
         \\                ^
         \\
@@ -7250,9 +7250,9 @@ test "tests/feature_tests/basics/29_unsigned_literal_extrema" {
 
 test "tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow",
-        \\tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow/main.rg:2:22: error: integer literal magnitude exceeds the supported 64-bit range
+        \\tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow/main.rg:2:21: error: integer literal magnitude exceeds the supported 64-bit range
         \\      value: UInt64 = 18446744073709551616
-        \\                       ^
+        \\                      ^
         \\
     );
 }
@@ -7471,7 +7471,7 @@ test "feature_tests/types/273_specialized_comparison_operators" {
 }
 
 test "feature_tests/types/274X_specialized_comparison_missing" {
-    try buildExpectFail("tests/feature_tests/types/274X_specialized_comparison_missing", "no matching comparison operator '==' for 'Record' and 'Record'");
+    try buildExpectFail("tests/feature_tests/types/274X_specialized_comparison_missing", "no conformance for the qualified operation's participants");
 }
 
 test "feature_tests/types/275X_specialized_ordering_missing" {
@@ -7479,7 +7479,7 @@ test "feature_tests/types/275X_specialized_ordering_missing" {
 }
 
 test "feature_tests/types/276X_specialized_numeric_comparison_mismatch" {
-    try buildExpectFail("tests/feature_tests/types/276X_specialized_numeric_comparison_mismatch", "no matching comparison operator '==' for 'UInt64' and 'Int64'");
+    try buildExpectFail("tests/feature_tests/types/276X_specialized_numeric_comparison_mismatch", "no conformance for the qualified operation's participants");
 }
 
 test "feature_tests/types/277_specialized_comparison_assumed_input" {
@@ -13411,7 +13411,7 @@ test "feature_tests/collections/164_standard_hasher_vectors" {
 }
 
 test "feature_tests/collections/163X_custom_hash_policy_required" {
-    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "construction arguments do not match the selected Init operation signature");
+    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "arguments do not match this specialized function definition");
 }
 
 test "feature_tests/contracts/338X_partial_constructor_unknown_parameter" {
@@ -15950,4 +15950,26 @@ test "feature_tests/contracts/339_arithmetic_callable_provider" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
     try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/347X_generic_record_missing_context" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/347X_generic_record_missing_context", "add an explicit type annotation", "without a diagnostic");
+}
+
+test "feature_tests/types/348_generic_contextual_records" {
+    const path = "tests/feature_tests/types/348_generic_contextual_records";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/340_tag_choice_equality" {
+    const path = "tests/feature_tests/contracts/340_tag_choice_equality";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/341X_tag_choice_nominal_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/341X_tag_choice_nominal_identity", "no conformance for the qualified operation's participants", "without a diagnostic");
 }

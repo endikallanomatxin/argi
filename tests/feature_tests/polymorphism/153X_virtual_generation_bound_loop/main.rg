@@ -35,7 +35,7 @@ _impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (
 apply_edit := (.editor: &Virtual#(Editor), .target: $&Int32, .mode: Int32) -> (
     .result: Errable#(?Int32, (..failed))
 ) {
-    pending :: Errable#(?Int32, (..failed))
+    pending :: Errable#(?Int32, (..failed)) = ..ok ..none
     index :: Int32 = 0
     while index < 2 {
         pending = edit(editor, target, index)

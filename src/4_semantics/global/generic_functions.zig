@@ -550,7 +550,7 @@ pub const Resolver = struct {
                     error.DeferredGenericFunction => return .deferred,
                     error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName => return err,
+                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName, error.UncontextualizedRecordValue => return err,
                     else => return .deferred,
                 }
             else
@@ -559,7 +559,7 @@ pub const Resolver = struct {
                     error.DeferredGenericFunction => return .deferred,
                     error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName => return err,
+                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName, error.UncontextualizedRecordValue => return err,
                     error.ConflictingGenericArgument => return err,
                     else => return .deferred,
                 };
@@ -2743,6 +2743,16 @@ pub const Resolver = struct {
                     try self.instantiateNodeWithExpected(node, self.resolver.graph.bindings.items[@intFromEnum(global)].ty)
                 else
                     try self.instantiateNode(node);
+                if (source_ty == null and !source.deferred_initialization and
+                    self.resolver.graph.node(initialization).content == .struct_value_literal and
+                    self.resolver.graph.node(initialization).ty == null)
+                {
+                    self.resolver.generics.comptime_failure = .{
+                        .source = self.resolver.sourceFor(self.module_index, source.source),
+                        .reason = "cannot infer the type of this record literal; add an explicit type annotation",
+                    };
+                    return error.UncontextualizedRecordValue;
+                }
                 var updated = self.resolver.graph.binding(global);
                 updated.initialization = initialization;
                 try self.resolver.graph.setBinding(self.resolver.allocator, global, updated);
@@ -3182,9 +3192,6 @@ pub const Resolver = struct {
             const range = literal.fields;
             var values: std.ArrayList(global_sg.ValueField) = .empty;
             defer values.deinit(self.resolver.allocator);
-            var fields: std.ArrayList(global_sg.Field) = .empty;
-            defer fields.deinit(self.resolver.allocator);
-            var complete_type = true;
             var choice_context: ?global_sg.GlobalTypeId = null;
             for (storage.value_fields.items[range.start..][0..range.len]) |field| {
                 if (!std.mem.eql(u8, self.resolver.modules[self.module_index].text(field.name), "value")) continue;
@@ -3202,26 +3209,9 @@ pub const Resolver = struct {
                     try self.instantiateNode(field.value);
                 const name = try self.copyString(field.name);
                 try values.append(self.resolver.allocator, .{ .name = name, .value = value });
-                if (self.resolver.graph.nodes.items[@intFromEnum(value)].ty) |field_ty| {
-                    try fields.append(self.resolver.allocator, .{
-                        .name = name,
-                        .ty = field_ty,
-                        .source = self.resolver.sourceFor(self.module_index, node.source),
-                    });
-                } else {
-                    complete_type = false;
-                }
             }
-            var ty: ?global_sg.GlobalTypeId = null;
-            if (complete_type) {
-                const field_start: u32 = @intCast(self.resolver.graph.fields.items.len);
-                try self.resolver.graph.fields.appendSlice(self.resolver.allocator, fields.items);
-                const structural: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.types.items.len)));
-                try self.resolver.graph.types.append(self.resolver.allocator, .{ .structural = .{
-                    .fields = .{ .start = field_start, .len = @intCast(fields.items.len) },
-                } });
-                ty = structural;
-            }
+            // Value literals have no independent type identity. Calls and
+            // annotated storage supply the expected nominal record later.
             var assumed: std.ArrayList(global_sg.ValueField) = .empty;
             defer assumed.deinit(self.resolver.allocator);
             if (self.callsite_reach) |context| {
@@ -3242,7 +3232,7 @@ pub const Resolver = struct {
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, assumed.items);
             const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
-            return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = ty, .content = .{
+            return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = null, .content = .{
                 .struct_value_literal = .{
                     .fields = .{ .start = start, .len = @intCast(values.items.len) },
                     .dispatch_prefix_positional_count = literal.dispatch_prefix_positional_count,

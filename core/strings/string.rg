@@ -527,6 +527,17 @@ implement Add#(&String, &StringView) (
     }
 )
 
+implement Add#(&String, StringView) (
+    .Result : Type = Errable#(String, (..out_of_memory))
+    .add    = #(.Provider: Type: Allocator) (
+        .left: &String, .right: StringView, .allocator: $&Provider = reach allocator
+    ) -> (.result: Result) {
+        assume allocator
+        left_view ::= view(left)
+        result = concat_views(&left_view, &right)
+    }
+)
+
 implement Add#(&String, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
@@ -564,6 +575,16 @@ implement Add#(&StringView, &StringView) (
         assume allocator
 
         result = concat_views(.left = left, .right = right)
+    }
+)
+
+implement Add#(&StringView, StringView) (
+    .Result : Type = Errable#(String, (..out_of_memory))
+    .add    = #(.Provider: Type: Allocator) (
+        .left: &StringView, .right: StringView, .allocator: $&Provider = reach allocator
+    ) -> (.result: Result) {
+        assume allocator
+        result = concat_views(left, &right)
     }
 )
 

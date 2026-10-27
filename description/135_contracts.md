@@ -169,6 +169,10 @@ representation hooks; primitive lowering happens after evidence selection and
 preserves constant expressions. It never replaces a custom implementation.
 Scalar equality also selects Equal evidence before primitive lowering, preserving
 IEEE NaN behavior and evaluating != once.
+Choices without payloads use the same selected-evidence path to compare tags.
+The operands must have the same type; matching variant names do not make two
+independent nominal choices interchangeable. Choices with payloads require their
+own equality implementation.
 
 Ordered comparisons use two contracts with ordinary Left and Right participants:
 

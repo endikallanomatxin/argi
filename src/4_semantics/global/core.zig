@@ -2485,8 +2485,7 @@ pub const Resolver = struct {
         // comparisons against bare variant tags are resolved separately.
         return self.isBuiltinComparable(left, right) or
             ((operator == .equal or operator == .not_equal) and
-                (self.isCEnumPair(left, right) or
-                    (types.equal(self.graph, left, right) and c_abi.isFunctionPointer(self.graph, left))));
+                self.isTagOrForeignEqualityRepresentation(left, right));
     }
 
     pub fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
@@ -2497,8 +2496,13 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn isForeignEqualityRepresentation(self: *const Resolver, left: global_sg.GlobalTypeId, right: global_sg.GlobalTypeId) bool {
-        return self.isCEnumPair(left, right) or (types.equal(self.graph, left, right) and c_abi.isFunctionPointer(self.graph, left));
+    pub fn isTagOrForeignEqualityRepresentation(self: *const Resolver, left: global_sg.GlobalTypeId, right: global_sg.GlobalTypeId) bool {
+        if (!types.equal(self.graph, left, right)) return false;
+        if (self.isCEnumPair(left, right) or c_abi.isFunctionPointer(self.graph, left)) return true;
+        const variants = types.variants(self.graph, left) orelse return false;
+        for (self.graph.variants.items[variants.start..][0..variants.len]) |variant|
+            if (variant.payload_type != null) return false;
+        return true;
     }
 
     fn isCEnumPair(self: *const Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {

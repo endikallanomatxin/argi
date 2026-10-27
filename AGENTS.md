@@ -177,7 +177,7 @@ feature first.
   and ordinary Ordering interpreters; scalar specializations retain direct predicates.
   These contracts have no Args participant or default operations. Unordered maps
   to false for all four predicates; TotalOrder excludes unordered by semantic promise.
-  C enum and callback equality selects Equal evidence;
+  Payloadless choice, C enum and callback equality selects Equal evidence;
   the compiler supplies only their private empty representation classification.
   Infer participant bindings from Args, including reached generic providers,
   never from Result. Concrete and specialized generic expressions share the
