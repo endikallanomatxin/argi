@@ -102,6 +102,7 @@ pub fn build(b: *std.Build) void {
     });
     tests_mod.addImport("llvm_c", llvm_c_mod);
     linkLlvmModule(tests_mod, llvm_lib_path, llvm_libs_raw);
+    if (target.result.os.tag == .linux) tests_mod.linkSystemLibrary("util", .{});
 
     const program_options = b.addOptions();
     program_options.addOption(u32, "workers", test_jobs);

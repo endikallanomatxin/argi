@@ -23,6 +23,10 @@ not Argi programs or build outputs. Shared helpers live in `tests/support.zig`.
 Additional compile-time imports or embedded files must also be included in the
 generated tree; runtime fixture paths continue to refer to the source checkout.
 
+Terminal editing and interruption probes live in `tests/terminal_probe.zig`.
+They use native pseudo-terminals on Linux and macOS, without a Python runner;
+Windows skips these POSIX terminal probes.
+
 Tests requiring custom orchestration across fixtures or shared installation
 state remain in `tests/test.zig` and run exclusively. The coverage check requires
 every substantive root `main.rg` to have a sibling `test.zig` or coverage in those
