@@ -1401,7 +1401,7 @@ pub const Resolver = struct {
                 var participants = [_]global_sg.GlobalTypeId{target_ty};
                 const node = try dispatch.contracts.callOperationCandidate(module_index, .{
                     .declaration = declaration,
-                    .participants = &participants,
+                    .participants = .{ .stable = &participants },
                 }, "deinit", input, context, source) orelse return error.DeferredImplicitFunction;
                 const call = node.content.function_call;
                 succeeded = true;

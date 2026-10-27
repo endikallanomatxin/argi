@@ -3,6 +3,7 @@ const contract_projections = @import("contract_projections.zig");
 const contract_safety = @import("contract_safety.zig");
 const standard_contracts = @import("standard_contracts.zig");
 const type_arguments = @import("../module/type_arguments.zig");
+const TypeRecipe = @import("type_recipe.zig").Recipe;
 const std = @import("std");
 const module_views = @import("../module/views.zig");
 const module_sg = @import("../module/graph.zig");
@@ -92,6 +93,7 @@ pub const Resolver = struct {
 
     instantiate_alias: ?*const fn (*anyopaque, global_sg.GlobalDeclId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
     infer_operation_parameters: ?*const fn (*anyopaque, usize, parameterized_storage.ContractRequirement, global_sg.GlobalNodeId, *generic_mod.Resolver.Bindings, reach_context.Context) anyerror!bool = null,
+    probe_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalFamilyDefinitionId, u32, []const u8, global_sg.GlobalNodeId, reach_context.Context, primitives.Range(global_sg.GlobalGenericArgId), *bool, *?ParticipantConformanceFailure) anyerror!?OperationCandidate = null,
     call_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, reach_context.Context, primitives.SourceRef) anyerror!global_sg.Node = null,
     instantiate_generic_operation: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId, bool) anyerror!global_sg.GlobalFunctionId = null,
 
@@ -1307,9 +1309,38 @@ pub const Resolver = struct {
 
     pub const OperationCandidate = struct {
         declaration: global_sg.GlobalFamilyDefinitionId,
-        participants: []global_sg.GlobalTypeId,
+        participants: union(enum) {
+            stable: []const global_sg.GlobalTypeId,
+            transient: TypeRecipe,
+            ambiguous,
+        },
         virtual: bool = false,
+
+        pub fn deinit(self: OperationCandidate, allocator: std.mem.Allocator) void {
+            switch (self.participants) {
+                .stable => |values| allocator.free(values),
+                .transient => |recipe| {
+                    var owned = recipe;
+                    owned.deinit(allocator);
+                },
+                .ambiguous => {},
+            }
+        }
     };
+
+    /// Takes ownership of participants on success. Probe-local identities are
+    /// encoded before rollback and published only after choosing an operation.
+    pub fn captureOperationCandidate(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participants: []const global_sg.GlobalTypeId, virtual: bool, boundary: TypeRecipe.Boundary) !OperationCandidate {
+        for (participants) |participant| if (@intFromEnum(participant) >= boundary.types) {
+            const roots = try self.allocator.alloc(?global_sg.GlobalTypeId, participants.len);
+            defer self.allocator.free(roots);
+            for (roots, participants) |*root, value| root.* = value;
+            const recipe = try TypeRecipe.capture(self.allocator, self.graph, boundary, roots);
+            self.allocator.free(participants);
+            return .{ .declaration = declaration, .participants = .{ .transient = recipe }, .virtual = virtual };
+        };
+        return .{ .declaration = declaration, .participants = .{ .stable = participants }, .virtual = virtual };
+    }
 
     pub const OperationCandidates = struct {
         items: std.ArrayList(OperationCandidate) = .empty,
@@ -1317,7 +1348,7 @@ pub const Resolver = struct {
         failure: ?ParticipantConformanceFailure = null,
 
         pub fn deinit(self: *OperationCandidates, allocator: std.mem.Allocator) void {
-            for (self.items.items) |candidate| allocator.free(candidate.participants);
+            for (self.items.items) |candidate| candidate.deinit(allocator);
             self.items.deinit(allocator);
         }
     };
@@ -1345,8 +1376,8 @@ pub const Resolver = struct {
                 const storage = &module.semantic.parameterized_storage;
                 for (storage.contract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
                     if (!std.mem.eql(u8, module.text(requirement.name), name)) continue;
-                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, arguments, &result.deferred, &result.failure)) |candidate| {
-                        errdefer self.allocator.free(candidate.participants);
+                    if (try self.probeOperationCandidate(module_index, .{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, arguments, &result.deferred, &result.failure)) |candidate| {
+                        errdefer candidate.deinit(self.allocator);
                         try result.items.append(self.allocator, candidate);
                     }
                 }
@@ -1366,10 +1397,21 @@ pub const Resolver = struct {
         return self.inferConstraintTypePattern(module_index, pattern, actual, bindings);
     }
 
-    fn probeOperationCandidate(self: *Resolver, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
+    fn probeOperationCandidate(self: *Resolver, caller_module_index: usize, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
             else => return null,
+        };
+        if (requirement.signature == null) {
+            const probe = self.probe_implementation_operation orelse return error.MissingOperationInstantiator;
+            return probe(self.function_context.?, caller_module_index, declaration, located.definition.participants.len, self.modules[located.module_index].text(requirement.name), input, context, arguments, deferred, failure);
+        }
+        const boundary: TypeRecipe.Boundary = .{
+            .types = self.graph.types.items.len,
+            .declarations = self.graph.declarations.items.len,
+            .nodes = self.graph.nodes.items.len,
+            .type_definitions = self.graph.type_definitions.items.len,
+            .family_definitions = self.graph.family_definitions.items.len,
         };
         var checkpoint = self.graph.beginTransaction(self.allocator);
         const caches = self.checkpointResolution();
@@ -1391,7 +1433,6 @@ pub const Resolver = struct {
             error.OutOfMemory => return err,
             else => return null,
         };
-        if (requirement.signature == null) return null;
         const input_pattern = storage.ir.representation(requirement.signature.?.input);
         const fields = if (input_pattern == .resolved and input_pattern.resolved == .structural)
             input_pattern.resolved.structural.fields
@@ -1517,8 +1558,9 @@ pub const Resolver = struct {
         };
         switch (try self.core.matchCallInputWithReach(global_types.fields(self.graph, required) orelse return error.InvalidContractRequirementInput, input, context)) {
             .applicable => {
+                const candidate = try self.captureOperationCandidate(declaration, participants, virtual, boundary);
                 transferred = true;
-                return .{ .declaration = declaration, .participants = participants, .virtual = virtual };
+                return candidate;
             },
             .deferred => deferred.* = true,
             .no_match => {},
@@ -1531,6 +1573,30 @@ pub const Resolver = struct {
     }
 
     pub fn callSpecializedOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !?global_sg.Node {
+        var materialized: ?[]global_sg.GlobalTypeId = null;
+        defer if (materialized) |values| self.allocator.free(values);
+        const participants = switch (candidate.participants) {
+            .stable => |values| values,
+            .transient => |recipe| values: {
+                const roots = try self.allocator.alloc(?global_sg.GlobalTypeId, recipe.roots.len);
+                defer self.allocator.free(roots);
+                @memset(roots, null);
+                try recipe.publish(self.allocator, self.generics, roots);
+                const values = try self.allocator.alloc(global_sg.GlobalTypeId, roots.len);
+                materialized = values;
+                for (values, roots) |*value, root| value.* = root.?;
+                break :values values;
+            },
+            .ambiguous => {
+                self.participant_conformance_failure = .{
+                    .source = source,
+                    .contract_name = self.graph.familyDefinitionName(candidate.declaration),
+                    .operation = name,
+                    .reason = "operation inputs do not determine a unique participant tuple; qualify the contract explicitly",
+                };
+                return error.InvalidContractOperation;
+            },
+        };
         if (candidate.virtual) {
             const located = self.findContractDefinition(candidate.declaration) orelse return null;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
@@ -1543,16 +1609,16 @@ pub const Resolver = struct {
             }
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
-            const interface = self.contractUse(candidate.participants[0]) orelse return null;
+            const interface = self.contractUse(participants[0]) orelse return null;
             if (!self.bindContractUseArguments(interface, located, &bindings)) return null;
-            bindings.types[located.definition.participants.start] = candidate.participants[0];
+            bindings.types[located.definition.participants.start] = participants[0];
             const required = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
             if (!try self.core.completeCallInputFieldsWithReach(global_types.fields(self.graph, required).?, input, context)) return null;
         }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        if (!candidate.virtual) for (candidate.participants) |participant|
+        if (!candidate.virtual) for (participants) |participant|
             try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
-        const base = try self.generics.internType(.{ .generic = .{ .base = candidate.declaration, .arguments = .{ .start = start, .len = if (candidate.virtual) 0 else @intCast(candidate.participants.len) } } });
+        const base = try self.generics.internType(.{ .generic = .{ .base = candidate.declaration, .arguments = .{ .start = start, .len = if (candidate.virtual) 0 else @intCast(participants.len) } } });
         return self.makeSpecializedScopedOperationCall(module_index, base, name, arguments, input, context, source);
     }
 
@@ -2929,7 +2995,7 @@ pub const Resolver = struct {
         };
     }
 
-    fn resolveFunctionRef(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !global_sg.GlobalDeclId {
+    pub fn resolveFunctionRef(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !global_sg.GlobalDeclId {
         return switch (reference) {
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
             .external => |external| self.core.resolveDeclaration(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{.function}),

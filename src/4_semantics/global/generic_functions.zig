@@ -1053,42 +1053,134 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         context: ReachInferenceContext,
         bindings: *generic_mod.Resolver.Bindings,
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
+        associated: primitives.Range(ir.ParameterizedGenericArgId),
     ) !?global_sg.GlobalTypeId {
-        if (!operation.instantiate_associated) return null;
-        const local = switch (operation.function) {
-            .module => |declaration| declaration,
-            .external => return null,
-        };
-        const declaration = globalizer.globalDecl(self.offsets[module_index], local);
+        const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
+        const declaration = try contracts.resolveFunctionRef(module_index, operation.function);
         const located = self.findParameterized(declaration) orelse {
+            if (arguments.len != 0) return null;
             const function_id = self.graph.declaration(declaration).function_id orelse return null;
             return self.graph.function(function_id).input_type;
         };
-        std.debug.assert(located.module_index == module_index);
         const function = located.parameterized;
-        if (function.captured_parameter_count != captures.len) return null;
-        var inferred = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+        const capture_count = if (operation.instantiate_associated) captures.len else 0;
+        if (operation.instantiate_associated and (located.module_index != module_index or function.captured_parameter_count < capture_count)) return null;
+        var inferred = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer inferred.deinit(self.allocator);
-        for (0..captures.len) |index| {
+        for (0..capture_count) |index| {
             const from = captures.start + index;
             const to = function.parameters.start + index;
             inferred.types[to] = bindings.types[from];
             inferred.ints[to] = bindings.ints[from];
             inferred.definitions[to] = bindings.definitions[from];
         }
-        if (!try self.inferBindingsFromInput(module_index, function.input, input, &inferred)) return null;
-        if (!try self.inferBindingsFromReachDefaults(module_index, function.input, input, &inferred, context)) return null;
-        if (!try self.inferAndValidateConstraints(module_index, function.parameters, &inferred)) return null;
-        if (!self.parametersBound(module_index, function.parameters, &inferred)) return null;
-        const signature = try self.generics.instantiateParameterizedType(module_index, function.input, &inferred);
-        for (0..captures.len) |index| {
+        const own_parameters: primitives.Range(ir.ComptimeParameterId) = .{
+            .start = function.parameters.start + function.captured_parameter_count,
+            .len = function.parameters.len - function.captured_parameter_count,
+        };
+        self.generics.bindGlobalArgumentsPartial(located.module_index, own_parameters, arguments, &inferred) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return null,
+        };
+        if (!try self.inferBindingsFromInput(located.module_index, function.input, input, &inferred)) return null;
+        if (!try self.inferBindingsFromReachDefaults(located.module_index, function.input, input, &inferred, context)) return null;
+        const implementation_parameters: primitives.Range(ir.ComptimeParameterId) = .{ .start = function.parameters.start, .len = capture_count };
+        if (!try self.inferAndValidateConstraints(located.module_index, implementation_parameters, &inferred) or
+            !self.parametersBound(located.module_index, implementation_parameters, &inferred)) return null;
+        for (0..capture_count) |index| {
             const from = function.parameters.start + index;
             const to = captures.start + index;
             bindings.types[to] = inferred.types[from];
             bindings.ints[to] = inferred.ints[from];
             bindings.definitions[to] = inferred.definitions[from];
         }
+        if (operation.instantiate_associated) {
+            const values = try self.generics.instantiateParameterizedArguments(module_index, associated, bindings);
+            self.generics.bindGlobalArgumentsPartial(located.module_index, .{
+                .start = function.parameters.start + capture_count,
+                .len = function.captured_parameter_count - capture_count,
+            }, values, &inferred) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return null,
+            };
+        }
+        if (!try self.inferAndValidateConstraints(located.module_index, own_parameters, &inferred) or
+            !self.parametersBound(located.module_index, own_parameters, &inferred)) return null;
+        const signature = self.generics.instantiateParameterizedType(located.module_index, function.input, &inferred) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return null,
+            else => return err,
+        };
         return signature;
+    }
+
+    /// Probe an implementation-owned interface through ordinary input inference.
+    /// Bodies stay deferred, and all graph/call/default effects are rolled back.
+    pub fn probeImplementationOperation(function_context: *anyopaque, module_index: usize, declaration: global_sg.GlobalFamilyDefinitionId, participant_count: u32, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?contract_mod.ParticipantConformanceFailure) anyerror!?contract_mod.Resolver.OperationCandidate {
+        const self: *Resolver = @ptrCast(@alignCast(function_context));
+        const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
+        const boundary: @import("type_recipe.zig").Recipe.Boundary = .{
+            .types = self.graph.types.items.len,
+            .declarations = self.graph.declarations.items.len,
+            .nodes = self.graph.nodes.items.len,
+            .type_definitions = self.graph.type_definitions.items.len,
+            .family_definitions = self.graph.family_definitions.items.len,
+        };
+        var scope = self.beginSpeculation();
+        defer scope.deinit();
+        const saved_publication = self.publishing_signature;
+        self.publishing_signature = true;
+        defer self.publishing_signature = saved_publication;
+        const prefix = try self.allocator.alloc(implementation_arguments.Participant, participant_count);
+        defer self.allocator.free(prefix);
+        @memset(prefix, .inferred);
+        var resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = self.generics, .functions = self, .contracts = contracts };
+        const result = resolver.inferOperationWithArguments(declaration, prefix, name, input, reach, arguments) catch |err| switch (err) {
+            error.ComptimeExecutionPending => {
+                scope.retainPendingExecution();
+                deferred.* = true;
+                return null;
+            },
+            else => return err,
+        };
+        const selected = switch (result) {
+            .selected => |value| value,
+            .ambiguous => return .{ .declaration = declaration, .participants = .ambiguous },
+            .deferred => {
+                deferred.* = true;
+                return null;
+            },
+            else => return null,
+        };
+        var retained = false;
+        defer if (!retained) self.allocator.free(selected.participants);
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        for (selected.participants) |participant| try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
+        const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = participant_count } } });
+        _ = contracts.makeSpecializedScopedOperationCall(module_index, contract, name, arguments, input, reach, self.graph.node(input).source) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            error.ComptimeExecutionPending => {
+                scope.retainPendingExecution();
+                deferred.* = true;
+                return null;
+            },
+            else => {
+                if (contracts.participant_conformance_failure) |diagnostic| {
+                    var retained_failure = diagnostic;
+                    retained_failure.input = null;
+                    retained_failure.output = null;
+                    const owner = @intFromEnum(self.graph.moduleForDeclaration(self.graph.familyDeclaration(declaration)).?);
+                    const local = @intFromEnum(self.graph.familyDeclaration(declaration)) - self.offsets[owner].declaration_base;
+                    retained_failure.contract_name = self.modules[owner].text(self.modules[owner].declarations.items[local].name);
+                    retained_failure.operation = name;
+                    failure.* = retained_failure;
+                }
+                return null;
+            },
+        } orelse return null;
+        const candidate = try contracts.captureOperationCandidate(declaration, selected.participants, false, boundary);
+        retained = true;
+        return candidate;
     }
 
     fn inferAndValidateConstraints(

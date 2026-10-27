@@ -15973,3 +15973,41 @@ test "feature_tests/contracts/340_tag_choice_equality" {
 test "feature_tests/contracts/341X_tag_choice_nominal_identity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/341X_tag_choice_nominal_identity", "no conformance for the qualified operation's participants", "without a diagnostic");
 }
+
+test "feature_tests/contracts/342_open_operation_inference" {
+    const path = "tests/feature_tests/contracts/342_open_operation_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/343X_open_operation_identity_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/343X_open_operation_identity_ambiguity", "multiple applicable operation identities", "without a diagnostic");
+}
+
+test "feature_tests/contracts/344X_open_operation_participant_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/344X_open_operation_participant_ambiguity", "operation inputs do not determine a unique participant tuple", "without a diagnostic");
+}
+
+test "feature_tests/contracts/345_open_operation_provider" {
+    const path = "tests/feature_tests/contracts/345_open_operation_provider";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "argi repl preserves inferred operation participants across rejected submissions" {
+    const commands =
+        \\first ::= build_cell(42)
+        \\number :: UInt8 = 5
+        \\bad ::= build_cell(number) + true
+        \\first.value
+        \\second ::= build_cell(7)
+        \\first = second
+        \\first.value
+        \\third ::= build_cell(number)
+        \\third.value
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic("tests/feature_tests/contracts/342_open_operation_inference/main.rg", commands, "_0 = 42\n_1 = 7\n_2 = 5\n", "operator '+' is not defined");
+}

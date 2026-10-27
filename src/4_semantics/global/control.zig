@@ -707,7 +707,7 @@ pub const Resolver = struct {
         var participants = [_]global_sg.GlobalTypeId{participant};
         // Generated protocol calls retain the loop's lexical reach context.
         // Selected operations can gain transitive inputs on later passes.
-        const node = try contracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = &participants }, name, input, context, source) orelse return .deferred;
+        const node = try contracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = .{ .stable = &participants } }, name, input, context, source) orelse return .deferred;
         const value = try self.appendNode(source, node.ty orelse return .deferred, node.content);
         return .{ .call = value };
     }

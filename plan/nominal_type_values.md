@@ -222,8 +222,10 @@ not proof that the complete migration passes.
 Implementation-owned operation signatures use `.operation: _`. Their definitions
 or aliases use ordinary function inference, defaults, reached capabilities and
 Safety. Qualified static calls work; erased virtual interfaces require fixed
-signatures. General unqualified inference and projected signature properties
-remain to be completed where required by the final contract design.
+signatures. Unqualified static calls infer participants from input signatures,
+resolve operation identity before conformance specificity, and preserve inferred
+types through probe rollback using the existing type recipes. Projected signature
+properties remain to be reviewed where required by the final contract design.
 
 Init now has only T as participant. The constructor resolver selects its evidence
 before inferring operation-local parameters and passes ordinary inputs directly.
@@ -252,14 +254,12 @@ Outstanding before completion:
 
 - Finish and validate generic selected-evidence queries: a generic operation can
   have many concrete functions, and matching its family alone is insufficient.
-  Captured argument values must match the selected conformance.
+  Captured argument values must match the selected conformance. Implementation
+  members still reject bound function-value aliases such as `identity#(Int32)`;
+  retain their definition value and captures instead of just a declaration ID.
 - Review remaining anonymous aggregate/choice identities, contextual literals,
   associated signature properties and generic operation inference against the
   design above. Remove obsolete representations rather than keep fallbacks.
-- Complete unqualified lookup of implementation-owned signatures through shared
-  input inference. Candidate probes roll back: any inferred participant created
-  by a probe needs a stable representation before it can survive that rollback.
-  Do not retain provisional type IDs or infer from operation results.
 - Check shorthand assume on named signatures whose fields become known late;
   current acquisition functions retain explicit assume bindings.
 - Finish fixture diagnostics, editor navigation and declaration metadata cleanup;
@@ -280,10 +280,9 @@ The complete contract program suite passes after the arithmetic migration,
 including static provider inference in native, VM and #run execution. Required
 operation results are checked against Result; auxiliary inputs cannot create
 another conformance for one operand tuple. Former structural argument fixtures
-now use explicit nominal argument families. The general run's shared phase passed
-762 cases with 11 optional skips. Its reported worker failures now pass together
-in a focused batch, including diagnostic locations, nominal signature reuse,
-StringView concatenation and reason-set comparisons. Payloadless choice equality
+now use explicit nominal argument families. Full program validation passed on
+a464d1b1: 2,427 passed and 11 optional skips. Payloadless choice equality
 selects ordinary Equal evidence through a private representation fact; distinct
-nominal choices remain incompatible. A fresh complete run is still required;
-no full program-suite success is claimed.
+nominal choices remain incompatible. The subsequent unqualified-operation changes
+pass the internal and contract suites, plus native/VM/compile-time inference and
+REPL rollback coverage. Repeat full validation after closing the remaining work.

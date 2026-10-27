@@ -122,6 +122,12 @@ rather than multiple Init conformances distinguished only by argument signatures
 Implementation-owned signatures require static selection; virtual interfaces need
 a fixed declared signature.
 
+Unqualified calls can infer participants from implementation-owned inputs,
+including ordinary generic aliases and operation-local compile-time parameters.
+Inputs must identify a unique operation and participant tuple; an expected output
+type does not disambiguate either. Signature probes discard their semantic
+effects, and preserve any newly inferred nominal types until actual selection.
+
 Conversion uses `Convert#(Source, Target)` and its associated `Result`. The result
 must be `Target` or an `Errable` containing it. Explicit conversion syntax is
 `convert#(.to: Target)(.value = source)`, usually written as

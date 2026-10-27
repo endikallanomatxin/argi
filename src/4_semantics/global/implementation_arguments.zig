@@ -166,6 +166,10 @@ pub const Resolver = struct {
     /// Infer unknown participants from operation inputs and lexical capabilities.
     /// Associated results never select an implementation.
     pub fn inferOperation(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, operation_name: []const u8, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
+        return self.inferOperationWithArguments(declaration, prefix, operation_name, input, reach, .{ .start = 0, .len = 0 });
+    }
+
+    pub fn inferOperationWithArguments(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, operation_name: []const u8, input: graph_mod.GlobalNodeId, reach: reach_context.Context, arguments: primitives.Range(graph_mod.GlobalGenericArgId)) !Result {
         const allocator = self.core.allocator;
         const Candidate = struct { module: usize, template: storage_mod.ContractConformance, participants: []const graph_mod.GlobalTypeId };
         var candidates: std.ArrayList(Candidate) = .empty;
@@ -222,7 +226,7 @@ pub const Resolver = struct {
                     const operation = for (storage.contract_operations.items[template.operations.start..][0..template.operations.len]) |candidate| {
                         if (std.mem.eql(u8, module.text(candidate.name), operation_name)) break candidate;
                     } else continue :templates;
-                    break :blk self.functions.inferImplementationInput(module_index, operation, template.parameters, input, reach, &bindings) catch |err| switch (err) {
+                    break :blk self.functions.inferImplementationInput(module_index, operation, template.parameters, input, reach, &bindings, arguments, template.associated_arguments) catch |err| switch (err) {
                         error.ConflictingGenericArgument => null,
                         else => return err,
                     } orelse continue :templates;
