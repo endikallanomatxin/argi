@@ -174,10 +174,11 @@ second specialization cache. Concrete calls must satisfy the instantiated
 requirement before publication. Virtual use requires a fixed supported interface
 and must not bypass these checks.
 
-Before migrating those protocols, specify how contracts declare generic operation
-signatures, how associated families share their parameters, and how implementation
-compatibility is verified. Preserve static inference, explicit/reached capability
-rules, safety summaries, and virtual signature restrictions.
+Fixed and declared-generic signatures use the compatibility rule above. An
+implementation-owned operation does not provide a fixed virtual interface;
+virtual use must reject it. Init uses its explicit Args participant rather than
+an implementation-owned signature. Preserve static inference, explicit/reached
+capabilities, safety summaries and virtual signature restrictions.
 
 ## Implementation sequence and acceptance
 
@@ -201,12 +202,13 @@ independent same-shape definitions, repeated/nested specialization, missing cont
 defaults, generic capabilities, rejected transactions, cached modules, REPL, and
 `#run`; compare native and bytecode behavior where execution is involved.
 
-Open details: generic operation/family signature syntax and checking; precise
-multiple-output construction/destructuring; classification of compile-time family
-parameters; and phase-safe introspection. Settle these at the relevant boundary
-before adding implementation exceptions.
+Multiple outputs form an ordinary named or inline result record. Reading named
+fields and assigning the complete result use the same nominal rules as other
+records. A new destructuring shorthand is not required for this refactor.
+Compile-time families retain their producer classification and captures; they
+are not runtime Type values or callable factories.
 
-## Current state and remaining work
+## Completed implementation and validation
 
 Implemented:
 
@@ -224,23 +226,32 @@ Implemented:
 - Named inputs take lexical precedence over captured parameters. Deferred defaults
   reuse caller assumptions and roll back provisional effects before retrying.
 
-Validation is not complete. The consolidated ReleaseSafe program run passes
-2,442 cases, skips 11 optional cases and leaves two diagnostic failures for
-unknown constructor/destructor participants. The compiler now diagnoses those
-only after resolution reaches its fixed point, preserving delayed alias completion.
-Focused validation passes all four affected cases, including delayed alias
-specialization and invalid defaults. The complete Debug internal suite passes,
-including LSP navigation and closed-pattern coverage. Official formatting passes
-for core and more. Repeat the final suites after any further semantic changes.
+Validation of 8506f809:
 
-Before completion:
+- Complete ReleaseSafe program suite: 2,444 passed, 11 optional skips, no failures.
+- Complete Debug internal suite: 1,045 passed, one skip, no failures.
+- Official formatter check passes for core and more; changed Zig files pass
+  zig fmt and the worktree passes git diff --check.
+- Init participant case 353 succeeds in native and VM execution, including its
+  #run expression. Its LLVM contains direct calls to the selected implementations.
 
-- Pass the complete program and internal suites on the consolidated changes,
-  including native/VM/REPL/comptime, rejected transactions, imports, caches,
-  partial targets, defaults, ambiguity, ownership and cleanup.
-- Audit remaining aggregate/choice identity and contextual construction paths;
-  remove identity fallbacks or declaration metadata that the new model supersedes.
-- Check generic operation inference and signature compatibility against this
-  reference; preserve static providers and explicit operation identities.
-- Synchronize examples and descriptions, check official formatting, and commit
-  the coherent migration without the local architecture audit or for-later note.
+The implementation review found no remaining construction registry, unary Init
+compatibility path, declaration-owned ordinary generic parameters or structural
+identity fallback for source record definitions. Internal structural shapes remain
+representation metadata. Nominal identity, aliases and specialization publication
+use the shared definition/capture model. Operation signature compatibility remains
+a separate explicit rule, not general structural type equality.
+
+The coherent migration is committed without the local architecture audit or
+for-later note. This closes the branch objective; optional integrations skipped by
+the ordinary local suite retain their existing environmental requirements.
+
+Audit evidence: syntax tests reject declaration-owned generic parameters; global
+generic tests cover canonical identities, captured prefixes and speculative ID
+reuse. Types 302–320 and 348 cover aliases, named/imported signatures, nested
+choices and contextual construction in native, VM and #run execution. Interactive
+tests cover persistent Init evidence, partial targets, static providers, defaults
+and rejected submissions. Operation compatibility is centralized in types.zig;
+inline contextual signatures reuse required identities without equating unrelated
+nominal types. LLVM inspection of contract case 353 confirms direct calls to the
+selected conformances; native and VM execution both succeed.
