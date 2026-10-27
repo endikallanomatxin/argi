@@ -377,7 +377,10 @@ before adding implementation exceptions.
   function signatures/bodies; family defaults use the same captured values.
   Retained definition references distinguish lexical family parameters from named
   declarations. Explicit binding checks remaining arity and parameter kinds;
-  universal compatibility of bounds remains pending.
+  Bound compatibility rejects extra restrictions on an unrestricted signature
+  and compares explicit contract identities and symbolic arguments under
+  alpha-renaming. Unrestricted supplied families remain usable where a bound
+  is promised. General implication through contract composition remains pending.
   Concrete call arguments now share the retained-IR lowering path, removing the
   separate literal-only evaluator. Scoped operation and virtual-evidence consumers
   resolve those arguments through the common resolver. Native, VM and `#run`
@@ -426,8 +429,10 @@ before adding implementation exceptions.
   accepts incompatible nested arities. Positive nested application and negative
   nested-signature fixtures complement the existing top-level arity checks.
   Integer parameter types are compared by semantic identity, including aliases,
-  nested signatures and captured lexical environments. Bounds still need
-  implication checks; this does not claim universal signature compatibility.
+  nested signatures and captured lexical environments. Explicit bounds compare
+  symbolic parameter positions, reference types and fixed arguments rather than
+  testing a representative instance. Contract-composition implication remains
+  outside this check; this does not claim universal signature compatibility.
 
 - Specialization in value position uses a shared entity-application recipe.
   Type producers yield Type values; function producers retain their origin and

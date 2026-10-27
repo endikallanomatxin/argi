@@ -15870,3 +15870,18 @@ test "feature_tests/types/342_associated_family_arguments" {
     try runExpect(path, 42);
     try vmExpect(path, 42, null);
 }
+
+test "feature_tests/types/343X_family_incompatible_bound" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/343X_family_incompatible_bound", "type-family argument does not match its parameter signature", "without a diagnostic");
+}
+
+test "feature_tests/types/344_family_alpha_equivalent_bounds" {
+    const path = "tests/feature_tests/types/344_family_alpha_equivalent_bounds";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/345X_family_bound_arguments" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/345X_family_bound_arguments", "type-family argument does not match its parameter signature", "without a diagnostic");
+}

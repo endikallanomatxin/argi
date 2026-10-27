@@ -961,14 +961,15 @@ pub const Resolver = struct {
         return self.parameterShapesMatch(module_index, expected, expected_bindings, located.module_index, .{
             .start = parameters.start + actual.captures.len,
             .len = parameters.len - actual.captures.len,
-        }, &actual_bindings, 0);
+        }, &actual_bindings, 0, null);
     }
 
-    fn parameterShapesMatch(self: *Resolver, expected_module: usize, expected: primitives.Range(ir.ComptimeParameterId), expected_bindings: *Bindings, actual_module: usize, actual: primitives.Range(ir.ComptimeParameterId), actual_bindings: *Bindings, depth: usize) anyerror!bool {
+    fn parameterShapesMatch(self: *Resolver, expected_module: usize, expected: primitives.Range(ir.ComptimeParameterId), expected_bindings: *Bindings, actual_module: usize, actual: primitives.Range(ir.ComptimeParameterId), actual_bindings: *Bindings, depth: usize, parent: ?*const FamilySignatureScope) anyerror!bool {
         if (depth > 128) return error.CompileTimeTypeDepthLimit;
         if (expected.len != actual.len) return false;
         const expected_storage = &self.modules[expected_module].semantic.parameterized_storage;
         const actual_storage = &self.modules[actual_module].semantic.parameterized_storage;
+        const scope = FamilySignatureScope{ .expected_module = expected_module, .actual_module = actual_module, .expected = expected, .actual = actual, .expected_bindings = expected_bindings, .actual_bindings = actual_bindings, .parent = parent };
         for (0..expected.len) |position| {
             const left = expected_storage.comptime_parameters.items[expected.start + position];
             const right = actual_storage.comptime_parameters.items[actual.start + position];
@@ -976,16 +977,129 @@ pub const Resolver = struct {
             // An unconstrained signature promises every value of this kind.
             // The supplied family cannot silently narrow that domain.
             if (left.constraint == null and right.constraint != null) return false;
+            if (right.constraint) |actual_constraint| {
+                const expected_constraint = left.constraint orelse return false;
+                const required = expected_storage.contract_constraints.items[@intFromEnum(expected_constraint)];
+                const supplied = actual_storage.contract_constraints.items[@intFromEnum(actual_constraint)];
+                if (try self.constraintFamily(expected_module, required.contract_ref) != try self.constraintFamily(actual_module, supplied.contract_ref)) return false;
+                if (!try self.signatureArgumentsMatch(&scope, required.arguments, supplied.arguments, depth + 1)) return false;
+            }
             if (left.kind == .comptime_int) {
                 const expected_type = try self.instantiateParameterizedType(expected_module, left.value_type orelse return false, expected_bindings);
                 const actual_type = try self.instantiateParameterizedType(actual_module, right.value_type orelse return false, actual_bindings);
                 if (!global_types.equal(self.graph, expected_type, actual_type)) return false;
             }
             if (left.kind == .definition) {
-                if (!try self.parameterShapesMatch(expected_module, left.family_parameters orelse return false, expected_bindings, actual_module, right.family_parameters orelse return false, actual_bindings, depth + 1)) return false;
+                if (!try self.parameterShapesMatch(expected_module, left.family_parameters orelse return false, expected_bindings, actual_module, right.family_parameters orelse return false, actual_bindings, depth + 1, &scope)) return false;
             }
         }
         return true;
+    }
+
+    const FamilySignatureScope = struct {
+        expected_module: usize,
+        actual_module: usize,
+        expected: primitives.Range(ir.ComptimeParameterId),
+        actual: primitives.Range(ir.ComptimeParameterId),
+        expected_bindings: *Bindings,
+        actual_bindings: *Bindings,
+        parent: ?*const FamilySignatureScope,
+
+        fn sameParameter(self: *const FamilySignatureScope, expected: ir.ComptimeParameterId, actual: ir.ComptimeParameterId) bool {
+            const left = @intFromEnum(expected);
+            const right = @intFromEnum(actual);
+            if (left >= self.expected.start and left - self.expected.start < self.expected.len)
+                return right >= self.actual.start and right - self.actual.start == left - self.expected.start;
+            return if (self.parent) |parent| parent.sameParameter(expected, actual) else false;
+        }
+    };
+
+    fn constraintFamily(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !global_sg.GlobalFamilyDefinitionId {
+        return switch (reference) {
+            .module => |id| self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], id)) orelse error.ExpectedParameterizedDefinition,
+            .external => |id| self.resolveExternalFamily(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(id)], &.{.contract_type}),
+        };
+    }
+
+    /// Compare universal bound recipes under alpha-renaming. No representative
+    /// concrete type can prove that a family accepts every promised argument.
+    fn signatureArgumentsMatch(self: *Resolver, scope: *const FamilySignatureScope, expected: primitives.Range(ir.ParameterizedGenericArgId), actual: primitives.Range(ir.ParameterizedGenericArgId), depth: usize) anyerror!bool {
+        if (depth > 128) return error.CompileTimeTypeDepthLimit;
+        if (expected.len != actual.len) return false;
+        const left_module = &self.modules[scope.expected_module];
+        const right_module = &self.modules[scope.actual_module];
+        for (0..expected.len) |offset| {
+            const left = left_module.semantic.parameterized_storage.ir.generic_arguments.items[expected.start + offset];
+            const right = right_module.semantic.parameterized_storage.ir.generic_arguments.items[actual.start + offset];
+            if (left.name.len != 0 and right.name.len != 0 and !std.mem.eql(u8, left_module.text(left.name), right_module.text(right.name))) return false;
+            if (left.value == .type and right.value == .type) {
+                if (!try self.signatureTypesMatch(scope, left.value.type, right.value.type, depth + 1)) return false;
+            } else if (left.value == .comptime_int and right.value == .comptime_int) {
+                if (!try self.signatureIntegersMatch(scope, left.value.comptime_int, right.value.comptime_int, depth + 1)) return false;
+            } else if (left.value == .projection and right.value == .projection) {
+                if (!std.mem.eql(u8, left_module.text(left.value.projection.member), right_module.text(right.value.projection.member)) or !try self.signatureTypesMatch(scope, left.value.projection.base, right.value.projection.base, depth + 1)) return false;
+            } else if (left.value == .definition and right.value == .definition and left.value.definition == .parameter and right.value.definition == .parameter and scope.sameParameter(left.value.definition.parameter, right.value.definition.parameter)) {
+                continue;
+            } else {
+                const left_value = try self.instantiateSignatureArgument(scope.expected_module, left.value, scope.expected_bindings);
+                const right_value = try self.instantiateSignatureArgument(scope.actual_module, right.value, scope.actual_bindings);
+                if (!global_types.genericArgumentValuesEqual(self.graph, left_value, right_value)) return false;
+            }
+        }
+        return true;
+    }
+
+    fn instantiateSignatureArgument(self: *Resolver, module_index: usize, value: ir.GenericArgument.Value, bindings: *Bindings) !global_sg.GenericArgument.Value {
+        return switch (value) {
+            .type => |ty| .{ .type = try self.instantiateParameterizedType(module_index, ty, bindings) },
+            .definition => |definition| .{ .definition = try self.instantiateDefinitionValue(module_index, definition, bindings) },
+            .comptime_int => |integer| .{ .comptime_int = try self.evalInt(module_index, integer, bindings) },
+            .projection => |projection| self.instantiateArgumentProjection(module_index, projection, bindings),
+        };
+    }
+
+    fn signatureIntegersMatch(self: *Resolver, scope: *const FamilySignatureScope, expected: ir.ParameterizedIntExprId, actual: ir.ParameterizedIntExprId, depth: usize) anyerror!bool {
+        if (depth > 128) return error.CompileTimeTypeDepthLimit;
+        const left = self.modules[scope.expected_module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(expected)];
+        const right = self.modules[scope.actual_module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(actual)];
+        if (left == .parameter and right == .parameter and scope.sameParameter(left.parameter, right.parameter)) return true;
+        if (left == .binary and right == .binary) return left.binary.operator == right.binary.operator and try self.signatureIntegersMatch(scope, left.binary.left, right.binary.left, depth + 1) and try self.signatureIntegersMatch(scope, left.binary.right, right.binary.right, depth + 1);
+        const left_value = self.evalInt(scope.expected_module, expected, scope.expected_bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
+        const right_value = self.evalInt(scope.actual_module, actual, scope.actual_bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
+        return left_value == right_value;
+    }
+
+    fn signatureTypesMatch(self: *Resolver, scope: *const FamilySignatureScope, expected: ir.ParameterizedTypeId, actual: ir.ParameterizedTypeId, depth: usize) anyerror!bool {
+        if (depth > 128) return error.CompileTimeTypeDepthLimit;
+        const left = self.modules[scope.expected_module].semantic.parameterized_storage.ir.types.items[@intFromEnum(expected)];
+        const right = self.modules[scope.actual_module].semantic.parameterized_storage.ir.types.items[@intFromEnum(actual)];
+        if (left == .parameter and right == .parameter and scope.sameParameter(left.parameter, right.parameter)) return true;
+        if (left == .array and right == .array) return try self.signatureIntegersMatch(scope, left.array.length, right.array.length, depth + 1) and try self.signatureTypesMatch(scope, left.array.element, right.array.element, depth + 1);
+        if (left == .resolved and right == .resolved) {
+            if (left.resolved == .nullable and right.resolved == .nullable) return self.signatureTypesMatch(scope, left.resolved.nullable, right.resolved.nullable, depth + 1);
+            if (left.resolved == .pointer and right.resolved == .pointer) return left.resolved.pointer.mutability == right.resolved.pointer.mutability and try self.signatureTypesMatch(scope, left.resolved.pointer.child, right.resolved.pointer.child, depth + 1);
+            if (left.resolved == .generic and right.resolved == .generic) {
+                const left_definition = try self.resolveParameterizedDefinitionValue(scope.expected_module, left.resolved.generic.base, scope.expected_bindings);
+                const right_definition = try self.resolveParameterizedDefinitionValue(scope.actual_module, right.resolved.generic.base, scope.actual_bindings);
+                if (left_definition.origin != right_definition.origin or !global_types.genericArgumentsEqual(self.graph, left_definition.captures, right_definition.captures)) return false;
+                return self.signatureArgumentsMatch(scope, left.resolved.generic.arguments, right.resolved.generic.arguments, depth + 1);
+            }
+        }
+        const left_type = self.instantiateParameterizedType(scope.expected_module, expected, scope.expected_bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.UnboundDefinitionParameter => return false,
+            else => return err,
+        };
+        const right_type = self.instantiateParameterizedType(scope.actual_module, actual, scope.actual_bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.UnboundDefinitionParameter => return false,
+            else => return err,
+        };
+        return global_types.identityEqual(self.graph, left_type, right_type);
     }
 
     pub fn inferDefinitionValue(self: *Resolver, module_index: usize, pattern: @FieldType(ir.GenericArgument.Value, "definition"), actual: global_sg.DefinitionValue, bindings: *Bindings) !bool {
