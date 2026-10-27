@@ -33,7 +33,9 @@ pub const ParameterizedMatchCaseId = enum(u32) { _ };
 
 pub const Ids = struct {
     pub const DeclId = ParameterizedDeclId;
+    pub const FamilyDefinitionId = ParameterizedDeclId;
     pub const TypeId = ParameterizedTypeId;
+    pub const TypeDefinitionId = entities.ModuleTypeDefinitionId;
     pub const FunctionId = ParameterizedFunctionId;
     pub const BindingId = ParameterizedBindingId;
     pub const NodeId = ParameterizedNodeId;
@@ -75,12 +77,14 @@ pub const VariantRef = union(enum) {
 
 pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo };
 
+pub const AssociatedProjection = struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef };
+
 pub const IntExpression = union(enum) {
     literal: i64,
     // Retain ordinary executable IR for staged compile-time evaluation.
     execution: ParameterizedNodeId,
     parameter: ComptimeParameterId,
-    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
+    projection: AssociatedProjection,
     binary: struct {
         operator: IntBinaryOperator,
         left: ParameterizedIntExprId,
@@ -91,8 +95,13 @@ pub const IntExpression = union(enum) {
 
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
+    definition: struct {
+        origin: entities.ModuleTypeDefinitionId,
+        body: ParameterizedTypeId,
+        arguments: primitives.Range(ParameterizedGenericArgId),
+    },
     parameter: ComptimeParameterId,
-    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
+    projection: AssociatedProjection,
     external: entities.ExternalRefId,
     array: struct {
         length: ParameterizedIntExprId,
@@ -103,7 +112,13 @@ pub const Type = union(enum) {
     resolved: primitives.SemanticType(Ids),
 };
 
-pub const Decl = struct { target: DeclarationRef };
+pub const DefinitionRef = union(enum) {
+    projection: AssociatedProjection,
+    module: entities.ModuleDeclId,
+    external: entities.ExternalRefId,
+    parameter: ComptimeParameterId,
+};
+pub const Decl = struct { target: DefinitionRef };
 pub const Function = struct { target: FunctionRef };
 pub const Variant = union(enum) {
     reference: VariantRef,
@@ -115,6 +130,11 @@ pub const GenericArgument = struct {
     value: Value,
 
     pub const Value = union(enum) {
+        projection: AssociatedProjection,
+        definition: union(enum) {
+            literal: primitives.DefinitionValue(Ids),
+            parameter: ComptimeParameterId,
+        },
         type: ParameterizedTypeId,
         comptime_int: ParameterizedIntExprId,
     };
@@ -146,12 +166,14 @@ pub const ResolvedNode = primitives.Node(Ids);
 pub const PendingExpressionKind = enum(u8) {
     entry_capture,
     unknown_identifier,
+    assume_name,
     comptime_parameter,
     pipe,
     unwrap_or,
     unwrap_or_do,
     nullable_test,
     generic_call,
+    entity_application,
     explicit_cast,
     choice_literal,
     field_access,
@@ -181,6 +203,8 @@ pub const PendingExpressionKind = enum(u8) {
 };
 
 pub const PendingExpressionDetail = union(enum(u8)) {
+    entity_application: ParameterizedTypeId,
+    callee_value: ParameterizedNodeId,
     capture_module_value: entities.ModuleNodeId,
     capture_owner: ?entities.ModuleFunctionId,
     none,
@@ -243,6 +267,17 @@ pub const Node = union(enum) {
 };
 
 pub const Storage = struct {
+    /// Inspect a definition's representation without changing its identity.
+    pub fn representation(self: *const Storage, id: ParameterizedTypeId) Type {
+        var current = id;
+        for (0..self.types.items.len) |_| {
+            const value = self.types.items[@intFromEnum(current)];
+            if (value != .definition) return value;
+            current = value.definition.body;
+        }
+        unreachable;
+    }
+
     int_expressions: std.ArrayList(IntExpression) = .empty,
     types: std.ArrayList(Type) = .empty,
     declarations: std.ArrayList(Decl) = .empty,

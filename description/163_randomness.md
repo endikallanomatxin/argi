@@ -44,7 +44,7 @@ A draw applies XSH-RR to the previous state and advances the recurrence once.
 | `uniform_uint64(.self, .upper_bound)` | Integer in `[0, upper_bound)` | 2 per attempt |
 
 Each operation returns `.value`, except the two bounded operations, which
-return `.result: Errable<UInt32/UInt64, invalid_range>`. Floats lie on equally
+return `.result: Errable#(UInt32/UInt64, invalid_range)`. Floats lie on equally
 spaced binary grids in `[0, 1)`, including zero and excluding one; every grid
 value is exactly representable in the requested width.
 
@@ -60,9 +60,9 @@ operating-system entropy is an independent capability operation.
 
 ## System entropy
 
-`fill_random_bytes(.self: $&RandomNumberGenerator, .destination: MutableArrayView<UInt8>)`
+`fill_random_bytes(.self: $&RandomNumberGenerator, .destination: MutableArrayView#(UInt8))`
 uses `system.rand_gen` to fill initialized writable storage. It returns
-`Errable<Void, entropy_unavailable>`, performs no allocation, and never falls
+`Errable#(Void, entropy_unavailable)`, performs no allocation, and never falls
 back to a deterministic generator. An empty view succeeds without an OS call.
 A failed request may have changed a prefix; discard the whole requested range.
 

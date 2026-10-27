@@ -7,4 +7,4 @@ answer ::= #run (.system: System) -> (.value: Int32) {
     value = unsupported_host_call()
 }
 
-main() -> (.status_code: Int32) := { status_code = answer }
+main := () -> (.status_code: Int32) { status_code = answer }

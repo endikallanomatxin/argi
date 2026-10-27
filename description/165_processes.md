@@ -27,7 +27,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 `spawn(.executable: StringView, .arguments: ArrayView#(.t: StringView),
 .stdin: ProcessStreamMode, .stdout: ProcessStreamMode,
 .stderr: ProcessStreamMode, .self: &ProcessManager)` returns
-`Errable<Process>` with `invalid_process_argument`, `out_of_memory`, or
+`Errable#(Process)` with `invalid_process_argument`, `out_of_memory`, or
 `process_spawn_failed`.
 
 Arguments default to an empty view and exclude the executable's own argument.
@@ -59,7 +59,7 @@ endpoint or in the wrong direction return the existing stream error reasons.
 An open writable endpoint is unbuffered, so `flush` succeeds without additional
 work. A broken pipe returns `stream_write_failed`. A read returning EOF produces
 `..end`. `close` relinquishes the endpoint and can be repeated; it returns
-`Errable<Void, stream_close_failed>`. Closing stdin supplies EOF to the child.
+`Errable#(Void, stream_close_failed)`. Closing stdin supplies EOF to the child.
 
 Streams borrow their containing process's lifetime. They are owners and cannot
 be copied implicitly. Automatic process cleanup closes its endpoints; ordinary
@@ -74,7 +74,7 @@ communication or an unbounded capture buffer.
 ## Wait, termination, and cleanup
 
 `wait(.self: $&Process)` blocks until the direct child ends and returns
-`Errable<ProcessExitStatus, process_wait_failed>`. `ProcessExitStatus` is an
+`Errable#(ProcessExitStatus, process_wait_failed)`. `ProcessExitStatus` is an
 implicitly copyable choice:
 
 - `..exited(.code: UInt32)` is a normal exit, including a nonzero program status.
@@ -87,7 +87,7 @@ reading any remaining bytes. A child program's unsuccessful exit is an ordinary
 status, not a failure of `wait`.
 
 `terminate(.self: $&Process)` returns
-`Errable<Void, process_terminate_failed>` and requests forced termination of the
+`Errable#(Void, process_terminate_failed)` and requests forced termination of the
 direct child: `SIGKILL` on POSIX, `TerminateProcess` with exit code 1 on Windows.
 It succeeds if the child has already ended. It does not wait or terminate
 other processes launched by that child. Call `wait` to obtain its final status.

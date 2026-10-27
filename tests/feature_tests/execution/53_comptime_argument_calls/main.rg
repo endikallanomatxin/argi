@@ -1,8 +1,8 @@
-identity(.value: Int32) -> (.result: Int32) := { result = value }
+identity := (.value: Int32) -> (.result: Int32) { result = value }
 
-increment(.value: Int32) -> (.result: Int32) := { result = value + 1 }
+increment := (.value: Int32) -> (.result: Int32) { result = value + 1 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     computed := increment(.value = 20 + 20)
     answer ::= #run () -> (.value: Int32) {
         value = identity(.value = increment(.value = computed))

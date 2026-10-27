@@ -6,7 +6,7 @@ implement OrderPolicy#(SmallOrder, UInt8) (
     }
 )
 
-take_queue#(.Collection: Type: Queue#(Collection)) := (.self: $&Collection) -> (
+take_queue := #(.Collection: Type: Queue#(Collection)) (.self: $&Collection) -> (
     .result : Queue#(Collection).Result
 ) {
     result = ~Queue#(Collection).pop(.self = self)

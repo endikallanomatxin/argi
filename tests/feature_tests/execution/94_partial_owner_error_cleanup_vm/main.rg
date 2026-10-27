@@ -1,10 +1,10 @@
 ..partial_construction_failed
 
-Counter: Type = (.count: Int32)
+Counter := (.count: Int32)
 
-Child: Type = (.counter: $&Counter)
+Child := (.counter: $&Counter)
 
-Parent: Type = (.child: Child, .missing: Int32)
+Parent := (.child: Child, .missing: Int32)
 
 implement Deinit#(Child) (
     .deinit = (.self: $&Child) -> () {
@@ -17,13 +17,13 @@ implement Deinit#(Parent) (
 )
 
 fail := (.tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result : Errable#(Int32, (..partial_construction_failed))
+    .result: Errable#(Int32, (..partial_construction_failed))
 ) {
     result = ..error(.reason = ..partial_construction_failed, .tracer = tracer)
 }
 
 build_partial := (.counter: $&Counter, .tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result : Errable#(Int32, (..partial_construction_failed))
+    .result: Errable#(Int32, (..partial_construction_failed))
 ) {
     parent :: Parent
     parent.child = Child(.counter = counter)

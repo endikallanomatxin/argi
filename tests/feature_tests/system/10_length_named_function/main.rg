@@ -1,12 +1,12 @@
-Counter : Type = (
-    .count: UIntNative
+Counter := (
+    .count : UIntNative
 )
 
-length(.self: &Counter) -> (.count: UIntNative) := {
+length := (.self: &Counter) -> (.count: UIntNative) {
     count = self&.count
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = (
         .count = 7
     )

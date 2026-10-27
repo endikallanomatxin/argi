@@ -1,25 +1,28 @@
 -- Scalars exclude surrogate code points and fit the Unicode codespace.
-UnicodeScalar: Type = (._value: UInt32)
+UnicodeScalar := (._value: UInt32)
 
 implement ImplicitlyCopyable#(UnicodeScalar) ()
 
-implement Init#(UnicodeScalar, (.value: UInt32)) (
-    .Result : Type = Errable#(UnicodeScalar, (..invalid_codepoint))
-    .init   = (.args: (.value: UInt32)) -> (.result: Result) {
-        value ::= args.value
+UnicodeScalarInitArgs: Type = (.value: UInt32)
 
-        if value > 1114111 or [value >= 55296 and value <= 57343] {
+implement Init#(UnicodeScalar, UnicodeScalarInitArgs) (
+    .Result : Type = Errable#(UnicodeScalar, (..invalid_codepoint))
+
+    .init = UnicodeScalarInitArgs -> (.result: Result) {
+        _init_value ::= value
+
+        if _init_value > 1114111 or [_init_value >= 55296 and _init_value <= 57343] {
             result = ..error(.reason = ..invalid_codepoint)
             return
         }
 
-        result = ..ok(._value = value)
+        result = ..ok(._value = _init_value)
     }
 )
 
-scalar_value(.self: UnicodeScalar) -> (.value: UInt32) := { value = self._value }
+scalar_value := (.self: UnicodeScalar) -> (.value: UInt32) { value = self._value }
 
-Utf8Decoded: Type = (.scalar: UnicodeScalar, .width: UIntNative)
+Utf8Decoded := (.scalar: UnicodeScalar, .width: UIntNative)
 
 implement ImplicitlyCopyable#(Utf8Decoded) ()
 
@@ -29,7 +32,7 @@ implement ImplicitlyCopyable#(_Utf8Decode) ()
 
 -- Keep the proven decoder infallible so validated iteration has no error-tracer
 -- dependency. Public operations translate these outcomes into their Errable contract.
-_utf8_decode_bytes(.bytes: ArrayView#(UInt8), .offset: UIntNative) -> (.result: _Utf8Decode) := {
+_utf8_decode_bytes := (.bytes: ArrayView#(UInt8), .offset: UIntNative) -> (.result: _Utf8Decode) {
     if offset >= length(&bytes).count {
         result = ..outside
         return
@@ -97,14 +100,14 @@ _utf8_decode_bytes(.bytes: ArrayView#(UInt8), .offset: UIntNative) -> (.result: 
     result = ..valid(.decoded = (.scalar = (._value = code), .width = width))
 }
 
-_utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) := {
+_utf8_decode := (.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) {
     result = _utf8_decode_bytes(.bytes = string_bytes(.text = text), .offset = offset)
 }
 
 -- Validation of arbitrary bytes does not publish a borrowed text view.
-validate_utf8_bytes(.bytes: ArrayView#(UInt8)) -> (
+validate_utf8_bytes := (.bytes: ArrayView#(UInt8)) -> (
     .result : Errable#(UIntNative, (..invalid_utf8))
-) := {
+) {
     offset :: UIntNative = 0
     count :: UIntNative = 0
     size ::= length(&bytes).count
@@ -122,9 +125,9 @@ validate_utf8_bytes(.bytes: ArrayView#(UInt8)) -> (
     result = ..ok count
 }
 
-utf8_decode(.text: StringView, .offset: UIntNative = 0) -> (
+utf8_decode := (.text: StringView, .offset: UIntNative = 0) -> (
     .result : Errable#(Utf8Decoded, (..invalid_utf8, ..out_of_bounds))
-) := {
+) {
     match _utf8_decode(.text = text, .offset = offset).result {
         ..valid payload { result = ..ok payload.decoded }
         ..invalid { result = ..error(.reason = ..invalid_utf8) }
@@ -132,7 +135,7 @@ utf8_decode(.text: StringView, .offset: UIntNative = 0) -> (
     }
 }
 
-utf8_encoded_length(.scalar: UnicodeScalar) -> (.count: UIntNative) := {
+utf8_encoded_length := (.scalar: UnicodeScalar) -> (.count: UIntNative) {
     code ::= scalar._value
 
     if code < 128 {
@@ -155,9 +158,9 @@ utf8_encoded_length(.scalar: UnicodeScalar) -> (.count: UIntNative) := {
 
 -- Validate the entire destination before writing any byte. The scalar's private
 -- representation guarantees that arithmetic yields the shortest valid encoding.
-utf8_encode(
+utf8_encode := (
     .scalar: UnicodeScalar, .buffer: MutableArrayView#(.t: UInt8), .offset: UIntNative = 0
-) -> (.result: Errable#(UIntNative, (..out_of_bounds))) := {
+) -> (.result: Errable#(UIntNative, (..out_of_bounds))) {
     width ::= utf8_encoded_length(.scalar = scalar).count
     size ::= length(&buffer).count
 
@@ -190,7 +193,7 @@ utf8_encode(
             .value = get_mutable_reference($&buffer, .index = [offset + index])
         )
         pointer&= unwrap_or_abort(
-            .value = [128 + code / divisor % 64] | convert#(.to: UInt8)(_)
+            .value = [[128 + code / divisor % 64] | convert#(.to: UInt8)(_)]
         )
         divisor = divisor / 64
         index = index + 1
@@ -199,20 +202,13 @@ utf8_encode(
     result = ..ok width
 }
 
-Utf8Decoder: Type = (._bytes: ArrayView#(UInt8), ._offset: UIntNative)
+Utf8Decoder := (._bytes: ArrayView#(UInt8), ._offset: UIntNative)
 
-implement Init#(Utf8Decoder, (.text: StringView)) (
-    .Result : Type = Utf8Decoder
-    .init   = (.args: (.text: StringView)) -> (.result: Result) {
-        text ::= args.text
+position := (.self: &Utf8Decoder) -> (.count: UIntNative) { count = self&._offset }
 
-        result = (._bytes = string_bytes(.text = text), ._offset = 0)
-    }
-)
-
-position(.self: &Utf8Decoder) -> (.count: UIntNative) := { count = self&._offset }
-
-next_codepoint(.self: $&Utf8Decoder) -> (.result: Errable#(?UnicodeScalar, (..invalid_utf8))) := {
+next_codepoint := (.self: $&Utf8Decoder) -> (
+    .result : Errable#(?UnicodeScalar, (..invalid_utf8))
+) {
     if self&._offset == length(&self&._bytes).count {
         result = ..ok ..none
         return
@@ -228,32 +224,38 @@ next_codepoint(.self: $&Utf8Decoder) -> (.result: Errable#(?UnicodeScalar, (..in
     }
 }
 
-implement Init#(Utf8Decoder, (.bytes: ArrayView#(UInt8))) (
+Utf8DecoderInitArgs: Type = (.bytes: ArrayView#(UInt8))
+
+implement Init#(Utf8Decoder, Utf8DecoderInitArgs) (
     .Result : Type = Utf8Decoder
-    .init   = (.args: (.bytes: ArrayView#(UInt8))) -> (.result: Result) {
-        result = (._bytes = args.bytes, ._offset = 0)
+
+    .init = Utf8DecoderInitArgs -> (.result: Result) {
+        result = (._bytes = bytes, ._offset = 0)
     }
 )
 
 -- A scalar view borrows already-valid text without decoding it up front.
 -- String storage dependencies invalidate it when the underlying text changes.
-CodepointView: Type = (._text: StringView)
+CodepointView := (._text: StringView)
 
 implement ImplicitlyCopyable#(CodepointView) ()
 
-implement Init#(CodepointView, (.text: StringView)) (
+CodepointViewInitArgs: Type = (.text: StringView)
+
+implement Init#(CodepointView, CodepointViewInitArgs) (
     .Result : Type = CodepointView
-    .init   = (.args: (.text: StringView)) -> (.result: Result) {
-        result = (._text = args.text)
+
+    .init = CodepointViewInitArgs -> (.result: Result) {
+        result = (._text = text)
     }
 )
 
-codepoints(.text: StringView) -> (.view: CodepointView) := {
+codepoints := (.text: StringView) -> (.view: CodepointView) {
     view = CodepointView(.text = text)
 }
 
 -- Scalar count requires a scan; constructing or iterating a view does not.
-length(.self: &CodepointView) -> (.count: UIntNative) := {
+length := (.self: &CodepointView) -> (.count: UIntNative) {
     count = 0
     offset :: UIntNative = 0
     while offset < self&._text._length {
@@ -273,7 +275,7 @@ implement Viewable#(&CodepointView) (
     }
 )
 
-CodepointIterator: Type = (._text: StringView, ._offset: UIntNative)
+CodepointIterator := (._text: StringView, ._offset: UIntNative)
 
 implement Iterable#(CodepointView) (
     .Item         : Type = UnicodeScalar
@@ -303,9 +305,9 @@ implement Iterator#(CodepointIterator) (
     }
 )
 
-utf8_decode_bytes(.bytes: ArrayView#(UInt8), .offset: UIntNative = 0) -> (
+utf8_decode_bytes := (.bytes: ArrayView#(UInt8), .offset: UIntNative = 0) -> (
     .result : Errable#(Utf8Decoded, (..invalid_utf8, ..out_of_bounds))
-) := {
+) {
     match _utf8_decode_bytes(.bytes = bytes, .offset = offset).result {
         ..valid payload { result = ..ok payload.decoded }
         ..invalid { result = ..error(.reason = ..invalid_utf8) }
@@ -313,9 +315,9 @@ utf8_decode_bytes(.bytes: ArrayView#(UInt8), .offset: UIntNative = 0) -> (
     }
 }
 
-implement Equal#(UnicodeScalar, UnicodeScalar, (.left: UnicodeScalar, .right: UnicodeScalar)) (
-    .equal = (.args: (.left: UnicodeScalar, .right: UnicodeScalar)) -> (.ok: Bool) {
-        ok = args.left._value == args.right._value
+implement Equal#(UnicodeScalar, UnicodeScalar) (
+    .equal = (.left: UnicodeScalar, .right: UnicodeScalar) -> (.ok: Bool) {
+        ok = left._value == right._value
     }
 )
 

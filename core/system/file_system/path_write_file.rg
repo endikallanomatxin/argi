@@ -26,7 +26,7 @@ _path_write_file_c := (.self: &FileSystem, .path: &CChar, .text: &String) -> (
     )
 ) {
     assume ffi := self&._ffi
-    open_result ::= File(.file_system = self, .path = path, .mode = ..write)
+    open_result ::= open_file(.file_system = self, .path = path, .mode = ..write)
     file :: File
 
     match open_result {
@@ -96,7 +96,7 @@ _path_write_file_string := (.self: &FileSystem, .path: &String, .text: &String) 
     result = write_file(self, .path = c_path, .text = text)
 }
 
-_path_write_file_view#(.Provider: Type: Allocator#(Provider)) := (
+_path_write_file_view := #(.Provider: Type: Allocator#(Provider)) (
     .self: &FileSystem, .path: StringView, .text: &String, .allocator: $&Provider
 ) -> (
     .result : Errable#(

@@ -12,6 +12,7 @@ pub const Context = union(enum) {
         offsets: globalizer.Offsets,
         visible_bindings: module_entities.BindingRange,
         owner_function: ?module_entities.ModuleFunctionId = null,
+        assumed_fields: @import("../primitives/schema.zig").Range(global_sg.GlobalValueFieldId) = .{ .start = 0, .len = 0 },
     };
 
     pub const Global = struct {
@@ -49,6 +50,20 @@ pub const Context = union(enum) {
             .module => |value| @intCast(value.visible_bindings.len),
             .global => |value| value.visible_bindings.len,
         };
+    }
+
+    pub fn assumedFields(self: Context) @import("../primitives/schema.zig").Range(global_sg.GlobalValueFieldId) {
+        return switch (self) {
+            inline else => |value| value.assumed_fields,
+        };
+    }
+
+    pub fn withAssumedFields(self: Context, fields: @import("../primitives/schema.zig").Range(global_sg.GlobalValueFieldId)) Context {
+        var result = self;
+        switch (result) {
+            inline else => |*value| value.assumed_fields = fields,
+        }
+        return result;
     }
 
     pub fn bindingAt(self: Context, index: usize) global_sg.GlobalBindingId {

@@ -16,7 +16,7 @@ copyable; constructors accept matching arrays. Dimensions belong to the type.
 - `&left * &right` accepts R×K and K×C and returns R×C through Multiply.
 - `transpose` returns C×R from R×C.
 
-Addition selects Add evidence with explicit readonly references in Args. There
+Addition selects Add evidence with explicit reference operands. There
 is no ordinary add overload family. Shared comptime parameters reject mismatched
 shapes during semantizing. Results
 own their storage and do not borrow inputs. Empty vectors have a zero dot
@@ -24,7 +24,7 @@ product; multiplication across an empty inner dimension produces zeros.
 
 ```rg
 math := import("math/linear_algebra")
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     left: math.Vector#(.n = 3, .t: Float64) = (.values = (1.0, 2.0, 3.0))
     right: math.Vector#(.n = 3, .t: Float64) = (.values = (4.0, 5.0, 6.0))
     product ::= math.dot(.left = &left, .right = &right)
@@ -52,8 +52,9 @@ the source view's length. Overflow or incompatible dimensions return
 
 Vectors expose `length`, checked `get`/`set`, `dot`, `+`, and `scale`. Matrices
 expose `shape`, checked `get`/`set`, `+`, `*`, and `transpose`. Dynamic
-shape incompatibilities return `dimension_mismatch`. Addition and multiplication carry a statically inferred allocator reference
-inside their Add or Multiply Args record, with a reach default. Other operations returning owners
+shape incompatibilities return `dimension_mismatch`. Addition and multiplication
+infer their allocator provider in the selected operation's compile-time parameters.
+Its ordinary allocator input has a reach default. Other operations returning owners
 take `.allocator`; scalar reads, writes, and dot products do not allocate.
 Index errors return `out_of_bounds` without writing. No operation resizes an
 existing owner or exposes mutable shape fields.
@@ -67,9 +68,12 @@ Dynamic owners are not implicitly copyable and are cleaned up automatically.
 
 `MatrixShape#(Value)` associates Element, Rows and Columns and a readonly `at`
 operation. Dense matrices and `Diagonal#(.n, .t)` implement it. Element reads
-validate indices. `MatrixProduct#(Left, Right, Args)` infers dimensions and the
+validate indices. `MatrixProduct#(Left, Right)` infers dimensions and the
 scalar type from selected shape evidence; its shared inner-dimension binding
-rejects incompatible products. Associated Result never supplies those bindings.
+rejects incompatible products. Args is associated with the selected operand pair;
+its nominal record is shared by the protocol and operator adapters. Neither Args
+nor Result introduces another conformance participant. Associated Result never
+supplies dimension or element bindings.
 
 The general product reads each representation through its shape operation and
 returns a dense matrix. A more specific diagonal/diagonal implementation returns
@@ -84,11 +88,9 @@ following the same implementation ownership rules as other contracts.
 
 ```rg
 math := import("math/linear_algebra")
-product#(.A: Type, .B: Type) := (.left: &A, .right: &B)
-    -> (.result: math.MatrixProduct#(A, B, (.left: &A, .right: &B)).Result) {
-    result = ~math.MatrixProduct#(A, B, (.left: &A, .right: &B)).multiply(
-        .args = (.left = left, .right = right)
-    )
+product := #(.A: Type, .B: Type) (.left: &A, .right: &B)
+    -> (.result: math.MatrixProduct#(A, B).Result) {
+    result = ~math.MatrixProduct#(A, B).multiply(.left = left, .right = right)
 }
 ```
 

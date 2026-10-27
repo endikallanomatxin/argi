@@ -1,26 +1,32 @@
 -- A minimum heap with borrowed strict-weak ordering. Equivalent values have
 -- unspecified removal order. Policy state must remain stable while populated.
-PriorityQueue#(.t: Type, .order: Type: OrderPolicy#(order, t)): Type = (
+PriorityQueue := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
     ._items : DynamicArray#(.t: t),
     ._order : &order
 )
 
+PriorityQueueInitArgs: Type = #(
+    .t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator
+) (
+    .order     : &order,
+    .allocator : $&Provider,
+    .capacity  : UIntNative  = 8
+)
+
 implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) Init#(
-    PriorityQueue#(.t: t, .order: order),
-    (.order: &order, .allocator: $&Provider, .capacity: UIntNative = 8)
+    PriorityQueue#(.t: t, .order: order), PriorityQueueInitArgs#(t, order, Provider)
 ) (
     .Result : Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
-    .init   = (.args: (.order: &order, .allocator: $&Provider, .capacity: UIntNative = 8)) -> (
-        .result : Result
-    ) {
-        order ::= args.order
-        allocator ::= args.allocator
-        capacity ::= args.capacity
 
-        assume allocator
-        items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+    .init = PriorityQueueInitArgs#(t, order, Provider) -> (.result: Result) {
+        _init_order ::= order
+        _init_allocator ::= allocator
+        _init_capacity ::= capacity
 
-        result = ..ok(._items = ~items, ._order = order)
+        assume allocator := _init_allocator
+        items ::= DynamicArray#(.t: t)(.allocator = _init_allocator, .capacity = _init_capacity)!
+
+        result = ..ok(._items = ~items, ._order = _init_order)
     }
 )
 
@@ -38,9 +44,9 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) Deinit#(
     }
 )
 
-_collection_length_priority_queue#(.t: Type, .order: Type: OrderPolicy#(order, t))(
+_collection_length_priority_queue := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
     .self : &PriorityQueue#(.t: t, .order: order)
-) -> (.count: UIntNative) := { count = length(&self&._items).count }
+) -> (.count: UIntNative) { count = length(&self&._items).count }
 
 implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) CollectionLength#(
     PriorityQueue#(.t: t, .order: order)
@@ -48,11 +54,11 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) CollectionLength#(
     .measure_length = _collection_length_priority_queue
 )
 
-_queue_push_priority_queue#(
+_queue_push_priority_queue := #(
     .t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator
-)(.self: $&PriorityQueue#(.t: t, .order: order), .value: t, .allocator: $&Provider) -> (
+) (.self: $&PriorityQueue#(.t: t, .order: order), .value: t, .allocator: $&Provider) -> (
     .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
-) := {
+) {
     assume allocator
     owned ::= ~value
 
@@ -81,9 +87,9 @@ _queue_push_priority_queue#(
     }
 }
 
-peek_reference#(.t: Type, .order: Type: OrderPolicy#(order, t))(
+peek_reference := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
     .self : &PriorityQueue#(.t: t, .order: order)
-) -> (.value: ?&t = ..none) := {
+) -> (.value: ?&t = ..none) {
     if length(&self&._items).count == 0 { return }
     value = ..some(
         .value = _trusted_dynamic_array_get_reference#(.t: t)(
@@ -92,9 +98,9 @@ peek_reference#(.t: Type, .order: Type: OrderPolicy#(order, t))(
     )
 }
 
-_queue_pop_priority_queue#(.t: Type, .order: Type: OrderPolicy#(order, t))(
+_queue_pop_priority_queue := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
     .self : $&PriorityQueue#(.t: t, .order: order)
-) -> (.result: ?t = ..none) := {
+) -> (.result: ?t = ..none) {
     count ::= length(&self&._items).count
 
     if count == 0 { return }
@@ -140,9 +146,9 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allo
     .push   = _queue_push_priority_queue
 )
 
-peek#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t))(
+peek := #(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t)) (
     .self : &PriorityQueue#(.t: t, .order: order)
-) -> (.value: ?t = ..none) := {
+) -> (.value: ?t = ..none) {
     if length(&self&._items).count == 0 { return }
     value = ..some(
         .value = unwrap_or_abort(.value = get_reference(&self&._items, .index = 0))&

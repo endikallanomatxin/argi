@@ -1,6 +1,6 @@
 drops :: Int32 = 0
 
-Resource: Type = (.source: &Int32)
+Resource := (.source: &Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -8,7 +8,7 @@ implement Deinit#(Resource) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     value :: Int32 = 42

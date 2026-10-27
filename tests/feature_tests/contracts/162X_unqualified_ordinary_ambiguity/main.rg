@@ -1,6 +1,6 @@
 Copy#(.T: Type): Contract = (.copy: (.value: T) -> (.result: T))
 
-implement Copy#(Int32)(.copy = (.value: Int32) -> (.result: Int32) { result = value })
+implement Copy#(Int32) (.copy = (.value: Int32) -> (.result: Int32) { result = value })
 
 copy := (.value: Int32) -> (.result: Int32) { result = value }
 

@@ -1,14 +1,14 @@
 semver := import ("semver")
 
-RecordingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .allocations   : UIntNative = 0
-    .deallocations : UIntNative = 0
-    .last_size     : UIntNative = 0
-    .fail : Bool = false
+RecordingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .allocations   : UIntNative                 = 0
+    .deallocations : UIntNative                 = 0
+    .last_size     : UIntNative                 = 0
+    .fail          : Bool                       = false
 )
 
-RecordingWriter: Type = (
+RecordingWriter := (
     .expected      : StringView
     .count         : UIntNative = 0
     .flush_calls   : UIntNative = 0
@@ -16,7 +16,7 @@ RecordingWriter: Type = (
     .flush_failure : Bool       = false
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     version ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3-alpha+001")).result
     output ::= unwrap_or_abort(
@@ -63,7 +63,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Writer#(RecordingWriter) (
     .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         if self&.count == self&.fail_at {
             if self&.flush_failure {
@@ -85,7 +85,7 @@ implement Writer#(RecordingWriter) (
     }
 
     .flush = (.self: $&RecordingWriter) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()
@@ -94,7 +94,7 @@ implement Writer#(RecordingWriter) (
 
 implement Allocator#(RecordingAllocator) (
     .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.allocations = self&.allocations + 1
         self&.last_size = size
@@ -129,7 +129,7 @@ implement Deallocator#(RecordingAllocator) (
     }
 )
 
-CountingDestination: Type = (.bytes: UIntNative = 0)
+CountingDestination := (.bytes: UIntNative = 0)
 
 implement WriteValue#(CountingDestination, StringView) (
     .Result      : Type = UIntNative

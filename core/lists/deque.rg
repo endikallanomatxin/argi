@@ -1,28 +1,32 @@
 -- A growable owner over the ring's live-slot invariant. Growth linearizes
 -- logical order into new storage and moves every element exactly once.
-Deque#(.t: Type): Type = (._ring: RingBuffer#(.t: t))
+Deque := #(.t: Type) (._ring: RingBuffer#(.t: t))
+
+DequeInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
+    .capacity  : UIntNative = 8,
+    .allocator : $&Provider = reach allocator
+)
 
 implement#(.t: Type, .Provider: Type: Allocator) Init#(
-    Deque#(.t: t), (.capacity: UIntNative = 8, .allocator: $&Provider = reach allocator)
+    Deque#(.t: t), DequeInitArgs#(t, Provider)
 ) (
     .Result : Type = Errable#(Deque#(.t: t), (..out_of_memory))
-    .init   = (.args: (.capacity: UIntNative = 8, .allocator: $&Provider = reach allocator)) -> (
-        .result : Result
-    ) {
-        capacity ::= args.capacity
-        allocator ::= args.allocator
 
-        actual :: UIntNative = capacity
+    .init = DequeInitArgs#(t, Provider) -> (.result: Result) {
+        _init_capacity ::= capacity
+        _init_allocator ::= allocator
+
+        actual :: UIntNative = _init_capacity
 
         if actual == 0 { actual = 1 }
-        match RingBuffer#(.t: t)(.capacity = actual, .allocator = allocator) {
+        match RingBuffer#(.t: t)(.capacity = actual, .allocator = _init_allocator) {
             ..ok ~ring { result = ..ok(._ring = ~ring) }
             ..error _ { result = ..error(.reason = ..out_of_memory) }
         }
     }
 )
 
-_collection_capacity_deque#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
+_collection_capacity_deque := #(.t: Type) (.self: &Deque#(.t: t)) -> (.count: UIntNative) {
     count = self&._ring._capacity
 }
 
@@ -30,9 +34,9 @@ implement#(.t: Type) CollectionCapacity#(Deque#(.t: t)) (
     .measure_capacity = _collection_capacity_deque
 )
 
-reserve#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&Deque#(.t: t), .capacity: UIntNative, .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     if capacity <= self&._ring._capacity {
         result = ..ok Void()
         return
@@ -77,9 +81,9 @@ reserve#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok Void()
 }
 
-_deque_ensure_room#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+_deque_ensure_room := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&Deque#(.t: t), .allocator: $&AllocatorType
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     if self&._ring._length < self&._ring._capacity {
         result = ..ok Void()
         return
@@ -97,9 +101,9 @@ _deque_ensure_room#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
     result = reserve(self, .capacity = grown, .allocator = allocator)
 }
 
-push_back#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
     owned ::= ~value
 
@@ -118,9 +122,9 @@ push_back#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok Void()
 }
 
-push_front#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+push_front := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
     owned ::= ~value
 
@@ -147,11 +151,11 @@ push_front#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok Void()
 }
 
-pop_front#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
+pop_front := #(.t: Type) (.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) {
     result = pop($&self&._ring)
 }
 
-pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
+pop_back := #(.t: Type) (.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) {
     if self&._ring._length == 0 {
         result = ..error(.reason = ..empty)
         return
@@ -171,9 +175,9 @@ pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty)))
     result = ..ok ~moved
 }
 
-get#(.t: Type: ImplicitlyCopyable)(.self: &Deque#(.t: t), .index: UIntNative) -> (
+get := #(.t: Type: ImplicitlyCopyable) (.self: &Deque#(.t: t), .index: UIntNative) -> (
     .result : Errable#(t, (..out_of_bounds))
-) := {
+) {
     pointer ::= get_reference(self, .index = index)!
 
     result = ..ok pointer&

@@ -1,16 +1,16 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-ReferenceRecord: Type = (.value: &Resource)
+ReferenceRecord := (.value: &Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {}
 )
 
-forward(.source: ReferenceRecord) -> (.result: ReferenceRecord) := {
+forward := (.source: ReferenceRecord) -> (.result: ReferenceRecord) {
     relocate(.source = $&source, .destination = $&result)
 }
 
-main() -> () := {
+main := () -> () {
     owner :: Resource = Resource(42)
     reference ::= forward(.source = (.value = &owner))
     deinit(.self = $&owner)

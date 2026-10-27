@@ -118,13 +118,14 @@ const State = struct {
             .int_literal,
             .float_literal,
             .char_literal,
-            .argument_default,
+            .captured_expression,
             .string_literal,
             .bool_literal,
             .break_statement,
             .continue_statement,
             .abort_statement,
             .type_literal,
+            .definition_literal,
             => {},
             .binding_declaration => |binding_id| {
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];

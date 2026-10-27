@@ -5,11 +5,16 @@ const types = @import("types.zig");
 /// Reachability is construction state derived from the selected executable
 /// root. It stays outside GlobalSG because final consumers only need the
 /// resulting set of materialized function bodies.
+const OperationInstance = struct {
+    operation: @import("../primitives/schema.zig").ContractOperationIdentity,
+    function: graph_mod.GlobalFunctionId,
+};
+
 pub const FunctionSet = struct {
     values: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
-    operations: std.AutoHashMap(@import("../primitives/schema.zig").ContractOperationIdentity, void),
+    operations: std.AutoHashMap(OperationInstance, void),
     virtualizes: std.AutoHashMap(graph_mod.GlobalVirtualizeId, void),
     cleanup_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
 
@@ -18,7 +23,7 @@ pub const FunctionSet = struct {
             .values = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
             .nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
-            .operations = std.AutoHashMap(@import("../primitives/schema.zig").ContractOperationIdentity, void).init(allocator),
+            .operations = std.AutoHashMap(OperationInstance, void).init(allocator),
             .virtualizes = std.AutoHashMap(graph_mod.GlobalVirtualizeId, void).init(allocator),
             .cleanup_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
         };
@@ -53,10 +58,10 @@ pub const FunctionSet = struct {
     // Proof selection belongs to the compilation unit. Sharing a method body
     // with selected cleanup does not select unrelated contract operations.
     pub fn requiresConformance(self: *const FunctionSet, graph: *const graph_mod.GlobalSemanticGraph, proof: graph_mod.ContractSafetyConformance) bool {
-        if (self.operations.contains(proof.selection)) return true;
+        if (self.operations.contains(.{ .operation = proof.selection, .function = proof.method })) return true;
         if (!self.cleanup_functions.contains(proof.method)) return false;
         const conformance = graph.contract_conformances.items[proof.selection.conformance];
-        return @import("standard_contracts.zig").standardDeclaration(graph, "Deinit") == conformance.declaration;
+        return @import("standard_contracts.zig").standardDefinition(graph, "Deinit") == conformance.declaration;
     }
 
     pub fn containsBinding(self: *const FunctionSet, binding: graph_mod.GlobalBindingId) bool {
@@ -237,7 +242,7 @@ const State = struct {
         try self.functions.nodes.put(node_id, {});
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
-            .argument_default, .declaration, .reach_directive, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .break_statement, .continue_statement, .abort_statement, .type_literal => {},
+            .captured_expression, .declaration, .reach_directive, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .break_statement, .continue_statement, .abort_statement, .type_literal, .definition_literal => {},
             .binding_use => |binding| try self.functions.bindings.put(binding, {}),
             .binding_declaration => |binding_id| {
                 try self.functions.bindings.put(binding_id, {});
@@ -271,7 +276,7 @@ const State = struct {
             },
             .function_address => |id| try self.includeFunction(id),
             .function_call => |call| {
-                if (self.graph.callOperation(call)) |operation| try self.functions.operations.put(operation, {});
+                if (self.graph.callOperation(call)) |operation| try self.functions.operations.put(.{ .operation = operation, .function = call.callee }, {});
                 if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 try self.includeFunction(call.callee);
@@ -468,12 +473,14 @@ test "reachability roots select main or one test" {
     try std.testing.expect(!selected.contains(@enumFromInt(0)));
     try std.testing.expect(selected.contains(@enumFromInt(1)));
 
-    try graph.function_refs.append(allocator, @enumFromInt(1));
+    var binding = std.mem.zeroes(graph_mod.ContractOperationBinding);
+    binding.materialized_function = @enumFromInt(1);
+    try graph.contract_operation_bindings.append(allocator, binding);
     try graph.contract_conformances.append(allocator, .{
         .declaration = @enumFromInt(0),
         .participants = .{ .start = 0, .len = 0 },
         .associated_arguments = .{ .start = 0, .len = 0 },
-        .operations = .{ .start = 0, .len = 1 },
+        .operation_bindings = .{ .start = 0, .len = 1 },
         .source = .{ .file_index = 0, .offset = 0 },
     });
     var runtime = try executionRoots(allocator, &graph, null);
@@ -586,4 +593,24 @@ test "reachability revisits completed bodies after pool growth and releases fail
             try std.testing.expect(expression.contains(@enumFromInt(2)));
         }
     }.traverse, .{&graph});
+}
+
+test "selected safety proofs distinguish operation specializations" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var unit = FunctionSet.init(allocator);
+    defer unit.deinit();
+    const selection = @import("../primitives/schema.zig").ContractOperationIdentity{ .conformance = 0, .index = 1 };
+    var proof = std.mem.zeroes(graph_mod.ContractSafetyConformance);
+    proof.selection = selection;
+    proof.method = @enumFromInt(0);
+    try unit.operations.put(.{ .operation = selection, .function = @enumFromInt(0) }, {});
+    try std.testing.expect(unit.requiresConformance(&graph, proof));
+    proof.method = @enumFromInt(1);
+    try std.testing.expect(!unit.requiresConformance(&graph, proof));
+    try unit.operations.put(.{ .operation = selection, .function = @enumFromInt(1) }, {});
+    try std.testing.expect(unit.requiresConformance(&graph, proof));
+    proof.selection.index = 2;
+    try std.testing.expect(!unit.requiresConformance(&graph, proof));
 }

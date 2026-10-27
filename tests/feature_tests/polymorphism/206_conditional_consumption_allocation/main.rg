@@ -1,4 +1,4 @@
-release_if(.allocation: $&Allocation, .consume: Bool) -> (.result: ?Int32) := {
+release_if := (.allocation: $&Allocation, .consume: Bool) -> (.result: ?Int32) {
     if consume {
         deinit(allocation)
         result = ..some(.value = 42)
@@ -8,7 +8,7 @@ release_if(.allocation: $&Allocation, .consume: Bool) -> (.result: ?Int32) := {
     result = ..none
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     allocation ::= unwrap_or_abort(allocate_bytes(.self = allocator, .size = 1))
     result ::= release_if($&allocation, false)

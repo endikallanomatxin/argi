@@ -16,6 +16,8 @@ pub const Stats = struct {
     const tag_count = @typeInfo(GlobalTypeTag).@"enum".fields.len;
 
     type_instances: u32 = 0,
+    definition_lookup_candidates: u64 = 0,
+    definition_lookup_hits: u64 = 0,
     type_holes: u32 = 0,
     type_intern_calls: u64 = 0,
     type_intern_candidates: u64 = 0,
@@ -30,6 +32,7 @@ pub const ComptimeFailure = struct {
     reason: []const u8,
     // Borrow the original module token; rendering happens after rollback.
     unknown_name: ?[]const u8 = null,
+    call_name: ?[]const u8 = null,
     materialization_error: ?anyerror = null,
 };
 
@@ -38,7 +41,8 @@ pub const Resolver = struct {
         child: global_sg.GlobalTypeId,
         mutability: primitives.PointerMutability,
     };
-    const GenericKey = struct { base: global_sg.GlobalDeclId, arity: u32, values: u64 };
+    const GenericOrigin = union(enum) { family: global_sg.GlobalFamilyDefinitionId, nominal: global_sg.GlobalTypeDefinitionId };
+    const GenericKey = struct { origin: GenericOrigin, arity: u32, values: u64 };
 
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -53,9 +57,11 @@ pub const Resolver = struct {
     rollback_execution: ?*const fn (*anyopaque, usize) void = null,
     execute_integer: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!i64 = null,
     execute_boolean: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!bool = null,
-    argument_failure: ?struct { declaration: global_sg.GlobalDeclId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
+    argument_failure: ?struct { declaration: global_sg.GlobalFamilyDefinitionId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
+    value_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GenericArgument.Value = null,
+    definition_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.DefinitionValue = null,
     constant_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!i64 = null,
     pointer_types: @import("identity_cache.zig").IdentityCache(PointerKey, global_sg.GlobalTypeId) = .empty,
     generic_types: @import("identity_cache.zig").IdentityCache(GenericKey, global_sg.GlobalTypeId) = .empty,
@@ -99,7 +105,7 @@ pub const Resolver = struct {
                 const reference = module.semantic.external_refs.items[@intFromEnum(external)];
                 const args = reference.generic_arguments orelse continue;
                 if (reference.kind != .type) continue;
-                const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch continue;
+                const base = (try self.core.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type })) orelse continue;
                 const global_args = try self.relocateModuleArguments(module_index, args);
                 const destination = globalizer.globalType(o, local_id);
                 try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
@@ -196,8 +202,78 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_type => |value| try self.resolveGenericTypeHole(module_index, module, o, value),
+            .resolve_entity_value => |value| blk: {
+                var bindings = try Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+                defer bindings.deinit(self.allocator);
+                const target = globalizer.globalNode(o, value.node);
+                const source = self.graph.node(target).source;
+                const entity = try self.instantiateEntityValue(module_index, value.expression, &bindings, source);
+                try self.graph.setNode(self.allocator, target, switch (entity) {
+                    .type => |ty| .{ .source = source, .ty = try self.core.builtin(.Type), .content = .{ .type_literal = ty } },
+                    .definition => |definition| .{ .source = source, .ty = try global_types.definitionClass(self.allocator, self.graph, definition.origin), .content = .{ .definition_literal = definition } },
+                });
+                break :blk .resolved;
+            },
             else => .not_applicable,
         };
+    }
+
+    /// Applying a definition in value position preserves a function producer;
+    /// only a type producer yields a concrete Type value. Both reuse the same
+    /// argument binding and captured-prefix representation as ordinary calls.
+    pub fn instantiateEntityValue(self: *Resolver, module_index: usize, expression: ir.ParameterizedTypeId, bindings: *Bindings, source: primitives.SourceRef) !global_types.EntityValue {
+        const recipe = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(expression)];
+        if (recipe == .resolved and recipe.resolved == .generic) {
+            const application = recipe.resolved.generic;
+            const definition = try self.resolveParameterizedDefinitionValue(module_index, application.base, bindings);
+            const family = self.graph.familyDefinition(definition.origin);
+            if (family.kind == .function) {
+                const owner: usize = @intFromEnum(self.graph.moduleForFamilyDefinition(definition.origin) orelse return error.UnknownParameterizedName);
+                const storage = &self.modules[owner].semantic.parameterized_storage;
+                const template = storage.parameterized_functions.items[family.template_index orelse return error.UnknownParameterizedName];
+                var substitutions = try Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+                defer substitutions.deinit(self.allocator);
+                const remaining = try self.bindDefinitionCaptures(owner, template.parameters, definition, &substitutions);
+                const arguments = try self.instantiateParameterizedArguments(module_index, application.arguments, bindings);
+                self.bindGlobalArgumentsPartial(owner, remaining, arguments, &substitutions) catch |err| {
+                    const reason = switch (err) {
+                        error.TooManyGenericArguments => "too many compile-time arguments in definition specialization",
+                        error.UnknownGenericArgument => "unknown compile-time argument in definition specialization",
+                        error.DuplicateGenericArgument => "duplicate compile-time argument in definition specialization",
+                        error.MissingGenericArgument => "missing compile-time argument in definition specialization",
+                        error.GenericArgumentKindMismatch => "compile-time argument kind does not match the definition parameter",
+                        error.DefinitionParameterSignatureMismatch => "definition argument does not match its parameter signature",
+                        else => return err,
+                    };
+                    self.comptime_failure = .{ .source = source, .reason = reason };
+                    return error.InvalidGenericCallArguments;
+                };
+                try self.applyParameterDefaults(owner, remaining, &substitutions);
+                // Definition values retain a canonical bound prefix. A trailing
+                // suffix stays available for later specialization/input inference;
+                // named arguments cannot create holes in that prefix.
+                var bound_count: u32 = 0;
+                var missing = false;
+                for (template.parameters.start..template.parameters.start + template.parameters.len) |raw| {
+                    const bound = switch (storage.comptime_parameters.items[raw].kind) {
+                        .type => substitutions.types[raw] != null,
+                        .comptime_int => substitutions.ints[raw] != null,
+                        .definition => substitutions.definitions[raw] != null,
+                    };
+                    if (!bound) {
+                        missing = true;
+                    } else if (missing) {
+                        self.comptime_failure = .{ .source = source, .reason = "definition specialization arguments must bind a contiguous parameter prefix" };
+                        return error.InvalidGenericCallArguments;
+                    } else bound_count += 1;
+                }
+                return .{ .definition = .{
+                    .origin = definition.origin,
+                    .captures = try self.appendBoundArguments(owner, .{ .start = template.parameters.start, .len = bound_count }, &substitutions),
+                } };
+            }
+        }
+        return .{ .type = try self.instantiateParameterizedType(module_index, expression, bindings) };
     }
 
     fn resolveGenericTypeHole(
@@ -229,8 +305,10 @@ pub const Resolver = struct {
             return .resolved;
         }
         const args = reference.generic_arguments orelse return .not_applicable;
-        const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch return .deferred;
-        const global_args = try self.relocateModuleArguments(module_index, args);
+        const base = (try self.core.resolveDefinitionReference(module_index, reference, &.{ .type, .contract_type })) orelse return .deferred;
+        var global_args = try self.relocateModuleArguments(module_index, args);
+        if (try self.core.resolveDefinitionAlias(module_index, reference)) |definition|
+            global_args = try self.completeDefinitionArguments(definition, global_args);
         const destination = globalizer.globalType(o, value.destination);
         try self.graph.resolveType(self.allocator, destination, .{ .generic = .{ .base = base, .arguments = global_args } });
         _ = try self.ensureGenericInstance(destination);
@@ -286,6 +364,7 @@ pub const Resolver = struct {
                 try arguments.append(self.allocator, .{
                     .name = try self.graph.addString(self.allocator, module.text(parameter.name)),
                     .value = switch (parameter.kind) {
+                        .definition => .{ .definition = bindings.definitions[raw].? },
                         .type => .{ .type = bindings.types[raw].? },
                         .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
                     },
@@ -299,7 +378,28 @@ pub const Resolver = struct {
         // Validate and canonicalize before reusing an equivalent instance.
         if (global_types.genericInstance(self.graph, ty) != null) return .complete;
         const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings);
+        const body_expression = module.semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
+        if (body_expression != .definition) {
+            // A family whose body denotes an existing type is an alias, not a
+            // nominal definition. Complete its provisional application with the
+            // resulting semantic type through the ordinary transactional path.
+            if (body_type == ty) return .pending;
+            const value = self.graph.resolvedSemanticType(body_type) orelse return .pending;
+            try self.graph.resolveType(self.allocator, ty, value);
+            if (value == .generic) {
+                const instance = global_types.genericInstance(self.graph, body_type) orelse return .changed;
+                try self.graph.generic_instances.append(self.allocator, .{ .type_id = ty, .shape = instance.shape });
+            }
+            self.stats.type_instances += 1;
+            return .changed;
+        }
         const shape = switch (self.graph.types.items[@intFromEnum(body_type)]) {
+            .nominal => |id| nominal: {
+                const definition = self.graph.typeDefinition(id);
+                if (definition.struct_fields) |fields| break :nominal @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .structure = .{ .fields = fields, .layout = definition.struct_layout } };
+                if (definition.choice_variants) |variants| break :nominal @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .choice = .{ .variants = variants, .layout = definition.choice_layout } };
+                break :nominal @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .alias = body_type };
+            },
             .structural => |value| @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .structure = .{
                 .fields = value.fields,
                 .layout = value.layout,
@@ -324,41 +424,85 @@ pub const Resolver = struct {
         parameterized: parameterized_storage.ParameterizedType,
     };
 
-    pub fn isParameterizedTypeDeclaration(self: *Resolver, declaration: global_sg.GlobalDeclId) bool {
-        return self.findTypeParameterized(declaration) != null;
+    pub fn isParameterizedTypeDeclaration(self: *Resolver, definition: global_sg.GlobalFamilyDefinitionId) bool {
+        return self.findTypeParameterized(definition) != null;
     }
 
-    pub fn findTypeParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedTypeParameterized {
-        const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
+    pub fn findTypeParameterized(self: *Resolver, definition: global_sg.GlobalFamilyDefinitionId) ?LocatedTypeParameterized {
+        const family = self.graph.familyDefinition(definition);
+        if (family.kind != .type) return null;
+        const owner = self.graph.moduleForFamilyDefinition(definition) orelse return null;
         const module_index: usize = @intFromEnum(owner);
-        const base = self.offsets[module_index].declaration_base;
-        const raw = @intFromEnum(declaration);
-        if (raw < base) return null;
-        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.parameterized_storage.parameterized_types.items) |parameterized|
-            if (parameterized.declaration == local) return .{ .module_index = module_index, .parameterized = parameterized };
-        return null;
+        const index = family.template_index orelse return null;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        if (index >= storage.parameterized_types.items.len) return null;
+        return .{ .module_index = module_index, .parameterized = storage.parameterized_types.items[index] };
     }
 
     pub const Bindings = struct {
         types: []?global_sg.GlobalTypeId,
         ints: []?i64,
+        definitions: []?global_sg.DefinitionValue = &.{},
 
         pub fn init(allocator: std.mem.Allocator, count: usize) !Bindings {
             const types_slice = try allocator.alloc(?global_sg.GlobalTypeId, count);
             errdefer allocator.free(types_slice);
             const ints_slice = try allocator.alloc(?i64, count);
+            errdefer allocator.free(ints_slice);
+            const definitions = try allocator.alloc(?global_sg.DefinitionValue, count);
+            @memset(definitions, null);
             @memset(types_slice, null);
             @memset(ints_slice, null);
-            return .{ .types = types_slice, .ints = ints_slice };
+            return .{ .types = types_slice, .ints = ints_slice, .definitions = definitions };
         }
 
         pub fn deinit(self: *Bindings, allocator: std.mem.Allocator) void {
             allocator.free(self.types);
             allocator.free(self.ints);
+            allocator.free(self.definitions);
             self.* = undefined;
         }
     };
+
+    fn completeDefinitionArguments(self: *Resolver, value: global_sg.DefinitionValue, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !primitives.Range(global_sg.GlobalGenericArgId) {
+        if (value.captures.len == 0) return arguments;
+        const located = self.findTypeParameterized(value.origin) orelse return error.ExpectedParameterizedType;
+        var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        const remaining = try self.bindDefinitionCaptures(located.module_index, located.parameterized.parameters, value, &bindings);
+        try self.bindGlobalArguments(located.module_index, remaining, arguments, &bindings);
+        return self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings);
+    }
+
+    pub fn bindDefinitionCaptures(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), value: global_sg.DefinitionValue, bindings: *Bindings) !primitives.Range(ir.ComptimeParameterId) {
+        if (value.captures.len > parameters.len) return error.TooManyGenericArguments;
+        try self.bindGlobalArgumentsPartial(module_index, .{ .start = parameters.start, .len = value.captures.len }, value.captures, bindings);
+        return .{ .start = parameters.start + value.captures.len, .len = parameters.len - value.captures.len };
+    }
+
+    pub fn appendBoundArguments(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *const Bindings) !primitives.Range(global_sg.GlobalGenericArgId) {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage;
+        // Missing bindings must not publish a partial argument tail.
+        for (parameters.start..parameters.start + parameters.len) |raw| switch (storage.comptime_parameters.items[raw].kind) {
+            .definition => if (bindings.definitions[raw] == null) return error.MissingGenericArgument,
+            .type => if (bindings.types[raw] == null) return error.MissingGenericArgument,
+            .comptime_int => if (bindings.ints[raw] == null) return error.MissingGenericArgument,
+        };
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            try self.graph.generic_arguments.append(self.allocator, .{
+                .name = try self.graph.addString(self.allocator, module.text(parameter.name)),
+                .value = switch (parameter.kind) {
+                    .definition => .{ .definition = bindings.definitions[raw].? },
+                    .type => .{ .type = bindings.types[raw].? },
+                    .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                },
+            });
+        }
+        return .{ .start = start, .len = parameters.len };
+    }
 
     pub fn bindGlobalArguments(
         self: *Resolver,
@@ -373,12 +517,20 @@ pub const Resolver = struct {
             const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[param_raw];
             if (parameter.kind == .type and bindings.types[param_raw] == null) return error.MissingGenericArgument;
             if (parameter.kind == .comptime_int and bindings.ints[param_raw] == null) return error.MissingGenericArgument;
+            if (parameter.kind == .definition and bindings.definitions[param_raw] == null) return error.MissingGenericArgument;
         }
     }
 
     pub fn applyParameterDefaults(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *Bindings) !void {
         for (parameters.start..parameters.start + parameters.len) |raw| {
             const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[raw];
+            if (parameter.kind == .definition and bindings.definitions[raw] == null) {
+                if (parameter.default_definition) |expression| {
+                    const definition = try self.instantiateDefinitionValue(module_index, expression, bindings);
+                    if (!try self.definitionParameterShapeMatches(module_index, parameter, definition, bindings)) return error.DefinitionParameterSignatureMismatch;
+                    bindings.definitions[raw] = definition;
+                }
+            }
             if (parameter.kind == .type and bindings.types[raw] == null) {
                 if (parameter.default_type) |expression|
                     bindings.types[raw] = try self.instantiateParameterizedType(module_index, expression, bindings);
@@ -424,6 +576,13 @@ pub const Resolver = struct {
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[param_raw];
             const argument = self.findGlobalArgument(module.text(parameter.name), arguments, position) orelse continue;
             switch (parameter.kind) {
+                .definition => switch (argument.value) {
+                    .definition => |value| {
+                        if (!try self.definitionParameterShapeMatches(module_index, parameter, value, bindings)) return error.DefinitionParameterSignatureMismatch;
+                        bindings.definitions[param_raw] = value;
+                    },
+                    else => return error.GenericArgumentKindMismatch,
+                },
                 .type => switch (argument.value) {
                     .type => |value| bindings.types[param_raw] = value,
                     else => return error.GenericArgumentKindMismatch,
@@ -487,6 +646,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(argument.name)),
                 .value = switch (argument.value) {
+                    .definition => |value| .{ .definition = .{ .origin = globalizer.globalFamilyDefinition(self.offsets[module_index], value.origin), .captures = .{ .start = self.offsets[module_index].generic_argument_base + value.captures.start, .len = value.captures.len } } },
                     .type => |value| .{ .type = globalizer.globalType(self.offsets[module_index], value) },
                     .comptime_int => |value| .{ .comptime_int = value },
                 },
@@ -505,6 +665,7 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage.ir;
         return switch (storage.types.items[@intFromEnum(id)]) {
             .concrete => |value| globalizer.globalType(self.offsets[module_index], value),
+            .definition => |value| self.instantiateDefinition(module_index, value.origin, value.body, value.arguments, bindings),
             .parameter => |parameter| bindings.types[@intFromEnum(parameter)] orelse return error.UnboundGenericTypeParameter,
             .projection => |value| blk: {
                 const base = try self.instantiateParameterizedType(module_index, value.base, bindings);
@@ -528,6 +689,122 @@ pub const Resolver = struct {
             .choice_union => |value| self.instantiateChoiceUnion(module_index, value.left, value.right, bindings),
             .resolved => |value| self.instantiateResolvedParameterizedType(module_index, value, bindings),
         };
+    }
+
+    /// Construct a definition with contextually checked field types. Only the
+    /// unpublished representation is built here; an existing identity is never
+    /// rewritten to fit a new context.
+    pub fn instantiateRecordDefinition(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *Bindings, prefix_types: []const global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const expression = storage.types.items[@intFromEnum(pattern)];
+        if (expression != .definition) return error.ContextualSignatureMismatch;
+        const origin = globalizer.globalTypeDefinition(self.offsets[module_index], expression.definition.origin);
+        const arguments = try self.instantiateParameterizedArguments(module_index, expression.definition.arguments, bindings);
+        if (try self.findDefinitionInstance(origin, arguments)) |existing| {
+            const fields = global_types.fields(self.graph, existing) orelse return error.ContextualSignatureMismatch;
+            if (prefix_types.len > fields.len) return error.ContextualSignatureMismatch;
+            for (prefix_types, 0..) |ty, offset|
+                if (!global_types.equal(self.graph, ty, self.graph.fields.items[fields.start + offset].ty)) return error.ContextualSignatureMismatch;
+            return existing;
+        }
+        const shape = storage.representation(pattern);
+        if (shape != .resolved or shape.resolved != .structural) return error.ContextualSignatureMismatch;
+        const fields = try self.instantiateFieldsWithTypes(module_index, shape.resolved.structural.fields, bindings, prefix_types);
+        const representation = try self.internType(.{ .structural = .{ .fields = fields, .layout = shape.resolved.structural.layout } });
+        return self.publishDefinitionInstance(origin, arguments, representation);
+    }
+
+    pub const DefinitionArguments = struct { pattern: primitives.Range(ir.ParameterizedGenericArgId), actual: primitives.Range(global_sg.GlobalGenericArgId) };
+
+    pub fn definitionArguments(self: *const Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, actual: global_sg.GlobalTypeId) ?DefinitionArguments {
+        const expression = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern)];
+        if (expression != .definition) return null;
+        const id = switch (self.graph.resolvedSemanticType(actual) orelse return null) {
+            .nominal => |value| value,
+            else => return null,
+        };
+        const origin = globalizer.globalTypeDefinition(self.offsets[module_index], expression.definition.origin);
+        const definition = self.graph.typeDefinition(id);
+        const arguments = if (definition.specialization) |instance| arguments: {
+            if (instance.origin != origin) return null;
+            break :arguments instance.arguments;
+        } else arguments: {
+            if (id != origin) return null;
+            break :arguments primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
+        };
+        if (arguments.len != expression.definition.arguments.len) return null;
+        return .{ .pattern = expression.definition.arguments, .actual = arguments };
+    }
+
+    fn instantiateDefinition(self: *Resolver, module_index: usize, local_origin: module_entities.ModuleTypeDefinitionId, body: ir.ParameterizedTypeId, captures: primitives.Range(ir.ParameterizedGenericArgId), bindings: *Bindings) !global_sg.GlobalTypeId {
+        const origin = globalizer.globalTypeDefinition(self.offsets[module_index], local_origin);
+        const arguments = try self.instantiateParameterizedArguments(module_index, captures, bindings);
+        if (try self.findDefinitionInstance(origin, arguments)) |existing| return existing;
+        const representation = try self.instantiateParameterizedType(module_index, body, bindings);
+        return self.publishDefinitionInstance(origin, arguments, representation);
+    }
+
+    pub fn findDefinitionInstance(self: *Resolver, origin: global_sg.GlobalTypeDefinitionId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !?global_sg.GlobalTypeId {
+        if (arguments.len == 0) {
+            const definition = self.graph.typeDefinition(origin);
+            if (definition.struct_fields != null or definition.choice_variants != null)
+                return try self.internType(.{ .nominal = origin });
+        } else {
+            const key = self.applicationKey(.{ .nominal = origin }, arguments);
+            if (self.generic_types.get(key)) |candidate| {
+                const raw = @intFromEnum(candidate);
+                if (raw < self.graph.types.items.len and !self.graph.isTypeUnresolved(candidate)) {
+                    const value = self.graph.semanticType(candidate);
+                    if (value == .nominal and @intFromEnum(value.nominal) < self.graph.type_definitions.items.len) {
+                        if (self.graph.typeDefinition(value.nominal).specialization) |instance| {
+                            if (instance.origin == origin and global_types.genericArgumentsEqual(self.graph, instance.arguments, arguments)) {
+                                self.stats.definition_lookup_hits += 1;
+                                return candidate;
+                            }
+                        }
+                    }
+                }
+            }
+            // Recursive equality and positional spellings can have different
+            // fast keys. Keep semantic matching authoritative on a miss.
+            for (self.graph.type_definitions.items, 0..) |definition, raw| {
+                self.stats.definition_lookup_candidates += 1;
+                const instance = definition.specialization orelse continue;
+                if (instance.origin == origin and global_types.genericArgumentsEqual(self.graph, instance.arguments, arguments)) {
+                    const id = try self.internType(.{ .nominal = @enumFromInt(@as(u32, @intCast(raw))) });
+                    self.generic_types.put(self.allocator, key, id) catch {};
+                    return id;
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Shared publication path for ordinary instantiation and speculative type
+    /// recipes. Identity depends on origin and captures, never the shape.
+    pub fn publishDefinitionInstance(self: *Resolver, origin: global_sg.GlobalTypeDefinitionId, arguments: primitives.Range(global_sg.GlobalGenericArgId), representation: global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
+        if (try self.findDefinitionInstance(origin, arguments)) |existing| return existing;
+        var definition = self.graph.typeDefinition(origin);
+        switch (self.graph.types.items[@intFromEnum(representation)]) {
+            .structural => |shape| {
+                definition.struct_fields = shape.fields;
+                definition.struct_layout = shape.layout;
+            },
+            .structural_choice => |shape| {
+                definition.choice_variants = shape.variants;
+                definition.choice_layout = shape.layout;
+            },
+            else => return error.InvalidNominalDefinitionRecipe,
+        }
+        if (arguments.len == 0) {
+            try self.graph.completeTypeDefinition(self.allocator, origin, definition);
+            return self.internType(.{ .nominal = origin });
+        }
+        definition.specialization = .{ .origin = origin, .arguments = arguments };
+        definition.declaration = null;
+        const id: global_sg.GlobalTypeDefinitionId = @enumFromInt(@as(u32, @intCast(self.graph.type_definitions.items.len)));
+        try self.graph.type_definitions.append(self.allocator, definition);
+        return self.internType(.{ .nominal = id });
     }
 
     fn instantiateChoiceUnion(self: *Resolver, module_index: usize, left: ir.ParameterizedTypeId, right: ir.ParameterizedTypeId, bindings: *Bindings) !global_sg.GlobalTypeId {
@@ -569,14 +846,16 @@ pub const Resolver = struct {
         _ = bindings;
         const module = &self.modules[module_index];
         const reference = module.semantic.external_refs.items[@intFromEnum(external)];
-        const decl = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type });
-        if (reference.generic_arguments) |args| {
-            const global_args = try self.relocateModuleArguments(module_index, args);
-            const id = try self.internType(.{ .generic = .{ .base = decl, .arguments = global_args } });
-            _ = try self.ensureGenericInstance(id);
-            return id;
+        if (reference.generic_arguments == null) {
+            if (try self.core.resolveTypeValue(module_index, reference)) |ty| return ty;
+            _ = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding });
+            return error.ComptimeExecutionPending;
         }
-        return self.graph.declarations.items[@intFromEnum(decl)].type_id orelse self.internType(.{ .declared = decl });
+        const decl = try self.resolveExternalFamily(module_index, reference, &.{ .type, .contract_type });
+        const global_args = try self.relocateModuleArguments(module_index, reference.generic_arguments.?);
+        const id = try self.internType(.{ .generic = .{ .base = decl, .arguments = global_args } });
+        _ = try self.ensureGenericInstance(id);
+        return id;
     }
 
     fn instantiateResolvedParameterizedType(
@@ -587,7 +866,8 @@ pub const Resolver = struct {
     ) anyerror!global_sg.GlobalTypeId {
         return switch (value) {
             .builtin => |builtin| self.internType(.{ .builtin = builtin }),
-            .declared => |decl| self.internType(.{ .declared = try self.resolveParameterizedDeclaration(module_index, decl) }),
+            .nominal => |definition| self.internType(.{ .nominal = globalizer.globalTypeDefinition(self.offsets[module_index], definition) }),
+            .definition => |decl| self.internType(.{ .definition = try self.resolveParameterizedFamily(module_index, decl) }),
             .pointer => |pointer| self.internType(.{ .pointer = .{
                 .child = try self.instantiateParameterizedType(module_index, pointer.child, bindings),
                 .mutability = pointer.mutability,
@@ -617,9 +897,10 @@ pub const Resolver = struct {
                 .layout = shape.layout,
             } }),
             .generic => |generic| blk: {
-                const base = try self.resolveParameterizedDeclaration(module_index, generic.base);
+                const definition = try self.resolveParameterizedDefinitionValue(module_index, generic.base, bindings);
                 const args = try self.instantiateParameterizedArguments(module_index, generic.arguments, bindings);
-                const id = try self.internType(.{ .generic = .{ .base = base, .arguments = args } });
+                const complete_args = try self.completeDefinitionArguments(definition, args);
+                const id = try self.internType(.{ .generic = .{ .base = definition.origin, .arguments = complete_args } });
                 _ = try self.ensureGenericInstance(id);
                 break :blk id;
             },
@@ -627,9 +908,40 @@ pub const Resolver = struct {
         };
     }
 
+    fn resolveExternalFamily(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, kinds: []const primitives.DeclarationKind) !global_sg.GlobalFamilyDefinitionId {
+        if (try self.core.resolveDefinitionReference(module_index, reference, kinds)) |family| return family;
+        // An existing binding may still need its initializer resolved. A missing
+        // name is an error, not work that another resolution pass can complete.
+        _ = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type, .function, .binding });
+        return error.ComptimeExecutionPending;
+    }
+
+    pub fn resolveParameterizedFamily(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.GlobalFamilyDefinitionId {
+        return (try self.resolveParameterizedDefinitionValue(module_index, id, null)).origin;
+    }
+
+    pub fn resolveParameterizedDefinitionValue(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId, bindings: ?*Bindings) !global_sg.DefinitionValue {
+        const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
+        return switch (target) {
+            .projection => |projection| value: {
+                const environment = bindings orelse return error.UnboundDefinitionParameter;
+                const base = try self.instantiateParameterizedType(module_index, projection.base, environment);
+                break :value try self.definition_projection_resolver.?(self.projection_context.?, base, self.modules[module_index].text(projection.member), self.globalSource(module_index, projection.source));
+            },
+            .parameter => |parameter| if (bindings) |environment| environment.definitions[@intFromEnum(parameter)] orelse error.UnboundDefinitionParameter else error.UnboundDefinitionParameter,
+            .module => |local| .{ .origin = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse return error.ExpectedParameterizedDefinition },
+            .external => |external| value: {
+                const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)];
+                if (try self.core.resolveDefinitionAlias(module_index, reference)) |definition| break :value definition;
+                break :value .{ .origin = try self.resolveExternalFamily(module_index, reference, &.{ .type, .contract_type, .function }) };
+            },
+        };
+    }
+
     pub fn resolveParameterizedDeclaration(self: *Resolver, module_index: usize, id: ir.ParameterizedDeclId) !global_sg.GlobalDeclId {
         const target = self.modules[module_index].semantic.parameterized_storage.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
+            .parameter, .projection => return error.ExpectedDeclarationReference,
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
             .external => |external| self.core.resolveDeclaration(
                 module_index,
@@ -657,6 +969,194 @@ pub const Resolver = struct {
         return null;
     }
 
+    fn definitionParameterShapeMatches(self: *Resolver, module_index: usize, parameter: parameterized_storage.ComptimeParameter, actual: global_sg.DefinitionValue, expected_bindings: *Bindings) anyerror!bool {
+        const expected = parameter.family_parameters orelse return false;
+        const located = self.findTypeParameterized(actual.origin) orelse return false;
+        const parameters = located.parameterized.parameters;
+        if (actual.captures.len > parameters.len) return false;
+        var actual_bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer actual_bindings.deinit(self.allocator);
+        _ = try self.bindDefinitionCaptures(located.module_index, parameters, actual, &actual_bindings);
+        return self.parameterShapesMatch(module_index, expected, expected_bindings, located.module_index, .{
+            .start = parameters.start + actual.captures.len,
+            .len = parameters.len - actual.captures.len,
+        }, &actual_bindings, 0, null);
+    }
+
+    fn parameterShapesMatch(self: *Resolver, expected_module: usize, expected: primitives.Range(ir.ComptimeParameterId), expected_bindings: *Bindings, actual_module: usize, actual: primitives.Range(ir.ComptimeParameterId), actual_bindings: *Bindings, depth: usize, parent: ?*const FamilySignatureScope) anyerror!bool {
+        if (depth > 128) return error.CompileTimeTypeDepthLimit;
+        if (expected.len != actual.len) return false;
+        const expected_storage = &self.modules[expected_module].semantic.parameterized_storage;
+        const actual_storage = &self.modules[actual_module].semantic.parameterized_storage;
+        const scope = FamilySignatureScope{ .expected_module = expected_module, .actual_module = actual_module, .expected = expected, .actual = actual, .expected_bindings = expected_bindings, .actual_bindings = actual_bindings, .parent = parent };
+        for (0..expected.len) |position| {
+            const left = expected_storage.comptime_parameters.items[expected.start + position];
+            const right = actual_storage.comptime_parameters.items[actual.start + position];
+            if (left.kind != right.kind) return false;
+            // An unconstrained signature promises every value of this kind.
+            // The supplied family cannot silently narrow that domain.
+            if (left.constraint == null and right.constraint != null) return false;
+            if (right.constraint) |actual_constraint| {
+                const expected_constraint = left.constraint orelse return false;
+                const required = expected_storage.contract_constraints.items[@intFromEnum(expected_constraint)];
+                const supplied = actual_storage.contract_constraints.items[@intFromEnum(actual_constraint)];
+                if (try self.constraintFamily(expected_module, required.contract_ref) != try self.constraintFamily(actual_module, supplied.contract_ref)) return false;
+                if (!try self.signatureArgumentsMatch(&scope, required.arguments, supplied.arguments, depth + 1)) return false;
+            }
+            if (left.kind == .comptime_int) {
+                const expected_type = try self.instantiateParameterizedType(expected_module, left.value_type orelse return false, expected_bindings);
+                const actual_type = try self.instantiateParameterizedType(actual_module, right.value_type orelse return false, actual_bindings);
+                if (!global_types.equal(self.graph, expected_type, actual_type)) return false;
+            }
+            if (left.kind == .definition) {
+                if (!try self.parameterShapesMatch(expected_module, left.family_parameters orelse return false, expected_bindings, actual_module, right.family_parameters orelse return false, actual_bindings, depth + 1, &scope)) return false;
+            }
+        }
+        return true;
+    }
+
+    const FamilySignatureScope = struct {
+        expected_module: usize,
+        actual_module: usize,
+        expected: primitives.Range(ir.ComptimeParameterId),
+        actual: primitives.Range(ir.ComptimeParameterId),
+        expected_bindings: *Bindings,
+        actual_bindings: *Bindings,
+        parent: ?*const FamilySignatureScope,
+
+        fn sameParameter(self: *const FamilySignatureScope, expected: ir.ComptimeParameterId, actual: ir.ComptimeParameterId) bool {
+            const left = @intFromEnum(expected);
+            const right = @intFromEnum(actual);
+            if (left >= self.expected.start and left - self.expected.start < self.expected.len)
+                return right >= self.actual.start and right - self.actual.start == left - self.expected.start;
+            return if (self.parent) |parent| parent.sameParameter(expected, actual) else false;
+        }
+    };
+
+    fn constraintFamily(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !global_sg.GlobalFamilyDefinitionId {
+        return switch (reference) {
+            .module => |id| self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], id)) orelse error.ExpectedParameterizedDefinition,
+            .external => |id| self.resolveExternalFamily(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(id)], &.{.contract_type}),
+        };
+    }
+
+    /// Compare universal bound recipes under alpha-renaming. No representative
+    /// concrete type can prove that a family accepts every promised argument.
+    fn signatureArgumentsMatch(self: *Resolver, scope: *const FamilySignatureScope, expected: primitives.Range(ir.ParameterizedGenericArgId), actual: primitives.Range(ir.ParameterizedGenericArgId), depth: usize) anyerror!bool {
+        if (depth > 128) return error.CompileTimeTypeDepthLimit;
+        if (expected.len != actual.len) return false;
+        const left_module = &self.modules[scope.expected_module];
+        const right_module = &self.modules[scope.actual_module];
+        for (0..expected.len) |offset| {
+            const left = left_module.semantic.parameterized_storage.ir.generic_arguments.items[expected.start + offset];
+            const right = right_module.semantic.parameterized_storage.ir.generic_arguments.items[actual.start + offset];
+            if (left.name.len != 0 and right.name.len != 0 and !std.mem.eql(u8, left_module.text(left.name), right_module.text(right.name))) return false;
+            if (left.value == .type and right.value == .type) {
+                if (!try self.signatureTypesMatch(scope, left.value.type, right.value.type, depth + 1)) return false;
+            } else if (left.value == .comptime_int and right.value == .comptime_int) {
+                if (!try self.signatureIntegersMatch(scope, left.value.comptime_int, right.value.comptime_int, depth + 1)) return false;
+            } else if (left.value == .projection and right.value == .projection) {
+                if (!std.mem.eql(u8, left_module.text(left.value.projection.member), right_module.text(right.value.projection.member)) or !try self.signatureTypesMatch(scope, left.value.projection.base, right.value.projection.base, depth + 1)) return false;
+            } else if (left.value == .definition and right.value == .definition and left.value.definition == .parameter and right.value.definition == .parameter and scope.sameParameter(left.value.definition.parameter, right.value.definition.parameter)) {
+                continue;
+            } else {
+                const left_value = try self.instantiateArgumentValue(scope.expected_module, left.value, scope.expected_bindings);
+                const right_value = try self.instantiateArgumentValue(scope.actual_module, right.value, scope.actual_bindings);
+                if (!global_types.genericArgumentValuesEqual(self.graph, left_value, right_value)) return false;
+            }
+        }
+        return true;
+    }
+
+    pub fn instantiateArgumentValue(self: *Resolver, module_index: usize, value: ir.GenericArgument.Value, bindings: *Bindings) !global_sg.GenericArgument.Value {
+        return switch (value) {
+            .type => |ty| .{ .type = try self.instantiateParameterizedType(module_index, ty, bindings) },
+            .definition => |definition| .{ .definition = try self.instantiateDefinitionValue(module_index, definition, bindings) },
+            .comptime_int => |integer| .{ .comptime_int = try self.evalInt(module_index, integer, bindings) },
+            .projection => |projection| self.instantiateArgumentProjection(module_index, projection, bindings),
+        };
+    }
+
+    fn signatureIntegersMatch(self: *Resolver, scope: *const FamilySignatureScope, expected: ir.ParameterizedIntExprId, actual: ir.ParameterizedIntExprId, depth: usize) anyerror!bool {
+        if (depth > 128) return error.CompileTimeTypeDepthLimit;
+        const left = self.modules[scope.expected_module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(expected)];
+        const right = self.modules[scope.actual_module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(actual)];
+        if (left == .parameter and right == .parameter and scope.sameParameter(left.parameter, right.parameter)) return true;
+        if (left == .binary and right == .binary) return left.binary.operator == right.binary.operator and try self.signatureIntegersMatch(scope, left.binary.left, right.binary.left, depth + 1) and try self.signatureIntegersMatch(scope, left.binary.right, right.binary.right, depth + 1);
+        const left_value = self.evalInt(scope.expected_module, expected, scope.expected_bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
+        const right_value = self.evalInt(scope.actual_module, actual, scope.actual_bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
+        return left_value == right_value;
+    }
+
+    fn signatureTypesMatch(self: *Resolver, scope: *const FamilySignatureScope, expected: ir.ParameterizedTypeId, actual: ir.ParameterizedTypeId, depth: usize) anyerror!bool {
+        if (depth > 128) return error.CompileTimeTypeDepthLimit;
+        const left = self.modules[scope.expected_module].semantic.parameterized_storage.ir.types.items[@intFromEnum(expected)];
+        const right = self.modules[scope.actual_module].semantic.parameterized_storage.ir.types.items[@intFromEnum(actual)];
+        if (left == .parameter and right == .parameter and scope.sameParameter(left.parameter, right.parameter)) return true;
+        if (left == .array and right == .array) return try self.signatureIntegersMatch(scope, left.array.length, right.array.length, depth + 1) and try self.signatureTypesMatch(scope, left.array.element, right.array.element, depth + 1);
+        if (left == .resolved and right == .resolved) {
+            if (left.resolved == .nullable and right.resolved == .nullable) return self.signatureTypesMatch(scope, left.resolved.nullable, right.resolved.nullable, depth + 1);
+            if (left.resolved == .pointer and right.resolved == .pointer) return left.resolved.pointer.mutability == right.resolved.pointer.mutability and try self.signatureTypesMatch(scope, left.resolved.pointer.child, right.resolved.pointer.child, depth + 1);
+            if (left.resolved == .generic and right.resolved == .generic) {
+                const left_definition = try self.resolveParameterizedDefinitionValue(scope.expected_module, left.resolved.generic.base, scope.expected_bindings);
+                const right_definition = try self.resolveParameterizedDefinitionValue(scope.actual_module, right.resolved.generic.base, scope.actual_bindings);
+                if (left_definition.origin != right_definition.origin or !global_types.genericArgumentsEqual(self.graph, left_definition.captures, right_definition.captures)) return false;
+                return self.signatureArgumentsMatch(scope, left.resolved.generic.arguments, right.resolved.generic.arguments, depth + 1);
+            }
+        }
+        const left_type = self.instantiateParameterizedType(scope.expected_module, expected, scope.expected_bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.UnboundDefinitionParameter => return false,
+            else => return err,
+        };
+        const right_type = self.instantiateParameterizedType(scope.actual_module, actual, scope.actual_bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.UnboundDefinitionParameter => return false,
+            else => return err,
+        };
+        return global_types.identityEqual(self.graph, left_type, right_type);
+    }
+
+    pub fn inferDefinitionValue(self: *Resolver, module_index: usize, pattern: @FieldType(ir.GenericArgument.Value, "definition"), actual: global_sg.DefinitionValue, bindings: *Bindings) !bool {
+        if (pattern == .parameter) {
+            const slot = &bindings.definitions[@intFromEnum(pattern.parameter)];
+            if (slot.*) |previous| return previous.origin == actual.origin and global_types.genericArgumentsEqual(self.graph, previous.captures, actual.captures);
+            slot.* = actual;
+            return true;
+        }
+        const expected = try self.instantiateDefinitionValue(module_index, pattern, bindings);
+        return expected.origin == actual.origin and global_types.genericArgumentsEqual(self.graph, expected.captures, actual.captures);
+    }
+
+    pub fn instantiateDefinitionValue(self: *Resolver, module_index: usize, value: @FieldType(ir.GenericArgument.Value, "definition"), bindings: *Bindings) anyerror!global_sg.DefinitionValue {
+        return switch (value) {
+            .parameter => |id| bindings.definitions[@intFromEnum(id)] orelse error.UnboundDefinitionParameter,
+            .literal => |literal| value: {
+                const definition = try self.resolveParameterizedDefinitionValue(module_index, literal.origin, bindings);
+                const captures = try self.instantiateParameterizedArguments(module_index, literal.captures, bindings);
+                if (captures.len == 0) break :value definition;
+                if (definition.captures.len == 0) break :value .{ .origin = definition.origin, .captures = captures };
+                const count = std.math.add(u32, definition.captures.len, captures.len) catch return error.SemanticGraphTooLarge;
+                try self.graph.generic_arguments.ensureUnusedCapacity(self.allocator, count);
+                const start = std.math.cast(u32, self.graph.generic_arguments.items.len) orelse return error.SemanticGraphTooLarge;
+                const prefix = self.graph.generic_arguments.items[definition.captures.start..][0..definition.captures.len];
+                const suffix = self.graph.generic_arguments.items[captures.start..][0..captures.len];
+                self.graph.generic_arguments.appendSliceAssumeCapacity(prefix);
+                self.graph.generic_arguments.appendSliceAssumeCapacity(suffix);
+                break :value .{ .origin = definition.origin, .captures = .{ .start = start, .len = count } };
+            },
+        };
+    }
+
+    pub fn instantiateArgumentProjection(self: *Resolver, module_index: usize, projection: @FieldType(ir.Type, "projection"), bindings: *Bindings) !global_sg.GenericArgument.Value {
+        const base = try self.instantiateParameterizedType(module_index, projection.base, bindings);
+        return self.value_projection_resolver.?(self.projection_context.?, base, self.modules[module_index].text(projection.member), self.globalSource(module_index, projection.source));
+    }
+
     pub fn instantiateParameterizedArguments(
         self: *Resolver,
         module_index: usize,
@@ -671,10 +1171,7 @@ pub const Resolver = struct {
             const argument = storage.generic_arguments.items[range.start + @as(u32, @intCast(offset))];
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(argument.name)),
-                .value = switch (argument.value) {
-                    .type => |value| .{ .type = try self.instantiateParameterizedType(module_index, value, bindings) },
-                    .comptime_int => |value| .{ .comptime_int = try self.evalInt(module_index, value, bindings) },
-                },
+                .value = try self.instantiateArgumentValue(module_index, argument.value, bindings),
             });
         }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
@@ -722,9 +1219,9 @@ pub const Resolver = struct {
             .resolved => |value| value,
             .pending => |pending_id| {
                 const pending = module.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)];
-                if (pending != .resolve_expression or pending.resolve_expression.kind != .choice_literal) return try self.recordArgumentDefault(module_index, id, ty, bindings);
+                if (pending != .resolve_expression or pending.resolve_expression.kind != .choice_literal) return try self.recordCapturedExpression(module_index, id, ty, bindings);
                 const choice = pending.resolve_expression;
-                if (choice.operands.len != 0) return try self.recordArgumentDefault(module_index, id, ty, bindings);
+                if (choice.operands.len != 0) return try self.recordCapturedExpression(module_index, id, ty, bindings);
                 const name = choice.name orelse return null;
                 _ = try self.ensureGenericInstance(ty);
                 const variant = global_types.findVariant(self.graph, ty, module.text(name)) orelse return null;
@@ -744,7 +1241,7 @@ pub const Resolver = struct {
             .bool_literal => |value| .{ .bool_literal = value },
             .char_literal => |value| .{ .char_literal = value },
             .string_literal => |value| .{ .string_literal = try self.graph.addString(self.allocator, module.text(value)) },
-            else => return try self.recordArgumentDefault(module_index, id, ty, bindings),
+            else => return try self.recordCapturedExpression(module_index, id, ty, bindings),
         };
         const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         const literal_type = if (resolved.ty) |source_type| try self.instantiateParameterizedType(module_index, source_type, bindings) else ty;
@@ -752,18 +1249,18 @@ pub const Resolver = struct {
         return global;
     }
 
-    fn recordArgumentDefault(self: *Resolver, module_index: usize, expression: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !global_sg.GlobalNodeId {
-        const binding_start: u32 = @intCast(self.graph.argument_default_bindings.items.len);
-        for (bindings.types, bindings.ints) |bound_type, integer|
-            try self.graph.argument_default_bindings.append(self.allocator, .{ .ty = bound_type, .integer = integer });
-        const recipe: u32 = @intCast(self.graph.argument_defaults.items.len);
-        try self.graph.argument_defaults.append(self.allocator, .{
+    pub fn recordCapturedExpression(self: *Resolver, module_index: usize, expression: ir.ParameterizedNodeId, ty: ?global_sg.GlobalTypeId, bindings: *Bindings) !global_sg.GlobalNodeId {
+        const binding_start: u32 = @intCast(self.graph.captured_expression_bindings.items.len);
+        for (bindings.types, bindings.ints, 0..) |bound_type, integer, index|
+            try self.graph.captured_expression_bindings.append(self.allocator, .{ .ty = bound_type, .integer = integer, .definition = if (index < bindings.definitions.len) bindings.definitions[index] else null });
+        const recipe: u32 = @intCast(self.graph.captured_expressions.items.len);
+        try self.graph.captured_expressions.append(self.allocator, .{
             .module_index = module_index,
             .expression = expression,
             .bindings = .{ .start = binding_start, .len = @intCast(bindings.types.len) },
         });
         const node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-        try self.graph.nodes.append(self.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = ty, .content = .{ .argument_default = recipe } });
+        try self.graph.nodes.append(self.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = ty, .content = .{ .captured_expression = recipe } });
         return node;
     }
 
@@ -773,13 +1270,17 @@ pub const Resolver = struct {
         range: primitives.Range(ir.ParameterizedFieldId),
         bindings: *Bindings,
     ) !global_sg.FieldRange {
+        return self.instantiateFieldsWithTypes(module_index, range, bindings, &.{});
+    }
+
+    fn instantiateFieldsWithTypes(self: *Resolver, module_index: usize, range: primitives.Range(ir.ParameterizedFieldId), bindings: *Bindings, prefix_types: []const global_sg.GlobalTypeId) !global_sg.FieldRange {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
         var items: std.ArrayList(global_sg.Field) = .empty;
         defer items.deinit(self.allocator);
         for (0..range.len) |offset| {
             const field = storage.fields.items[range.start + @as(u32, @intCast(offset))];
-            const ty = try self.instantiateParameterizedType(module_index, field.ty, bindings);
+            const ty = if (offset < prefix_types.len) prefix_types[offset] else try self.instantiateParameterizedType(module_index, field.ty, bindings);
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(field.name)),
                 .ty = ty,
@@ -935,8 +1436,12 @@ pub const Resolver = struct {
     }
 
     fn genericKey(self: *const Resolver, generic: anytype) GenericKey {
+        return self.applicationKey(.{ .family = generic.base }, generic.arguments);
+    }
+
+    fn applicationKey(self: *const Resolver, origin: GenericOrigin, arguments: primitives.Range(global_sg.GlobalGenericArgId)) GenericKey {
         var hash = std.hash.Wyhash.init(0);
-        for (self.graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
+        for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
             // Matching accepts positional spelling as a wildcard. Index each
             // spelling separately so a later named instance cannot change the
             // first match previously found for a positional argument list.
@@ -946,18 +1451,26 @@ pub const Resolver = struct {
             const kind: u8 = @intFromEnum(std.meta.activeTag(argument.value));
             hash.update(std.mem.asBytes(&kind));
             switch (argument.value) {
+                .definition => |value| {
+                    hash.update(std.mem.asBytes(&value.origin));
+                    hash.update(std.mem.asBytes(&value.captures.start));
+                    hash.update(std.mem.asBytes(&value.captures.len));
+                },
                 .type => |value| hash.update(std.mem.asBytes(&value)),
                 .comptime_int => |value| hash.update(std.mem.asBytes(&value)),
             }
         }
         // Recursively equivalent types still use the original search on a miss.
-        return .{ .base = generic.base, .arity = generic.arguments.len, .values = hash.final() };
+        return .{ .origin = origin, .arity = arguments.len, .values = hash.final() };
     }
 
     fn cacheType(self: *Resolver, value: global_sg.GlobalType, id: global_sg.GlobalTypeId) void {
         switch (value) {
             .pointer => |pointer| self.cachePointer(pointer, id),
             .generic => |generic| self.generic_types.put(self.allocator, self.genericKey(generic), id) catch {},
+            .nominal => |definition| if (self.graph.typeDefinition(definition).specialization) |instance| {
+                self.generic_types.put(self.allocator, self.applicationKey(.{ .nominal = instance.origin }, instance.arguments), id) catch {};
+            },
             else => {},
         }
     }
@@ -1019,7 +1532,8 @@ fn sameShallowType(graph: *const global_sg.GlobalSemanticGraph, a: global_sg.Glo
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
     return switch (a) {
         .builtin => |value| value == b.builtin,
-        .declared => |value| value == b.declared,
+        .nominal => |value| value == b.nominal,
+        .definition => |value| value == b.definition,
         .pointer => |value| value.mutability == b.pointer.mutability and global_types.identityEqual(graph, value.child, b.pointer.child),
         .array => |value| value.length == b.array.length and global_types.identityEqual(graph, value.element, b.array.element),
         .nullable => |value| global_types.identityEqual(graph, value, b.nullable),
@@ -1040,7 +1554,7 @@ test "generic type identity is independent of argument pool position" {
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
 
-    const base: global_sg.GlobalDeclId = @enumFromInt(7);
+    const base: global_sg.GlobalFamilyDefinitionId = @enumFromInt(7);
     try graph.types.append(allocator, .{ .generic = .{
         .base = base,
         .arguments = .{ .start = 0, .len = 1 },
@@ -1179,6 +1693,7 @@ test "pending generic types revisit old holes and discover appended types" {
     try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);
     // No defining module yet: keep the old generic candidate rather than
     // treating a false materialization result as completion.
+    try graph.family_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .type, .parameter_count = 0 });
     try graph.resolveType(a, @enumFromInt(0), .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } });
     try std.testing.expect(!try resolver.materializePendingTypes(&pending));
     try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);
@@ -1229,4 +1744,103 @@ test "pending generic work is discarded across rollback and allocation failure" 
     defer next.deinit(a);
     try next.discover(a, &graph, null);
     try std.testing.expectEqualSlices(global_sg.GlobalTypeId, &.{@enumFromInt(0)}, next.items.items);
+}
+
+test "definition captures bind the lexical prefix before explicit specialization arguments" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(a);
+    var writer = @import("../module/writer.zig").Writer.init(a, &module);
+    for ([_][]const u8{ "Captured", "Value" }) |name|
+        try module.semantic.parameterized_storage.comptime_parameters.append(a, .{ .name = try writer.addString(name), .kind = .type });
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .builtin = .Int32 } });
+    try graph.generic_arguments.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } },
+        .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } },
+    });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{module}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    var bindings = try Resolver.Bindings.init(a, 2);
+    defer bindings.deinit(a);
+    const remaining = try resolver.bindDefinitionCaptures(0, .{ .start = 0, .len = 2 }, .{ .origin = @enumFromInt(0), .captures = .{ .start = 0, .len = 1 } }, &bindings);
+    try std.testing.expectEqual(@as(u32, 1), remaining.start);
+    try resolver.bindGlobalArguments(0, remaining, .{ .start = 1, .len = 1 }, &bindings);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(0)), bindings.types[0]);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(1)), bindings.types[1]);
+    const arguments = try resolver.appendBoundArguments(0, .{ .start = 0, .len = 2 }, &bindings);
+    try std.testing.expectEqualStrings("Captured", graph.text(graph.generic_arguments.items[arguments.start].name));
+    try std.testing.expectEqualStrings("Value", graph.text(graph.generic_arguments.items[arguments.start + 1].name));
+    try graph.generic_arguments.append(a, .{ .name = try graph.addString(a, "Captured"), .value = .{ .type = @enumFromInt(1) } });
+    try std.testing.expectError(error.UnknownGenericArgument, resolver.bindGlobalArgumentsPartial(0, remaining, .{ .start = @intCast(graph.generic_arguments.items.len - 1), .len = 1 }, &bindings));
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(0)), bindings.types[0]);
+}
+
+test "nominal specializations share the generic identity index and survive speculative ID reuse" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .builtin = .Int32 }, .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } } });
+    try graph.type_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.generic_arguments.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } },
+        .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } },
+    });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    const arguments = primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 1 };
+    const retained = try resolver.publishDefinitionInstance(@enumFromInt(0), arguments, @enumFromInt(2));
+    const scanned = resolver.stats.definition_lookup_candidates;
+    for (0..100) |_| try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), arguments)).?);
+    try std.testing.expectEqual(scanned, resolver.stats.definition_lookup_candidates);
+    try std.testing.expectEqual(@as(u64, 100), resolver.stats.definition_lookup_hits);
+    resolver.commitCaches();
+    const saved = resolver.checkpointCaches();
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    const other_arguments = primitives.Range(global_sg.GlobalGenericArgId){ .start = 1, .len = 1 };
+    const rejected = try resolver.publishDefinitionInstance(@enumFromInt(0), other_arguments, @enumFromInt(2));
+    try std.testing.expect(rejected != retained);
+    transaction.rollback();
+    resolver.rollbackCaches(saved);
+    try graph.types.append(a, .{ .builtin = .UInt8 });
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, null), try resolver.findDefinitionInstance(@enumFromInt(0), other_arguments));
+    try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), arguments)).?);
+    const duplicate: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(a, .{ .builtin = .Bool });
+    const equivalent_arguments = primitives.Range(global_sg.GlobalGenericArgId){ .start = @intCast(graph.generic_arguments.items.len), .len = 1 };
+    try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = duplicate } });
+    try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), equivalent_arguments)).?);
+    const equivalent_scanned = resolver.stats.definition_lookup_candidates;
+    try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), equivalent_arguments)).?);
+    try std.testing.expectEqual(equivalent_scanned, resolver.stats.definition_lookup_candidates);
+    // A wrong/colliding cache entry cannot become semantic evidence.
+    try resolver.generic_types.put(a, resolver.applicationKey(.{ .nominal = @enumFromInt(0) }, arguments), @enumFromInt(0));
+    try std.testing.expectEqual(retained, (try resolver.findDefinitionInstance(@enumFromInt(0), arguments)).?);
+}
+
+test "definition arguments infer captures without conflating concrete types or integers" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .builtin = .Int32 } });
+    for (0..2) |index| try graph.generic_arguments.append(a, .{
+        .name = .{ .start = 0, .len = 0 },
+        .value = .{ .type = @enumFromInt(index) },
+    });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    var bindings = try Resolver.Bindings.init(a, 1);
+    defer bindings.deinit(a);
+    const first: global_sg.DefinitionValue = .{ .origin = @enumFromInt(0), .captures = .{ .start = 0, .len = 1 } };
+    const second: global_sg.DefinitionValue = .{ .origin = @enumFromInt(0), .captures = .{ .start = 1, .len = 1 } };
+    const pattern: @FieldType(ir.GenericArgument.Value, "definition") = .{ .parameter = @enumFromInt(0) };
+    try std.testing.expectError(error.UnboundDefinitionParameter, resolver.instantiateDefinitionValue(0, pattern, &bindings));
+    try std.testing.expect(try resolver.inferDefinitionValue(0, pattern, first, &bindings));
+    try std.testing.expect(try resolver.inferDefinitionValue(0, pattern, first, &bindings));
+    try std.testing.expect(!try resolver.inferDefinitionValue(0, pattern, second, &bindings));
+    try std.testing.expectEqualDeep(first, try resolver.instantiateDefinitionValue(0, pattern, &bindings));
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, null), bindings.types[0]);
+    try std.testing.expectEqual(@as(?i64, null), bindings.ints[0]);
 }

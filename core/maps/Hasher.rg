@@ -6,19 +6,22 @@ Hasher#(.State: Type): Contract = (
 
 -- FNV-1a-64, with explicit offset basis. This is a non-cryptographic hash.
 -- https://www.ietf.org/archive/id/draft-eastlake-fnv-25.html
-StandardHasher: Type = (._state: UInt64)
+StandardHasher := (._state: UInt64)
 
-implement Init#(StandardHasher, (.seed: UInt64 = 14695981039346656037)) (
+StandardHasherInitArgs: Type = (.seed: UInt64 = 14695981039346656037)
+
+implement Init#(StandardHasher, StandardHasherInitArgs) (
     .Result : Type = StandardHasher
-    .init   = (.args: (.seed: UInt64 = 14695981039346656037)) -> (.result: Result) {
-        result = (._state = args.seed)
+
+    .init = StandardHasherInitArgs -> (.result: Result) {
+        result = (._state = seed)
     }
 )
 
 -- Both operands fit the requested low-bit window. Arithmetic XOR avoids
 -- introducing a hashing-specific compiler primitive.
 -- TODO: Use ordinary bitwise XOR once the language provides it.
-_hash_xor_window(.left: UInt64, .right: UInt64) -> (.result: UInt64) := {
+_hash_xor_window := (.left: UInt64, .right: UInt64) -> (.result: UInt64) {
     a ::= left
     b ::= right
     place :: UInt64 = 1
@@ -32,7 +35,7 @@ _hash_xor_window(.left: UInt64, .right: UInt64) -> (.result: UInt64) := {
     result = left + right - overlap * 2
 }
 
-_hash_fnv_byte(.state: UInt64, .byte: UInt8) -> (.result: UInt64) := {
+_hash_fnv_byte := (.state: UInt64, .byte: UInt8) -> (.result: UInt64) {
     low_byte ::= state % 256
     digit ::= byte | convert#(.to: UInt64)(_)
     mixed ::= state - low_byte + _hash_xor_window(.left = low_byte, .right = digit).result

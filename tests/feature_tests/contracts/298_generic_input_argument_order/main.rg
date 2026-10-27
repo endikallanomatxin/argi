@@ -1,26 +1,26 @@
-Packet#(.T: Type, .N: UIntNative): Type = (.items: Array#(.n = N, .t: T))
+Packet := #(.T: Type, .N: UIntNative) (.items: Array#(.n = N, .t: T))
 
-first_named#(.T: Type: ImplicitlyCopyable, .N: UIntNative) := (
-    .packet: &Packet#(.N = N, .T: T)
-) -> (.value: T, .count: UIntNative) {
+first_named := #(.T: Type: ImplicitlyCopyable, .N: UIntNative) (.packet: &Packet#(.N = N, .T: T)) -> (
+    .value: T, .count: UIntNative
+) {
     value = packet&.items[0]
     count = N
 }
 
-first_ordered#(.T: Type: ImplicitlyCopyable, .N: UIntNative) := (
+first_ordered := #(.T: Type: ImplicitlyCopyable, .N: UIntNative) (
     .packet: &Packet#(.T: T, .N = N)
 ) -> (.value: T, .count: UIntNative) {
     value = packet&.items[0]
     count = N
 }
 
-Pair#(.Left: Type, .Right: Type): Type = (.left: Left, .right: Right)
+Pair := #(.Left: Type, .Right: Type) (.left: Left, .right: Right)
 
-left_positional#(.Left: Type: ImplicitlyCopyable, .Right: Type) := (
-    .pair: &Pair#(Left, Right)
-) -> (.value: Left) { value = pair&.left }
+left_positional := #(.Left: Type: ImplicitlyCopyable, .Right: Type) (.pair: &Pair#(Left, Right)) -> (
+    .value : Left
+) { value = pair&.left }
 
-left_named#(.Left: Type: ImplicitlyCopyable, .Right: Type) := (
+left_named := #(.Left: Type: ImplicitlyCopyable, .Right: Type) (
     .pair: &Pair#(.Right: Right, .Left: Left)
 ) -> (.value: Left) { value = pair&.left }
 

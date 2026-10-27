@@ -4,7 +4,7 @@ Viewable#(.Source: Type): Contract = (
     .make_view : (.self: Source) -> (.view: Result)
 )
 
-view#(.Source: Type: Viewable#(Source)) := (.self: Source) -> (.view: Viewable#(Source).Result) {
+view := #(.Source: Type: Viewable#(Source)) (.self: Source) -> (.view: Viewable#(Source).Result) {
     view = Viewable#(Source).make_view(.self = self)
 }
 

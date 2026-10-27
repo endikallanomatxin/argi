@@ -1,8 +1,8 @@
-produce() -> (.result: Errable#(.t: Void, .reasons: (..test_error))) := {
+produce := () -> (.result: Errable#(.t: Void, .reasons: (..test_error))) {
     result = ..ok Void()
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     result ::= produce()
     if is(.value = result, .variant = ..ok) {
     } else {

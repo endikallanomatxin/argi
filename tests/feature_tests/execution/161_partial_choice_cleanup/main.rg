@@ -1,7 +1,7 @@
 drops :: Int32 = 0
 whole_drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { drops = drops + 1 }
@@ -22,11 +22,11 @@ implement Deinit#(Choice) (
     }
 )
 
-Envelope: Type = (.choice: Choice, .sibling: Resource)
+Envelope := (.choice: Choice, .sibling: Resource)
 
 implement Deinit#(Envelope) (.deinit = (.self: $&Envelope) -> () { abort })
 
-consume_left(.choice: $&Choice, .consume: Bool) -> () := {
+consume_left := (.choice: $&Choice, .consume: Bool) -> () {
     if consume {
         match choice&{
             ..pair $&payload { deinit(.self = $&payload&.left) }
@@ -35,7 +35,7 @@ consume_left(.choice: $&Choice, .consume: Bool) -> () := {
     }
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     if true {
         choice :: Choice = ..pair(.left = (.value = 1), .right = (.value = 2))
         match choice {

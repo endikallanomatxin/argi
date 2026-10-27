@@ -1,8 +1,8 @@
 -- Exchange occupied slots through temporary lexical owners. No element is
 -- copied or dropped; collection shape invalidation ends pre-existing loans.
-_swap_owned_array#(.t: Type)(
+_swap_owned_array := #(.t: Type) (
     .self: $&DynamicArray#(.t: t), .left: UIntNative, .right: UIntNative
-) -> () := {
+) -> () {
     if left == right { return }
     if left >= self&._length or right >= self&._length { abort }
     a ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = left)
@@ -16,7 +16,7 @@ _swap_owned_array#(.t: Type)(
     _invalidate_dynamic_array_shape#(.t: t)(.array = self)
 }
 
-reverse_owned#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
+reverse_owned := #(.t: Type) (.self: $&DynamicArray#(.t: t)) -> () {
     left :: UIntNative = 0
     end ::= length(self).count
 
@@ -28,17 +28,17 @@ reverse_owned#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
     }
 }
 
-_owned_array_less#(.t: Type, .Policy: Type: OrderPolicy#(Policy, t))(
+_owned_array_less := #(.t: Type, .Policy: Type: OrderPolicy#(Policy, t)) (
     .self: &DynamicArray#(.t: t), .order: &Policy, .left: UIntNative, .right: UIntNative
-) -> (.ok: Bool) := {
+) -> (.ok: Bool) {
     a ::= _trusted_dynamic_array_get_reference#(.t: t)(.array = self, .index = left).reference
     b ::= _trusted_dynamic_array_get_reference#(.t: t)(.array = self, .index = right).reference
     ok = OrderPolicy#(Policy, t).less(order, .left = a, .right = b).ok
 }
 
-_owned_sift_down#(.t: Type, .Policy: Type: OrderPolicy#(Policy, t))(
+_owned_sift_down := #(.t: Type, .Policy: Type: OrderPolicy#(Policy, t)) (
     .self: $&DynamicArray#(.t: t), .order: &Policy, .start: UIntNative, .count: UIntNative
-) -> () := {
+) -> () {
     root ::= start
 
     while root < count / 2 {
@@ -58,9 +58,9 @@ _owned_sift_down#(.t: Type, .Policy: Type: OrderPolicy#(Policy, t))(
 }
 
 -- Unstable heapsort uses O(1) auxiliary space and performs no allocation.
-sort_owned#(.t: Type, .Policy: Type: OrderPolicy#(Policy, t))(
+sort_owned := #(.t: Type, .Policy: Type: OrderPolicy#(Policy, t)) (
     .self: $&DynamicArray#(.t: t), .order: &Policy
-) -> () := {
+) -> () {
     count ::= length(self).count
     parent ::= count / 2
 

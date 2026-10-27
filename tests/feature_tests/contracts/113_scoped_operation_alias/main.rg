@@ -1,14 +1,15 @@
-Row: Type = (.value: Int32)
-Column: Type = (.value: Int32)
+Row := (.value: Int32)
+
+Column := (.value: Int32)
 
 Product#(.Left: Type, .Right: Type): Contract = (
-    .Result: Type
-    .multiply: (.left: &Left, .right: &Right) -> (.result: Result)
+    .Result   : Type
+    .multiply : (.left: &Left, .right: &Right) -> (.result: Result)
 )
 
 OtherProduct#(.Left: Type, .Right: Type): Contract = (
-    .Result: Type
-    .multiply: (.left: &Left, .right: &Right) -> (.result: Result)
+    .Result   : Type
+    .multiply : (.left: &Left, .right: &Right) -> (.result: Result)
 )
 
 multiply_row_column := (.left: &Row, .right: &Column) -> (.result: Int32) {
@@ -20,12 +21,12 @@ add_row_column := (.left: &Row, .right: &Column) -> (.result: Int32) {
 }
 
 implement Product#(Row, Column) (
-    .Result: Type = Int32
+    .Result   : Type = Int32
     .multiply = multiply_row_column
 )
 
 implement OtherProduct#(Row, Column) (
-    .Result: Type = Int32
+    .Result   : Type = Int32
     .multiply = add_row_column
 )
 

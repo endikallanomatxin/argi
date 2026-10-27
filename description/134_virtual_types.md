@@ -41,10 +41,10 @@ Shape#(.Participant: Type): Contract = (
 Box : Type = (.value: Int32)
 implement Shape#(Box) (.get_value = _get_box, .set_value = _set_box)
 
-_get_box(.self: &Box) -> (.value: Int32) := {
+_get_box := (.self: &Box) -> (.value: Int32)  {
     value = self&.value
 }
-_set_box(.self: $&Box, .value: Int32) -> () := {
+_set_box := (.self: $&Box, .value: Int32) -> ()  {
     self&.value = value
 }
 
@@ -95,7 +95,7 @@ that handle's table. The receiver need not be the first input; its position
 comes from the contract.
 
 ```rg
-read_shape(.shape: &Virtual#(.contract: Shape)) -> (.value: Int32) := {
+read_shape := (.shape: &Virtual#(.contract: Shape)) -> (.value: Int32)  {
     value = get_value(.self = shape)
 }
 ```
@@ -559,7 +559,7 @@ Source#(.Participant: Type): Contract = (
         where invalidates(self.storage)
 )
 
-Cell: Type = (.value: Int32, .other: Int32)
+Cell := (.value: Int32, .other: Int32)
 implement Source#(Cell) (
     .get = (.self: &Cell) -> (.value: &Int32) { value = &self&.value }
     .reset = (.self: $&Cell) -> () { self&.value = 0 }

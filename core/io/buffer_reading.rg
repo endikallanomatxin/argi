@@ -8,9 +8,9 @@ implement#(.Stream: Type: Reader#(Stream)) BufferReading#(Stream) (
     .read   = _reader_read
 )
 
-_reader_read#(.Stream: Type: Reader#(Stream))(
+_reader_read := #(.Stream: Type: Reader#(Stream)) (
     .self: $&Stream, .buffer: MutableArrayView#(.t: UInt8)
-) -> (.result: Errable#(UIntNative, (..stream_read_failed))) := {
+) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
     copied :: UIntNative = 0
 
     while copied < length(&buffer).count {

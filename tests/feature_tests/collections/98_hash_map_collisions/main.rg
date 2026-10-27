@@ -1,4 +1,4 @@
-CollisionPolicy: Type = (.marker: Int32 = 0)
+CollisionPolicy := (.marker: Int32 = 0)
 
 implement ImplicitlyCopyable#(CollisionPolicy) ()
 
@@ -12,7 +12,7 @@ implement HashPolicy#(CollisionPolicy, Int32) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= system.page_allocator
     map ::= unwrap_or_abort(
         .value = HashMap#(.key: Int32, .value: Int32, .policy: CollisionPolicy)(

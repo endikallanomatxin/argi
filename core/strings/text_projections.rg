@@ -10,7 +10,7 @@ TextBytes#(.Text: Type): Contract = (
     )
 )
 
-bytes_get#(.Text: Type: TextBytes#(Text)) := (.view: &Text, .index: UIntNative) -> (
+bytes_get := #(.Text: Type: TextBytes#(Text)) (.view: &Text, .index: UIntNative) -> (
     .result : Errable#(UInt8, (..out_of_bounds))
 ) {
     result = TextBytes#(Text).byte_at(.view = view, .index = index)
@@ -26,10 +26,10 @@ implement TextBytes#(StringView) (
     .measure_bytes = _view_byte_length
 )
 
-_string_byte_length(.self: &String) -> (.count: UIntNative) := { count = self&._length }
+_string_byte_length := (.self: &String) -> (.count: UIntNative) { count = self&._length }
 
-_view_byte_length(.self: &StringView) -> (.count: UIntNative) := { count = self&._length }
+_view_byte_length := (.self: &StringView) -> (.count: UIntNative) { count = self&._length }
 
-byte_length#(.Text: Type: TextBytes#(Text))(.self: &Text) -> (.count: UIntNative) := {
+byte_length := #(.Text: Type: TextBytes#(Text)) (.self: &Text) -> (.count: UIntNative) {
     count = TextBytes#(Text).measure_bytes(.self = self)
 }

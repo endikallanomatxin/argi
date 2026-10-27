@@ -1,7 +1,7 @@
-Owner: Type = (.first: DynamicArray#(UIntNative), .second: DynamicArray#(UIntNative))
+Owner := (.first: DynamicArray#(UIntNative), .second: DynamicArray#(UIntNative))
 
-make_owner#(.Provider: Type: Allocator) := (.allocator: $&Provider = reach allocator) -> (
-    .result : Errable#(Owner, (..out_of_memory))
+make_owner := #(.Provider: Type: Allocator) (.allocator: $&Provider = reach allocator) -> (
+    .result: Errable#(Owner, (..out_of_memory))
 ) {
     first ::= DynamicArray#(UIntNative)(.allocator = allocator)!
     second ::= DynamicArray#(UIntNative)(.allocator = allocator)!

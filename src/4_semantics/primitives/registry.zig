@@ -98,7 +98,12 @@ pub fn signatureMatches(spec: Spec, tree: *const syntax.FileSyntaxTree, source: 
     if (function.is_once or (function.body != null) != (spec.declaration == .body)) return false;
     const name_index: usize = @intFromEnum(function.name_token);
     const name_start: usize = tree.tokenLocation(function.name_token).offset;
-    const start = name_start + spec.name.len;
+    var start = name_start + spec.name.len;
+    skipWhitespaceAndComments(source, &start);
+    if (std.mem.startsWith(u8, source[start..], ":=")) {
+        start += 2;
+        skipWhitespaceAndComments(source, &start);
+    }
     const output_index: usize = @intFromEnum(tree.mainToken(function.output));
     if (output_index <= name_index or output_index >= tree.tokens.len) return false;
     var depth: usize = 0;

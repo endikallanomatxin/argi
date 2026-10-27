@@ -1,9 +1,10 @@
 json ::= import ("codecs/serialization/json")
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     json.validate(
         .text = " {\"text\":\"café \\uD83D\\uDE42\", \"values\":[null,true,false,-1.2e+3]} "
-    )!
+    )!!!
     cases :: [12]StringView = (
         "",
         "01",
@@ -26,10 +27,10 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     match json.validate(.text = "[[]]", .maximum_depth = 1) {
         ..ok _ { abort } ..error error { if [error.reason != ..json_depth_exceeded] { abort } }
     }
-    cursor ::= json.JsonCursor(.text = "[1,true,\"x\"]")!
+    cursor ::= json.JsonCursor(.text = "[1,true,\"x\"]")!!!
     count :: UIntNative = 0
     while true {
-        match json.next(.self = $&cursor)! {
+        match json.next(.self = $&cursor)!!! {
             ..none { break } ..some token {
                 if [byte_length(&token.value.lexeme).count == 0] { abort }
                 count = [count + 1]
@@ -37,15 +38,15 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         }
     }
     if count != 7 { abort }
-    match json.next(.self = $&cursor)! { ..none {} ..some _ { abort } }
+    match json.next(.self = $&cursor)!!! { ..none {} ..some _ { abort } }
     assume allocator := system.page_allocator
     decoded ::= json.decode_string(
         .text = "\"caf\\u00e9 \\uD83D\\uDE42\\n\"", .allocator = allocator
-    )!
+    )!!!
     if view(.self = &decoded) != "café 🙂\n" { abort }
     storage ::= zeroed#(.t: [64]UInt8)()
     writer ::= ByteWriter(.bytes = view(.self = $&storage))
-    json.write_string(.writer = $&writer, .text = view(.self = &decoded))!
+    json.write_string(.writer = $&writer, .text = view(.self = &decoded))!!!
     text_storage ::= unwrap_or_abort(
         .value = string_from_bytes(
             .bytes = unwrap_or_abort(
@@ -55,12 +56,6 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         )
     )
     text ::= view(&text_storage)
-    json.validate(.text = text)!
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
+    json.validate(.text = text)!!!
     status_code = 0
 }

@@ -1,8 +1,8 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Tracked: Type = (.drops: $&Int32)
+Tracked := (.drops: $&Int32)
 
-Pair: Type = (.first: Tracked, .second: Tracked)
+Pair := (.first: Tracked, .second: Tracked)
 
 implement Deinit#(Tracked) (
     .deinit = (.self: $&Tracked) -> () {
@@ -13,7 +13,7 @@ implement Deinit#(Tracked) (
 Slots: Type = ()
 
 SlotProtocol#(.Participant: Type): Contract = (
-    .take_pair: (
+    .take_pair : (
         .self        : &Participant,
         .first       : $&Allocation,
         .first_slot  : $&Tracked,
@@ -30,14 +30,12 @@ SlotProtocol#(.Participant: Type): Contract = (
 implement SlotProtocol#(Slots) (.take_pair = _impl_take_pair_Slots)
 
 _impl_take_pair_Slots := (
-        .self        : &Slots,
-        .first       : $&Allocation,
-        .first_slot  : $&Tracked,
-        .second      : $&Allocation,
-        .second_slot : $&Tracked
-    ) -> (
-        .value : Pair
-    )  {
+    .self        : &Slots,
+    .first       : $&Allocation,
+    .first_slot  : $&Tracked,
+    .second      : $&Allocation,
+    .second_slot : $&Tracked
+) -> (.value: Pair) {
     first_value ::= trusted_opaque_move_out#(Tracked, Allocation)(first, first_slot)
     second_value ::= trusted_opaque_move_out#(Tracked, Allocation)(second, second_slot)
     trusted_opaque_mark_empty(first)
@@ -46,7 +44,7 @@ _impl_take_pair_Slots := (
     value = Pair(~first_value, ~second_value)
 }
 
-escape(.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (.result: Pair) := {
+escape := (.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (.result: Pair) {
     local_drops :: Int32 = 0
     first ::= unwrap_or_abort(allocate#(Tracked)(allocator))
     second ::= unwrap_or_abort(allocate#(Tracked)(allocator))
@@ -66,7 +64,7 @@ escape(.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (.result: Pair
     deinit($&second)
 }
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     drops :: Int32 = 0
     pair ::= escape(allocator, $&drops)

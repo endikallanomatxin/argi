@@ -1,14 +1,13 @@
-expect_error#(.t: Type: Int)(
-    .value  : Errable#(.t: t, .reasons: (..invalid_base, ..invalid_input, ..out_of_range)),
-    .reason : (..invalid_base, ..invalid_input, ..out_of_range),
-) -> () := {
+expect_error := #(.t: Type: Int, .Reasons: Type) (
+    .value: Errable#(.t: t, .reasons: Reasons), .reason: Reasons
+) -> () {
     match value {
         ..ok _ { abort }
         ..error error { if error.reason != reason { abort } }
     }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if unwrap_or_abort(.value = parse_uint8(.text = "0")).result != 0 { abort }
     if unwrap_or_abort(.value = parse_uint8(.text = "0")).result != 0 { abort }
     if unwrap_or_abort(.value = parse_uint8(.text = "255")).result != 255 { abort }

@@ -1,5 +1,5 @@
-Thing : Type = (
-    .value: Int32
+Thing := (
+    .value : Int32
 )
 
 implement Deinit#(Thing) (
@@ -8,7 +8,7 @@ implement Deinit#(Thing) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     x :: Thing = (.value = 1)
     stale ::= $&x
 

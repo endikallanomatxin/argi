@@ -1,11 +1,11 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-CountingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
+CountingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
     .deallocations : Int32
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage :: CountingAllocator = (.ffi = system.ffi, .deallocations = 0)
     assume allocator ::= $&allocator_storage
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
 implement Allocator#(CountingAllocator) (
     .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         address :: UIntNative = storage | convert#(.to: UIntNative)(_)

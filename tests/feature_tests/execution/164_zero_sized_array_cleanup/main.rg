@@ -6,7 +6,7 @@ implement Deinit#(Zero) (
     .deinit = (.self: $&Zero) -> () { drops = drops + 1 }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         values :: [2]Zero = (
             (),

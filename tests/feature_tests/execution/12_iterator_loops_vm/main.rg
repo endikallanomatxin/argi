@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     values :: [3]Int32 = (1, 2, 3)
     for $&value in values { value&= value&+ 1 }
     for &value in values { status_code = status_code + value&}

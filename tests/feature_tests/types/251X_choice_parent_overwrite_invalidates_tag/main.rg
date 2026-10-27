@@ -3,12 +3,12 @@ Result : Type = (
     ..error Int32
 )
 
-Wrapper : Type = (
+Wrapper := (
     .result: Result
     .counter: Int32
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     wrapper :: Wrapper = (
         .result = ..ok 42,
         .counter = 0,

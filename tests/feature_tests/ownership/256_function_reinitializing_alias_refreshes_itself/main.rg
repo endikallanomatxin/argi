@@ -1,4 +1,4 @@
-Value : Type = (.number: Int32)
+Value := (.number: Int32)
 
 implement Deinit#(Value) (
     .deinit = (.self: $&Value) -> () {
@@ -6,11 +6,11 @@ implement Deinit#(Value) (
     }
 )
 
-replace(.target: $&Value) -> () := {
-    target& = (.number = 9)
+replace := (.target: $&Value) -> () {
+    target&= (.number = 9)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     source :: Value = (.number = 7)
     a ::= $&source
     b ::= $&source

@@ -1,17 +1,16 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     order ::= Int32OrderPolicy()
     queue ::= PriorityQueue#(.t: Int32, .order: Int32OrderPolicy)(
-        .order     = &order
-        .allocator = allocator
-        .capacity  = 1
-    )!
+        .order = &order, .allocator = allocator, .capacity = 1
+    )!!!
     match peek(.self = &queue).value { ..none {} ..some _ { abort } }
     match pop(.self = $&queue).result { ..none {} ..some _ { abort } }
-    push(.self = $&queue, .value = 5, .allocator = allocator)!
-    push(.self = $&queue, .value = -10, .allocator = allocator)!
-    push(.self = $&queue, .value = 5, .allocator = allocator)!
-    push(.self = $&queue, .value = 0, .allocator = allocator)!
+    push(.self = $&queue, .value = 5, .allocator = allocator)!!!
+    push(.self = $&queue, .value = -10, .allocator = allocator)!!!
+    push(.self = $&queue, .value = 5, .allocator = allocator)!!!
+    push(.self = $&queue, .value = 0, .allocator = allocator)!!!
     expected :: [4]Int32 = (-10, 0, 5, 5)
     index :: UIntNative = 0
     while index < 4 {
@@ -24,7 +23,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if length(.self = &queue).count != 0 { abort }
     value :: Int32 = 1024
     while value > 0 {
-        push(.self = $&queue, .value = value, .allocator = allocator)!
+        push(.self = $&queue, .value = value, .allocator = allocator)!!!
         value = value - 1
     }
     value = 1
@@ -39,8 +38,8 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         }
         value = value + 1
     }
-    push(.self = $&queue, .value = -2147483648, .allocator = allocator)!
-    push(.self = $&queue, .value = 2147483647, .allocator = allocator)!
+    push(.self = $&queue, .value = -2147483648, .allocator = allocator)!!!
+    push(.self = $&queue, .value = 2147483647, .allocator = allocator)!!!
     match pop(.self = $&queue).result {
         ..none { abort }
         ..some item { if item.value != -2147483648 { abort } }
@@ -49,10 +48,5 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..none { abort }
         ..some item { if item.value != 2147483647 { abort } }
     }
-
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

@@ -1,19 +1,22 @@
-Range#(.t: Type): Type = (
+Range := #(.t: Type) (
     .start : t
     .end   : t
     .step  : t
 )
 
-RangeIterator#(.t: Type): Type = (
+RangeIterator := #(.t: Type) (
     .current : t
     .end     : t
     .step    : t
 )
 
-implement#(.t: Type) Init#(Range#(.t: t), (.end: t, .start: t = 0, .step: t = 1)) (
+RangeInitArgs: Type = #(.t: Type) (.end: t, .start: t = 0, .step: t = 1)
+
+implement#(.t: Type) Init#(Range#(.t: t), RangeInitArgs#(t)) (
     .Result : Type = Range#(.t: t)
-    .init   = (.args: (.end: t, .start: t = 0, .step: t = 1)) -> (.result: Result) {
-        result = (.start = args.start, .end = args.end, .step = args.step)
+
+    .init = RangeInitArgs#(t) -> (.result: Result) {
+        result = (.start = start, .end = end, .step = step)
     }
 )
 

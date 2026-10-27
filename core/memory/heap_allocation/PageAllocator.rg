@@ -1,22 +1,24 @@
-PageAllocator: Type = (
+PageAllocator := (
     .memory    : $&Memory
     .page_size : UIntNative
 )
 
-implement Init#(PageAllocator, (.memory: $&Memory)) (
+PageAllocatorInitArgs: Type = (.memory: $&Memory)
+
+implement Init#(PageAllocator, PageAllocatorInitArgs) (
     .Result : Type = PageAllocator
 
-    .init = (.args: (.memory: $&Memory)) -> (.result: Result) {
-        memory ::= args.memory
-        result = (.memory = memory, .page_size = memory&._page_size)
+    .init = PageAllocatorInitArgs -> (.result: Result) {
+        _init_memory ::= memory
+        result = (.memory = _init_memory, .page_size = _init_memory&._page_size)
     }
 )
 
-page_allocator_page_size(.self: $&PageAllocator) -> (.size: UIntNative) := {
+page_allocator_page_size := (.self: $&PageAllocator) -> (.size: UIntNative) {
     size = self&.page_size
 }
 
-page_allocator_round_up(.size: UIntNative, .alignment: UIntNative) -> (.rounded: UIntNative) := {
+page_allocator_round_up := (.size: UIntNative, .alignment: UIntNative) -> (.rounded: UIntNative) {
     rounded = size
 
     if rounded == 0 {

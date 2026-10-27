@@ -1,8 +1,11 @@
 Product#(.Left: Type, .Right: Type): Contract = (
-    .Result: Type
+    .Result : Type
 
-    .multiply: (.left: &Self, .right: &Right) -> (.value: Result) where {}
+    .multiply : (.left: &Self, .right: &Right) -> (.value: Result) where {}
 )
-Row: Type = (.value: Int32)
-Column: Type = (.value: Int32)
-main() -> () := {}
+
+Row := (.value: Int32)
+
+Column := (.value: Int32)
+
+main := () -> () {}

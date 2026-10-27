@@ -1,4 +1,4 @@
-Counter: Type = (.count: UIntNative = 0)
+Counter := (.count: UIntNative = 0)
 
 implement ErrorTracer#(Counter) (
     .add_context = (.self: $&Counter, .location: SourceLocationId, .context: StringView) -> () {
@@ -12,18 +12,21 @@ implement ErrorTracer#(Counter) (
     }
 )
 
-FailFourthAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
+FailFourthAllocator := (
+    .ffi                 : $&ForeignFunctionInterface
     .allocation_attempts : Int32
-    .array_backing_size : UIntNative
-    .deallocations : Int32
+    .array_backing_size  : UIntNative
+    .deallocations       : Int32
     .backing_freed_after_elements : Bool
 )
 
-implement Init#(FailFourthAllocator, (.ffi: $&ForeignFunctionInterface)) (
+FailFourthAllocatorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+
+implement Init#(FailFourthAllocator, FailFourthAllocatorInitArgs) (
     .Result : Type = FailFourthAllocator
-    .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        assume ffi := ~args.ffi
+
+    .init = FailFourthAllocatorInitArgs -> (.result: Result) {
+        assume ffi := ~ffi
 
         result.ffi = ffi
         result.allocation_attempts = 0
@@ -33,7 +36,7 @@ implement Init#(FailFourthAllocator, (.ffi: $&ForeignFunctionInterface)) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

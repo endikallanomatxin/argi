@@ -1,6 +1,6 @@
-transfer_if(.source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32), .move: Bool) -> (
-    .result : ?Int32
-) := {
+transfer_if := (
+    .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32), .move: Bool
+) -> (.result: ?Int32) {
     if move {
         relocate(source, destination)
         result = ..some(.value = 1)
@@ -10,7 +10,7 @@ transfer_if(.source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32
     result = ..none
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
 
     source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))

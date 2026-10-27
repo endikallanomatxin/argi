@@ -1,5 +1,6 @@
 RefusingAllocator: Type = ()
-implement Allocator#(RefusingAllocator)(
+
+implement Allocator#(RefusingAllocator) (
     .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
         .result : Errable#(Allocation, (..out_of_memory))
     ) {
@@ -12,36 +13,35 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     #if target_os("windows") {
         path: StringView = "NUL"
         c_path ::= from_literal(.data = "NUL")
-    }#else {
+    } #else {
         path: StringView = "/dev/null"
         c_path ::= from_literal(.data = "/dev/null")
     }
 
     -- Borrowed NUL-terminated paths require no allocation provider.
     borrowed ::= unwrap_or_abort(
-        .value = File(.file_system = system.file_system, .path = c_path)
+        .value = open_file(.file_system = system.file_system, .path = c_path)
     )
     unwrap_or_abort(.value = close(.self = $&borrowed))
     text ::= unwrap_or_abort(
         .value = string_with_capacity(
-            .allocator = allocator,
-            .capacity  = byte_length(&path).count
+            .allocator = allocator, .capacity = byte_length(&path).count
         )
     )
     unwrap_or_abort(.value = push_view(.self = $&text, .view = path, .allocator = allocator))
     string_file ::= unwrap_or_abort(
-        .value = File(.file_system = system.file_system, .path = &text)
+        .value = open_file(.file_system = system.file_system, .path = &text)
     )
     unwrap_or_abort(.value = close(.self = $&string_file))
     owned_path ::= Path(.text = ~text)
     path_file ::= unwrap_or_abort(
-        .value = File(.file_system = system.file_system, .path = &owned_path)
+        .value = open_file(.file_system = system.file_system, .path = &owned_path)
     )
     unwrap_or_abort(.value = close(.self = $&path_file))
 
     -- StringView obtains its provider from reached Args and releases its copy.
     view_file ::= unwrap_or_abort(
-        .value = File(.file_system = system.file_system, .path = path)
+        .value = open_file(.file_system = system.file_system, .path = path)
     )
     unwrap_or_abort(.value = close(.self = $&view_file))
     refusing ::= RefusingAllocator()
@@ -49,7 +49,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         ..ok ~text { status_code = 3 }
         ..error error { if error.reason != ..out_of_memory { status_code = 4 } }
     }
-    match File(.file_system = system.file_system, .path = path, .allocator = $&refusing) {
+    match open_file(.file_system = system.file_system, .path = path, .allocator = $&refusing) {
         ..ok ~file { status_code = 1 }
         ..error error { if error.reason != ..out_of_memory { status_code = 2 } }
     }

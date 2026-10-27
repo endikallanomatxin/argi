@@ -1,14 +1,14 @@
-Counter: Type = (.count: Int32 = 0, .order: Int32 = 0)
+Counter := (.count: Int32 = 0, .order: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .id: Int32)
+Resource := (.counter: $&Counter, .id: Int32)
 
-Args: Type = (.target: $&Resource)
+Args := (.target: $&Resource)
 
-NestedArgs: Type = (.nested: Args)
+NestedArgs := (.nested: Args)
 
-Pair: Type = (.first: Resource, .second: Resource)
+Pair := (.first: Resource, .second: Resource)
 
-PairArgs: Type = (.target: $&Pair)
+PairArgs := (.target: $&Pair)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -17,12 +17,12 @@ implement Deinit#(Resource) (
     }
 )
 
-make(.counter: $&Counter, .id: Int32) -> (.result: Resource) := {
+make := (.counter: $&Counter, .id: Int32) -> (.result: Resource) {
     counter&.order = counter&.order * 10 + id
     result = Resource(.counter = counter, .id = id)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter, .id = 1)

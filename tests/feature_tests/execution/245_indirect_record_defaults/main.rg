@@ -1,13 +1,13 @@
-Pair: Type = (.left: Int32, .right: Int32 = 22)
+Pair := (.left: Int32, .right: Int32 = 22)
 
 calls :: Int32 = 0
 
-select(.value: $&Pair) -> (.result: $&Pair) := {
+select := (.value: $&Pair) -> (.result: $&Pair) {
     calls = calls + 1
     result = value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value :: Pair = (.left = 1, .right = 2)
     pointer ::= select($&value)
     pointer&= (.left = 20)

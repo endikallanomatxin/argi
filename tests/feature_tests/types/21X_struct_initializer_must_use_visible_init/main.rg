@@ -1,21 +1,21 @@
-Point : Type = (
-    .x: Int32,
-    .y: Int32,
+Point := (
+    .x : Int32,
+    .y : Int32,
 )
 
-implement Init#(Point, (.sum: Int32)) (
-    .Result: Type = Point
-    .init = (.args: (.sum: Int32)) -> (.result: Result) {
-        sum ::= ~args.sum
+PointInitArgs: Type = (.sum: Int32)
 
-        result = (
-            .x = sum,
-            .y = 0,
-        )
+implement Init#(Point, PointInitArgs) (
+    .Result : Type = Point
+
+    .init = PointInitArgs -> (.result: Result) {
+        _init_sum ::= ~sum
+
+        result = (.x = _init_sum, .y = 0)
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     point := Point(.x = 1, .y = 2)
     status_code = point.x + point.y
 }

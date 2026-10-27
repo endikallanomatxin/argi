@@ -1,10 +1,11 @@
 # Types
 
 Type names conventionally use `PascalCase`; value names use `snake_case`.
-Types are checked during compilation. A named type has its own identity:
-two independently declared types do not become interchangeable merely
-because their fields match. Unnamed structural types may be compared by
-their field structure. See [Structs](11_structs.md) and [Choice](12_choice.md).
+Types are compile-time values. A struct or choice definition literal creates its
+own nominal identity, including when it is unnamed. A declaration binds a name to
+that value; it does not create another identity. Independent definitions remain
+distinct even when their fields match, while aliases preserve identity. See
+[Structs](11_structs.md) and [Choice](12_choice.md).
 
 Types are values that can be passed as compile-time parameters. For example,
 `Array#(4, Int32)` selects an array type using a length and an

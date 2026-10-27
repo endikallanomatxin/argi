@@ -41,7 +41,7 @@ fn execute(source: []const u8, limits: vm.Limits) !i128 {
 
 test "bytecode executes selected arithmetic contracts and loops" {
     try std.testing.expectEqual(@as(i128, 55), try execute(
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    index :: Int32 = 0
         \\    while index < 10 {
         \\        index = index + 1
@@ -53,20 +53,20 @@ test "bytecode executes selected arithmetic contracts and loops" {
 
 test "bytecode enforces execution fuel" {
     try std.testing.expectError(error.ExecutionInstructionLimit, execute(
-        \\main() -> (.status_code: Int32 = 0) := { while true {} }
+        \\main := () -> (.status_code: Int32 = 0)  { while true {} }
     , .{ .instructions = 100 }));
 }
 
 test "bytecode refuses unsupported code before execution" {
     try std.testing.expectError(error.UnsupportedExecution, execute(
         \\Mode: CEnum = (..one)
-        \\main() -> (.status_code: Int32 = 0) := { message: Mode = ..one }
+        \\main := () -> (.status_code: Int32 = 0)  { message: Mode = ..one }
     , .{}));
 }
 
 test "bytecode wraps integer arithmetic at its declared width" {
     try std.testing.expectEqual(@as(i128, -2147483648), try execute(
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 = 2147483647
         \\    status_code = value + 1
         \\}
@@ -75,9 +75,9 @@ test "bytecode wraps integer arithmetic at its declared width" {
 
 test "bytecode calls specialize generic functions and short circuit" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }
-        \\fail() -> (.result: Bool = false) := { abort }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
+        \\fail := () -> (.result: Bool = false)  { abort }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    if false and fail() { abort }
         \\    if true or fail() { status_code = identity(.value = 42) }
         \\}
@@ -86,8 +86,8 @@ test "bytecode calls specialize generic functions and short circuit" {
 
 test "bytecode limits recursive calls and allocation" {
     const recursive =
-        \\recurse(.value: Int32) -> (.result: Int32) := { result = recurse(.value = value) }
-        \\main() -> (.status_code: Int32 = 0) := { status_code = recurse(.value = 1) }
+        \\recurse := (.value: Int32) -> (.result: Int32)  { result = recurse(.value = value) }
+        \\main := () -> (.status_code: Int32 = 0)  { status_code = recurse(.value = 1) }
     ;
     try std.testing.expectError(error.ExecutionCallDepthLimit, execute(recursive, .{ .call_depth = 8 }));
     try std.testing.expectError(error.ExecutionMemoryLimit, execute(recursive, .{ .value_cells = 4 }));
@@ -95,7 +95,7 @@ test "bytecode limits recursive calls and allocation" {
 
 test "bytecode preserves break continue and early return" {
     try std.testing.expectEqual(@as(i128, 12), try execute(
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    index :: Int32 = 0
         \\    while index < 20 {
         \\        index = index + 1
@@ -143,11 +143,11 @@ test "bytecode verifier rejects malformed control flow and missing initializatio
 
 test "bytecode returns immutable records across frames" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\Pair: Type = (.left: Int32, .right: Int32)
-        \\make_pair(.left: Int32, .right: Int32) -> (.result: Pair) := {
+        \\Pair := (.left: Int32, .right: Int32)
+        \\make_pair := (.left: Int32, .right: Int32) -> (.result: Pair)  {
         \\    result = (.left = left, .right = right)
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    pair ::= make_pair(.left = 20, .right = 22)
         \\    status_code = pair.left + pair.right
         \\}
@@ -156,11 +156,11 @@ test "bytecode returns immutable records across frames" {
 
 test "bytecode arrays preserve value copies and frame isolation" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\change(.values: [2]Int32) -> (.result: [2]Int32) := {
+        \\change := (.values: [2]Int32) -> (.result: [2]Int32)  {
         \\    result = values
         \\    result[0] = 20
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    original :: [2]Int32 = (1, 22)
         \\    changed ::= change(.values = original)
         \\    original[1] = 99
@@ -171,14 +171,14 @@ test "bytecode arrays preserve value copies and frame isolation" {
 
 test "bytecode array indexing is checked at runtime" {
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, execute(
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    values :: [2]Int32 = (10, 20)
         \\    index :: UIntNative = 2
         \\    status_code = values[index]
         \\}
     , .{}));
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, execute(
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    values :: [0]Int32 = ()
         \\    index :: UIntNative = 0
         \\    values[index] = 1
@@ -224,9 +224,9 @@ test "bytecode array verifier rejects malformed elements and indices" {
 
 test "bytecode places update nested aggregates without changing copies" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\Pair: Type = (.left: Int32, .right: Int32)
-        \\Box: Type = (.pairs: [2]Pair)
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\Pair := (.left: Int32, .right: Int32)
+        \\Box := (.pairs: [2]Pair)
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    box :: Box = (.pairs = ((.left = 1, .right = 2), (.left = 3, .right = 4)))
         \\    saved ::= box
         \\    box.pairs[1].left = 40
@@ -239,8 +239,8 @@ test "bytecode places update nested aggregates without changing copies" {
 
 test "bytecode validates intermediate destinations before later operands" {
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, execute(
-        \\fail() -> (.result: UIntNative = 0) := { abort }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\fail := () -> (.result: UIntNative = 0)  { abort }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    values :: [2][2]Int32 = ((1, 2), (3, 4))
         \\    index :: UIntNative = 2
         \\    values[index][fail()] = 9
@@ -250,8 +250,8 @@ test "bytecode validates intermediate destinations before later operands" {
 
 test "bytecode validates the final destination before RHS effects" {
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, execute(
-        \\fail() -> (.result: Int32 = 0) := { abort }
-        \\main() -> () := {
+        \\fail := () -> (.result: Int32 = 0)  { abort }
+        \\main := () -> ()  {
         \\    values :: [2]Int32 = (1, 2)
         \\    index :: UIntNative = 2
         \\    values[index] = fail()
@@ -261,10 +261,10 @@ test "bytecode validates the final destination before RHS effects" {
 
 test "bytecode call stack does not recurse through the host stack" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\recurse(.remaining: Int32) -> (.result: Int32 = 42) := {
+        \\recurse := (.remaining: Int32) -> (.result: Int32 = 42)  {
         \\    if remaining > 0 { result = recurse(.remaining = remaining - 1) }
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = recurse(.remaining = 512)
         \\}
     , .{ .call_depth = 1024 }));
@@ -324,9 +324,9 @@ test "bytecode VM retains invocations and resets poisoned execution contexts" {
 
 test "bytecode references preserve caller storage across calls" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\update(.value: $&Int32) -> () := { value& = value& + 1 }
-        \\borrow(.value: &Int32) -> (.result: &Int32) := { result = value }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\update := (.value: $&Int32) -> ()  { value& = value& + 1 }
+        \\borrow := (.value: &Int32) -> (.result: &Int32)  { result = value }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 = 41
         \\    update(.value = $&value)
         \\    reference ::= borrow(.value = &value)
@@ -337,9 +337,9 @@ test "bytecode references preserve caller storage across calls" {
 
 test "bytecode reference projections capture indices and preserve aggregate copies" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\Pair: Type = (.left: Int32, .right: Int32)
-        \\update(.value: $&Pair) -> () := { value&.left = 40 }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\Pair := (.left: Int32, .right: Int32)
+        \\update := (.value: $&Pair) -> ()  { value&.left = 40 }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    pairs :: [2]Pair = ((.left = 1, .right = 2), (.left = 3, .right = 4))
         \\    saved ::= pairs
         \\    index :: UIntNative = 0
@@ -532,8 +532,8 @@ test "bytecode references cannot name another execution context" {
 
 test "bytecode accepts mutable reference arguments for readonly inputs" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\read(.value: &Int32) -> (.result: Int32) := { result = value& }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\read := (.value: &Int32) -> (.result: Int32)  { result = value& }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 = 42
         \\    status_code = read(.value = $&value)
         \\}
@@ -575,10 +575,10 @@ test "bytecode verifies reference access and traps escaped frame storage" {
 
 test "bytecode reference fields keep pointees separate from copied records" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\Args: Type = (.target: $&Int32)
-        \\View: Type = (.target: &Int32)
-        \\update(.args: Args) -> () := { args.target& = 42 }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\Args := (.target: $&Int32)
+        \\View := (.target: &Int32)
+        \\update := (.args: Args) -> ()  { args.target& = 42 }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 = 1
         \\    args: Args = (.target = $&value)
         \\    update(.args = args)
@@ -591,7 +591,7 @@ test "bytecode reference fields keep pointees separate from copied records" {
 test "bytecode matches choice payloads and borrows their storage" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\Result: Type = (..ok(.value: Int32), ..empty)
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Result = ..ok(.value = 1)
         \\    saved ::= value
         \\    match value {
@@ -613,8 +613,8 @@ test "bytecode matches choice payloads and borrows their storage" {
 test "bytecode accesses proven active payloads across calls" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\Result: Type = (..ok Int32, ..empty)
-        \\make(.value: Int32) -> (.result: Result) := { result = ..ok value }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\make := (.value: Int32) -> (.result: Result)  { result = ..ok value }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    result ::= make(.value = 42)
         \\    if result == ..ok { status_code = result..ok } else { abort }
         \\}
@@ -675,11 +675,11 @@ test "bytecode choice verifier rejects foreign variants and incorrect payload ty
 
 test "bytecode calls return several typed outputs" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\split_number(.value: Int32) -> (.first: Int32, .second: Int32) := {
+        \\split_number := (.value: Int32) -> (.first: Int32, .second: Int32)  {
         \\    first = value * 10
         \\    second = value - 2
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    result ::= split_number(.value = 4)
         \\    status_code = result.first + result.second
         \\}
@@ -688,10 +688,10 @@ test "bytecode calls return several typed outputs" {
 
 test "bytecode multiple outputs retain caller reference lifetimes" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\inspect(.value: &Int32) -> (.reference: &Int32, .present: Bool = true) := {
+        \\inspect := (.value: &Int32) -> (.reference: &Int32, .present: Bool = true)  {
         \\    reference = value
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 = 42
         \\    result ::= inspect(.value = &value)
         \\    if result.present { status_code = result.reference& }
@@ -931,15 +931,15 @@ test "compile-time evaluation exports aggregate constants and rejects escaping r
     const a = arena.allocator();
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code =
-        \\Pair: Type = (.sum: Int32, .items: [2]Int32)
-        \\calculate(.base: Int32) -> (.result: Pair) := {
+        \\Pair := (.sum: Int32, .items: [2]Int32)
+        \\calculate := (.base: Int32) -> (.result: Pair)  {
         \\    sum :: Int32 = base
         \\    index :: Int32 = 0
         \\    while index < 2 { sum = sum + 1 index = index + 1 }
         \\    result = (.sum = sum, .items = (base, sum))
         \\}
-        \\borrow(.value: &Int32) -> (.result: &Int32) := { result = value }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\borrow := (.value: &Int32) -> (.result: &Int32)  { result = value }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    result ::= calculate(.base = 40)
         \\    status_code = borrow(.value = &result.sum)&
         \\}
@@ -999,13 +999,13 @@ test "bytecode retained lowering publishes stable programs for independent entri
     const a = arena.allocator();
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code =
-        \\first() -> (.result: Int32 = 20) := {}
-        \\second() -> (.result: Int32 = 22) := {}
+        \\first := () -> (.result: Int32 = 20)  {}
+        \\second := () -> (.result: Int32 = 22)  {}
         \\Mode: CEnum = (..one)
         \\shared: Int32 = 22
-        \\unsupported() -> (.result: Int32 = 0) := { read ::= shared
+        \\unsupported := () -> (.result: Int32 = 0)  { read ::= shared
         \\    value: Mode = ..one }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = first() + second()
         \\    unused ::= unsupported()
         \\}
@@ -1116,15 +1116,15 @@ test "compile-time evaluation proves its dependency unit before execution" {
     const a = arena.allocator();
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code =
-        \\seed() -> (.result: Int32 = 42) := {}
-        \\good() -> (.result: Int32 = seed()) := {}
-        \\bad() -> (.result: Int32 = 0) := {
+        \\seed := () -> (.result: Int32 = 42)  {}
+        \\good := () -> (.result: Int32 = seed())  {}
+        \\bad := () -> (.result: Int32 = 0)  {
         \\    fixed :: Int32 = 0
         \\    fixed = 1
         \\    result = fixed
         \\}
-        \\wrapper() -> (.result: Int32 = bad()) := {}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\wrapper := () -> (.result: Int32 = bad())  {}
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = good() + wrapper()
         \\}
         },
@@ -1175,28 +1175,28 @@ test "bytecode safety preserves observations through returned reference aliases"
         defer arena.deinit();
         const a = arena.allocator();
         const common =
-            \\Resource: Type = (.value: Int32)
-            \\Holder: Type = (.item: Resource)
+            \\Resource := (.value: Int32)
+            \\Holder := (.item: Resource)
             \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
-            \\keep(.value: &Resource) -> (.result: &Resource) := { result = value }
-            \\observe(.self: $&Holder, .other: &Resource) -> (.result: Int32) := {
+            \\keep := (.value: &Resource) -> (.result: &Resource)  { result = value }
+            \\observe := (.self: $&Holder, .other: &Resource) -> (.result: Int32)  {
             \\    alias ::= keep(.value = other)
             \\    deinit(.self = $&self&.item)
             \\    result = alias&.value
             \\}
-            \\main() -> (.status_code: Int32) := {
+            \\main := () -> (.status_code: Int32)  {
             \\    if false { abort }
             \\    holder :: Holder = (.item = (.value = 17))
             \\    independent :: Resource = (.value = 42)
         ;
         var body: []const u8 = common;
         if (operand_effect) {
-            body = try std.mem.replaceOwned(u8, a, body, "keep(.value: &Resource) -> (.result: &Resource) := { result = value }", "keep(.owner: $&Holder, .value: &Resource) -> (.result: &Resource) := { deinit(.self = $&owner&.item)\nresult = value }");
+            body = try std.mem.replaceOwned(u8, a, body, "keep := (.value: &Resource) -> (.result: &Resource)  { result = value }", "keep := (.owner: $&Holder, .value: &Resource) -> (.result: &Resource)  { deinit(.self = $&owner&.item)\nresult = value }");
             body = try std.mem.replaceOwned(u8, a, body, "    alias ::= keep(.value = other)\n    deinit(.self = $&self&.item)\n    result = alias&.value", "    result = keep(.owner = self, .value = other)&.value");
         }
         if ((scenario >= 4 and scenario < 6) or scenario >= 8) body = try std.mem.replaceOwned(u8, a, body, "    result = keep(.owner = self, .value = other)&.value", "    pointer ::= &keep(.owner = self, .value = other)&.value\n    result = pointer&");
         if (scenario >= 6) {
-            body = try std.mem.replaceOwned(u8, a, body, "Resource: Type = (.value: Int32)", "Resource: Type = (.value: [2]Int32)");
+            body = try std.mem.replaceOwned(u8, a, body, "Resource := (.value: Int32)", "Resource := (.value: [2]Int32)");
             body = try std.mem.replaceOwned(u8, a, body, "(.value = 17)", "(.value = (17, 0))");
             body = try std.mem.replaceOwned(u8, a, body, "(.value = 42)", "(.value = (42, 0))");
             body = try std.mem.replaceOwned(u8, a, body, "keep(.owner = self, .value = other)&.value", "keep(.owner = self, .value = other)&.value[0]");
@@ -1245,19 +1245,19 @@ test "compile-time evaluation retains selected cleanup in its dependency unit" {
     const a = arena.allocator();
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code =
-        \\Counter: Type = (.count: Int32)
-        \\Resource: Type = (.counter: $&Counter)
+        \\Counter := (.count: Int32)
+        \\Resource := (.counter: $&Counter)
         \\implement Deinit#(Resource) (
         \\    .deinit = (.self: $&Resource) -> () {
         \\        self&.counter&.count = self&.counter&.count + 1
         \\    }
         \\)
-        \\calculate() -> (.result: Int32 = 0) := {
+        \\calculate := () -> (.result: Int32 = 0)  {
         \\    counter :: Counter = (.count = 41)
         \\    { owner :: Resource = (.counter = $&counter) }
         \\    result = counter.count
         \\}
-        \\main() -> (.status_code: Int32 = calculate()) := {}
+        \\main := () -> (.status_code: Int32 = calculate())  {}
         },
         .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
         .{ .path = "arithmetic_core/deinit.rg", .origin = .bundled_core, .code =
@@ -1297,11 +1297,11 @@ test "compile-time evaluation retains selected cleanup in its dependency unit" {
 
 test "bytecode source run freezes loop results before runtime execution" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\calculate(.base: Int32) -> (.result: Int32 = 0) := {
+        \\calculate := (.base: Int32) -> (.result: Int32 = 0)  {
         \\    result = base
         \\    while result < 42 { result = result + 1 }
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    answer ::= #run () -> (.answer: Int32) { answer = calculate(.base = 40) }
         \\    status_code = answer
         \\}
@@ -1310,14 +1310,14 @@ test "bytecode source run freezes loop results before runtime execution" {
 
 test "bytecode source run evaluates nested requests in specialized bodies" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\calculate(.base: Int32) -> (.result: Int32 = 0) := {
+        \\calculate := (.base: Int32) -> (.result: Int32 = 0)  {
         \\    result = base
         \\    while result < 42 { result = result + 1 }
         \\}
-        \\prepared#(.N: Int32)() -> (.result: Int32 = 0) := {
+        \\prepared := #(.N: Int32) () -> (.result: Int32 = 0)  {
         \\    result = #run () -> (.answer: Int32) { answer = calculate(.base = N) }
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = #run () -> (.answer: Int32) { answer = prepared#(.N = 40)() }
         \\}
     , .{ .instructions = 20 }));
@@ -1325,9 +1325,9 @@ test "bytecode source run evaluates nested requests in specialized bodies" {
 
 test "bytecode source run preserves several outputs and void boundaries" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\pair() -> (.left: Int32 = 20, .right: Int32 = 22) := {}
-        \\check(.value: Int32) -> () := { if value != 42 { abort } }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\pair := () -> (.left: Int32 = 20, .right: Int32 = 22)  {}
+        \\check := (.value: Int32) -> ()  { if value != 42 { abort } }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    values ::= #run () -> (.left: Int32, .right: Int32) {
         \\        pair_value ::= pair()
         \\        left = pair_value.left
@@ -1338,8 +1338,8 @@ test "bytecode source run preserves several outputs and void boundaries" {
         \\}
     , .{}));
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\answer(.value: Void) -> (.result: Int32 = 42) := {}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\answer := (.value: Void) -> (.result: Int32 = 42)  {}
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = #run () -> (.computed: Int32) { computed = answer(.value = ()) }
         \\}
     , .{}));
@@ -1347,8 +1347,8 @@ test "bytecode source run preserves several outputs and void boundaries" {
 
 test "bytecode anonymous compile-time entry executes an ordinary function body" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\calculate(.value: Int32) -> (.result: Int32) := { result = value + 1 }
-        \\main() -> (.status_code: Int32) := {
+        \\calculate := (.value: Int32) -> (.result: Int32)  { result = value + 1 }
+        \\main := () -> (.status_code: Int32)  {
         \\    answer ::= #run () -> (.result: Int32) {
         \\        local :: Int32 = 41
         \\        result = calculate(.value = local)
@@ -1360,9 +1360,9 @@ test "bytecode anonymous compile-time entry executes an ordinary function body" 
 
 test "bytecode nested anonymous entries retain their invocation environment" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\compute() -> (.value: Int32 = 40) := {}
+        \\compute := () -> (.value: Int32 = 40)  {}
         \\
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    known := compute()
         \\    captured := #run () -> (.answer: Int32) {
         \\        first := #run () -> (.answer: Int32) { answer = known + 1 }
@@ -1386,14 +1386,14 @@ test "bytecode nested anonymous entries retain their invocation environment" {
 
 test "bytecode generic anonymous entries transport retained lexical capture types" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\calculate#(.n: Int32)() -> (.result: Int32) := {
+        \\calculate := #(.n: Int32) () -> (.result: Int32)  {
         \\    local := n
         \\    offset := 0
         \\    result = #run () -> (.value: Int32) {
         \\        value = #run () -> (.inner: Int32) { inner = local + offset }
         \\    }
         \\}
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    if calculate#(.n = 41)() != 41 { abort }
         \\    status_code = calculate#(.n = 42)()
         \\}
@@ -1402,9 +1402,9 @@ test "bytecode generic anonymous entries transport retained lexical capture type
 
 test "concrete staged entries select captures across nested entry boundaries" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\compute() -> (.value: Int32 = 42) := {}
+        \\compute := () -> (.value: Int32 = 42)  {}
         \\
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    runtime :: Int32 = 7
         \\    known := compute()
         \\    first := #run () -> (.answer: Int32) {
@@ -1426,12 +1426,12 @@ test "concrete staged entries select captures across nested entry boundaries" {
 
 test "generic compile-time entries ignore runtime captures in discarded branches" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\choose#(.n: Int32)(.runtime_value: Int32) -> (.result: Int32) := {
+        \\choose := #(.n: Int32) (.runtime_value: Int32) -> (.result: Int32)  {
         \\    result = #run () -> (.value: Int32) {
         \\        #if n == 42 { value = n } #else { value = runtime_value }
         \\    }
         \\}
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    status_code = choose#(.n = 42)(.runtime_value = 7)
         \\}
     , .{}));
@@ -1439,12 +1439,12 @@ test "generic compile-time entries ignore runtime captures in discarded branches
 
 test "staged compile-time captures resolve types from instantiated outer bindings" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\identity(.value: Int32) -> (.result: Int32 = value) := {}
-        \\compute#(.n: Int32)() -> (.result: Int32) := {
+        \\identity := (.value: Int32) -> (.result: Int32 = value)  {}
+        \\compute := #(.n: Int32) () -> (.result: Int32)  {
         \\    pending := identity(.value = n)
         \\    result = #run () -> (.value: Int32) { value = pending }
         \\}
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    if compute#(.n = 41)() != 41 { abort }
         \\    status_code = compute#(.n = 42)()
         \\}
@@ -1453,8 +1453,8 @@ test "staged compile-time captures resolve types from instantiated outer binding
 
 test "bytecode anonymous entries complete inferred capture types" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\compute() -> (.value: Int32 = 41) := {}
-        \\main() -> (.status_code: Int32) := {
+        \\compute := () -> (.value: Int32 = 41)  {}
+        \\main := () -> (.status_code: Int32)  {
         \\    known := compute()
         \\    status_code = #run () -> (.answer: Int32) { answer = known + 1 }
         \\}
@@ -1463,7 +1463,7 @@ test "bytecode anonymous entries complete inferred capture types" {
 
 test "bytecode anonymous entries capture only used constant values" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    known: Int32 = 40
         \\    runtime :: Int32 = 99
         \\    status_code = #run () -> (.answer: Int32) {
@@ -1475,7 +1475,7 @@ test "bytecode anonymous entries capture only used constant values" {
 
 test "bytecode anonymous compile-time entries retain defaults and independent scopes" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    first ::= #run () -> (.result: Int32 = 20) {}
         \\    second ::= #run () -> (.result: Int32) {
         \\        local ::= #run () -> (.result: Int32 = 21) {}
@@ -1488,7 +1488,7 @@ test "bytecode anonymous compile-time entries retain defaults and independent sc
 
 test "bytecode anonymous compile-time blocks support local storage and no outputs" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    #run {
         \\        local :: Int32 = 41
         \\        pointer ::= $&local
@@ -1506,12 +1506,12 @@ test "bytecode anonymous compile-time blocks support local storage and no output
 
 test "bytecode generic anonymous entries capture compile-time parameters" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\calculate#(.T: Type, .n: Int32) := () -> (.result: T) {
+        \\calculate := #(.T: Type, .n: Int32) () -> (.result: T) {
         \\    result = #run () -> (.value: T) {
         \\        value = n
         \\    }
         \\}
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    narrow ::= calculate#(.T: Int8, .n = 41)()
         \\    if calculate#(.T: Int32, .n = 41)() != 41 { abort }
         \\    status_code = calculate#(.T: Int32, .n = 42)()
@@ -1521,11 +1521,11 @@ test "bytecode generic anonymous entries capture compile-time parameters" {
 
 test "bytecode anonymous entries supply computed specialization arguments" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\identity#(.n: Int32) := () -> (.result: Int32) { result = n }
-        \\forward#(.n: Int32) := () -> (.result: Int32) {
+        \\identity := #(.n: Int32) () -> (.result: Int32) { result = n }
+        \\forward := #(.n: Int32) () -> (.result: Int32) {
         \\    result = identity#(.n = #run () -> (.value: Int32) { value = n })()
         \\}
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    if forward#(.n = 41)() != 41 { abort }
         \\    if forward#(.n = 42)() != 42 { abort }
         \\    status_code = identity#(.n = #run () -> (.value: Int32) { value = 42 })()
@@ -1535,25 +1535,25 @@ test "bytecode anonymous entries supply computed specialization arguments" {
 
 test "bytecode anonymous entry results determine array dimensions" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\Items#(.n: Int32): Type = (.items: Array#(.n = n, .t: Int32))
-        \\read#(.n: Int32) := () -> (.result: Int32) {
+        \\Items := #(.n: Int32) (.items: Array#(.n = n, .t: Int32))
+        \\read := #(.n: Int32) () -> (.result: Int32) {
         \\    values: Items#(.n = #run () -> (.count: Int32) { count = n }) = (.items = (20, 22))
         \\    result = values.items[0] + values.items[1]
         \\}
-        \\main() -> (.status_code: Int32) := { status_code = read#(.n = 2)() }
+        \\main := () -> (.status_code: Int32)  { status_code = read#(.n = 2)() }
     , .{}));
 }
 
 test "bytecode generic anonymous entries retain nested parameter-dependent selection" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\calculate#(.n: Int32) := () -> (.result: Int32) {
+        \\calculate := #(.n: Int32) () -> (.result: Int32) {
         \\    result = #run () -> (.value: Int32) {
         \\        #if n == 42 {
         \\            value = #run () -> (.inner: Int32) { inner = n }
         \\        } #else { value = 41 }
         \\    }
         \\}
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    if calculate#(.n = 41)() != 41 { abort }
         \\    status_code = calculate#(.n = 42)()
         \\}
@@ -1563,7 +1563,7 @@ test "bytecode generic anonymous entries retain nested parameter-dependent selec
 test "bytecode anonymous compile-time entries consume known module values" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\base := 41
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    status_code = #run () -> (.result: Int32) { result = base + 1 }
         \\}
     , .{}));
@@ -1572,10 +1572,10 @@ test "bytecode anonymous compile-time entries consume known module values" {
 test "anonymous compile-time entries reject runtime storage only on executed paths" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\runtime :: Int32 = 99
-        \\choose(.access: Bool) -> (.value: Int32) := {
+        \\choose := (.access: Bool) -> (.value: Int32)  {
         \\    if access { value = runtime } else { value = 42 }
         \\}
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    status_code = #run () -> (.answer: Int32) {
         \\        answer = choose(.access = false)
         \\    }
@@ -1597,8 +1597,8 @@ test "anonymous compile-time entries cannot observe mutable runtime globals" {
         const a = arena.allocator();
         const source = try std.fmt.allocPrint(a, "runtime_value :: Int32 = 42\n" ++
             "alias := runtime_value\n" ++
-            "read_runtime() -> (.result: Int32) := {{ result = runtime_value }}\n" ++
-            "main() -> (.status_code: Int32) := {{ status_code = #run () -> (.result: Int32) {{ {s} }} }}", .{body});
+            "read_runtime := () -> (.result: Int32)  {{ result = runtime_value }}\n" ++
+            "main := () -> (.status_code: Int32)  {{ status_code = #run () -> (.result: Int32) {{ {s} }} }}", .{body});
         const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
         var diagnostics = diag.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
@@ -1619,8 +1619,8 @@ test "bytecode anonymous compile-time entries initialize module constants" {
         \\    local :: Int32 = 41
         \\    result = local + 1
         \\}
-        \\Record: Type = (.value: Int32 = #run () -> (.result: Int32 = 42) {})
-        \\main() -> (.status_code: Int32) := {
+        \\Record := (.value: Int32 = #run () -> (.result: Int32 = 42) {})
+        \\main := () -> (.status_code: Int32)  {
         \\    record ::= Record()
         \\    if record.value != answer { abort }
         \\    status_code = answer
@@ -1630,8 +1630,8 @@ test "bytecode anonymous compile-time entries initialize module constants" {
 
 test "bytecode anonymous compile-time entries select only their active branch" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\enabled() -> (.result: Bool) := { result = true }
-        \\main() -> (.status_code: Int32) := {
+        \\enabled := () -> (.result: Bool)  { result = true }
+        \\main := () -> (.status_code: Int32)  {
         \\    status_code = #run () -> (.result: Int32) {
         \\        #if enabled() {
         \\            result = #run () -> (.value: Int32 = 42) {}
@@ -1643,7 +1643,7 @@ test "bytecode anonymous compile-time entries select only their active branch" {
 
 test "bytecode anonymous compile-time entries preserve named multiple outputs" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    pair ::= #run () -> (.left: Int32, .right: Int32) {
         \\        left = 20
         \\        right = 22
@@ -1659,9 +1659,9 @@ test "anonymous compile-time entries diagnose unsupported argument interfaces" {
         defer arena.deinit();
         const a = arena.allocator();
         const source = if (generic)
-            try std.fmt.allocPrint(a, "entry#(.T: Type) := () -> () {{ #run ({s}) -> () {{}} }}\nmain := () -> () {{ entry#(Int32)() }}", .{inputs})
+            try std.fmt.allocPrint(a, "entry := #(.T: Type) () -> () {{ #run ({s}) -> () {{}} }}\nmain := () -> () {{ entry#(Int32)() }}", .{inputs})
         else
-            try std.fmt.allocPrint(a, "main() -> () := {{ #run ({s}) -> () {{}} }}", .{inputs});
+            try std.fmt.allocPrint(a, "main := () -> ()  {{ #run ({s}) -> () {{}} }}", .{inputs});
         const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
         var diagnostics = diag.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
@@ -1681,7 +1681,7 @@ test "nested compile-time entries retain their output representation boundary" {
     defer arena.deinit();
     const a = arena.allocator();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\main() -> (.status_code: Int32) := {
+        \\main := () -> (.status_code: Int32)  {
         \\    status_code = #run () -> (.answer: Int32) {
         \\        local :: Int32 = 42
         \\        pointer ::= &local
@@ -1708,7 +1708,7 @@ test "anonymous compile-time entries cannot export temporary references" {
     defer arena.deinit();
     const a = arena.allocator();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\main() -> () := {
+        \\main := () -> ()  {
         \\    pointer ::= #run () -> (.result: &Int32) {
         \\        local :: Int32 = 42
         \\        result = &local
@@ -1725,9 +1725,9 @@ test "anonymous compile-time entries cannot export temporary references" {
 
 test "bytecode source run evaluates closed argument calls through selected operations" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\identity(.value: Int32) -> (.result: Int32) := { result = value }
-        \\increment(.value: Int32) -> (.result: Int32) := { result = value + 1 }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\identity := (.value: Int32) -> (.result: Int32)  { result = value }
+        \\increment := (.value: Int32) -> (.result: Int32)  { result = value + 1 }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = #run () -> (.answer: Int32) { answer = identity(.value = increment(.value = 20 + 21)) }
         \\}
     , .{ .instructions = 20 }));
@@ -1771,11 +1771,11 @@ test "bytecode expression entries share validation and retained execution" {
 
 test "bytecode source run leaves implicit argument calls in runtime bindings" {
     try std.testing.expectError(error.ExecutionInstructionLimit, execute(
-        \\compute() -> (.result: Int32 = 0) := {
+        \\compute := () -> (.result: Int32 = 0)  {
         \\    while result < 1000 { result = result + 1 }
         \\}
-        \\identity(.value: Int32) -> (.result: Int32) := { result = value }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\identity := (.value: Int32) -> (.result: Int32)  { result = value }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    computed: Int32 = compute()
         \\    status_code = #run () -> (.answer: Int32) { answer = identity(.value = computed) }
         \\}
@@ -1784,10 +1784,10 @@ test "bytecode source run leaves implicit argument calls in runtime bindings" {
 
 test "bytecode source run admits a single argument computation below its budget" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\compute(.count: Int32) -> (.result: Int32 = 0) := {
+        \\compute := (.count: Int32) -> (.result: Int32 = 0)  {
         \\    while result < count { result = result + 1 }
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value ::= #run () -> (.answer: Int32) { answer = compute(.count = 100000) }
         \\    if value != 100000 { abort }
         \\    status_code = 42
@@ -1797,9 +1797,9 @@ test "bytecode source run admits a single argument computation below its budget"
 
 test "bytecode source run evaluates concrete output defaults in function scope" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\increment(.value: Int32) -> (.result: Int32 = value + 1) := {}
-        \\compute(.value: Int32) -> (.first: Int32 = value | increment(_), .second: Int32 = first + 1) := {}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\increment := (.value: Int32) -> (.result: Int32 = value + 1)  {}
+        \\compute := (.value: Int32) -> (.first: Int32 = value | increment(_), .second: Int32 = first + 1)  {}
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    values := #run () -> (.first: Int32, .second: Int32) {
         \\        pair_value ::= compute(.value = 40)
         \\        first = pair_value.first
@@ -1812,11 +1812,11 @@ test "bytecode source run evaluates concrete output defaults in function scope" 
 
 test "bytecode source run projects aggregate argument expressions" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\values() -> (.data: (.items: [2]Int32)) := {
+        \\values := () -> (.data: (.items: [2]Int32))  {
         \\    data = (.items = (20, 42))
         \\}
-        \\identity(.value: Int32) -> (.result: Int32 = value) := {}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\identity := (.value: Int32) -> (.result: Int32 = value)  {}
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = #run () -> (.answer: Int32) { answer = identity(.value = values().items[1]) }
         \\}
     , .{ .instructions = 50 }));
@@ -1824,11 +1824,11 @@ test "bytecode source run projects aggregate argument expressions" {
 
 test "bytecode source run determines specialization arguments" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\compute() -> (.result: Int32 = 0) := {
+        \\compute := () -> (.result: Int32 = 0)  {
         \\    while result < 6 { result = result + 1 }
         \\}
-        \\scale#(.n: Int32)(.value: Int32) -> (.result: Int32 = value * n) := {}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\scale := #(.n: Int32) (.value: Int32) -> (.result: Int32 = value * n)  {}
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = scale#(.n = #run () -> (.answer: Int32) { answer = compute() })(.value = 7)
         \\}
     , .{ .instructions = 50 }));
@@ -1836,9 +1836,9 @@ test "bytecode source run determines specialization arguments" {
 
 test "bytecode source run determines type arguments" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\compute() -> (.result: Int32 = 2) := {}
-        \\Holder#(.n: Int32): Type = (.items: Array#(.n = n, .t: Int32))
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\compute := () -> (.result: Int32 = 2)  {}
+        \\Holder := #(.n: Int32) (.items: Array#(.n = n, .t: Int32))
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    data :: Holder#(.n = #run () -> (.answer: Int32) { answer = compute() }) = (.items = (20, 42))
         \\    status_code = data.items[1]
         \\}
@@ -1847,12 +1847,12 @@ test "bytecode source run determines type arguments" {
 
 test "bytecode source run keys generic requests by bound arguments" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\increment(.value: Int32) -> (.result: Int32 = value + 1) := {}
-        \\result#(.n: Int32)() -> (.value: Int32 = n) := {}
-        \\compute#(.n: Int32)() -> (.value: Int32) := {
+        \\increment := (.value: Int32) -> (.result: Int32 = value + 1)  {}
+        \\result := #(.n: Int32) () -> (.value: Int32 = n)  {}
+        \\compute := #(.n: Int32) () -> (.value: Int32)  {
         \\    value = result#(.n = #run () -> (.answer: Int32) { answer = increment(.value = n) })()
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    if compute#(.n = 3)() != 4 { abort }
         \\    status_code = compute#(.n = 41)()
         \\}
@@ -1861,10 +1861,10 @@ test "bytecode source run keys generic requests by bound arguments" {
 
 test "bytecode staged dependencies survive default argument suspension" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\compute() -> (.value: Int32 = 42) := {}
-        \\result#(.n: Int32)() -> (.value: Int32 = n) := {}
-        \\defaulted#(.T: Type)(.ignored: T, .value: Int32 = result#(.n = #run () -> (.value: Int32) { value = compute() })(), .tail: Int32 = 0) -> (.output: Int32 = [value + tail]) := {}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\compute := () -> (.value: Int32 = 42)  {}
+        \\result := #(.n: Int32) () -> (.value: Int32 = n)  {}
+        \\defaulted := #(.T: Type) (.ignored: T, .value: Int32 = result#(.n = #run () -> (.value: Int32) { value = compute() })(), .tail: Int32 = 0) -> (.output: Int32 = [value + tail])  {}
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = defaulted(.ignored = 0)
         \\}
     , .{ .instructions = 50 }));
@@ -2208,7 +2208,7 @@ test "comptime evaluation releases transient proofs with a retained graph alloca
 
 test "bytecode string literal backing survives completed calls" {
     try std.testing.expectEqual(@as(i128, 65), try execute(
-        \\StringView: Type = (._data: &UInt8, ._length: UIntNative)
+        \\StringView := (._data: &UInt8, ._length: UIntNative)
         \\text := () -> (.result: StringView) { result = "A" }
         \\main := () -> (.status_code: Int32) {
         \\    value ::= text()
@@ -2273,7 +2273,7 @@ test "bytecode verifier rejects mutable literal references" {
 test "bytecode executes preselected virtual operations" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
-        \\Box: Type = (.value: Int32)
+        \\Box := (.value: Int32)
         \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 42)
@@ -2498,11 +2498,11 @@ test "bytecode failed lowering does not retain host requirements" {
         .{ .path = "app/main.rg", .code =
         \\Mode: CEnum = (..one)
         \\foreign_value(.value: Int32) -> (.result: Int32): ExternFunction
-        \\unsupported(.ffi: $&ForeignFunctionInterface) -> (.result: Int32) := {
+        \\unsupported := (.ffi: $&ForeignFunctionInterface) -> (.result: Int32)  {
         \\    result = foreign_value(.value = 41)
         \\    value: Mode = ..one
         \\}
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    capability :: ForeignFunctionInterface = ()
         \\    status_code = unsupported(.ffi = $&capability)
         \\}
@@ -2552,7 +2552,7 @@ test "bytecode partial record reservation never permits unavailable field reads"
 
 test "bytecode partial records allow borrowed reads of initialized siblings" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
-        \\Pair: Type = (.first: Int32, .second: Int32)
+        \\Pair := (.first: Int32, .second: Int32)
         \\first := (.pair: &Pair) -> (.result: Int32) { result = pair&.first }
         \\make := () -> (.result: Pair) {
         \\    result.first = 41
@@ -2795,7 +2795,7 @@ test "bytecode virtual tables verify receiver access descriptors" {
     const a = arena.allocator();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
         \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
-        \\Box: Type = (.value: Int32)
+        \\Box := (.value: Int32)
         \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
         \\main := () -> () {
         \\    box :: Box = (.value = 42)
@@ -3037,11 +3037,11 @@ test "replacement summaries preserve historical references in returned arrays" {
         defer arena.deinit();
         const a = arena.allocator();
         var source = try std.mem.concat(a, u8, &.{
-            \\Resource: Type = (.value: Int32)
+            \\Resource := (.value: Int32)
             \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
-            \\references(.target: $&Resource) -> (.result: [1] $&Resource) := { result = (target,) }
-            \\replace(.targets: [1] $&Resource) -> () := { targets[0]&= (.value = 9) }
-            \\main() -> (.status_code: Int32) := {
+            \\references := (.target: $&Resource) -> (.result: [1] $&Resource)  { result = (target,) }
+            \\replace := (.targets: [1] $&Resource) -> ()  { targets[0]&= (.value = 9) }
+            \\main := () -> (.status_code: Int32)  {
             \\    owner :: Resource = (.value = 1)
             \\    targets ::= references(.target = $&owner)
             \\    previous ::= targets
@@ -3051,7 +3051,7 @@ test "replacement summaries preserve historical references in returned arrays" {
             if (historical) "status_code = previous[0]&.value\n}" else "status_code = targets[0]&.value\n}",
         });
         if (conditional) {
-            source = try std.mem.replaceOwned(u8, a, source, "replace(.targets: [1] $&Resource) -> () := { targets[0]&= (.value = 9) }", "replace(.targets: [1] $&Resource, .enabled: Bool) -> (.result: (..changed, ..preserved)) := { if enabled { targets[0]&= (.value = 9)\nresult = ..changed } else { result = ..preserved } }");
+            source = try std.mem.replaceOwned(u8, a, source, "replace := (.targets: [1] $&Resource) -> ()  { targets[0]&= (.value = 9) }", "replace := (.targets: [1] $&Resource, .enabled: Bool) -> (.result: (..changed, ..preserved))  { if enabled { targets[0]&= (.value = 9)\nresult = ..changed } else { result = ..preserved } }");
             source = try std.mem.replaceOwned(u8, a, source, "replace(.targets = targets)", "outcome ::= replace(.targets = targets, .enabled = true)\nmatch outcome { ..changed {} ..preserved {} }");
         }
         if (scenario >= 4) source = try std.mem.replaceOwned(u8, a, source, "else { result = ..preserved }", "else { deinit(.self = targets[0])\nresult = ..preserved }");
@@ -3080,21 +3080,21 @@ test "conditional replacement renews selected symbolic input without renewing co
         defer arena.deinit();
         const a = arena.allocator();
         const source = try std.mem.concat(a, u8, &.{
-            \\Resource: Type = (.value: Int32)
+            \\Resource := (.value: Int32)
             \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
-            \\replace(.target: $&Resource, .enabled: Bool) -> (.result: (..changed, ..preserved)) := {
+            \\replace := (.target: $&Resource, .enabled: Bool) -> (.result: (..changed, ..preserved))  {
             \\    if enabled { target&= (.value = 9)
             \\        result = ..changed
             \\    } else { result = ..preserved }
             \\}
-            \\observe(.owner: $&Resource) -> (.result: Int32) := {
+            \\observe := (.owner: $&Resource) -> (.result: Int32)  {
             \\    previous ::= owner
             \\    outcome ::= replace(.target = owner, .enabled = true)
             \\    match outcome { ..changed {} ..preserved {} }
             \\
             ,
             if (historical) "result = previous&.value\n}" else "result = owner&.value\n}",
-            "\nmain() -> (.status_code: Int32) := { owner :: Resource = (.value = 1)\nstatus_code = observe(.owner = $&owner) }",
+            "\nmain := () -> (.status_code: Int32)  { owner :: Resource = (.value = 1)\nstatus_code = observe(.owner = $&owner) }",
         });
         const files = [_]sf.SourceFile{
             .{ .path = "app/main.rg", .code = source },
@@ -3115,9 +3115,9 @@ test "VM failures retain bounded caller locations and reset clears them" {
     defer arena.deinit();
     const a = arena.allocator();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\fail() -> () := { abort }
-        \\middle() -> () := { fail() }
-        \\main() -> () := { middle() }
+        \\fail := () -> ()  { abort }
+        \\middle := () -> ()  { fail() }
+        \\main := () -> ()  { middle() }
     }};
     var diagnostics = diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
@@ -3153,13 +3153,13 @@ test "retained submissions report failure locations from earlier definitions" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("stop() -> () := { abort }");
+    try session.submitDefinitions("stop := () -> ()  { abort }");
     try std.testing.expectError(error.ExecutionAborted, session.submitStatements("stop()"));
     try std.testing.expectEqual(@as(usize, 1), session.diagnostics.list.items.len);
     const failure = session.diagnostics.list.items[0];
     try std.testing.expect(std.mem.indexOf(u8, failure.msg, "called from") != null);
     const origin = session.diagnostics.presentedLocation(failure.loc);
-    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.source_db.get(origin.file).source, "stop() -> () := { abort }") != null);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.source_db.get(origin.file).source, "stop := () -> ()  { abort }") != null);
     try std.testing.expectEqual(.poisoned, session.runtime.context.state);
     try session.reset();
 }
@@ -3169,9 +3169,9 @@ test "compile-time failures preserve nested caller sources after evaluator teard
     defer arena.deinit();
     const a = arena.allocator();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\fail() -> (.result: Int32 = 0) := { abort }
-        \\middle() -> (.result: Int32) := { result = fail() }
-        \\main() -> (.status_code: Int32) := {
+        \\fail := () -> (.result: Int32 = 0)  { abort }
+        \\middle := () -> (.result: Int32)  { result = fail() }
+        \\main := () -> (.status_code: Int32)  {
         \\    status_code = #run () -> (.value: Int32) { value = middle() }
         \\}
     }};
@@ -3193,7 +3193,7 @@ test "retained virtual failures preserve the creation unit source" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})\nBox: Type = (.value: Int32)");
+    try session.submitDefinitions("Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})\nBox := (.value: Int32)");
     try session.submitDefinitions("fail_read := (.source: &Box) -> (.result: Int32 = 0) { abort }\nimplement Readable#(Box) (.read = fail_read)");
     try session.submitStatements("box :: Box = (.value = 42)\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
     try session.submitDefinitions("invoke := (.handle: &Virtual#(.contract: Readable)) -> (.result: Int32) { result = Readable#().read(handle).result }");
@@ -3211,7 +3211,7 @@ test "compile-time expression failures retain source after evaluator teardown" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main(.value: Int32) -> (.result: Int32) := { result = value }" }};
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main := (.value: Int32) -> (.result: Int32)  { result = value }" }};
     var diagnostics = diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
@@ -3236,7 +3236,7 @@ test "incomplete record submissions fail semantically without poisoning retained
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
     try session.submitStatements("alive ::= 42");
-    try session.submitDefinitions("Pair: Type = (.left: Int32, .right: Int32)\nmake_pair() -> (.result: Pair) := { result = (.left = 42) }");
+    try session.submitDefinitions("Pair := (.left: Int32, .right: Int32)\nmake_pair := () -> (.result: Pair)  { result = (.left = 42) }");
     try std.testing.expectError(error.Reported, session.submitStatements("pair ::= make_pair()"));
     try std.testing.expectEqual(@as(usize, 1), session.diagnostics.list.items.len);
     try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "record initializer is missing required field 'right'") != null);
@@ -3250,9 +3250,9 @@ test "interactive record defaults retain borrowed temporary storage across comma
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("make_array() -> (.result: [2]Int32) := { result = (20, 22) }");
+    try session.submitDefinitions("make_array := () -> (.result: [2]Int32)  { result = (20, 22) }");
     try session.submitStatements("holder :: (.data: $&[2]Int32 = $&make_array()) = ()");
-    try session.submitDefinitions("Other: Type = (.value: Int32)");
+    try session.submitDefinitions("Other := (.value: Int32)");
     try std.testing.expectEqual(@as(u64, 20), (try session.submitInput("holder.data&[0]")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(u64, 22), (try session.submitInput("holder.data&[1]")).?.value.runtime.integer);
     try session.submitStatements("next :: (.data: $&[2]Int32 = $&make_array()) = ()");
@@ -3267,7 +3267,7 @@ test "interactive array record defaults retain separate backing between commands
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("make_array() -> (.result: [2]Int32) := { result = (20, 22) }");
+    try session.submitDefinitions("make_array := () -> (.result: [2]Int32)  { result = (20, 22) }");
     try session.submitStatements("values :: [2](.data: $&[2]Int32 = $&make_array()) = ((), ())");
     try session.submitStatements("values[0].data&[0] = 7");
     try std.testing.expectEqual(@as(u64, 20), (try session.submitInput("values[1].data&[0]")).?.value.runtime.integer);
@@ -3281,10 +3281,10 @@ test "registered core allocation metadata executes through ordinary generic spec
     const a = arena.allocator();
     const metadata_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "core/memory/heap_allocation/allocation_metadata.rg", a, .limited(64 * 1024));
     const files = [_]sf.SourceFile{
-        .{ .path = "app/main.rg", .code = "main() -> (.result: UIntNative) := { result = metadata_probe#(.t: [3]&Int32)() }" },
+        .{ .path = "app/main.rg", .code = "main := () -> (.result: UIntNative)  { result = metadata_probe#(.t: [3]&Int32)() }" },
         .{ .path = "core/memory/heap_allocation/allocation_metadata.rg", .origin = .bundled_core, .code = metadata_source },
         .{ .path = "core/memory/heap_allocation/probe.rg", .origin = .bundled_core, .code =
-        \\metadata_probe#(.t: Type)() -> (.count: UIntNative) := {
+        \\metadata_probe := #(.t: Type) () -> (.count: UIntNative)  {
         \\    count = _allocation_metadata_layout#(.t: t)().layout.reference_leaves
         \\}
         },
@@ -3317,11 +3317,11 @@ test "allocation metadata retains generic cleanup evidence without checking unus
     const a = arena.allocator();
     const metadata_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "core/memory/heap_allocation/allocation_metadata.rg", a, .limited(64 * 1024));
     const files = [_]sf.SourceFile{
-        .{ .path = "app/main.rg", .code = "Box#(.T: Type): Type = (.value: T)\nimplement#(.T: Type) Deinit#(Box#(T)) (.deinit = (.self: $&Box#(T)) -> () { unknown_unused_destructor_body() })\nmain() -> (.result: UIntNative) := { result = metadata_probe#(.t: Box#(Int32))() }" },
+        .{ .path = "app/main.rg", .code = "Box := #(.T: Type) (.value: T)\nimplement#(.T: Type) Deinit#(Box#(T)) (.deinit = (.self: $&Box#(T)) -> () { unknown_unused_destructor_body() })\nmain := () -> (.result: UIntNative)  { result = metadata_probe#(.t: Box#(Int32))() }" },
         .{ .path = "core/memory/Deinit.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> () where consumes(self))" },
         .{ .path = "core/memory/heap_allocation/allocation_metadata.rg", .origin = .bundled_core, .code = metadata_source },
         .{ .path = "core/memory/heap_allocation/probe.rg", .origin = .bundled_core, .code =
-        \\metadata_probe#(.t: Type)() -> (.count: UIntNative) := {
+        \\metadata_probe := #(.t: Type) () -> (.count: UIntNative)  {
         \\    count = _allocation_metadata_layout#(.t: t)().layout.cleanup_flags
         \\}
         },
@@ -3354,15 +3354,15 @@ test "prepared acquisition bytecode rejects altered receipt value and cleanup de
     const a = arena.allocator();
     const metadata_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "core/memory/heap_allocation/allocation_metadata.rg", a, .limited(64 * 1024));
     const files = [_]sf.SourceFile{
-        .{ .path = "app/main.rg", .code = "main() -> (.result: UIntNative) := { result = reserve_probe() }" },
+        .{ .path = "app/main.rg", .code = "main := () -> (.result: UIntNative)  { result = reserve_probe() }" },
         .{ .path = "core/memory/Deinit.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> () where consumes(self))" },
         .{ .path = "core/memory/heap_allocation/allocation_metadata.rg", .origin = .bundled_core, .code = metadata_source },
         .{ .path = "core/memory/heap_allocation/probe.rg", .origin = .bundled_core, .code =
-        \\ProbeElement: Type = (.id: UIntNative)
+        \\ProbeElement := (.id: UIntNative)
         \\implement Deinit#(ProbeElement) (.deinit = (.self: $&ProbeElement) -> () {})
-        \\SlotExtent: Type = (.element_size: UIntNative, .count: UIntNative)
+        \\SlotExtent := (.element_size: UIntNative, .count: UIntNative)
         \\OptionalExtent: Type = (..none, ..some(.value: SlotExtent))
-        \\Allocation: Type = (
+        \\Allocation := (
         \\    .data: (.address: UIntNative)
         \\    .size: UIntNative
         \\    ._storage_address: UIntNative
@@ -3371,7 +3371,7 @@ test "prepared acquisition bytecode rejects altered receipt value and cleanup de
         \\    ._slot_state: UIntNative
         \\    ._slot_extent: OptionalExtent
         \\)
-        \\reserve_probe() -> (.state: UIntNative) := {
+        \\reserve_probe := () -> (.state: UIntNative)  {
         \\    value: Allocation = (
         \\        .data = (.address = 0), .size = 0,
         \\        ._storage_address = 0, ._storage_size = 0, ._storage_alignment = 8,
@@ -3442,8 +3442,8 @@ test "prepared acquisition bytecode rejects altered receipt value and cleanup de
 test "virtual once analysis deduplicates handles and checks repeated calls" {
     const declarations =
         \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
-        \\Box: Type = (.value: Int32)
-        \\once acquire := () -> () {}
+        \\Box := (.value: Int32)
+        \\acquire := once () -> () {}
         \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) {
         \\    acquire()
         \\    result = source&.value
@@ -3573,8 +3573,8 @@ test "bytecode imported bodies retain verified origins and global initialization
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code =
         \\offset :: Int32 = 40
-        \\helper() -> (.result: Int32 = offset + 2) := {}
-        \\main() -> (.status_code: Int32 = helper()) := {}
+        \\helper := () -> (.result: Int32 = offset + 2)  {}
+        \\main := () -> (.status_code: Int32 = helper())  {}
         },
         .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
     };
@@ -3715,7 +3715,7 @@ test "virtual contract declarations retain domains without concrete implementati
         \\    domain shape
         \\    .inspect: (.self: &T) -> (.value: Int32)
         \\)
-        \\main() -> (.status_code: Int32 = 0) := {}
+        \\main := () -> (.status_code: Int32 = 0)  {}
     }};
     var diagnostics = diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
@@ -3726,7 +3726,7 @@ test "virtual contract declarations retain domains without concrete implementati
     const declaration = for (graph.declarations.items) |decl| {
         if (std.mem.eql(u8, graph.text(decl.name), "Storage")) break decl;
     } else return error.MissingStorageContract;
-    try std.testing.expectEqual(@as(u32, 2), declaration.contract_domain_count);
+    try std.testing.expectEqual(@as(u32, 2), graph.familyDefinition(declaration.family_definition.?).domain_count);
 }
 
 fn transientCallAllocationFailures(a: std.mem.Allocator) !void {

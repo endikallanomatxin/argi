@@ -1,13 +1,13 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Holder: Type = (.reference: $&Resource)
+Holder := (.reference: $&Resource)
 
-store(.holder: $&Holder) -> () := {
+store := (.holder: $&Holder) -> () {
     local :: Resource = (.value = 7)
     holder&.reference = $&local
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     owner :: Resource = (.value = 1)
     holder :: Holder = (.reference = $&owner)
     store(.holder = $&holder)

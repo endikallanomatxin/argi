@@ -12,7 +12,7 @@ pub const ContractDefinitionId = enum(u32) { _ };
 
 pub const DeclarationRef = ir.DeclarationRef;
 
-pub const ComptimeParameterKind = enum(u8) { type, comptime_int };
+pub const ComptimeParameterKind = enum(u8) { type, comptime_int, definition };
 
 pub const ComptimeParameter = struct {
     name: primitives.StringRange,
@@ -20,7 +20,9 @@ pub const ComptimeParameter = struct {
     value_type: ?ir.ParameterizedTypeId = null,
     default_type: ?ir.ParameterizedTypeId = null,
     default_integer: ?ir.ParameterizedIntExprId = null,
+    default_definition: ?@FieldType(ir.GenericArgument.Value, "definition") = null,
     constraint: ?ContractConstraintId = null,
+    family_parameters: ?primitives.Range(ComptimeParameterId) = null,
 };
 
 pub const ContractConstraint = struct {
@@ -30,6 +32,8 @@ pub const ContractConstraint = struct {
 };
 
 pub const ParameterizedFunction = struct {
+    captured_parameter_count: u32 = 0,
+    is_once: bool = false,
     // A concrete identity may retain its body here when conditional compilation
     // needs staged materialization; it is never a generic dispatch candidate.
     is_comptime_entry: bool = false,
@@ -54,10 +58,11 @@ pub const ParameterizedType = struct {
 };
 
 pub const ContractRequirement = struct {
+    parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
     name: primitives.StringRange,
-    input: ir.ParameterizedTypeId,
-    output: ir.ParameterizedTypeId,
+    /// Null means that the selected implementation provides its own signature.
+    signature: ?struct { input: ir.ParameterizedTypeId, output: ir.ParameterizedTypeId } = null,
     safety_contract: ?primitives.MethodSafetyContract = null,
 };
 
@@ -90,10 +95,17 @@ pub const DomainMapping = struct {
 // Tuple evidence keeps selector arguments separate from associated outputs.
 pub const ContractOperationId = enum(u32) { _ };
 pub const ContractOperation = struct {
+    associated_parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     instantiate_associated: bool = false,
     name: primitives.StringRange,
-    function: DeclarationRef,
+    function: Function,
     source: primitives.SourceRef,
+
+    pub const Function = union(enum) {
+        module: entities.ModuleDeclId,
+        external: entities.ExternalRefId,
+        expression: ir.ParameterizedNodeId,
+    };
 };
 pub const ContractConformance = struct {
     parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
@@ -123,6 +135,8 @@ pub const Storage = struct {
         self.contract_constraints.deinit(allocator);
         self.parameterized_functions.deinit(allocator);
         self.parameterized_types.deinit(allocator);
+        for (self.contract_requirements.items) |requirement|
+            if (requirement.safety_contract) |contract| contract.deinit(allocator);
         self.contract_requirements.deinit(allocator);
         for (self.contract_definitions.items) |definition| allocator.free(definition.domains);
         self.contract_definitions.deinit(allocator);

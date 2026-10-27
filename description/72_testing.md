@@ -88,7 +88,7 @@ test equality := (.system: System) -> !() {
 ```rg
 ..some_reason
 
-some_fallible_call() -> (.result: Errable#(Int32, (..some_reason))) := {
+some_fallible_call := () -> (.result: Errable#(Int32, (..some_reason)))  {
     result = ..error(.reason = ..some_reason)
 }
 

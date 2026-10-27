@@ -1,9 +1,9 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     element :: Int32 = 0
     borrowed_view ::= single_mutable_array_view(.data = $&element)
     set_result ::= set(.self = $&borrowed_view, .index = 1, .value = 42).result
     if is(.value = set_result, .variant = ..error) {
-        if is(.value = set_result..error.reason, .variant = ..out_of_bounds) {
+        if is(.value = set_result ..error.reason, .variant = ..out_of_bounds) {
             status_code = 0
         } else {
             status_code = 2

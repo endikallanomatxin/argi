@@ -1,30 +1,27 @@
 -- Borrows both the writer and an initialized byte buffer. Construction does
 -- not allocate. Explicit flush reports errors; cleanup flushes best-effort.
 -- Failed writes discard pending bytes because partial progress is unknown.
-BufferedWriter#(.base_type: Type: Writer#(base_type)): Type = (
+BufferedWriter := #(.base_type: Type: Writer#(base_type)) (
     .base   : $&base_type
     .buffer : MutableArrayView#(.t: UInt8)
     .length : UIntNative
 )
 
+BufferedWriterInitArgs: Type = #(.base_type: Type: Writer#(base_type)) (
+    .base   : $&base_type,
+    .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
+)
+
 implement#(.base_type: Type: Writer#(base_type)) Init#(
-    BufferedWriter#(.base_type: base_type),
-    (
-        .base   : $&base_type,
-        .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
-    )
+    BufferedWriter#(.base_type: base_type), BufferedWriterInitArgs#(base_type)
 ) (
     .Result : Type = BufferedWriter#(.base_type: base_type)
-    .init   = (
-        .args : (
-            .base   : $&base_type,
-            .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
-        )
-    ) -> (.result: Result) {
-        base ::= args.base
-        buffer ::= args.buffer
 
-        result = (.base = base, .buffer = buffer, .length = 0)
+    .init = BufferedWriterInitArgs#(base_type) -> (.result: Result) {
+        _init_base ::= base
+        _init_buffer ::= buffer
+
+        result = (.base = _init_base, .buffer = _init_buffer, .length = 0)
     }
 )
 
@@ -34,9 +31,9 @@ implement#(.base_type: Type: Writer#(base_type)) Deinit#(BufferedWriter#(.base_t
     }
 )
 
-buffered_writer_flush#(.base_type: Type: Writer#(base_type))(
+buffered_writer_flush := #(.base_type: Type: Writer#(base_type)) (
     .self : $&BufferedWriter#(.base_type: base_type)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     i :: UIntNative = 0
 
     while i < self&.length {

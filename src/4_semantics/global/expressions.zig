@@ -7,6 +7,7 @@ const resolution = @import("resolution.zig");
 const name_lookup = @import("name_lookup.zig");
 const module_linker = @import("module_linker.zig");
 const primitives = @import("../primitives/schema.zig");
+const types = @import("types.zig");
 
 pub const Stats = struct {
     binding_uses: u32 = 0,
@@ -72,14 +73,15 @@ pub const Resolver = struct {
             ) catch return false;
             const target_index: usize = @intFromEnum(target);
             if (!self.graph.sameModuleNamespace(target, @enumFromInt(module_index)) and std.mem.startsWith(u8, name, "_")) return false;
-            const binding = name_lookup.bindingInNamespace(self.graph, self.modules, self.offsets, target_index, name) orelse return false;
-            return self.patchNameUse(o, value.node, binding, value.source);
+            if (name_lookup.bindingInNamespace(self.graph, self.modules, self.offsets, target_index, name)) |binding|
+                return self.patchNameUse(o, value.node, binding, value.source);
+            return self.patchTypeExpression(target_index, o, value.node, name, true);
         }
         if (self.sessionBindingForOwner(name, owner)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
         if (name_lookup.binding(self.graph, self.modules, self.offsets, module_index, name)) |binding|
             return self.patchNameUse(o, value.node, binding, value.source);
-        return self.patchTypeExpression(module_index, o, value.node, name);
+        return self.patchTypeExpression(module_index, o, value.node, name, false);
     }
 
     fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype, owner: ?global_sg.GlobalFunctionId) !bool {
@@ -120,9 +122,10 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, node: module_entities.ModuleNodeId, name: []const u8) !bool {
+    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, node: module_entities.ModuleNodeId, name: []const u8, qualified: bool) !bool {
         var found: ?global_sg.GlobalTypeId = null;
-        for (self.graph.types.items, 0..) |item, raw| switch (item) {
+        var definition: ?global_sg.GlobalFamilyDefinitionId = null;
+        if (!qualified) for (self.graph.types.items, 0..) |item, raw| switch (item) {
             .builtin => |builtin| if (std.mem.eql(u8, name, @tagName(builtin))) {
                 // Globalization preserves module-local type identities, so the
                 // same language builtin can legitimately occupy several global
@@ -133,12 +136,27 @@ pub const Resolver = struct {
             else => {},
         };
         for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            if (declaration.kind != .type and declaration.kind != .function and declaration.kind != .contract_type) continue;
+            if (declaration.kind == .function and declaration.family_definition == null) continue;
+            if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             const owner = self.graph.moduleForDeclaration(id) orelse continue;
-            if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
-            if (found != null) return false;
-            found = declaration.type_id orelse continue;
+            if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and
+                (qualified or !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core)) continue;
+            if (found != null or definition != null) return false;
+            if (declaration.family_definition != null or declaration.kind == .contract_type) {
+                definition = declaration.family_definition;
+            } else found = declaration.type_id orelse continue;
+        }
+        if (definition) |id| {
+            const classification = try types.definitionClass(self.allocator, self.graph, id);
+            const target = globalizer.globalNode(o, node);
+            try self.graph.setNode(self.allocator, target, .{
+                .source = self.graph.node(target).source,
+                .ty = classification,
+                .content = .{ .definition_literal = .{ .origin = id } },
+            });
+            return true;
         }
         const ty = found orelse return false;
         var meta: ?global_sg.GlobalTypeId = null;

@@ -1,20 +1,23 @@
-Counter: Type = (.count: UIntNative = 0)
+Counter := (.count: UIntNative = 0)
 
-bump(.counter: $&Counter = reach counter) -> (.result: UIntNative) := {
+bump := (.counter: $&Counter = reach counter) -> (.result: UIntNative) {
     counter&.count = counter&.count + 1
     result = counter&.count
 }
 
-Value#(.Tag: Type): Type = (.number: UIntNative)
+Value := #(.Tag: Type) (.number: UIntNative)
 
-implement#(.Tag: Type) Init#(Value#(Tag), (.number: UIntNative = bump())) (
+ValueInitArgs: Type = #(.Tag: Type) (.number: UIntNative = bump())
+
+implement#(.Tag: Type) Init#(Value#(Tag), ValueInitArgs#(Tag)) (
     .Result : Type = Value#(Tag)
-    .init   = (.args: (.number: UIntNative = bump())) -> (.result: Result) {
-        result = (.number = args.number)
+
+    .init = ValueInitArgs#(Tag) -> (.result: Result) {
+        result = (.number = number)
     }
 )
 
-main() -> () := {
+main := () -> () {
     state :: Counter = (.count = 0)
     assume counter := $&state
     first ::= Value#(Int32)()

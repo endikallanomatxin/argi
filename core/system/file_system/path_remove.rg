@@ -33,7 +33,7 @@ _path_remove_string := (.self: &FileSystem, .path: &String) -> (
     result = remove(.self = self, .path = c_path)
 }
 
-_path_remove_view#(.Provider: Type: Allocator#(Provider)) := (
+_path_remove_view := #(.Provider: Type: Allocator#(Provider)) (
     .self: &FileSystem, .path: StringView, .allocator: $&Provider
 ) -> (.result: Errable#(Bool, (..path_remove_failed, ..out_of_memory))) {
     assume ffi := self&._ffi

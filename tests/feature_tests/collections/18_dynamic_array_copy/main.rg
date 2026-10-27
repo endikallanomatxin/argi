@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -8,15 +8,19 @@ main(.system: System) -> (.status_code: Int32) := {
     push(.self = $&arr, .value = 10, .allocator = $&allocator_storage)
     push(.self = $&arr, .value = 20, .allocator = $&allocator_storage)
 
-    copied_result ::= FalliblyCopyable#(DynamicArray#(Int32), GeneralPurposeAllocator).copy(.self = &arr, .allocator = allocator)
+    copied_result ::= FalliblyCopyable#(DynamicArray#(Int32), GeneralPurposeAllocator).copy(
+        .self = &arr, .allocator = allocator
+    )
     if is(.value = copied_result, .variant = ..error) {
         status_code = 5
         return
     }
-    copied ::= ~copied_result..ok
+    copied ::= ~copied_result ..ok
     defer deinit(.self = $&copied)
 
-    set_result ::= replace(.self = $&copied, .index = 0, .value = 99, .allocator = $&allocator_storage).result
+    set_result ::= replace(
+        .self = $&copied, .index = 0, .value = 99, .allocator = $&allocator_storage
+    ).result
     if is(.value = set_result, .variant = ..error) {
         status_code = 6
         return
@@ -38,7 +42,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 3
         return
     }
-    if first_result..ok != 10 {
+    if first_result ..ok != 10 {
         status_code = 3
         return
     }
@@ -48,7 +52,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 4
         return
     }
-    if copied_first_result..ok != 99 {
+    if copied_first_result ..ok != 99 {
         status_code = 4
         return
     }

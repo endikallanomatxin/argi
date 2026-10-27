@@ -1,12 +1,21 @@
-Packet: Type = (.kind: Int32)
-implement#(.T: Type) Init#(Packet, (.value: T)) (
-    .Result: Type = Packet
-    .init = (.args: (.value: T)) -> (.result: Result) { result = (.kind = 1) }
+Packet := #(.T: Type) (.kind: Int32)
+
+PacketInitArgs: Type = #(.T: Type) (.value: T)
+
+implement#(.T: Type) Init#(Packet#(T), PacketInitArgs#(T)) (
+    .Result : Type = Packet#(T)
+
+    .init = PacketInitArgs#(T) -> (.result: Result) { result = (.kind = 1) }
 )
-implement Init#(Packet, (.value: Int32)) (
-    .Result: Type = Packet
-    .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.kind = 2) }
+
+PacketInitArgs2: Type = PacketInitArgs#(Int32)
+
+implement Init#(Packet#(Int32), PacketInitArgs2) (
+    .Result : Type = Packet#(Int32)
+
+    .init = PacketInitArgs2 -> (.result: Result) { result = (.kind = 2) }
 )
+
 main := () -> (.status_code: Int32 = 0) {
     integer :: Int32 = 42
     byte :: UInt8 = 7

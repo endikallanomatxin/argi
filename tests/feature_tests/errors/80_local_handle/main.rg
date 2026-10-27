@@ -1,16 +1,18 @@
 ..missing
 
-attempt(.fail: Bool) -> (.result: Errable#(.t: Int32, .reasons: (..missing))) := {
+attempt := (.fail: Bool) -> (.result: Errable#(.t: Int32, .reasons: (..missing))) {
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 7 }
 }
 
-recover#(.t: Type)(.input: Errable#(.t: t, .reasons: (..missing)), .fallback: t) -> (.result: t) := {
+recover := #(.t: Type) (.input: Errable#(.t: t, .reasons: (..missing)), .fallback: t) -> (
+    .result : t
+) {
     result = ~input handle error, value {
         match error.reason { ..missing { value = ~fallback } }
     }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     first ::= attempt(.fail = false) handle error, value {
         match error.reason { ..missing { value = 9 } }
     }

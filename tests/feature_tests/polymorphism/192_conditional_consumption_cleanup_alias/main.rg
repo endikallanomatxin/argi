@@ -1,6 +1,6 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Bundle: Type = (.first: Resource, .second: Resource)
+Bundle := (.first: Resource, .second: Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -10,7 +10,7 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-release_if(.resource: $&Resource, .consume: Bool) -> (.result: ?Int32) := {
+release_if := (.resource: $&Resource, .consume: Bool) -> (.result: ?Int32) {
     if consume {
         deinit(resource)
         result = ..some(.value = 1)
@@ -20,12 +20,12 @@ release_if(.resource: $&Resource, .consume: Bool) -> (.result: ?Int32) := {
     result = ..none
 }
 
-release_again(.resource: $&Resource, .consume: Bool) -> (.result: ?Int32) := {
+release_again := (.resource: $&Resource, .consume: Bool) -> (.result: ?Int32) {
     saved ::= release_if(resource, consume)
     result = saved
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if true {
         bundle ::= Bundle(Resource(42), Resource(43))
         alias ::= $&bundle.first

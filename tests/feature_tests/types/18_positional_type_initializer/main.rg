@@ -1,19 +1,22 @@
-Point : Type = (
-    .x: Int32,
-    .y: Int32,
+Point := (
+    .x : Int32,
+    .y : Int32,
 )
 
-implement Init#(Point, (.x: Int32, .y: Int32)) (
-    .Result: Type = Point
-    .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
-        x ::= ~args.x
-        y ::= ~args.y
+PointInitArgs: Type = (.x: Int32, .y: Int32)
 
-        result = (.x = x, .y = y)
+implement Init#(Point, PointInitArgs) (
+    .Result : Type = Point
+
+    .init = PointInitArgs -> (.result: Result) {
+        _init_x ::= ~x
+        _init_y ::= ~y
+
+        result = (.x = _init_x, .y = _init_y)
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     point := Point(20, 22)
     status_code = point.x + point.y
 }

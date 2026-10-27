@@ -4,14 +4,14 @@
 
 An ordinary function has one identity in its module namespace. It can be generic,
 but its name cannot be overloaded, including by changing compile-time parameter
-count or types. Ordinary declarations use the existing `#(...)` parameter syntax:
+count or types. Ordinary definitions place their `#(...)` parameters on the value after `:=`:
 
 ```argi
 square := (.value: Int32) -> (.result: Int32) {
     result = value * value
 }
 
-identity#(.T: Type) := (.value: T) -> (.result: T) {
+identity := #(.T: Type) (.value: T) -> (.result: T) {
     result = value
 }
 ```
@@ -57,6 +57,11 @@ implement Product#(Row, Column) (
     .multiply = multiply_row_column
 )
 ```
+
+Members may also use a specialized definition directly, for example
+`.copy = copy_value#(T)`. Its compile-time arguments retain the implementation's
+lexical bindings. Function-value expressions are resolved through the ordinary
+captured-expression machinery; pending aliases do not force premature evaluation.
 
 Generic binders belong after `implement`, for example
 `implement#(.T: Type) Copyable#(Box#(T)) (...)`. Applicable conformances are ranked
@@ -105,13 +110,35 @@ provide compile-time guarantees; specialization and monomorphization produce
 ordinary concrete calls. Constraints are checks on known or inferred parameters,
 not a general constraint-solving mechanism.
 
+An associated family is also a compile-time value. For example, passing
+`Factory#(Owner).Args` to a family parameter preserves the selected definition
+and its captures. The known participants select the conformance first; the
+associated value does not infer an otherwise unknown participant.
+
 ## Standard operations
 
-Construction uses `Init#(T, Args)`, with an associated `Result` and an `init`
-operation. `T(...)` supplies fields of `Args`, including their defaults. `Result`
-is `T` or an `Errable` containing `T`; eligible types without a custom Init retain
-structural construction. Alternative construction uses explicitly named functions
-or conversions instead of constructor overloads.
+Construction uses `Init#(Target, Args)`. Both participants are concrete types;
+Args is the nominal input record and retains its defaults. The associated Result
+must be Target or an Errable containing Target. The fixed requirement is
+`.init: Args -> (.result: Result)`.
+
+`T(...)` fixes the target and infers the remaining participants from applicable
+input signatures and reachable capabilities. Implementation parameters, including
+static allocator types, must be determined by those participants. Several Init
+conformances may share a target. Different inferred argument types require
+qualification; specificity only compares conformances for the same complete tuple.
+Return types never select construction. Untyped call literals receive their
+nominal context from candidate signatures, not structural type identity.
+
+Eligible types without a custom Init retain structural construction. Alternative
+factories may still use explicitly named functions. Initializer behavior and
+compiler-managed storage initialization/cleanup remain separate responsibilities.
+
+Unqualified calls can infer participants from implementation-owned inputs,
+including ordinary generic aliases and operation-local compile-time parameters.
+Inputs must identify a unique operation and participant tuple; an expected output
+type does not disambiguate either. Signature probes discard their semantic
+effects, and preserve any newly inferred nominal types until actual selection.
 
 Conversion uses `Convert#(Source, Target)` and its associated `Result`. The result
 must be `Target` or an `Errable` containing it. Explicit conversion syntax is
@@ -127,27 +154,29 @@ Operators identify standard contracts such as Add, Multiply and Equal. Their
 conformances use the same participant dispatch and obey explicit copy, move and
 reference rules.
 
-Binary arithmetic contracts include an argument-record participant:
+Binary arithmetic contracts select by their two operand types:
 
 ```argi
-Add#(.Left: Type, .Right: Type, .Args: Type): Contract = (
+Add#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
-    .add: (.args: Args) -> (.result: Result)
+    .add: _
 )
 ```
 
-The Args pattern contains the operands and any additional operation capabilities.
-For example, a string implementation can include a reference to a generic
-allocator with a reach default. Its provider is inferred from that field, so
-selection remains static without adding a provider to every arithmetic contract
-or erasing the allocator. Operand participants and Args are inferred together
-from implementation input patterns; Result contributes no inference bindings.
-The selected Args record completes defaults and reached capabilities before
-invoking the scoped operation, following the same selection rules as Init.
-Addition now uses this lowering for concrete and specialized generic expressions.
-Bundled string concatenation implementations retain a statically selected allocator.
-Equality uses `Equal#(Left, Right, Args)` with an `equal` operation returning
-Bool. The `!=` symbol negates the same selected operation and evaluates it once.
+Each implementation supplies its operation signature. Its ordinary inputs include
+both operands and any auxiliary capabilities. An allocator provider can be a
+compile-time parameter of that callable, inferred from an explicit input or a
+reach default after the conformance has been selected. It does not distinguish
+conformances. The operation returns `(.result: Result)`; Result never selects an
+implementation. Borrowed operands use reference participants and explicit
+reference arguments. Concrete and specialized generic expressions share this
+selected-evidence path.
+
+Equality uses `Equal#(Left, Right)` with an `equal` operation taking the two
+operand types directly and returning `(.ok: Bool)`. Borrowed equality uses
+reference participants, such as `Equal#(&Key, &Key)`. Auxiliary inputs belong
+to the operation signature and cannot distinguish conformances for one tuple.
+The `!=` symbol negates the same selected operation and evaluates it once.
 Bundled StringView, time values, Path and semver comparisons use Equal; auxiliary
 capabilities can be fields with reach defaults, including in generic bodies.
 Both addition and equality require explicit references for borrowed operands;
@@ -158,6 +187,10 @@ representation hooks; primitive lowering happens after evidence selection and
 preserves constant expressions. It never replaces a custom implementation.
 Scalar equality also selects Equal evidence before primitive lowering, preserving
 IEEE NaN behavior and evaluating != once.
+Choices without payloads use the same selected-evidence path to compare tags.
+The operands must have the same type; matching variant names do not make two
+independent nominal choices interchangeable. Choices with payloads require their
+own equality implementation.
 
 Ordered comparisons use two contracts with ordinary Left and Right participants:
 
@@ -362,9 +395,12 @@ parameterized bodies. The source protocol and CLI view adapter live separately
 from option-tokenization and schema code.
 
 Generic operation aliases infer their ordinary function parameters from the
-selected requirement's input signature. The aliased declaration is fixed; no
-second overload search or result-directed inference occurs. Selected bounds and
-result compatibility remain checked. Equivalent generic implementation patterns
+selected requirement's input signature. A named alias can retain a completely
+or partially specialized function value; its captured arguments stay fixed, and
+only remaining parameters are inferred. Reuse preserves the producer identity
+and `once` restriction. No second overload search or result-directed inference
+occurs. Selected bounds and result compatibility remain checked. Equivalent
+generic implementation patterns
 and extension ownership are checked even for dormant templates.
 
 ImplicitlyCopyable and InfalliblyCopyable now have explicit Value participants.
@@ -379,7 +415,7 @@ Ownership queries these conformances rather than functions named copy.
 
 The standard Init contract now owns canonical construction for migrated types.
 Type calls select Init evidence, complete its Args record and invoke its init
-operation; Result must be the participant itself or one bundled Errable containing
+operation; Result must be the target participant or one bundled Errable containing
 it. Concrete and explicit generic calls, including parameterized bodies, share
 this route. Closed anonymous Args records retain ordinary field defaults; generic
 argument shapes retain scalar and lexical reach defaults. Failed construction

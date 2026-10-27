@@ -1,14 +1,14 @@
-calculate(.value: Int32) -> (.result: Int32) := { result = value + 1 }
+calculate := (.value: Int32) -> (.result: Int32) { result = value + 1 }
 
-enabled() -> (.result: Bool) := { result = true }
+enabled := () -> (.result: Bool) { result = true }
 
 module_answer ::= #run () -> (.result: Int32 = 42) {}
 known_base := 41
 known_answer := #run () -> (.result: Int32) { result = known_base + 1 }
 
-Record: Type = (.value: Int32 = #run () -> (.result: Int32 = 42) {})
+Record := (.value: Int32 = #run () -> (.result: Int32 = 42) {})
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     record ::= Record()
     if record.value != module_answer { abort }
     if known_answer != 42 { abort }

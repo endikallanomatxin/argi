@@ -3,7 +3,7 @@ IntegerBounds#(.Value: Type): Contract = (
     .bounds : (.value: Value) -> (.minimum: Value, .maximum: Value)
 )
 
-integer_limits#(.Value: Type: IntegerBounds#(Value)) := (.value: Value) -> (
+integer_limits := #(.Value: Type: IntegerBounds#(Value)) (.value: Value) -> (
     .minimum: Value, .maximum: Value
 ) {
     bounds ::= IntegerBounds#(Value).bounds(.value = value)
@@ -83,7 +83,9 @@ implement IntegerBounds#(UIntNative) (
 
 ..division_by_zero
 
-checked_add#(.t: Type: Int)(.left: t, .right: t) -> (.result: Errable#(t, (..out_of_range))) := {
+checked_add := #(.t: Type: Int) (.left: t, .right: t) -> (
+    .result : Errable#(t, (..out_of_range))
+) {
     bounds ::= integer_limits(.value = left)
 
     if right > 0 {
@@ -101,9 +103,9 @@ checked_add#(.t: Type: Int)(.left: t, .right: t) -> (.result: Errable#(t, (..out
     result = ..ok left + right
 }
 
-checked_subtract#(.t: Type: Int)(.left: t, .right: t) -> (
+checked_subtract := #(.t: Type: Int) (.left: t, .right: t) -> (
     .result : Errable#(t, (..out_of_range))
-) := {
+) {
     bounds ::= integer_limits(.value = left)
 
     if right > 0 {
@@ -121,9 +123,9 @@ checked_subtract#(.t: Type: Int)(.left: t, .right: t) -> (
     result = ..ok left - right
 }
 
-checked_multiply#(.t: Type: Int)(.left: t, .right: t) -> (
+checked_multiply := #(.t: Type: Int) (.left: t, .right: t) -> (
     .result : Errable#(t, (..out_of_range))
-) := {
+) {
     bounds ::= integer_limits(.value = left)
     -- Divide a representable bound, never a potentially overflowing product.
     -- The negative pair uses maximum/right and avoids negating signed minima.
@@ -152,9 +154,9 @@ checked_multiply#(.t: Type: Int)(.left: t, .right: t) -> (
     result = ..ok left * right
 }
 
-checked_divide#(.t: Type: Int)(.left: t, .right: t) -> (
+checked_divide := #(.t: Type: Int) (.left: t, .right: t) -> (
     .result : Errable#(t, (..out_of_range, ..division_by_zero))
-) := {
+) {
     if right == 0 {
         result = ..error(.reason = ..division_by_zero)
         return

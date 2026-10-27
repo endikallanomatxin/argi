@@ -1,19 +1,25 @@
-Box#(.T: Type): Type = (.value: T)
-implement#(.T: Type) Add#(Box#(T), Box#(T), (.left: &Box#(T), .right: &Box#(T))) (
-    .Result: Type = Box#(T)
-    .add = (.args: (.left: &Box#(T), .right: &Box#(T))) -> (.result: Result) {
-        result = (.value = args.left&.value + args.right&.value)
+Box := #(.T: Type) (.value: T)
+
+implement#(.T: Type) Add#(&Box#(T), &Box#(T)) (
+    .Result : Type = Box#(T)
+    .add    = (.left: &Box#(T), .right: &Box#(T)) -> (.result: Result) {
+        result = (.value = left&.value + right&.value)
     }
 )
-implement Add#(Box#(Int32), Box#(Int32), (.left: &Box#(Int32), .right: &Box#(Int32))) (
-    .Result: Type = Int32
-    .add = (.args: (.left: &Box#(Int32), .right: &Box#(Int32))) -> (.result: Result) {
-        result = args.left&.value + args.right&.value
+
+implement Add#(&Box#(Int32), &Box#(Int32)) (
+    .Result : Type = Int32
+    .add    = (.left: &Box#(Int32), .right: &Box#(Int32)) -> (.result: Result) {
+        result = left&.value + right&.value
     }
 )
-sum#(.T: Type) := (.left: &T, .right: &T) -> (.result: Add#(T, T, (.left: &T, .right: &T)).Result) {
+
+sum := #(.T: Type) (.left: &T, .right: &T) -> (
+    .result: Add#(&T, &T).Result
+) {
     result = ~[left + right]
 }
+
 main := () -> (.status_code: Int32 = 0) {
     a ::= Box#(Int32)(7)
     b ::= Box#(Int32)(5)

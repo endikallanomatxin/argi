@@ -1,10 +1,10 @@
-TrackingDeallocator : Type = (
+TrackingDeallocator := (
     .ffi: $&ForeignFunctionInterface
     .released_size: UIntNative
     .released_alignment: UIntNative
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     tracker :: TrackingDeallocator = (.ffi = system.ffi, .released_size = 0, .released_alignment = 0)
     storage ::= unwrap_or_abort(.value = acquire_heap_storage(.size = 32, .alignment = 16, .ffi = system.ffi))
     deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(.value = $&tracker)

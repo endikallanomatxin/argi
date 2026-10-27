@@ -45,7 +45,7 @@ An error carries its reason and a small handle to its trace. Trace entries are
 held by the configured tracer, not embedded in each error value.
 
 ```rg
-Error#(.reasons: Choice) : Type = (
+Error := #(.reasons: Choice) (
     .reason: reasons
     .tracer: $&Virtual#(.contract: ErrorTracer)
 )
@@ -63,9 +63,9 @@ the lifetime of the error or change its reason.
 `Errable` is defined over a set of reasons:
 
 ```rg
-Errable#(.t: Type, .reasons: Choice) : Type = (
+Errable := #(.t: Type, .reasons: Choice) (
     ..ok t
-    ..error Error#(.reasons = reasons)
+    ..error Error#(.reasons: reasons)
 )
 ```
 
@@ -80,11 +80,11 @@ Example:
 ..file_not_found
 ..permission_denied
 
-read_file() -> (.result: Errable#(Int32, (..file_not_found))) := {
+read_file := () -> (.result: Errable#(Int32, (..file_not_found)))  {
     result = ..error(.reason = ..file_not_found)
 }
 
-load_file() -> (.result: Errable#(Int32, (..file_not_found, ..permission_denied))) := {
+load_file := () -> (.result: Errable#(Int32, (..file_not_found, ..permission_denied)))  {
     value := read_file()!
     result = ..ok value
 }
@@ -126,7 +126,7 @@ The same inference path is also available when the output is written
 explicitly as `Errable#(T)` and omits `.reasons`:
 
 ```rg
-load_file() -> (.result: Errable#(Int32)) := {
+load_file := () -> (.result: Errable#(Int32))  {
     value := read_file()!
     result = ..ok value
 }

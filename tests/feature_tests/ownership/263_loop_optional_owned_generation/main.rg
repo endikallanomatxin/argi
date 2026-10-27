@@ -1,16 +1,21 @@
-Holder: Type = (
+Holder := (
     .buffer : String
 )
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(Holder, (.allocator: $&AllocatorProvider)) (
-    .Result : Type = Holder
-    .init   = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
-        allocator ::= ~args.allocator
+HolderInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (.allocator: $&AllocatorProvider)
 
-        assume allocator
+implement#(.AllocatorProvider: Type: Allocator) Init#(
+    Holder, HolderInitArgs#(AllocatorProvider)
+) (
+    .Result : Type = Holder
+
+    .init = HolderInitArgs#(AllocatorProvider) -> (.result: Result) {
+        _init_allocator ::= ~allocator
+
+        assume allocator := _init_allocator
 
         result.buffer = unwrap_or_abort(
-            .value = string_with_capacity(.allocator = allocator, .capacity = 1)
+            .value = string_with_capacity(.allocator = _init_allocator, .capacity = 1)
         )
     }
 )
@@ -21,15 +26,15 @@ implement Deinit#(Holder) (
     }
 )
 
-append#(.AllocatorType: Type: Allocator#(AllocatorType))(
+append := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&Holder, .allocator: $&AllocatorType
-) -> () := {
+) -> () {
     assume allocator
 
     _ ::= push_ascii(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

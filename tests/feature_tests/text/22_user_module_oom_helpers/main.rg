@@ -1,6 +1,6 @@
-make_text#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (
-    .result : Errable#(.t: String, .reasons: (..out_of_memory))
-) := {
+make_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
+    .result: Errable#(.t: String, .reasons: (..out_of_memory))
+) {
     assume allocator
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = 4)
@@ -21,7 +21,7 @@ make_text#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Alloca
     }
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

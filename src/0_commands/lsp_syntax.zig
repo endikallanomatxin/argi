@@ -95,8 +95,8 @@ test "LSP syntax cache replaces changed files and releases departed sources" {
     var cache: Cache = .{};
     defer cache.deinit(allocator);
     const sources = [_]sf.SourceFile{
-        .{ .path = "main.rg", .code = "main() -> () := {}" },
-        .{ .path = "helper.rg", .code = "helper() -> () := {}" },
+        .{ .path = "main.rg", .code = "main := () -> ()  {}" },
+        .{ .path = "helper.rg", .code = "helper := () -> ()  {}" },
     };
     const first = try cache.load(allocator, arena.allocator(), &sources);
     const helper_tokens = first[1].tokens.contents.ptr;
@@ -143,7 +143,7 @@ pub fn load_files(work: std.mem.Allocator, sources: []const sf.SourceFile) ![]Fi
             for (0..file.tree.nodes.len) |raw| {
                 const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
                 switch (file.tree.tag(node)) {
-                    .function_declaration, .function_declaration_once, .c_function_pointer_declaration, .type_declaration, .contract_declaration, .symbol_declaration_constant, .symbol_declaration_variable, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration, .choice_option_declaration => {
+                    .function_declaration, .c_function_pointer_declaration, .contract_declaration, .symbol_declaration_constant, .symbol_declaration_variable, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration, .choice_option_declaration => {
                         if (file.scope_start[@intFromEnum(file.tree.mainToken(node))] == 0)
                             try roots.append(work, node);
                     },
@@ -301,7 +301,7 @@ fn test_definition(sources: []const sf.SourceFile, needle: []const u8) !?Declara
 
 test "syntax navigation preserves lexical scopes and ignores member guesses" {
     const code =
-        \\main(.input: Int32) -> (.result: Int32) := {
+        \\main := (.input: Int32) -> (.result: Int32)  {
         \\    value := input
         \\    if true { hidden := 1 }
         \\    result = value
@@ -324,10 +324,10 @@ test "syntax navigation preserves lexical scopes and ignores member guesses" {
 
 test "syntax navigation respects visibility and refuses duplicate function identities" {
     const sources = [_]sf.SourceFile{
-        .{ .path = "/app/main.rg", .code = "main() -> () := { local()\n unique()\n overload()\n foreign()\n _private()\n }" },
-        .{ .path = "/app/helper.rg", .code = "local() -> () := {}" },
-        .{ .path = "/core/library.rg", .origin = .bundled_core, .code = "local() -> () := {}\nunique() -> () := {}\noverload() -> () := {}\noverload(.a: Int32) -> () := {}\n_private() -> () := {}" },
-        .{ .path = "/other/foreign.rg", .code = "foreign() -> () := {}" },
+        .{ .path = "/app/main.rg", .code = "main := () -> ()  { local()\n unique()\n overload()\n foreign()\n _private()\n }" },
+        .{ .path = "/app/helper.rg", .code = "local := () -> ()  {}" },
+        .{ .path = "/core/library.rg", .origin = .bundled_core, .code = "local := () -> ()  {}\nunique := () -> ()  {}\noverload := () -> ()  {}\noverload := (.a: Int32) -> ()  {}\n_private := () -> ()  {}" },
+        .{ .path = "/other/foreign.rg", .code = "foreign := () -> ()  {}" },
     };
     const local = (try test_definition(&sources, "local()")).?;
     try std.testing.expectEqualStrings("/app/helper.rg", local.path);

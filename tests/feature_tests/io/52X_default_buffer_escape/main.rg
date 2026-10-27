@@ -6,11 +6,11 @@ implement Reader#(Source) (
     }
 )
 
-make_reader(.source: $&Source) -> (.result: BufferedReader#(Source)) := {
+make_reader := (.source: $&Source) -> (.result: BufferedReader#(Source)) {
     result = BufferedReader(.base = source)
 }
 
-main() -> () := {
+main := () -> () {
     source :: Source = ()
     reader ::= make_reader($&source)
     _ ::= Reader#().read_byte($&reader)

@@ -1,4 +1,4 @@
-Init#(.T: Type, .Args: Type): Contract = (
+Init#(.Target: Type, .Args: Type): Contract = (
     .Result : Type
-    .init   : (.args: Args) -> (.result: Result)
+    .init   : Args -> (.result: Result)
 )

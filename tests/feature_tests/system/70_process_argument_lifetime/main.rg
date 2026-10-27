@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     if length(.self = system.args).count == 2 {
         value ::= unwrap_or_abort(.value = get(.self = system.args, .index = 1)).result
         if value != "done" { abort }

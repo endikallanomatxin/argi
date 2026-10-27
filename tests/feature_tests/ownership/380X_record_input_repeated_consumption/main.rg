@@ -1,18 +1,18 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Access: Type = (.target: $&Resource, .other: $&Resource)
+Access := (.target: $&Resource, .other: $&Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {}
 )
 
-cycle(.args: Access) -> () := {
+cycle := (.args: Access) -> () {
     deinit(.self = args.target)
     deinit(.self = args.target)
 
 }
 
-main() -> () := {
+main := () -> () {
     owner :: Resource = Resource(.value = 1)
     other :: Resource = Resource(.value = 2)
     cycle(.args = (.target = $&owner, .other = $&other))

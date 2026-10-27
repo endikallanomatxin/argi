@@ -1,5 +1,5 @@
 -- Components borrow the encoded source; decoding is an explicit allocation.
-UriView: Type = (
+UriView := (
     .scheme    : ?StringView
     .authority : ?StringView
     .path      : StringView
@@ -9,13 +9,13 @@ UriView: Type = (
 
 implement ImplicitlyCopyable#(UriView) ()
 
-_alpha(.byte: UInt8) -> (.ok: Bool) := {
+_alpha := (.byte: UInt8) -> (.ok: Bool) {
     ok = [byte >= 65 and byte <= 90] or [byte >= 97 and byte <= 122]
 }
 
-_digit(.byte: UInt8) -> (.ok: Bool) := { ok = byte >= 48 and byte <= 57 }
+_digit := (.byte: UInt8) -> (.ok: Bool) { ok = byte >= 48 and byte <= 57 }
 
-_unreserved(.byte: UInt8) -> (.ok: Bool) := {
+_unreserved := (.byte: UInt8) -> (.ok: Bool) {
     ok = [
         _alpha(.byte = byte).ok
         or _digit(.byte = byte).ok
@@ -26,7 +26,7 @@ _unreserved(.byte: UInt8) -> (.ok: Bool) := {
     ]
 }
 
-_subdelimiter(.byte: UInt8) -> (.ok: Bool) := {
+_subdelimiter := (.byte: UInt8) -> (.ok: Bool) {
     ok = [
         byte == 33
         or byte == 36
@@ -42,7 +42,7 @@ _subdelimiter(.byte: UInt8) -> (.ok: Bool) := {
     ]
 }
 
-_hex(.byte: UInt8) -> (.value: UInt8, .ok: Bool = true) := {
+_hex := (.byte: UInt8) -> (.value: UInt8, .ok: Bool = true) {
     if _digit(.byte = byte).ok {
         value = byte - 48
         return
@@ -62,7 +62,7 @@ _hex(.byte: UInt8) -> (.value: UInt8, .ok: Bool = true) := {
     ok = false
 }
 
-_scheme_valid(.text: StringView) -> (.ok: Bool = false) := {
+_scheme_valid := (.text: StringView) -> (.ok: Bool = false) {
     if byte_length(&text).count == 0 { return }
     if [
         _alpha(.byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))).ok
@@ -88,7 +88,7 @@ _scheme_valid(.text: StringView) -> (.ok: Bool = false) := {
     ok = true
 }
 
-_component_valid(.text: StringView, .kind: UInt8) -> (.ok: Bool = false) := {
+_component_valid := (.text: StringView, .kind: UInt8) -> (.ok: Bool = false) {
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
@@ -132,12 +132,12 @@ _component_valid(.text: StringView, .kind: UInt8) -> (.ok: Bool = false) := {
     ok = true
 }
 
-_slice(.text: StringView, .start: UIntNative, .end: UIntNative) -> (.value: StringView) := {
+_slice := (.text: StringView, .start: UIntNative, .end: UIntNative) -> (.value: StringView) {
     value = string_view_slice(.view = &text, .start = start, .length = end - start)
 }
 
 -- Delimiters are recognized before any decoding. Encoded separators remain data.
-parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
+parse := (.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) {
     fragment_start ::= byte_length(&text).count
     i :: UIntNative = 0
 
@@ -243,7 +243,7 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
     )
 }
 
-_ipv4_valid(.text: StringView) -> (.ok: Bool = false) := {
+_ipv4_valid := (.text: StringView) -> (.ok: Bool = false) {
     groups :: UIntNative = 0
     start :: UIntNative = 0
     i :: UIntNative = 0
@@ -275,7 +275,7 @@ _ipv4_valid(.text: StringView) -> (.ok: Bool = false) := {
     ok = groups == 4
 }
 
-_ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
+_ip_literal_valid := (.text: StringView) -> (.ok: Bool = false) {
     if byte_length(&text).count == 0 { return }
     first ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
 
@@ -364,7 +364,7 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
     ok = [compressed and groups < 8] or [compressed == false and groups == 8]
 }
 
-_authority_valid(.text: StringView) -> (.ok: Bool = false) := {
+_authority_valid := (.text: StringView) -> (.ok: Bool = false) {
     if _component_valid(.text = text, .kind = 0).ok == false { return }
     host_start :: UIntNative = 0
     i :: UIntNative = 0
@@ -432,9 +432,9 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
 
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
-build#(.AllocatorType: Type: Allocator#(AllocatorType))(
+build := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .value: UriView, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) := {
+) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) {
     if [
         is(.value = value.scheme, .variant = ..none)
         and is(.value = value.authority, .variant = ..none)
@@ -533,9 +533,9 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~output
 }
 
-encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
+encode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .text: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..out_of_memory))) := {
+) -> (.result: Errable#(String, (..out_of_memory))) {
     output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
     hex: StringView = "0123456789ABCDEF"
     i :: UIntNative = 0
@@ -575,9 +575,9 @@ encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~output
 }
 
-decode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
+decode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .text: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..invalid_input, ..invalid_utf8, ..out_of_memory))) := {
+) -> (.result: Errable#(String, (..invalid_input, ..invalid_utf8, ..out_of_memory))) {
     output ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = 0)!
     i :: UIntNative = 0
 
@@ -609,11 +609,11 @@ decode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~copied
 }
 
-AuthorityView: Type = (.userinfo: ?StringView, .host: StringView, .port: ?StringView)
+AuthorityView := (.userinfo: ?StringView, .host: StringView, .port: ?StringView)
 
 implement ImplicitlyCopyable#(AuthorityView) ()
 
-authority_parts(.text: StringView) -> (.result: Errable#(AuthorityView, (..invalid_input))) := {
+authority_parts := (.text: StringView) -> (.result: Errable#(AuthorityView, (..invalid_input))) {
     if _authority_valid(.text = text).ok == false {
         result = ..error(.reason = ..invalid_input)
         return

@@ -1,4 +1,4 @@
-Counter: Type = (.value: Int32)
+Counter := (.value: Int32)
 
 Counting#(.State: Type): Contract = (
     .bump : (.self: $&State, .amount: Int32) -> () where {}
@@ -14,9 +14,9 @@ implement Counting#(Counter) (
     }
 )
 
-Holder: Type = (.counter: Virtual#(.contract: Counting), .tag: UInt8)
+Holder := (.counter: Virtual#(.contract: Counting), .tag: UInt8)
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     counter :: Counter = (.value = 7)

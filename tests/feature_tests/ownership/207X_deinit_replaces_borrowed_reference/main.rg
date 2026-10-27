@@ -1,8 +1,10 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-Holder : Type = (.reference: $&UInt8)
-Observer : Type = (
-    .target: $&Holder
-    .new_reference: $&UInt8
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+Holder := (.reference: $&UInt8)
+
+Observer := (
+    .target        : $&Holder
+    .new_reference : $&UInt8
 )
 
 implement Deinit#(Observer) (
@@ -11,24 +13,33 @@ implement Deinit#(Observer) (
     }
 )
 
-replace_on_exit(.holder: $&Holder, .new_reference: $&UInt8) -> () := {
+replace_on_exit := (.holder: $&Holder, .new_reference: $&UInt8) -> () {
     observer ::= Observer(.target = holder, .new_reference = new_reference)
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     old_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     new_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match old_result {
         ..error _ { status_code = 1 }
-        ..ok ~ old_payload {
+        ..ok ~old_payload {
             old ::= ~old_payload
             match new_result {
                 ..error _ { status_code = 2 }
-                ..ok ~ new_payload {
+                ..ok ~new_payload {
                     new ::= ~new_payload
-                    holder ::= Holder(.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&old, .offset = 0).reference)
-                    replace_on_exit(.holder = $&holder, .new_reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&new, .offset = 0).reference)
+                    holder ::= Holder(
+                        .reference = unsafe_allocation.trusted_allocation_byte_rw(
+                            .allocation = $&old, .offset = 0
+                        ).reference
+                    )
+                    replace_on_exit(
+                        .holder        = $&holder
+                        .new_reference = unsafe_allocation.trusted_allocation_byte_rw(
+                            .allocation = $&new, .offset = 0
+                        ).reference
+                    )
                     deinit(.self = $&new)
                     observed ::= holder.reference&
                     deinit(.self = $&old)

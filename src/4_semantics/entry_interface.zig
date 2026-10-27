@@ -27,7 +27,7 @@ pub const comptime_input_message = "compile-time entries accept no inputs or one
 pub const test_input_message = "tests accept no inputs or one '.system: System' input";
 
 pub const system_scope = @embedFile("entry_system_scope.rg");
-pub const bootstrap_source = "bootstrap() -> () := {\n" ++ system_scope ++ "}\n";
+pub const bootstrap_source = "bootstrap := () -> () {\n" ++ system_scope ++ "}\n";
 
 /// Both concrete and parameterized lowering use this ordinary checked scope.
 /// Only the selected execution environment decides which host effects exist.

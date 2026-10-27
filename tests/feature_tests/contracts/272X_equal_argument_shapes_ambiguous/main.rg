@@ -1,13 +1,13 @@
-Value: Type = (.number: Int32)
+Value := (.number: Int32)
 
-implement Equal#(Value, Value, (.left: &Value, .right: &Value, .bias: Int32 = 1)) (
-    .equal = (.args: (.left: &Value, .right: &Value, .bias: Int32 = 1)) -> (.ok: Bool) {
+implement Equal#(&Value, &Value) (
+    .equal = (.left: &Value, .right: &Value, .bias: Int32 = 1) -> (.ok: Bool) {
         ok = true
     }
 )
 
-implement Equal#(Value, Value, (.left: &Value, .right: &Value, .offset: Int32 = 2)) (
-    .equal = (.args: (.left: &Value, .right: &Value, .offset: Int32 = 2)) -> (.ok: Bool) {
+implement Equal#(&Value, &Value) (
+    .equal = (.left: &Value, .right: &Value, .offset: Int32 = 2) -> (.ok: Bool) {
         ok = false
     }
 )

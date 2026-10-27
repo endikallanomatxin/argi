@@ -1,12 +1,13 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     map ::= HashMap#(.key: Int32, .value: Int32, .policy: StandardHashPolicy)(
         .policy = StandardHashPolicy(), .allocator = allocator
-    )!
+    )!!!
     for entry in map { abort }
     index :: Int32 = 0
     while index < 40 {
-        put(.self = $&map, .key = index, .value = index * 3, .allocator = allocator)!
+        put(.self = $&map, .key = index, .value = index * 3, .allocator = allocator)!!!
         index = index + 1
     }
     if remove(.self = $&map, .key = &1, .allocator = allocator).removed == false { abort }
@@ -39,20 +40,14 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     for entry in map { if entry.value&!= entry.key&* 3 + 1 { abort } }
     set ::= HashSet#(.key: Int32, .policy: StandardHashPolicy)(
         .policy = StandardHashPolicy(), .allocator = allocator
-    )!
+    )!!!
     for key in set { abort }
-    insert(.self = $&set, .key = 2, .allocator = allocator)!
-    insert(.self = $&set, .key = 4, .allocator = allocator)!
-    insert(.self = $&set, .key = 6, .allocator = allocator)!
+    insert(.self = $&set, .key = 2, .allocator = allocator)!!!
+    insert(.self = $&set, .key = 4, .allocator = allocator)!!!
+    insert(.self = $&set, .key = 6, .allocator = allocator)!!!
     remove(.self = $&set, .key = &4, .allocator = allocator)
     sum = 0
     for key in set { sum = sum + key }
     if sum != 8 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

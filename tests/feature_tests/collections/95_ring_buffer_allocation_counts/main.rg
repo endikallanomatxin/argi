@@ -1,10 +1,10 @@
-RecordingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .allocations   : UIntNative = 0
-    .deallocations : UIntNative = 0
+RecordingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .allocations   : UIntNative                 = 0
+    .deallocations : UIntNative                 = 0
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     ring ::= unwrap_or_abort(
         .value = RingBuffer#(.t: Int32)(.capacity = 1, .allocator = $&allocator)
@@ -51,7 +51,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Allocator#(RecordingAllocator) (
     .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.allocations = self&.allocations + 1
         storage ::= malloc(.size = size, .ffi = self&.ffi)

@@ -1,5 +1,5 @@
 -- Transfer binary input through one buffered output stream.
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     stdin ::= $&system.terminal&.stdin
@@ -35,7 +35,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             if path == "-" {
                 transfer_stream(stdin, output)!!! { status_code = 1 }
             } else {
-                file_reader ::= File(
+                file_reader ::= open_file(
                     .file_system = system.file_system, .path = path, .mode = ..read
                 ) handle error, value {
                     add_context(.context = path, .error_tracer = error.tracer)

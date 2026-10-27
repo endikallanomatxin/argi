@@ -5,7 +5,7 @@ signature has an explicit type. The input fields form one logical input
 structure; the output fields form one logical output structure.
 
 ```rg
-add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
+add := (.left: Int32, .right: Int32) -> (.sum: Int32)  {
     sum = left + right
 }
 ```
@@ -109,8 +109,15 @@ Multiple dispatch selects implementations of [contract operations](135_contracts
 Calls with multiple applicable operation identities require qualification;
 incomparable most-specific implementations are rejected as ambiguous.
 
-A function may be declared `once` when it is intended to be consumed at most
-once from the reachable call graph of the compiled entrypoint.
+A function definition value can be marked `once`, as in
+`acquire := once Args -> Result { ... }`. Aliases retain its identity and
+single-use restriction. See [Once functions](42_once.md) for entrypoint and
+reachability rules.
+
+A defined C-ABI function can annotate its definition value:
+`compare := (...) -> (...): CFunction { ... }`. The same value can be marked
+once, but once functions cannot be selected as C callbacks. C-ABI definitions
+remain concrete; parameterized C-ABI definitions are rejected.
 
 > [!IDEA]
 > Anonymous functions could use the same input, output, and body syntax as

@@ -2,62 +2,67 @@ _HashSetValue: Type = ()
 
 implement ImplicitlyCopyable#(_HashSetValue) ()
 
-HashSet#(.key: Type, .policy: Type: HashPolicy#(policy, key) = StandardHashPolicy): Type = (
+HashSet := #(.key: Type, .policy: Type: HashPolicy#(policy, key) = StandardHashPolicy) (
     ._map : HashMap#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-_init_hash_set#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator)(
-    .policy: policy, .allocator: $&Provider, .capacity: UIntNative
-) -> (.result: Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))) := {
+_init_hash_set := #(
+    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator
+) (.policy: policy, .allocator: $&Provider, .capacity: UIntNative) -> (
+    .result : Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
+) {
     map ::= _init_hash_map#(.key: key, .value: _HashSetValue)(
         .policy = ~policy, .allocator = allocator, .capacity = capacity
     )!
     result = ..ok(._map = ~map)
 }
 
+HashSetInitArgs: Type = #(
+    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator
+) (
+    .policy    : policy,
+    .allocator : $&Provider,
+    .capacity  : UIntNative  = 8
+)
+
 implement#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator) Init#(
-    HashSet#(.key: key, .policy: policy),
-    (.policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8)
+    HashSet#(.key: key, .policy: policy), HashSetInitArgs#(key, policy, Provider)
 ) (
     .Result : Type = Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
-    .init   = (.args: (.policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8)) -> (
-        .result : Result
-    ) {
+
+    .init = HashSetInitArgs#(key, policy, Provider) -> (.result: Result) {
         constructed ::= _init_hash_set#(.key: key)(
-            .policy = ~args.policy, .allocator = args.allocator, .capacity = args.capacity
+            .policy = ~policy, .allocator = allocator, .capacity = capacity
         )!
         result = ..ok ~constructed
     }
 )
 
+StandardHashSetInitArgs: Type = #(
+    .key: Type: _StandardHashKey#(key), .Provider: Type: Allocator
+) (
+    .allocator : $&Provider,
+    .capacity  : UIntNative  = 8
+)
+
 implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#(
-    HashSet#(.key: key, .policy: StandardHashPolicy),
-    (
-        .policy    : StandardHashPolicy = StandardHashPolicy(),
-        .allocator : $&Provider,
-        .capacity  : UIntNative         = 8
-    )
+    HashSet#(.key: key, .policy: StandardHashPolicy), StandardHashSetInitArgs#(key, Provider)
 ) (
     .Result : Type = Errable#(
         HashSet#(.key: key, .policy: StandardHashPolicy), (..out_of_memory)
     )
-    .init = (
-        .args : (
-            .policy    : StandardHashPolicy = StandardHashPolicy(),
-            .allocator : $&Provider,
-            .capacity  : UIntNative         = 8
-        )
-    ) -> (.result: Result) {
+
+    .init = StandardHashSetInitArgs#(key, Provider) -> (.result: Result) {
         constructed ::= _init_hash_set#(.key: key)(
-            .policy = ~args.policy, .allocator = args.allocator, .capacity = args.capacity
+            .policy = StandardHashPolicy(), .allocator = allocator, .capacity = capacity
         )!
         result = ..ok ~constructed
     }
 )
 
-_map_insert_hash_set#(
+_map_insert_hash_set := #(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Provider) -> (
+) (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Provider) -> (
     .result : Errable#(Bool, (..out_of_memory))
 ) {
     query ::= HashPolicy#(policy, key).query(&self&._map._policy, .key = &key)
@@ -72,13 +77,13 @@ _map_insert_hash_set#(
     result = ..ok true
 }
 
-_map_contains_hash_set#(.key: Type, .policy: Type: HashPolicy#(policy, key)) := (
+_map_contains_hash_set := #(.key: Type, .policy: Type: HashPolicy#(policy, key)) (
     .self: &HashSet#(.key: key, .policy: policy), .key: HashPolicy#(policy, key).Query
 ) -> (.ok: Bool) { ok = contains(&self&._map, .key = key).ok }
 
-_map_remove_hash_set#(
+_map_remove_hash_set := #(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (
+) (
     .self      : $&HashSet#(.key: key, .policy: policy),
     .key       : HashPolicy#(policy, key).Query,
     .allocator : $&Provider
@@ -86,7 +91,7 @@ _map_remove_hash_set#(
     removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed
 }
 
-_map_extract_hash_set#(.key: Type, .policy: Type: HashPolicy#(policy, key)) := (
+_map_extract_hash_set := #(.key: Type, .policy: Type: HashPolicy#(policy, key)) (
     .self: $&HashSet#(.key: key, .policy: policy), .key: HashPolicy#(policy, key).Query
 ) -> (.result: ?key) {
     match extract($&self&._map, .key = key).result {
@@ -98,9 +103,9 @@ _map_extract_hash_set#(.key: Type, .policy: Type: HashPolicy#(policy, key)) := (
     }
 }
 
-_collection_length_hash_set#(.key: Type, .policy: Type: HashPolicy#(policy, key))(
+_collection_length_hash_set := #(.key: Type, .policy: Type: HashPolicy#(policy, key)) (
     .self : &HashSet#(.key: key, .policy: policy)
-) -> (.count: UIntNative) := { count = length(&self&._map).count }
+) -> (.count: UIntNative) { count = length(&self&._map).count }
 
 implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) CollectionLength#(
     HashSet#(.key: key, .policy: policy)
@@ -108,9 +113,9 @@ implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) CollectionLength
     .measure_length = _collection_length_hash_set
 )
 
-_collection_capacity_hash_set#(.key: Type, .policy: Type: HashPolicy#(policy, key))(
+_collection_capacity_hash_set := #(.key: Type, .policy: Type: HashPolicy#(policy, key)) (
     .self : &HashSet#(.key: key, .policy: policy)
-) -> (.count: UIntNative) := {
+) -> (.count: UIntNative) {
     count = capacity(&self&._map).count
 }
 
@@ -120,11 +125,11 @@ implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) CollectionCapaci
     .measure_capacity = _collection_capacity_hash_set
 )
 
-_map_reserve_hash_set#(
+_map_reserve_hash_set := #(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (
-    .self: $&HashSet#(.key: key, .policy: policy), .capacity: UIntNative, .allocator: $&Provider
-) -> (.result: Errable#(Void, (..out_of_memory))) {
+) (.self: $&HashSet#(.key: key, .policy: policy), .capacity: UIntNative, .allocator: $&Provider) -> (
+    .result : Errable#(Void, (..out_of_memory))
+) {
     result = reserve($&self&._map, .capacity = capacity, .allocator = allocator)
 }
 

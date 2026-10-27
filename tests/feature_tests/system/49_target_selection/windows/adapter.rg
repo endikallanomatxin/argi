@@ -1,1 +1,1 @@
-value() -> (.result: Int32 = 1) := {}
+value := () -> (.result: Int32 = 1) {}

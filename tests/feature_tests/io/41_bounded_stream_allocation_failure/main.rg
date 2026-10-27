@@ -1,12 +1,12 @@
-RecordingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .fail_at       : UIntNative = 0
-    .attempts      : UIntNative = 0
-    .allocations   : UIntNative = 0
-    .deallocations : UIntNative = 0
+RecordingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .fail_at       : UIntNative                 = 0
+    .attempts      : UIntNative                 = 0
+    .allocations   : UIntNative                 = 0
+    .deallocations : UIntNative                 = 0
 )
 
-FaultReader: Type = (
+FaultReader := (
     .position : UIntNative = 0,
     .calls    : UIntNative = 0,
     .fail_at  : UIntNative = 0
@@ -14,7 +14,7 @@ FaultReader: Type = (
 
 implement BlockReader#(FaultReader) (
     .read_block = (.self: $&FaultReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
     ) {
         self&.calls = self&.calls + 1
         if self&.calls == self&.fail_at {
@@ -32,7 +32,8 @@ implement BlockReader#(FaultReader) (
     }
 )
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     allocator :: RecordingAllocator = (.ffi = system.ffi, .fail_at = 1)
     source :: FaultReader = FaultReader()
     scratch :: [2]UInt8 = (0, 0)
@@ -113,7 +114,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
     unbounded ::= read_all_limited(
         .self = $&source, .buffer = view($&scratch), .limit = maximum, .allocator = $&allocator
-    )!
+    )!!!
     if length(&unbounded).count != 8 { abort }
     deinit(.self = $&unbounded)
     source.position = 0
@@ -122,22 +123,16 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .buffer    = view(.self = $&scratch)
         .limit     = 8
         .allocator = $&allocator
-    )!
+    )!!!
     if length(&owned).count != 8 or capacity(.self = &owned).count > 8 { abort }
     deinit(.self = $&owned)
     if allocator.allocations != allocator.deallocations { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }
 
 implement Allocator#(RecordingAllocator) (
     .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.attempts = self&.attempts + 1
         if self&.attempts == self&.fail_at {

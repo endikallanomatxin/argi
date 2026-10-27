@@ -367,7 +367,7 @@ pub const Resolver = struct {
         const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
         try self.core.trackReachedCall(fail_function, fail_input, reach, false);
         const fail = self.graph.functions.items[@intFromEnum(fail_function)];
-        _ = try self.core.completeCallInputFieldsWithReach(fail.input, fail_input, reach);
+        _ = try self.core.completeRecordFieldsWithContext(fail.input, fail_input, reach);
         if (fail.output.len != 1) return error.InvalidTestingFailFunction;
         const result_ty = self.graph.fields.items[fail.output.start].ty;
         const result_ok = global_types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidTestingFailFunction;
@@ -609,7 +609,7 @@ pub const Resolver = struct {
         const semantic = self.graph.resolvedSemanticType(ty) orelse return false;
         return switch (semantic) {
             .pointer => |pointer| pointer.mutability == .read_only and global_types.isBuiltin(self.graph, pointer.child, primitives.builtinTypeNamedForTarget("CChar", self.graph.target.stdTarget()).?),
-            .declared => |declaration| std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), "StringView"),
+            .nominal => |declaration| std.mem.eql(u8, self.graph.typeDefinitionName(declaration), "StringView"),
             else => false,
         };
     }

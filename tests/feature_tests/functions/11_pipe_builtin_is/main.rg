@@ -3,7 +3,7 @@ Result: Type = (
     ..error(.code: UnicodeScalar),
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value: Result = ..error(.code = 'x')
 
     if value | is(.value = _, .variant = ..error) {

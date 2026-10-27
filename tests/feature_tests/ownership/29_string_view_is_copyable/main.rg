@@ -1,8 +1,8 @@
-measure(.view: StringView) -> (.count: UIntNative) := {
+measure := (.view: StringView) -> (.count: UIntNative) {
     count = byte_length(&view).count
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

@@ -1,4 +1,4 @@
-Key: Type = (.id: Int32)
+Key := (.id: Int32)
 
 implement ImplicitlyCopyable#(Key) ()
 
@@ -9,7 +9,7 @@ implement#(.State: Type: Hasher#(State)) Hashable#(Key, State) (
     }
 )
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume allocator := system.page_allocator
     map ::= unwrap_or_abort(.value = HashMap#(.key: Key, .value: Int32)())
 }

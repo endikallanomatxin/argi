@@ -1,6 +1,6 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Tracked: Type = (.drops: $&Int32)
+Tracked := (.drops: $&Int32)
 
 implement Deinit#(Tracked) (
     .deinit = (.self: $&Tracked) -> () {
@@ -11,28 +11,30 @@ implement Deinit#(Tracked) (
 SlotProtocol#(.Participant: Type): Contract = (
     domain contents
 
-    .put: (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
-    .take: (.self: $&Participant) -> (.value: Tracked) where {
+    .put  : (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
+    .take : (.self: $&Participant) -> (.value: Tracked) where {
         owns(value)
         from_storage(value, self.contents)
         empties(self.contents)
     }
 )
 
-Inner: Type = (.storage: Allocation)
+Inner := (.storage: Allocation)
 
-Slot: Type = (.inner: Inner)
+Slot := (.inner: Inner)
 
-implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where { contents(self.inner.storage) }
+implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where {
+    contents(self.inner.storage)
+}
 
-_impl_put_Slot := (.self: $&Slot, .value: Tracked) -> ()  {
+_impl_put_Slot := (.self: $&Slot, .value: Tracked) -> () {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.inner.storage, 0).reference
     ).reference
     trusted_opaque_move_in#(Tracked, Allocation)($&self&.inner.storage, slot, ~value)
 }
 
-_impl_take_Slot := (.self: $&Slot) -> (.value: Tracked)  {
+_impl_take_Slot := (.self: $&Slot) -> (.value: Tracked) {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.inner.storage, 0).reference
     ).reference
@@ -40,19 +42,22 @@ _impl_take_Slot := (.self: $&Slot) -> (.value: Tracked)  {
     trusted_opaque_mark_empty($&self&.inner.storage)
 }
 
-forward_put(.slot: $&Virtual#(SlotProtocol), .value: Tracked) -> () := {
+forward_put := (.slot: $&Virtual#(SlotProtocol), .value: Tracked) -> () {
     put(slot, ~value)
 }
 
-forward_take(.slot: $&Virtual#(SlotProtocol)) -> (.value: Tracked) := {
+forward_take := (.slot: $&Virtual#(SlotProtocol)) -> (.value: Tracked) {
     value = take(slot)
 }
 
-static_put#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType, .value: Tracked) -> () := { put(slot, ~value) }
+static_put := #(.SlotType: Type: SlotProtocol#(SlotType)) (.slot: $&SlotType, .value: Tracked) -> (
+) { put(slot, ~value) }
 
-static_take#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType) -> (.value: Tracked) := { value = take(slot) }
+static_take := #(.SlotType: Type: SlotProtocol#(SlotType)) (.slot: $&SlotType) -> (
+    .value : Tracked
+) { value = take(slot) }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     drops :: Int32 = 0
 

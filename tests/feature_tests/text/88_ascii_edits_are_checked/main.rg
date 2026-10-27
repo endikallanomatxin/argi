@@ -1,4 +1,4 @@
-Refusing: Type = (.attempts: UIntNative = 0)
+Refusing := (.attempts: UIntNative = 0)
 
 implement Allocator#(Refusing) (
     .allocate = (.self: $&Refusing, .size: UIntNative, .alignment: UIntNative = 1) -> (
@@ -9,7 +9,7 @@ implement Allocator#(Refusing) (
     }
 )
 
-main(.system: System) -> () := {
+main := (.system: System) -> ()  {
     assume allocator := system.page_allocator
     text ::= unwrap_or_abort(.value = format(.value = "Aé"))
     before ::= capacity(&text).count

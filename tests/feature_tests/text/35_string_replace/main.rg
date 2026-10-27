@@ -1,10 +1,10 @@
-expect_replacement#(.AllocatorType: Type: Allocator#(AllocatorType))(
+expect_replacement := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .text        : StringView,
     .pattern     : StringView,
     .replacement : StringView,
     .expected    : StringView,
     .allocator   : $&AllocatorType
-) -> () := {
+) -> () {
     output ::= unwrap_or_abort(
         .value = replace(
             .self = text, .pattern = pattern, .replacement = replacement, .allocator = allocator
@@ -21,7 +21,7 @@ expect_replacement#(.AllocatorType: Type: Allocator#(AllocatorType))(
     deinit(.self = $&output)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     expect_replacement(
         .text        = ""
         .pattern     = "a"

@@ -1,4 +1,4 @@
-consume#(.Stream: Type: Reader#(Stream)) := (.stream: $&Stream) -> (.byte: UInt8) {
+consume := #(.Stream: Type: Reader#(Stream)) (.stream: $&Stream) -> (.byte: UInt8) {
     match unwrap_or_abort(.value = Reader#().read_byte(stream)) {
         ..end { abort }
         ..ok value { byte = value }

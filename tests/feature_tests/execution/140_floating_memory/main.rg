@@ -1,4 +1,4 @@
-Numbers: Type = (.half: Float16, .single: Float32, .double: Float64, .values: [2]Float32)
+Numbers := (.half: Float16, .single: Float32, .double: Float64, .values: [2]Float32)
 
 exercise := () -> (.result: Int32) {
     original :: Numbers = (

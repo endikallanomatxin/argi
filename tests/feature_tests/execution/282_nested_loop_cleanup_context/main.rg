@@ -1,6 +1,6 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -8,7 +8,7 @@ implement Deinit#(Resource) (
     }
 )
 
-exercise() -> (.result: Int32) := {
+exercise := () -> (.result: Int32) {
     counter :: Counter = Counter()
     {
         sentinel ::= Resource(.counter = $&counter)
@@ -31,7 +31,7 @@ exercise() -> (.result: Int32) := {
     result = counter.count
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if exercise() != 207 { abort }
     computed ::= #run () -> (.value: Int32) { value = exercise() }
     if computed != 207 { abort }

@@ -1,11 +1,14 @@
-Payload : Type = (
-    .value: Int32,
+Payload := (
+    .value : Int32,
 )
 
-implement Init#(Payload, (.value: Int32)) (
-    .Result: Type = Payload
-    .init = (.args: (.value: Int32)) -> (.result: Result) {
-        result = (.value = args.value)
+PayloadInitArgs: Type = (.value: Int32)
+
+implement Init#(Payload, PayloadInitArgs) (
+    .Result : Type = Payload
+
+    .init = PayloadInitArgs -> (.result: Result) {
+        result = (.value = value)
     }
 )
 
@@ -15,22 +18,21 @@ implement Deinit#(Payload) (
     }
 )
 
-
-_ordinary_copy_0(.self: &Payload, .tag: Int32 = 1) -> (.value: Payload) := {
+_ordinary_copy_0 := (.self: &Payload, .tag: Int32 = 1) -> (.value: Payload) {
     value = Payload(.value = self&.value)
 }
 
-_ordinary_copy_1(.self: &Payload, .flag: Bool = true) -> (.value: Payload) := {
+_ordinary_copy_1 := (.self: &Payload, .flag: Bool = true) -> (.value: Payload) {
     value = Payload(.value = self&.value)
 }
 
-Result : Type = (
+Result: Type = (
     ..ok Payload,
     ..error,
 )
 
-main () -> (.status_code: Int32) := {
-    value : Result = ..ok Payload(.value = 7)
-    payload := value..ok
+main := () -> (.status_code: Int32) {
+    value: Result = ..ok Payload(.value = 7)
+    payload := value ..ok
     status_code = payload.value - 7
 }

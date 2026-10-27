@@ -1,4 +1,4 @@
-Product#(.Input: Type): Contract = (
+Product #(.Input: Type ): Contract = (
     .Result
 )
-main() -> () := {}
+main := () -> () {}

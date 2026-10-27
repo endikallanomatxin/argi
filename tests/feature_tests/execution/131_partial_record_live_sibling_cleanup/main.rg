@@ -1,12 +1,12 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { self&.counter&.count = self&.counter&.count + 1 }
 )
 
-Wrapper: Type = (.item: Resource, .sibling: Resource, .whole: $&Counter)
+Wrapper := (.item: Resource, .sibling: Resource, .whole: $&Counter)
 
 implement Deinit#(Wrapper) (
     .deinit = (.self: $&Wrapper) -> () {
@@ -16,7 +16,7 @@ implement Deinit#(Wrapper) (
     }
 )
 
-replace_incomplete(.owner: $&Wrapper, .counter: $&Counter, .whole: $&Counter) -> () := {
+replace_incomplete := (.owner: $&Wrapper, .counter: $&Counter, .whole: $&Counter) -> () {
     deinit(.self = $&owner&.item)
     owner&= Wrapper(
         .item    = Resource(.counter = counter)
@@ -25,7 +25,7 @@ replace_incomplete(.owner: $&Wrapper, .counter: $&Counter, .whole: $&Counter) ->
     )
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     whole :: Counter = Counter()
     {

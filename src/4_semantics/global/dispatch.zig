@@ -1,4 +1,5 @@
 const std = @import("std");
+const primitives = @import("../primitives/schema.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
@@ -82,16 +83,41 @@ pub const Resolver = struct {
     ) !resolution.Result {
         if (operation == .resolve_call and operation.resolve_call.contract_type != null)
             return self.contracts.resolveScopedOperation(module_index, module, o, operation.resolve_call);
+        // Retained interactive bindings have the same static callable identity
+        // as lexical bindings lowered directly into the current module.
+        if (operation == .resolve_call and operation.resolve_call.callee_value == null) {
+            const call = operation.resolve_call;
+            const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+            if (reference.module_path == null) if (self.generic_functions.capture_lookup) |lookup| {
+                const owner = if (call.owner_function) |function| globalizer.globalFunction(o, function) else null;
+                if (lookup(self.generic_functions.capture_lookup_context.?, module_index, owner, module.text(reference.name))) |binding| {
+                    if (@import("types.zig").staticDefinitionBinding(self.core.graph, binding)) |definition| {
+                        if (self.core.graph.familyDefinition(definition.origin).kind == .function)
+                            return self.generic_functions.resolveDefinitionCall(module_index, module, o, call, definition);
+                    }
+                }
+            };
+        }
         // A lexical callable value shadows named functions and constructors.
-        if (operation == .resolve_call and operation.resolve_call.callee_value != null)
+        if (operation == .resolve_call and operation.resolve_call.callee_value != null) {
+            const call = operation.resolve_call;
+            const callee = globalizer.globalNode(o, call.callee_value.?);
+            const ty = self.core.graph.node(callee).ty orelse return .deferred;
+            if (self.core.graph.isTypeUnresolved(ty)) return .deferred;
+            if (@import("types.zig").definitionValue(self.core.graph, callee)) |definition| {
+                if (self.core.graph.familyDefinition(definition.origin).kind == .function)
+                    return self.generic_functions.resolveDefinitionCall(module_index, module, o, call, definition);
+            }
             return self.core.tryResolve(module_index, module, o, operation);
+        }
         if (operation == .resolve_call) {
             const call = operation.resolve_call;
             const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
-            if (reference.generic_arguments == null) {
+            {
                 const context = reach_context.Context.fromModule(module, o, call.visible_bindings, call.owner_function);
                 const operation_module = if (reference.module_path) |path| try self.core.findModuleForQualifier(module_index, module.text(path)) else null;
-                const selected = self.generic_functions.resolveOperationIdentityFiltered(module_index, module.text(reference.name), globalizer.globalNode(o, call.input), context, .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset }, operation_module) catch |err| switch (err) {
+                const arguments = try self.generic_functions.generics.resolveCallArguments(module_index, reference) orelse primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
+                const selected = self.generic_functions.resolveSpecializedOperationIdentityFiltered(module_index, module.text(reference.name), globalizer.globalNode(o, call.input), context, .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset }, operation_module, arguments, reference) catch |err| switch (err) {
                     error.AmbiguousOperationIdentity => return .invalid,
                     error.DeferredOperationIdentity => return .deferred,
                     else => return err,

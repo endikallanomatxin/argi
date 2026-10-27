@@ -1,7 +1,7 @@
 ..failed
 
 Factory#(.Participant: Type): Contract = (
-    .make: (.self: &Participant, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) where {
+    .make : (.self: &Participant, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) where {
         on result ..ok {
             on result ..some { owns(result) }
             on result ..none {}
@@ -10,11 +10,11 @@ Factory#(.Participant: Type): Contract = (
     }
 )
 
-Cell: Type = (.unused: Int32)
+Cell := (.unused: Int32)
 
 implement Factory#(Cell) (.make = _impl_make_Cell)
 
-Owned: Type = (.value: Int32)
+Owned := (.value: Int32)
 
 implement Deinit#(Owned) (
     .deinit = (.self: $&Owned) -> () {
@@ -24,7 +24,7 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-_impl_make_Cell := (.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (..failed)))  {
+_impl_make_Cell := (.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) {
     if mode == 0 {
         result = ..ok ..none
         return
@@ -37,7 +37,7 @@ _impl_make_Cell := (.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (.
     result = ..error(.reason = ..failed)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     factory ::= to_virtual#(Factory)(&cell)
 

@@ -1,6 +1,6 @@
 Empty: Type = ()
 
-Packet: Type = (.empty: Empty, .value: Int32)
+Packet := (.empty: Empty, .value: Int32)
 
 make_empty := () -> (.result: Empty) {
     result = Empty()

@@ -1,6 +1,6 @@
 ..test_error
 
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     result : Errable#(.t: Int32, .reasons: (..test_error)) = ..error(.reason = ..test_error)
 
     if is(.value = result, .variant = ..error) {

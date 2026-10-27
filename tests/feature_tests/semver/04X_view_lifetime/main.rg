@@ -1,6 +1,6 @@
 semver := import ("semver")
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     text ::= unwrap_or_abort(.value = format(.value = "1.2.3", .allocator = $&allocator)).result
     version ::= unwrap_or_abort(.value = semver.parse(.text = view(.self = &text).view)).result

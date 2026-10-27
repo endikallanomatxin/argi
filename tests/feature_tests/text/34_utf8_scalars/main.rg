@@ -1,4 +1,5 @@
-run_main() -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     boundaries :: [11]UInt32 = (
         0,
         127,
@@ -28,9 +29,9 @@ run_main() -> !Void = ..ok Void() := {
     widths :: [11]UIntNative = (1, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4)
     boundary_index :: UIntNative = 0
     for code in boundaries {
-        scalar ::= UnicodeScalar(.value = code)!
+        scalar ::= UnicodeScalar(.value = code)!!!
         bytes :: [6]UInt8 = (99, 88, 88, 88, 88, 99)
-        width ::= utf8_encode(.scalar = scalar, .buffer = view(.self = $&bytes), .offset = 1)!
+        width ::= utf8_encode(.scalar = scalar, .buffer = view(.self = $&bytes), .offset = 1)!!!
         if width != widths[boundary_index] { abort }
         byte_index :: UIntNative = 0
         while byte_index < width {
@@ -45,11 +46,11 @@ run_main() -> !Void = ..ok Void() := {
         if width != utf8_encoded_length(.scalar = scalar).count { abort }
         if bytes[0] != 99 or bytes[5] != 99 { abort }
         text ::= unwrap_or_abort(.value = slice(&view(&bytes), .start = 1, .count = width))
-        decoded ::= utf8_decode_bytes(.bytes = text)!
+        decoded ::= utf8_decode_bytes(.bytes = text)!!!
         if scalar_value(.self = decoded.scalar).value != code or decoded.width != width {
             abort
         }
-        if validate_utf8_bytes(.bytes = text)! != 1 { abort }
+        if validate_utf8_bytes(.bytes = text)!!! != 1 { abort }
     }
     text :: StringView = "Aé€🙂"
     validated :: CodepointView = codepoints(.text = text)
@@ -66,10 +67,10 @@ run_main() -> !Void = ..ok Void() := {
     again :: UIntNative = 0
     for scalar in validated { again = again + 1 }
     if again != 4 { abort }
-    decoder ::= Utf8Decoder(.text = text)
+    decoder ::= Utf8Decoder(.bytes = string_bytes(.text = text))
     index = 0
     while index < 4 {
-        match next_codepoint(.self = $&decoder)! {
+        match next_codepoint(.self = $&decoder)!!! {
             ..none { abort }
             ..some payload {
                 if scalar_value(.self = payload.value).value != expected[index] { abort }
@@ -78,16 +79,10 @@ run_main() -> !Void = ..ok Void() := {
         index = index + 1
     }
     if position(.self = &decoder).count != 10 { abort }
-    match next_codepoint(.self = $&decoder)! { ..none {} ..some _ { abort } }
-    match next_codepoint(.self = $&decoder)! { ..none {} ..some _ { abort } }
+    match next_codepoint(.self = $&decoder)!!! { ..none {} ..some _ { abort } }
+    match next_codepoint(.self = $&decoder)!!! { ..none {} ..some _ { abort } }
     empty ::= CodepointView(.text = "")
     if length(.self = &empty).count != 0 { abort }
     for scalar in empty { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (
-    .status_code : Int32 = 1
-) := {
-    run_main()!!!
     status_code = 0
 }

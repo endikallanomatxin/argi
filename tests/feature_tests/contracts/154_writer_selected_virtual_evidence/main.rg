@@ -1,4 +1,4 @@
-send#(.Stream: Type: Writer#(Stream)) := (.stream: $&Stream, .byte: UInt8) -> () {
+send := #(.Stream: Type: Writer#(Stream)) (.stream: $&Stream, .byte: UInt8) -> () {
     unwrap_or_abort(Writer#().write_byte(stream, .byte = byte))
 }
 

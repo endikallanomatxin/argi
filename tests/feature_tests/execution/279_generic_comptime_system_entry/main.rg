@@ -1,10 +1,10 @@
-copy_value(.value: Int32) -> (.result: Int32 = value) := {}
+copy_value := (.value: Int32) -> (.result: Int32 = value) {}
 
-calculate#(.T: Type, .n: Int32) := () -> (.result: T) {
+calculate := #(.T: Type, .n: Int32) () -> (.result: T) {
     result = #run (.system: System) -> (.value: T) { value = n }
 }
 
-selected#(.n: Int32) := () -> (.result: Int32) {
+selected := #(.n: Int32) () -> (.result: Int32) {
     result = #run (.system: System) -> (.value: Int32) {
         #if n == 42 {
             value = #run (.system: System) -> (.inner: Int32) { inner = n }
@@ -14,7 +14,7 @@ selected#(.n: Int32) := () -> (.result: Int32) {
     }
 }
 
-captured_local#(.n: Int32) := () -> (.result: Int32) {
+captured_local := #(.n: Int32) () -> (.result: Int32) {
     local := copy_value(.value = n)
     offset := 0
     result = #run (.system: System) -> (.value: Int32) {
@@ -22,40 +22,40 @@ captured_local#(.n: Int32) := () -> (.result: Int32) {
     }
 }
 
-selected_capture#(.n: Int32) := (.runtime_value: Int32) -> (.result: Int32) {
+selected_capture := #(.n: Int32) (.runtime_value: Int32) -> (.result: Int32) {
     selector := copy_value(.value = n)
     result = #run (.system: System) -> (.value: Int32) {
         #if selector == 42 { value = n } #else { value = runtime_value }
     }
 }
 
-nested_specialization#(.n: Int32) := () -> (.result: Int32) {
+nested_specialization := #(.n: Int32) () -> (.result: Int32) {
     result = #run (.system: System) -> (.value: Int32) {
         value = identity#(.n = #run (.system: System) -> (.inner: Int32) { inner = n })()
     }
 }
 
-identity#(.n: Int32) := () -> (.result: Int32) { result = n }
+identity := #(.n: Int32) () -> (.result: Int32) { result = n }
 
-Items#(.n: Int32): Type = (.items: Array#(.n = n, .t: Int32))
+Items := #(.n: Int32) (.items: Array#(.n = n, .t: Int32))
 
-read_items#(.n: Int32) := () -> (.result: Int32) {
+read_items := #(.n: Int32) () -> (.result: Int32) {
     values: Items#(.n = #run (.system: System) -> (.count: Int32) { count = n }) = (
         .items = (20, 22)
     )
     result = values.items[0] + values.items[1]
 }
 
-forward#(.n: Int32) := () -> (.result: Int32) {
+forward := #(.n: Int32) () -> (.result: Int32) {
     result = identity#(.n = #run (.system: System) -> (.value: Int32) { value = n })()
 }
 
-record_default(.system: System, .value: Int32) -> (.result: Int32) := {
+record_default := (.system: System, .value: Int32) -> (.result: Int32) {
     system.args&.count = system.args&.count + 1
     result = value
 }
 
-default_host#(.n: Int32) := () -> (.result: Int32) {
+default_host := #(.n: Int32) () -> (.result: Int32) {
     result = #run (.system: System) -> (
         .value : Int32 = record_default(.system = system, .value = n)
     ) {
@@ -63,12 +63,12 @@ default_host#(.n: Int32) := () -> (.result: Int32) {
     }
 }
 
-tuple_host#(.n: Int32) := () -> (.result: Int32) {
+tuple_host := #(.n: Int32) () -> (.result: Int32) {
     pair ::= #run (.system: System) -> (.left: Int32 = n, .right: Int32 = 1) {}
     result = pair.left + pair.right
 }
 
-allocate_host#(.n: Int32) := () -> (.result: Int32) {
+allocate_host := #(.n: Int32) () -> (.result: Int32) {
     result = #run (.system: System) -> (.value: Int32) {
         tracer :: NoopErrorTracer = (.marker = 0)
         erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
@@ -79,7 +79,7 @@ allocate_host#(.n: Int32) := () -> (.result: Int32) {
     }
 }
 
-abort_host#(.n: Int32) := () -> (.result: Int32) {
+abort_host := #(.n: Int32) () -> (.result: Int32) {
     result = #run (.system: System) -> (.value: Int32) {
         tracer :: NoopErrorTracer = (.marker = 0)
         erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
@@ -91,7 +91,7 @@ abort_host#(.n: Int32) := () -> (.result: Int32) {
     }
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     if [
         default_host#(.n = 42)() != 42
         or tuple_host#(.n = 41)() != 42

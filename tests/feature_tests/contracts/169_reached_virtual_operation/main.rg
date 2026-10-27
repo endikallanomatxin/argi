@@ -1,10 +1,10 @@
-Counter: Type = (.value: Int32 = 0)
+Counter := (.value: Int32 = 0)
 
 Counting#(.State: Type): Contract = (
     .bump : (.self: $&State = reach counter, .amount: Int32) -> () where {}
 )
 
-implement Counting#(Counter)(
+implement Counting#(Counter) (
     .bump = (.self: $&Counter, .amount: Int32) -> () { self&.value = self&.value + amount }
 )
 

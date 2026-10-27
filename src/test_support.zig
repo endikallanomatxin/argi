@@ -12,27 +12,27 @@ pub fn tmpFilePath(tmp: *const std.testing.TmpDir, rel_path: []const u8) ![:0]u8
 
 /// A small explicit prelude for compiler tests that do not load installed core.
 pub const arithmetic_core_source =
-    \\Add#(.Left: Type, .Right: Type, .Args: Type): Contract = (.Result: Type, .add: (.args: Args) -> (.result: Result))
-    \\implement Add#(Int32, Int32, (.left: Int32, .right: Int32)) (
+    \\Add#(.Left: Type, .Right: Type): Contract = (.Result: Type, .add: _)
+    \\implement Add#(Int32, Int32) (
     \\    .Result: Type = Int32
-    \\    .add = (.args: (.left: Int32, .right: Int32)) -> (.result: Result) { result = __scalar_add(.left = args.left, .right = args.right) }
+    \\    .add = (.left: Int32, .right: Int32) -> (.result: Result) { result = __scalar_add(.left = left, .right = right) }
     \\)
-    \\Subtract#(.Left: Type, .Right: Type, .Args: Type): Contract = (.Result: Type, .subtract: (.args: Args) -> (.result: Result))
-    \\implement Subtract#(Int32, Int32, (.left: Int32, .right: Int32)) (
+    \\Subtract#(.Left: Type, .Right: Type): Contract = (.Result: Type, .subtract: _)
+    \\implement Subtract#(Int32, Int32) (
     \\    .Result: Type = Int32
-    \\    .subtract = (.args: (.left: Int32, .right: Int32)) -> (.result: Result) { result = __scalar_subtract(.left = args.left, .right = args.right) }
+    \\    .subtract = (.left: Int32, .right: Int32) -> (.result: Result) { result = __scalar_subtract(.left = left, .right = right) }
     \\)
-    \\Multiply#(.Left: Type, .Right: Type, .Args: Type): Contract = (.Result: Type, .multiply: (.args: Args) -> (.result: Result))
-    \\implement Multiply#(Int32, Int32, (.left: Int32, .right: Int32)) (
+    \\Multiply#(.Left: Type, .Right: Type): Contract = (.Result: Type, .multiply: _)
+    \\implement Multiply#(Int32, Int32) (
     \\    .Result: Type = Int32
-    \\    .multiply = (.args: (.left: Int32, .right: Int32)) -> (.result: Result) { result = __scalar_multiply(.left = args.left, .right = args.right) }
+    \\    .multiply = (.left: Int32, .right: Int32) -> (.result: Result) { result = __scalar_multiply(.left = left, .right = right) }
     \\)
-    \\Equal#(.Left: Type, .Right: Type, .Args: Type): Contract = (.equal: (.args: Args) -> (.ok: Bool))
+    \\Equal#(.Left: Type, .Right: Type): Contract = (.equal: (.left: Left, .right: Right) -> (.ok: Bool))
     \\_TestEquality#(.Value: Type): Contract = ()
     \\implement _TestEquality#(Int32) ()
     \\implement _TestEquality#(UInt8) ()
-    \\implement#(.Value: Type: _TestEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
-    \\    .equal = (.args: (.left: Value, .right: Value)) -> (.ok: Bool) { ok = __scalar_equal(.left = args.left, .right = args.right) }
+    \\implement#(.Value: Type: _TestEquality) Equal#(Value, Value) (
+    \\    .equal = (.left: Value, .right: Value) -> (.ok: Bool) { ok = __scalar_equal(.left = left, .right = right) }
     \\)
     \\CompareRelations#(.Left: Type, .Right: Type): Contract = (
     \\    .less_than: (.left: Left, .right: Right) -> (.ok: Bool)

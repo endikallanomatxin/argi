@@ -1,6 +1,6 @@
-compute() -> (.value: Int32 = 40) := {}
+compute := () -> (.value: Int32 = 40) {}
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     known := compute()
     captured := #run () -> (.answer: Int32) {
         first := #run () -> (.answer: Int32) { answer = known + 1 }

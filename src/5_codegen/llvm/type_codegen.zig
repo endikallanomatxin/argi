@@ -19,7 +19,7 @@ pub const Lowerer = struct {
             // it here would recurse through self-referential structures.
             .pointer => c.LLVMPointerType(c.LLVMInt8Type(), 0),
             .array => |array| c.LLVMArrayType(try self.toLLVMType(array.element), @intCast(array.length)),
-            .declared => |decl| self.declaredType(decl),
+            .nominal => |decl| self.nominalType(decl),
             .structural => |shape| self.structType(shape.fields, shape.layout),
             .structural_choice => |shape| self.choiceType(shape.variants, shape.layout),
             .inferred_choice => |shape| self.choiceType(shape.variants, .regular),
@@ -31,7 +31,7 @@ pub const Lowerer = struct {
                 };
                 break :blk c.LLVMStructType(&fields, fields.len, 0);
             },
-            .nullable, .inferred_errable => Error.InvalidType,
+            .definition, .nullable, .inferred_errable => Error.InvalidType,
         };
     }
 
@@ -57,8 +57,8 @@ pub const Lowerer = struct {
         };
     }
 
-    fn declaredType(self: *Lowerer, decl_id: graph_mod.GlobalDeclId) Error!llvm.c.LLVMTypeRef {
-        const declaration = self.graph.declarations.items[@intFromEnum(decl_id)];
+    fn nominalType(self: *Lowerer, decl_id: graph_mod.GlobalTypeDefinitionId) Error!llvm.c.LLVMTypeRef {
+        const declaration = self.graph.typeDefinition(decl_id);
         if (declaration.struct_layout == .c_function_pointer) return c.LLVMPointerType(c.LLVMInt8Type(), 0);
         if (declaration.struct_fields) |fields| return self.structType(fields, declaration.struct_layout);
         if (declaration.choice_variants) |variants| return self.choiceType(variants, declaration.choice_layout);
@@ -149,6 +149,7 @@ pub const Lowerer = struct {
 
     pub fn encodeType(self: *Lowerer, buffer: *std.array_list.Managed(u8), ty: graph_mod.GlobalTypeId) !void {
         switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .definition => |id| try self.appendPrint(buffer, "definition{d}", .{@intFromEnum(id)}),
             .builtin => |builtin| try buffer.appendSlice(switch (builtin) {
                 .Void => "void",
                 .Int8 => "i8",
@@ -175,10 +176,10 @@ pub const Lowerer = struct {
                 try self.appendPrint(buffer, "arr{d}_", .{array.length});
                 try self.encodeType(buffer, array.element);
             },
-            .declared => |decl| {
+            .nominal => |decl| {
                 try buffer.appendSlice("d");
                 try self.appendPrint(buffer, "{d}_", .{@intFromEnum(decl)});
-                try buffer.appendSlice(self.graph.text(self.graph.declarations.items[@intFromEnum(decl)].name));
+                try buffer.appendSlice(self.graph.typeDefinitionName(decl));
             },
             .structural => |shape| {
                 try buffer.appendSlice("s{");
@@ -194,13 +195,7 @@ pub const Lowerer = struct {
             .inferred_choice => |shape| try self.appendPrint(buffer, "choice_i{d}", .{shape.identity}),
             .generic => |identity| {
                 try self.appendPrint(buffer, "g{d}", .{@intFromEnum(identity.base)});
-                for (self.graph.generic_arguments.items[identity.arguments.start..][0..identity.arguments.len]) |argument| switch (argument.value) {
-                    .type => |value| {
-                        try buffer.append('_');
-                        try self.encodeType(buffer, value);
-                    },
-                    .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
-                };
+                try self.encodeGenericArguments(buffer, identity.arguments);
             },
             .virtual => |contract_type| {
                 try buffer.appendSlice("virtual_");
@@ -208,6 +203,21 @@ pub const Lowerer = struct {
             },
             .nullable, .inferred_errable => return Error.InvalidType,
         }
+    }
+
+    fn encodeGenericArguments(self: *Lowerer, buffer: *std.array_list.Managed(u8), arguments: primitives.Range(graph_mod.GlobalGenericArgId)) anyerror!void {
+        for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| switch (argument.value) {
+            .type => |value| {
+                try buffer.append('_');
+                try self.encodeType(buffer, value);
+            },
+            .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
+            .definition => |value| {
+                try self.appendPrint(buffer, "_d{d}c{d}", .{ @intFromEnum(value.origin), value.captures.len });
+                try self.encodeGenericArguments(buffer, value.captures);
+                try buffer.append('e');
+            },
+        };
     }
 
     pub fn mangledFunctionName(self: *Lowerer, function_id: graph_mod.GlobalFunctionId) ![]u8 {

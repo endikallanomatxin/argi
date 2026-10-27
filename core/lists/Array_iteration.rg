@@ -1,14 +1,14 @@
-ArrayIterator#(.n: UIntNative, .t: Type): Type = (
+ArrayIterator := #(.n: UIntNative, .t: Type) (
     .array : &Array#(.n = n, .t: t)
     .index : UIntNative
 )
 
-ArrayReferenceIterator#(.n: UIntNative, .t: Type): Type = (
+ArrayReferenceIterator := #(.n: UIntNative, .t: Type) (
     .array : &Array#(.n = n, .t: t)
     .index : UIntNative
 )
 
-ArrayMutableReferenceIterator#(.n: UIntNative, .t: Type): Type = (
+ArrayMutableReferenceIterator := #(.n: UIntNative, .t: Type) (
     .array : $&Array#(.n = n, .t: t)
     .index : UIntNative
 )

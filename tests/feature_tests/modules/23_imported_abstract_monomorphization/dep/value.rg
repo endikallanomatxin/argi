@@ -10,6 +10,6 @@ implement ExampleAbstract#(Int32) (.value_code = _int_code)
 
 implement ExampleAbstract#(UnicodeScalar) (.value_code = _char_code)
 
-use_value#(.Value: Type: ExampleAbstract) := (.value: Value) -> (.status_code: Int32) {
+use_value := #(.Value: Type: ExampleAbstract) (.value: Value) -> (.status_code: Int32) {
     status_code = value_code(.value = value).r
 }

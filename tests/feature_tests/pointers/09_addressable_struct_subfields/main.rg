@@ -1,20 +1,20 @@
-Inner : Type = (
+Inner := (
     .value : Int32
 )
 
-Outer : Type = (
+Outer := (
     .inner : Inner
 )
 
-increment(.target: $&Int32) -> () := {
-    target& = target& + 1
+increment := (.target: $&Int32) -> () {
+    target&= target&+ 1
 }
 
-read(.target: &Int32) -> (.value: Int32) := {
+read := (.target: &Int32) -> (.value: Int32) {
     value = target&
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     outer :: Outer = (
         .inner = (
             .value = 41

@@ -600,7 +600,6 @@ pub const Session = struct {
         var setup_start = profileTimestamp(options.profile_io);
         try core.resolveExternalTypes();
         try generics.resolveExternalTypes();
-        try validateUnderlyingTypes(&relocation.graph, options.diagnostics);
         profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
         setup_start = profileTimestamp(options.profile_io);
         // Generic record fields can contain associated projections. Publish tuple
@@ -637,7 +636,7 @@ pub const Session = struct {
                         diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
                         .semantic,
                         "function '{s}' cannot return contract '{s}' as a runtime value; use a concrete type or Virtual",
-                        .{ relocation.graph.text(declaration.name), relocation.graph.text(relocation.graph.declaration(contract_use.declaration).name) },
+                        .{ relocation.graph.text(declaration.name), relocation.graph.familyDefinitionName(contract_use.declaration) },
                     );
                     return error.Reported;
                 }
@@ -767,7 +766,6 @@ pub const Session = struct {
         if (try resolveQualifiedChoiceOptions(core, self.options.diagnostics)) return error.Reported;
         try core.resolveExternalTypesFrom(previous);
         try generics.resolveExternalTypesFrom(previous);
-        try validateUnderlyingTypes(&self.relocation.graph, self.options.diagnostics);
         try contracts.prepareParticipantConformances();
         try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
         try contracts.resolveAssociatedTypes();
@@ -1071,6 +1069,8 @@ pub const Session = struct {
                     return error.Reported;
                 if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                     return error.Reported;
+                if (try diagnoseTypeAliasCycles(allocator, &relocation.graph, modules, relocation.offsets.items, core, diagnostics))
+                    return error.Reported;
                 if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
                     return error.Reported;
                 if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
@@ -1099,6 +1099,8 @@ pub const Session = struct {
                 }
                 if (try diagnoseUnknownNames(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, core, diagnostics))
                     return error.Reported;
+                if (try diagnoseUnresolvedFunctionSignatures(&relocation.graph, modules, resolved, relocation.offsets.items, diagnostics))
+                    return error.Reported;
                 if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, generic_functions, contracts, diagnostics))
                     return error.Reported;
                 if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
@@ -1109,6 +1111,8 @@ pub const Session = struct {
             if (options.diagnostics) |diagnostics|
                 if (try diagnoseUnresolvedBindingTypes(&relocation.graph, reachable, diagnostics, true))
                     return error.Reported;
+            contracts.diagnoseUnresolvedParticipants();
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
             dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
             return error.UnsupportedGlobalSemantic;
         }
@@ -1145,7 +1149,7 @@ pub const Session = struct {
 
             try @import("record_literals.zig").checkRequiredFields(&relocation.graph, reachable, options.diagnostics);
 
-            if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+            if (try diagnoseInvalidValueAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
                 return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
 
             if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
@@ -1166,9 +1170,9 @@ pub const Session = struct {
                     "type '{s}' does not implement contract '{s}' required by generic type parameter '.{s}' of '{s}'",
                     .{
                         actual_name.items,
-                        relocation.graph.text(relocation.graph.declaration(failure.contract_decl).name),
+                        relocation.graph.familyDefinitionName(failure.contract_decl),
                         failure.parameter_name,
-                        relocation.graph.text(relocation.graph.declaration(failure.generic_decl).name),
+                        relocation.graph.familyDefinitionName(failure.generic_decl),
                     },
                 );
                 return error.Reported;
@@ -1365,6 +1369,8 @@ fn advanceResolution(
         while (changed) {
             staged_execution.stable_type_count = graph.types.items.len;
             staged_execution.stable_declaration_count = graph.declarations.items.len;
+            staged_execution.stable_type_definition_count = graph.type_definitions.items.len;
+            staged_execution.stable_family_definition_count = graph.family_definitions.items.len;
             staged_execution.stable_node_count = graph.nodes.items.len;
             progress.profile_rounds += 1;
             if (core.scan_profile) |profile| profile.rounds += 1;
@@ -1761,10 +1767,10 @@ fn diagnoseArrayAssignments(
     return false;
 }
 
-// Literal contextualization has already finished. Typed numeric values must
+// Literal contextualization has already finished. Typed nominal and numeric values must
 // agree with their destination; changing their node type would conceal a
 // conversion that codegen has no corresponding instruction to perform.
-fn diagnoseInvalidNumericAssignments(
+fn diagnoseInvalidValueAssignments(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
     reachable: ?*const reachability_mod.FunctionSet,
@@ -1782,7 +1788,7 @@ fn diagnoseInvalidNumericAssignments(
                 graph.binding(binding).initialization orelse continue,
                 graph.binding(binding).ty,
             },
-            .struct_value_literal, .array_literal => findAggregateNumericMismatch(graph, id) orelse continue,
+            .struct_value_literal, .array_literal => findAggregateValueMismatch(graph, id) orelse continue,
             .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
             .array_store => |store| .{ store.value, store.element_type },
             .pointer_assignment => |assignment| blk: {
@@ -1821,7 +1827,7 @@ fn diagnoseInvalidNumericAssignments(
             }
         }
         const unicode_mismatch = isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected);
-        const nominal_mismatch = hasUnderlyingType(graph, actual) or hasUnderlyingType(graph, expected);
+        const nominal_mismatch = global_types.hasNominalIdentity(graph, actual) or global_types.hasNominalIdentity(graph, expected);
         if (!unicode_mismatch and !nominal_mismatch and (!isNumericType(graph, actual) or !isNumericType(graph, expected))) continue;
         if (global_types.equal(graph, actual, expected)) continue;
         if (diagnostics) |sink| {
@@ -1860,8 +1866,8 @@ fn diagnoseInvalidNumericAssignments(
 }
 
 // Aggregate types alone do not prove that each child has the representation
-// expected by LLVM. Check typed numeric children after contextualization.
-fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
+// expected by LLVM. Check typed nominal and numeric children after contextualization.
+fn findAggregateValueMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
     const node = graph.node(id);
     const ty = node.ty orelse return null;
     switch (node.content) {
@@ -1877,12 +1883,12 @@ fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id:
                         }
                     }
                 } else if (offset < fields.len) expected = graph.fields.items[fields.start + offset].ty;
-                if (expected) |target| if (numericChildMismatch(graph, field.value, target)) return .{ field.value, target };
+                if (expected) |target| if (typedChildMismatch(graph, field.value, target)) return .{ field.value, target };
             }
         },
         .array_literal => |literal| {
             for (graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| {
-                if (numericChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
+                if (typedChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
             }
         },
         else => {},
@@ -1890,7 +1896,7 @@ fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id:
     return null;
 }
 
-fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
+fn typedChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
     const node = graph.node(child);
     const actual = node.ty orelse return false;
     if (isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected))
@@ -1900,21 +1906,13 @@ fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: glob
         const represented = global_types.representation(graph, expected) orelse return false;
         if (represented == .builtin and primitives.integerRange(represented.builtin, graph.target.stdTarget()) != null) return false;
     }
-    if (hasUnderlyingType(graph, actual) or hasUnderlyingType(graph, expected)) return !global_types.equal(graph, actual, expected);
+    if (global_types.hasNominalIdentity(graph, actual) or global_types.hasNominalIdentity(graph, expected)) return !global_types.equal(graph, actual, expected);
     return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
-}
-
-fn hasUnderlyingType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
-    return switch (graph.resolvedSemanticType(ty) orelse return false) {
-        .declared => |id| graph.declaration(id).underlying_type != null,
-        .generic => if (global_types.genericInstance(graph, ty)) |instance| instance.shape == .alias else false,
-        else => false,
-    };
 }
 
 fn isUnicodeScalarType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
     const declaration = switch (graph.semanticType(ty)) {
-        .declared => |id| id,
+        .nominal => |id| graph.typeDefinition(id).declaration orelse return false,
         else => return false,
     };
     const owner = graph.moduleForDeclaration(declaration) orelse return false;
@@ -2243,7 +2241,7 @@ fn completePropagatedReachCalls(
 
             if (literal.fields.len == fields.len) continue;
             const context = reach_context.Context.fromModule(module, offset, call.visible_bindings, call.owner_function);
-            if (try core.completeCallInputFieldsWithReach(fields, input_id, context)) changed = true;
+            if (try core.completeRecordFieldsWithContext(fields, input_id, context)) changed = true;
         }
     }
     return changed;
@@ -2362,8 +2360,8 @@ fn hasSelectedUnresolvedBindingTypes(
 
 fn pendingOwnerTag(tag: PendingTag) PendingOwner {
     return switch (tag) {
-        .resolve_type => .types,
-        .resolve_call, .resolve_local_reach => .calls,
+        .resolve_type, .resolve_entity_value => .types,
+        .resolve_call, .resolve_local_reach, .resolve_function_signature => .calls,
         .resolve_index => .indexing,
         .resolve_aggregate_literal,
         .resolve_entry_call,
@@ -2433,6 +2431,7 @@ fn resolveTypeOperation(
 ) !resolution.Result {
     const value = switch (operation) {
         .resolve_type => |value| value,
+        .resolve_entity_value => return ownedResult(try generics.tryResolve(module_index, module, o, operation)),
         else => unreachable,
     };
     const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
@@ -2460,7 +2459,9 @@ fn resolvePendingOperation(
 ) !resolution.Result {
     return switch (pendingOwner(operation)) {
         .types => resolveTypeOperation(core, generics, module_index, module, o, operation),
-        .calls => if (operation == .resolve_local_reach)
+        .calls => if (operation == .resolve_function_signature)
+            ownedResult(try dispatch.generic_functions.tryResolve(module_index, module, o, operation))
+        else if (operation == .resolve_local_reach)
             dispatch.resolveLocalReach(module, o, operation.resolve_local_reach)
         else
             dispatch.resolveCall(module_index, module, o, operation),
@@ -2503,6 +2504,49 @@ fn markUnresolvedTypeSlots(
             }
         }
     }
+}
+
+fn diagnoseTypeAliasCycles(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+    core: *core_mod.Resolver,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    const edges = try allocator.alloc(?global_sg.GlobalTypeId, graph.types.items.len);
+    defer allocator.free(edges);
+    @memset(edges, null);
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items) |operation| {
+            const pending = switch (operation) {
+                .resolve_type => |value| value,
+                else => continue,
+            };
+            const destination = globalizer.globalType(offsets[module_index], pending.destination);
+            if (!graph.isTypeUnresolved(destination)) continue;
+            const reference = module.semantic.external_refs.items[@intFromEnum(pending.external)];
+            if (reference.generic_arguments != null or reference.computed_type != null or reference.projection_base != null) continue;
+            edges[@intFromEnum(destination)] = try core.resolveTypeValue(module_index, reference);
+        }
+    }
+    for (edges, 0..) |edge, raw| {
+        var current = edge orelse continue;
+        for (0..edges.len) |_| {
+            if (@intFromEnum(current) == raw) {
+                // The diagnostic walk runs only after resolution stalls. No
+                // dependency index or cycle state survives publication.
+                for (graph.nodes.items) |node| {
+                    if (node.content != .type_literal or @intFromEnum(node.content.type_literal) != raw) continue;
+                    try diagnostics.add(diagnosticLocation(graph, diagnostics, node.source), .semantic, "cyclic type alias", .{});
+                    return true;
+                }
+                break;
+            }
+            current = edges[@intFromEnum(current)] orelse break;
+        }
+    }
+    return false;
 }
 
 fn diagnoseUnresolvedQualifiedTypes(
@@ -2737,7 +2781,7 @@ fn diagnoseContractRuntimeBindings(
     for (graph.bindings.items, 0..) |binding, raw| {
         const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
         const contract_use = contracts.runtimeBindingContract(binding_id) orelse continue;
-        const name = graph.text(graph.declarations.items[@intFromEnum(contract_use.declaration)].name);
+        const name = graph.familyDefinitionName(contract_use.declaration);
         try diagnostics.add(
             diagnosticLocation(graph, diagnostics, binding.source),
             .semantic,
@@ -3267,6 +3311,41 @@ fn appendAmbiguousCallPrefix(
         try message.appendSlice("' for arguments ");
 }
 
+fn diagnoseUnresolvedFunctionSignatures(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items) |operation| {
+            defer flat += 1;
+            if (resolved[flat]) continue;
+            const signature = switch (operation) {
+                .resolve_function_signature => |value| value,
+                else => continue,
+            };
+            const function = graph.function(globalizer.globalFunction(offsets[module_index], signature.function));
+            for ([_]?global_sg.GlobalTypeId{ function.input_type, function.output_type }, 0..) |maybe_type, index| {
+                const ty = maybe_type orelse continue;
+                if (global_types.fields(graph, ty) != null) continue;
+                const represented = global_types.representation(graph, ty) orelse continue;
+                if (represented == .generic and global_types.genericInstance(graph, ty) == null) continue;
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, graph.declaration(function.declaration).source),
+                    .semantic,
+                    "function {s} signature must be a record type",
+                    .{if (index == 0) "input" else "output"},
+                );
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 fn diagnoseUnresolvedCall(
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -3315,7 +3394,7 @@ fn diagnoseUnresolvedCall(
                     try diagnostics.add(location, .semantic, "cannot call binding '{s}': expected a CFunctionPointer value", .{name});
                 } else {
                     const declaration = switch (graph.resolvedSemanticType(ty).?) {
-                        .declared => |id| graph.declaration(id),
+                        .nominal => |id| graph.typeDefinition(id),
                         else => unreachable,
                     };
                     const signature = graph.function(declaration.function_id.?);
@@ -3348,7 +3427,8 @@ fn diagnoseUnresolvedCall(
             }
             for (try graph.declarationsNamed(allocator, name)) |id| {
                 const declaration = graph.declaration(id);
-                if (declaration.struct_layout != .c_incomplete or !generic_functions.core.declarationVisible(module_index, id, qualified_module)) continue;
+                const ty = declaration.type_id orelse continue;
+                if (global_types.incompleteDeclaration(graph, ty) == null or !generic_functions.core.declarationVisible(module_index, id, qualified_module)) continue;
                 try diagnostics.add(location, .semantic, "CIncomplete type '{s}' cannot be constructed; use RawPointer for foreign handles", .{name});
                 return true;
             }
@@ -3448,7 +3528,7 @@ fn diagnoseUnresolvedCall(
                     "type '{s}' does not satisfy contract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
                     .{
                         constraint_actual_name.items,
-                        graph.text(graph.declaration(failure.contract_decl).name),
+                        graph.familyDefinitionName(failure.contract_decl),
                         failure.parameter_name,
                         graph.text(graph.declaration(failure.function).name),
                     },
@@ -3589,12 +3669,12 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            if (candidates.items.len == 1 and diagnostic_core.callInputNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
+            if (candidates.items.len == 1 and diagnostic_core.recordFieldNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
                 const function = graph.functions.items[@intFromEnum(candidates.items[0])];
                 var missing_contract: ?struct {
                     actual: global_sg.GlobalTypeId,
                     contract_type: global_sg.GlobalTypeId,
-                    declaration: global_sg.GlobalDeclId,
+                    declaration: global_sg.GlobalFamilyDefinitionId,
                     field: global_sg.Field,
                     source: primitives.SourceRef,
                 } = null;
@@ -3616,7 +3696,7 @@ fn diagnoseUnresolvedCall(
                         other_mismatch = true;
                         continue;
                     };
-                    if (global_types.equal(graph, actual, field.ty) or diagnostic_core.callTypesCompatible(actual, field.ty)) continue;
+                    if (global_types.equal(graph, actual, field.ty) or diagnostic_core.valueTypesCompatible(actual, field.ty)) continue;
 
                     var expected_contract_type = field.ty;
                     var actual_concrete = actual;
@@ -3639,7 +3719,7 @@ fn diagnoseUnresolvedCall(
                         else => {},
                     }
 
-                    const declaration = contracts.contractDeclarationForType(expected_contract_type) orelse {
+                    const declaration = contracts.contractDefinitionForType(expected_contract_type) orelse {
                         other_mismatch = true;
                         continue;
                     };
@@ -3671,7 +3751,7 @@ fn diagnoseUnresolvedCall(
                         "type '{s}' does not implement contract '{s}' required by parameter '.{s}' of '{s}'",
                         .{
                             actual_name.items,
-                            graph.text(graph.declaration(missing.declaration).name),
+                            graph.familyDefinitionName(missing.declaration),
                             graph.text(missing.field.name),
                             name,
                         },
@@ -3707,7 +3787,7 @@ fn diagnoseUnresolvedCall(
                 try message.appendSlice(reach_details.items);
                 if (std.mem.indexOf(u8, reach_details.items, ".ffi uses reach") != null)
                     try message.appendSlice("\n\nForeign calls require a live ForeignFunctionInterface capability. Bind 'assume ffi := system.ffi' in the caller or pass '.ffi' explicitly; this dependency is not part of the C signature.");
-                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
+                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main := (.system: System) -> (.status_code: Int32 = 0) { ... }\n\nOr pass the omitted argument explicitly.");
                 try diagnostics.add(location, .semantic, "{s}", .{message.items});
                 return true;
             }
@@ -3876,9 +3956,9 @@ pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_
     }
     switch (graph.semanticType(ty)) {
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
-        .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
+        .nominal => |definition| try buffer.appendSlice(graph.typeDefinitionName(definition)),
         .generic => |generic| {
-            const base_name = graph.text(graph.declaration(generic.base).name);
+            const base_name = graph.familyDefinitionName(generic.base);
             if (std.mem.eql(u8, base_name, "Nullable")) {
                 for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| switch (argument.value) {
                     .type => |value| {
@@ -3902,6 +3982,10 @@ pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_
                     .type => |value| {
                         if (name.len != 0) try buffer.appendSlice(": ");
                         try appendTypeName(buffer, graph, value);
+                    },
+                    .definition => |value| {
+                        if (name.len != 0) try buffer.appendSlice(": ");
+                        try buffer.appendSlice(graph.familyDefinitionName(value.origin));
                     },
                     .comptime_int => |value| {
                         if (name.len != 0) try buffer.appendSlice(" = ");
@@ -4031,6 +4115,10 @@ fn dumpUnresolved(
                         "global sema unresolved: module={d} dir={s} op=resolve_field name={s} node={d}\n",
                         .{ module_index, module.module_dir, module.text(field.field_name), @intFromEnum(field.node) },
                     ),
+                    .resolve_type => |value| {
+                        const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
+                        std.debug.print("global sema unresolved: module={d} dir={s} op=resolve_type name={s} source={d} computed={} projection={}\n", .{ module_index, module.module_dir, module.text(reference.name), reference.source.offset, reference.computed_type != null, reference.projection_base != null });
+                    },
                     else => std.debug.print(
                         "global sema unresolved: module={d} dir={s} op={s}\n",
                         .{ module_index, module.module_dir, @tagName(operation) },
@@ -4089,6 +4177,8 @@ fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, 
     if (diagnostics) |bag| {
         if (failure.unknown_name) |name| {
             try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "unknown name '{s}' in this scope", .{name});
+        } else if (failure.call_name) |name| {
+            try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s} in call to '{s}'", .{ failure.reason, name });
         } else if (failure.materialization_error) |err| {
             try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}: {s}", .{ failure.reason, @errorName(err) });
         } else try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
@@ -4096,27 +4186,10 @@ fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, 
     }
 }
 
-fn validateUnderlyingTypes(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
-    for (graph.declarations.items) |declaration| {
-        var current = declaration.underlying_type orelse continue;
-        for (0..graph.types.items.len + 1) |_| {
-            const semantic = graph.resolvedSemanticType(current) orelse break;
-            if (semantic != .declared) break;
-            current = graph.declaration(semantic.declared).underlying_type orelse break;
-        } else {
-            if (diagnostics) |sink| {
-                try sink.add(diagnosticLocation(graph, sink, declaration.source), .semantic, "cyclic underlying type for '{s}'", .{graph.text(declaration.name)});
-                return error.Reported;
-            }
-            return error.CyclicUnderlyingType;
-        }
-    }
-}
-
 fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
     const sink = diagnostics orelse return;
     const failure = generics.argument_failure orelse return;
-    const declaration = graph.declaration(failure.declaration);
+    const declaration = graph.familyDefinition(failure.declaration);
     var source = declaration.source;
     // External type holes retain the application's location in ModuleSG.
     // Recover it only on failure, without adding source maps to hot type tables.
@@ -4131,7 +4204,7 @@ fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, dia
         }
         break;
     }
-    try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
+    try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.familyDefinitionName(failure.declaration) });
 }
 
 fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, optional: ?contract_mod.ParticipantConformanceFailure) !void {

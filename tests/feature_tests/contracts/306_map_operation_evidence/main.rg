@@ -14,7 +14,7 @@ implement HashPolicy#(BytePolicy, UInt8) (
     }
 )
 
-lookup_byte#(.Map: Type: MapLookupValue#(.Map: Map, .Query: &UInt8, .Value: UInt8)) := (
+lookup_byte := #(.Map: Type: MapLookupValue#(.Map: Map, .Query: &UInt8, .Value: UInt8)) (
     .self : &Map
 ) -> (.result: ?UInt8) {
     query: UInt8 = 250

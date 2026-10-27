@@ -1,4 +1,4 @@
-borrow#(.Source: Type: Viewable#(Source)) := (.array: Source) -> (
+borrow := #(.Source: Type: Viewable#(Source)) (.array: Source) -> (
     .result : Viewable#(Source).Result
 ) {
     result = view(.self = array)

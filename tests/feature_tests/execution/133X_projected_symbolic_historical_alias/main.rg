@@ -1,14 +1,14 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-Holder: Type = (.item: Resource, .sibling: Resource)
+Holder := (.item: Resource, .sibling: Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { self&.counter&.count = self&.counter&.count + 1 }
 )
 
-renew(.self: $&Holder, .counter: $&Counter) -> () := {
+renew := (.self: $&Holder, .counter: $&Counter) -> () {
     target ::= $&self&.item
     historical ::= target
     deinit(.self = target)
@@ -16,7 +16,7 @@ renew(.self: $&Holder, .counter: $&Counter) -> () := {
     deinit(.self = historical)
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         holder :: Holder = Holder(

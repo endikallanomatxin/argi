@@ -3,6 +3,7 @@ const contract_projections = @import("contract_projections.zig");
 const contract_safety = @import("contract_safety.zig");
 const standard_contracts = @import("standard_contracts.zig");
 const type_arguments = @import("../module/type_arguments.zig");
+const TypeRecipe = @import("type_recipe.zig").Recipe;
 const std = @import("std");
 const module_views = @import("../module/views.zig");
 const module_sg = @import("../module/graph.zig");
@@ -28,7 +29,7 @@ pub const Stats = struct {
 };
 
 pub const ContractUse = struct {
-    declaration: global_sg.GlobalDeclId,
+    declaration: global_sg.GlobalFamilyDefinitionId,
     arguments: primitives.Range(global_sg.GlobalGenericArgId),
 };
 
@@ -44,8 +45,8 @@ pub const ParticipantConformanceFailure = struct {
 };
 
 pub const GenericTypeConstraintFailure = struct {
-    generic_decl: global_sg.GlobalDeclId,
-    contract_decl: global_sg.GlobalDeclId,
+    generic_decl: global_sg.GlobalFamilyDefinitionId,
+    contract_decl: global_sg.GlobalFamilyDefinitionId,
     actual: global_sg.GlobalTypeId,
     parameter_name: []const u8,
     source: primitives.SourceRef,
@@ -75,8 +76,8 @@ pub const Resolver = struct {
         external: module_entities.ExternalRefId,
         kind: primitives.DeclarationKind,
     };
-    const TemplateGroup = struct { declaration: global_sg.GlobalDeclId, arity: usize };
-    const ImplementationTemplate = struct { module: usize, index: usize };
+    const TemplateGroup = struct { declaration: global_sg.GlobalFamilyDefinitionId, arity: usize };
+    pub const ImplementationTemplate = struct { module: usize, index: usize };
     const TemplateRewrite = struct {
         key: TemplateGroup,
         previous: ?struct { entries: usize, modules: usize },
@@ -88,9 +89,14 @@ pub const Resolver = struct {
 
     allocator: std.mem.Allocator,
     function_context: ?*anyopaque = null,
-    instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId)) anyerror!global_sg.GlobalFunctionId = null,
+    instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
 
-    instantiate_alias: ?*const fn (*anyopaque, global_sg.GlobalDeclId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
+    instantiate_operation_value: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *generic_mod.Resolver.Bindings) anyerror!global_sg.GlobalNodeId = null,
+    instantiate_alias: ?*const fn (*anyopaque, global_sg.DefinitionValue, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
+    infer_operation_parameters: ?*const fn (*anyopaque, usize, parameterized_storage.ContractRequirement, global_sg.GlobalNodeId, *generic_mod.Resolver.Bindings, reach_context.Context) anyerror!bool = null,
+    probe_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalFamilyDefinitionId, u32, []const u8, global_sg.GlobalNodeId, reach_context.Context, primitives.Range(global_sg.GlobalGenericArgId), *bool, *?ParticipantConformanceFailure) anyerror!?OperationCandidate = null,
+    call_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, reach_context.Context, primitives.SourceRef) anyerror!global_sg.Node = null,
+    instantiate_generic_operation: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId, bool) anyerror!global_sg.GlobalFunctionId = null,
 
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -103,8 +109,8 @@ pub const Resolver = struct {
     stats: Stats = .{},
     profile_implementation_scans: bool = false,
     profile_io: ?std.Io = null,
-    constraint_declarations: @import("identity_cache.zig").IdentityCache(ConstraintKey, global_sg.GlobalDeclId) = .empty,
-    resolved_contract_refs: @import("identity_cache.zig").IdentityCache(ContractRefKey, global_sg.GlobalDeclId) = .empty,
+    constraint_declarations: @import("identity_cache.zig").IdentityCache(ConstraintKey, global_sg.GlobalFamilyDefinitionId) = .empty,
+    resolved_contract_refs: @import("identity_cache.zig").IdentityCache(ContractRefKey, global_sg.GlobalFamilyDefinitionId) = .empty,
     implementation_templates: std.AutoHashMapUnmanaged(TemplateGroup, TemplateIndex) = .empty,
     template_rewrites: std.ArrayList(TemplateRewrite) = .empty,
     pub fn deinit(self: *Resolver) void {
@@ -197,7 +203,7 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
     ) bool {
-        if (reference.module_path != null or reference.generic_arguments != null) return false;
+        if (reference.module_path != null or reference.generic_arguments != null or reference.computed_arguments != null) return false;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |item| item,
             else => return false,
@@ -231,9 +237,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         expected: ?global_sg.GlobalTypeId,
     ) !?global_sg.Node {
-        const arguments = if (reference.generic_arguments) |local|
-            try self.generics.relocateModuleArguments(module_index, local)
-        else
+        const arguments = try self.generics.resolveCallArguments(module_index, reference) orelse
             primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
         return self.makeVirtualizeWithArguments(module_index, reference, input, arguments, expected);
     }
@@ -415,15 +419,10 @@ pub const Resolver = struct {
                     if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
                     const field_name = self.modules[module_index].text(name);
                     if (std.mem.startsWith(u8, field_name, "_")) {
-                        const nominal = switch (self.graph.semanticType(ty)) {
-                            .declared => |declaration| declaration,
-                            .generic => |identity| identity.base,
-                            else => null,
-                        };
-                        if (nominal) |declaration| if (self.graph.moduleForDeclaration(declaration)) |owner| {
+                        if (global_types.nominalTypeOwner(self.graph, ty)) |owner| {
                             if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and !(self.modules[module_index].is_bundled_core and self.graph.modules.items[@intFromEnum(owner)].is_bundled_core))
                                 return self.domainFailure(source, "storage domain mappings cannot access private fields of another module");
-                        };
+                        }
                     }
                     const range = global_types.fields(self.graph, ty) orelse return self.domainFailure(source, "storage domain paths must select concrete record fields");
                     var selected: ?u32 = null;
@@ -458,27 +457,6 @@ pub const Resolver = struct {
         return try arena.dupe(primitives.StorageDomainMapping, result.items);
     }
 
-    fn inputFieldsSatisfyRequirement(
-        self: *const Resolver,
-        required: global_sg.FieldRange,
-        implementation: global_sg.FieldRange,
-    ) bool {
-        if (implementation.len < required.len) return false;
-        for (0..required.len) |index| {
-            const expected = self.graph.fields.items[required.start + @as(u32, @intCast(index))];
-            const actual = self.graph.fields.items[implementation.start + @as(u32, @intCast(index))];
-            if (!global_types.equal(self.graph, expected.ty, actual.ty)) return false;
-        }
-        // Implementations may expose additional optional/reached parameters:
-        // callers satisfying the contract must still be able to invoke
-        // the function using only the requirement's inputs.
-        for (required.len..implementation.len) |index| {
-            const extra = self.graph.fields.items[implementation.start + @as(u32, @intCast(index))];
-            if (extra.default_value == null) return false;
-        }
-        return true;
-    }
-
     pub fn resolveNestedCall(
         self: *Resolver,
         module_index: usize,
@@ -490,13 +468,13 @@ pub const Resolver = struct {
         return self.makeVirtualCall(module_index, reference, input, source, reach);
     }
 
-    pub fn contractDeclarationForType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {
-        return self.contractDeclFromType(ty);
+    pub fn contractDefinitionForType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFamilyDefinitionId {
+        return self.contractDefinitionFromType(ty);
     }
 
     pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, contract_type: global_sg.GlobalTypeId) bool {
         const declaration = switch (self.graph.types.items[@intFromEnum(contract_type)]) {
-            .declared => |value| value,
+            .definition => |value| value,
             else => return false,
         };
         if (self.findContractDefinition(declaration) == null) return false;
@@ -512,6 +490,11 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (located.definition.parameters.start..located.definition.parameters.start + located.definition.parameters.len) |raw| {
             switch (storage.comptime_parameters.items[raw].kind) {
+                .definition => {
+                    const actual = bindings.definitions[raw] orelse return false;
+                    const expected_value = wanted.definitions[raw] orelse return false;
+                    if (actual.origin != expected_value.origin or !global_types.genericArgumentsEqual(self.graph, actual.captures, expected_value.captures)) return false;
+                },
                 .type => {
                     const actual = bindings.types[raw] orelse return false;
                     if (!global_types.equal(self.graph, actual, wanted.types[raw].?)) return false;
@@ -582,14 +565,14 @@ pub const Resolver = struct {
         source: primitives.SourceRef,
         reach: reach_context.Context,
     ) !?global_sg.Node {
-        if (reference.module_path != null or reference.generic_arguments != null) return null;
+        if (reference.module_path != null or reference.generic_arguments != null or reference.computed_arguments != null) return null;
         return self.makeVirtualOperationCall(self.modules[module_index].text(reference.name), null, input, source, reach, null);
     }
 
     fn makeVirtualOperationCall(
         self: *Resolver,
         method_name: []const u8,
-        contract: ?global_sg.GlobalDeclId,
+        contract: ?global_sg.GlobalFamilyDefinitionId,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
         reach: reach_context.Context,
@@ -644,7 +627,7 @@ pub const Resolver = struct {
                     .applicable => {},
                     else => continue,
                 }
-                if (!try self.core.completeCallInputFieldsWithReach(input_fields, input, reach)) continue;
+                if (!try self.core.completeRecordFieldsWithContext(input_fields, input, reach)) continue;
 
                 var self_index: ?u32 = null;
                 var permission: primitives.PointerMutability = .read_only;
@@ -679,7 +662,7 @@ pub const Resolver = struct {
                 });
                 return .{
                     .source = source,
-                    .ty = try self.core.outputTypeForFields(output_fields),
+                    .ty = if (output_fields.len > 1) instance.output else try self.core.outputTypeForFields(output_fields),
                     .content = .{ .virtual_call = call_id },
                 };
             }
@@ -693,7 +676,7 @@ pub const Resolver = struct {
     };
 
     const RequirementInstance = struct {
-        declaration: global_sg.GlobalDeclId,
+        declaration: global_sg.GlobalFamilyDefinitionId,
         method_index: u32,
         input: global_sg.GlobalTypeId,
         output: global_sg.GlobalTypeId,
@@ -716,6 +699,14 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage;
         for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
             const name = module.text(requirement.name);
+            if (requirement.signature == null) {
+                self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "implementation-defined operation signatures require static selection and cannot be virtualized" };
+                return false;
+            }
+            if (requirement.parameters.len != 0) {
+                self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "generic contract operations require static specialization and cannot be virtualized" };
+                return false;
+            }
             var reason: ?[]const u8 = null;
             // Bind the handle's associated arguments before erasing its participant.
             const contract_use = self.contractUse(contract_ty) orelse return false;
@@ -763,6 +754,7 @@ pub const Resolver = struct {
         requirement: parameterized_storage.ContractRequirement,
         method_index: u32,
     ) !?RequirementInstance {
+        const signature = requirement.signature orelse return null;
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
@@ -774,28 +766,26 @@ pub const Resolver = struct {
         return .{
             .declaration = contract_use.declaration,
             .method_index = method_index,
-            .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings),
-            .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings),
+            .input = try self.generics.instantiateParameterizedType(located.module_index, signature.input, &bindings),
+            .output = try self.generics.instantiateParameterizedType(located.module_index, signature.output, &bindings),
         };
     }
 
-    pub fn findContractDefinition(self: *const Resolver, declaration: global_sg.GlobalDeclId) ?LocatedContractDefinition {
-        const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
-        const module_index: usize = @intFromEnum(owner);
-        const base = self.offsets[module_index].declaration_base;
-        const raw = @intFromEnum(declaration);
-        if (raw < base) return null;
-        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.parameterized_storage.contract_definitions.items) |definition|
-            if (definition.declaration == local) return .{ .module_index = module_index, .definition = definition };
-        return null;
+    pub fn findContractDefinition(self: *const Resolver, definition: global_sg.GlobalFamilyDefinitionId) ?LocatedContractDefinition {
+        const family = self.graph.familyDefinition(definition);
+        if (family.kind != .contract) return null;
+        const module_index = @intFromEnum(self.graph.moduleForFamilyDefinition(definition) orelse return null);
+        const index = family.template_index orelse return null;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        if (index >= storage.contract_definitions.items.len) return null;
+        return .{ .module_index = module_index, .definition = storage.contract_definitions.items[index] };
     }
 
     pub const ConformanceSelection = struct { tuple: usize };
 
     /// Source-template indexes extend with module fragments. Their entries
     /// retain source identities, while the resolver checkpoint owns each tail.
-    fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalDeclId, arity: usize) ![]const ImplementationTemplate {
+    pub fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, arity: usize) ![]const ImplementationTemplate {
         const key: TemplateGroup = .{ .declaration = declaration, .arity = arity };
         if (self.implementation_templates.get(key)) |group| {
             if (self.modules.len < group.module_count) return error.InvalidContractModulePrefix;
@@ -814,7 +804,7 @@ pub const Resolver = struct {
         errdefer self.implementation_templates.getPtr(key).?.entries.shrinkRetainingCapacity(count);
         for (self.modules[start..], start..) |module, owner| {
             for (module.semantic.parameterized_storage.contract_conformances.items, 0..) |template, index| {
-                if (template.parameters.len == 0 or template.participants.len != arity) continue;
+                if (template.participants.len != arity) continue;
                 if (try self.resolveDeclarationRef(owner, template.contract_ref, .contract_type) != declaration) continue;
                 // Declaration resolution may grow the index. Never keep a map
                 // entry pointer across that semantic operation.
@@ -828,7 +818,7 @@ pub const Resolver = struct {
 
     /// Source forms differ only while matching candidates. A selected conformance
     /// binds every participant and associated element as ordinary parameters.
-    pub fn selectConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, bindings: ?*generic_mod.Resolver.Bindings, depth: u8, deferred: ?*bool) anyerror!?ConformanceSelection {
+    pub fn selectConformance(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participants: []const global_sg.GlobalTypeId, bindings: ?*generic_mod.Resolver.Bindings, depth: u8, deferred: ?*bool) anyerror!?ConformanceSelection {
         const scan_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         defer if (self.profile_io) |io| {
             self.stats.implementation_scan_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - scan_start);
@@ -865,11 +855,11 @@ pub const Resolver = struct {
         // user contracts and implementations still match nominal identities.
         if (participants.len == 1 and located.definition.requirements.len == 0 and located.definition.parameters.len == 0) {
             const represented = global_types.representationType(self.graph, participants[0]);
-            const name = self.graph.text(self.graph.declaration(declaration).name);
+            const name = self.graph.familyDefinitionName(declaration);
             const fact = std.mem.eql(u8, name, "Int") or std.mem.eql(u8, name, "UInt") or std.mem.eql(u8, name, "Float") or
                 std.mem.eql(u8, name, "_BuiltinArithmetic") or std.mem.eql(u8, name, "_BuiltinEquality") or std.mem.eql(u8, name, "_BuiltinOrdering") or
                 std.mem.eql(u8, name, "_BuiltinInteger") or std.mem.startsWith(u8, name, "_IntegerFits");
-            if (fact and standard_contracts.standardDeclaration(self.graph, name) == declaration and
+            if (fact and standard_contracts.standardDefinition(self.graph, name) == declaration and
                 represented != null and !global_types.equal(self.graph, represented.?, participants[0]) and
                 self.graph.semanticType(represented.?) == .builtin and
                 try self.selectConformance(declaration, &.{represented.?}, null, depth + 1, deferred) != null)
@@ -879,19 +869,19 @@ pub const Resolver = struct {
                 try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, self.modules[located.module_index].text(parameter.name)), .value = .{ .type = participants[0] } });
                 const arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = start, .len = 1 };
                 const index = self.graph.contract_conformances.items.len;
-                try self.graph.contract_conformances.append(self.allocator, .{ .declaration = declaration, .context = @enumFromInt(located.module_index), .participants = arguments, .associated_arguments = .{ .start = start, .len = 0 }, .source = self.graph.declaration(declaration).source, .declaration_validated = true });
+                try self.graph.contract_conformances.append(self.allocator, .{ .declaration = declaration, .context = @enumFromInt(located.module_index), .participants = arguments, .associated_arguments = .{ .start = start, .len = 0 }, .source = self.graph.familyDefinition(declaration).source, .declaration_validated = true });
                 if (bindings) |target| try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, arguments, target);
                 return .{ .tuple = index };
             }
         }
-        // Native C identities have no source-level declaration in bundled core.
-        // Publish only their checked, operation-free representation fact; Equal
-        // still selects its ordinary generic implementation and operation.
+        // Payloadless choices and native C identities compare their tags or
+        // addresses. Publish only the private representation fact; Equal still
+        // selects its ordinary generic implementation and operation.
         if (participants.len == 1 and located.definition.requirements.len == 0 and located.definition.parameters.len == 0 and
-            standard_contracts.standardDeclaration(self.graph, "_BuiltinEquality") == declaration and
-            self.core.isForeignEqualityRepresentation(participants[0], participants[0]))
+            standard_contracts.standardDefinition(self.graph, "_BuiltinEquality") == declaration and
+            self.core.isTagOrForeignEqualityRepresentation(participants[0], participants[0]))
         {
-            const definition = self.graph.declaration(declaration);
+            const definition = self.graph.familyDefinition(declaration);
             const file = self.graph.files.items[definition.source.file_index];
             if (std.mem.eql(u8, std.fs.path.basename(self.graph.text(file.path)), "scalar_arithmetic.rg")) {
                 const start: u32 = @intCast(self.graph.generic_arguments.items.len);
@@ -911,7 +901,7 @@ pub const Resolver = struct {
     /// provider never establishes conformance or selects an operation.
     pub fn mayImplementFirstParticipant(self: *Resolver, name: []const u8, concrete: global_sg.GlobalTypeId) anyerror!bool {
         for (self.graph.contract_conformances.items) |conformance| {
-            if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(conformance.declaration)].name), name)) continue;
+            if (!std.mem.eql(u8, self.graph.familyDefinitionName(conformance.declaration), name)) continue;
             if (conformance.participants.len == 0) continue;
             const first = self.graph.generic_arguments.items[conformance.participants.start].value;
             if (first == .type and global_types.equal(self.graph, first.type, concrete)) return true;
@@ -921,7 +911,7 @@ pub const Resolver = struct {
             for (storage.contract_conformances.items) |template| {
                 if (template.participants.len == 0) continue;
                 const declaration = try self.resolveDeclarationRef(module_index, template.contract_ref, .contract_type);
-                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
+                if (!std.mem.eql(u8, self.graph.familyDefinitionName(declaration), name)) continue;
                 const first = storage.ir.generic_arguments.items[template.participants.start].value;
                 if (first != .type or !try self.typePatternMayMatch(module_index, first.type, concrete)) continue;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
@@ -951,7 +941,7 @@ pub const Resolver = struct {
         return false;
     }
 
-    fn selectGenericParticipantConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, target: ?*generic_mod.Resolver.Bindings) anyerror!?ConformanceSelection {
+    fn selectGenericParticipantConformance(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participants: []const global_sg.GlobalTypeId, target: ?*generic_mod.Resolver.Bindings) anyerror!?ConformanceSelection {
         const located = self.findContractDefinition(declaration) orelse return null;
         const Candidate = struct { module: usize, template: parameterized_storage.ContractConformance, bindings: generic_mod.Resolver.Bindings };
         var candidates: std.ArrayList(Candidate) = .empty;
@@ -963,6 +953,8 @@ pub const Resolver = struct {
             const module_index = reference.module;
             const module = &self.modules[module_index];
             const template = module.semantic.parameterized_storage.contract_conformances.items[reference.index];
+            // Concrete conformances are already published and checked above.
+            if (template.parameters.len == 0) continue;
             const patterns = module.semantic.parameterized_storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len];
             var possible = true;
             for (patterns, participants) |pattern, actual| {
@@ -1019,8 +1011,8 @@ pub const Resolver = struct {
         defer contract_bindings.deinit(self.allocator);
         try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, actual, &contract_bindings);
         try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, &contract_bindings);
-        var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, selected_template.source), .contract_name = self.graph.text(self.graph.declaration(declaration).name), .reason = "" };
-        const operations = try self.prepareOperationBindings(module_index, located, selected_template, &failure);
+        var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, selected_template.source), .contract_name = self.graph.familyDefinitionName(declaration), .reason = "" };
+        const operations = try self.prepareOperationBindings(module_index, located, selected_template, bindings, &failure);
         const implementation = try self.publishImplementationArguments(module_index, selected_template.parameters, bindings);
         const index = self.graph.contract_conformances.items.len;
         try self.graph.contract_conformances.append(self.allocator, .{
@@ -1085,8 +1077,8 @@ pub const Resolver = struct {
     fn nominalPatternsCover(self: *Resolver, a: SymbolicPattern, b: SymbolicPattern, substitutions: ?*PatternSubstitutions) !bool {
         const left = self.modules[a.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(a.ty)].resolved.generic;
         const right = self.modules[b.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(b.ty)].resolved.generic;
-        const declaration = try self.generics.resolveParameterizedDeclaration(a.module, left.base);
-        if (declaration != try self.generics.resolveParameterizedDeclaration(b.module, right.base)) return false;
+        const declaration = try self.generics.resolveParameterizedFamily(a.module, left.base);
+        if (declaration != try self.generics.resolveParameterizedFamily(b.module, right.base)) return false;
         const located = self.generics.findTypeParameterized(declaration) orelse return false;
         if (left.arguments.len != located.parameterized.parameters.len or right.arguments.len != left.arguments.len) return false;
         for (0..located.parameterized.parameters.len) |position| {
@@ -1200,6 +1192,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, self.modules[module_index].text(parameter.name)), .value = switch (parameter.kind) {
                 .type => .{ .type = bindings.types[raw].? },
                 .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                .definition => .{ .definition = bindings.definitions[raw].? },
             } });
         }
         return .{ .start = start, .len = parameters.len };
@@ -1208,7 +1201,7 @@ pub const Resolver = struct {
     fn implementsDepth(
         self: *Resolver,
         concrete: global_sg.GlobalTypeId,
-        contract_decl: global_sg.GlobalDeclId,
+        contract_decl: global_sg.GlobalFamilyDefinitionId,
         depth: u8,
     ) !bool {
         if (depth >= 64) return false;
@@ -1284,6 +1277,7 @@ pub const Resolver = struct {
             error.DuplicateGenericArgument => "duplicate argument",
             error.MissingGenericArgument => "missing argument",
             error.GenericArgumentKindMismatch => "argument kind does not match its parameter",
+            error.DefinitionParameterSignatureMismatch => "associated type-family argument does not match its parameter signature",
             else => null,
         };
     }
@@ -1297,6 +1291,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{
                 .name = name,
                 .value = switch (parameter.kind) {
+                    .definition => .{ .definition = bindings.definitions[raw] orelse return error.UnboundDefinitionParameter },
                     .type => .{ .type = bindings.types[raw].? },
                     .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
                 },
@@ -1308,17 +1303,47 @@ pub const Resolver = struct {
     pub fn resolveScopedOperation(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
         const context = reach_context.Context.fromModule(module, offsets, call.visible_bindings, call.owner_function);
-        const node = try self.makeScopedOperationCall(module_index, globalizer.globalType(offsets, call.contract_type.?), module.text(reference.name), globalizer.globalNode(offsets, call.input), context, self.sourceFor(module_index, reference.source)) orelse
+        const arguments = try self.generics.resolveCallArguments(module_index, reference) orelse primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
+        const node = try self.makeSpecializedScopedOperationCall(module_index, globalizer.globalType(offsets, call.contract_type.?), module.text(reference.name), arguments, globalizer.globalNode(offsets, call.input), context, self.sourceFor(module_index, reference.source)) orelse
             return if (self.participant_conformance_failure != null) .invalid else .deferred;
         try self.graph.setNode(self.allocator, globalizer.globalNode(offsets, call.node), node);
         return .resolved;
     }
 
     pub const OperationCandidate = struct {
-        declaration: global_sg.GlobalDeclId,
-        participants: []global_sg.GlobalTypeId,
+        declaration: global_sg.GlobalFamilyDefinitionId,
+        participants: union(enum) {
+            stable: []const global_sg.GlobalTypeId,
+            transient: TypeRecipe,
+            ambiguous,
+        },
         virtual: bool = false,
+
+        pub fn deinit(self: OperationCandidate, allocator: std.mem.Allocator) void {
+            switch (self.participants) {
+                .stable => |values| allocator.free(values),
+                .transient => |recipe| {
+                    var owned = recipe;
+                    owned.deinit(allocator);
+                },
+                .ambiguous => {},
+            }
+        }
     };
+
+    /// Takes ownership of participants on success. Probe-local identities are
+    /// encoded before rollback and published only after choosing an operation.
+    pub fn captureOperationCandidate(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participants: []const global_sg.GlobalTypeId, virtual: bool, boundary: TypeRecipe.Boundary) !OperationCandidate {
+        for (participants) |participant| if (@intFromEnum(participant) >= boundary.types) {
+            const roots = try self.allocator.alloc(?global_sg.GlobalTypeId, participants.len);
+            defer self.allocator.free(roots);
+            for (roots, participants) |*root, value| root.* = value;
+            const recipe = try TypeRecipe.capture(self.allocator, self.graph, boundary, roots);
+            self.allocator.free(participants);
+            return .{ .declaration = declaration, .participants = .{ .transient = recipe }, .virtual = virtual };
+        };
+        return .{ .declaration = declaration, .participants = .{ .stable = participants }, .virtual = virtual };
+    }
 
     pub const OperationCandidates = struct {
         items: std.ArrayList(OperationCandidate) = .empty,
@@ -1326,7 +1351,7 @@ pub const Resolver = struct {
         failure: ?ParticipantConformanceFailure = null,
 
         pub fn deinit(self: *OperationCandidates, allocator: std.mem.Allocator) void {
-            for (self.items.items) |candidate| allocator.free(candidate.participants);
+            for (self.items.items) |candidate| candidate.deinit(allocator);
             self.items.deinit(allocator);
         }
     };
@@ -1339,19 +1364,23 @@ pub const Resolver = struct {
     }
 
     pub fn operationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, module_filter: ?global_sg.GlobalModuleId) !OperationCandidates {
+        return self.specializedOperationCandidatesFiltered(module_index, name, input, context, module_filter, .{ .start = 0, .len = 0 });
+    }
+
+    pub fn specializedOperationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, module_filter: ?global_sg.GlobalModuleId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !OperationCandidates {
         var result: OperationCandidates = .{};
         errdefer result.deinit(self.allocator);
         if (std.mem.startsWith(u8, name, "_")) return result;
         for (self.modules, 0..) |module, owner| {
             for (module.semantic.parameterized_storage.contract_definitions.items) |definition| {
                 if (!definition.hasExplicitParticipants()) continue;
-                const declaration = globalizer.globalDecl(self.offsets[owner], definition.declaration);
-                if (!self.core.declarationVisible(module_index, declaration, module_filter)) continue;
+                const declaration = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[owner], definition.declaration)).?;
+                if (!self.core.familyVisible(module_index, declaration, module_filter)) continue;
                 const storage = &module.semantic.parameterized_storage;
                 for (storage.contract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
                     if (!std.mem.eql(u8, module.text(requirement.name), name)) continue;
-                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, &result.deferred, &result.failure)) |candidate| {
-                        errdefer self.allocator.free(candidate.participants);
+                    if (try self.probeOperationCandidate(module_index, .{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, arguments, &result.deferred, &result.failure)) |candidate| {
+                        errdefer candidate.deinit(self.allocator);
                         try result.items.append(self.allocator, candidate);
                     }
                 }
@@ -1371,10 +1400,21 @@ pub const Resolver = struct {
         return self.inferConstraintTypePattern(module_index, pattern, actual, bindings);
     }
 
-    fn probeOperationCandidate(self: *Resolver, located: LocatedContractDefinition, declaration: global_sg.GlobalDeclId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
+    fn probeOperationCandidate(self: *Resolver, caller_module_index: usize, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
             else => return null,
+        };
+        if (requirement.signature == null) {
+            const probe = self.probe_implementation_operation orelse return error.MissingOperationInstantiator;
+            return probe(self.function_context.?, caller_module_index, declaration, located.definition.participants.len, self.modules[located.module_index].text(requirement.name), input, context, arguments, deferred, failure);
+        }
+        const boundary: TypeRecipe.Boundary = .{
+            .types = self.graph.types.items.len,
+            .declarations = self.graph.declarations.items.len,
+            .nodes = self.graph.nodes.items.len,
+            .type_definitions = self.graph.type_definitions.items.len,
+            .family_definitions = self.graph.family_definitions.items.len,
         };
         var checkpoint = self.graph.beginTransaction(self.allocator);
         const caches = self.checkpointResolution();
@@ -1392,7 +1432,21 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        self.generics.bindGlobalArgumentsPartial(located.module_index, requirement.parameters, arguments, &bindings) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return null,
+        };
+        const input_pattern = storage.ir.representation(requirement.signature.?.input);
+        const fields = if (input_pattern == .resolved and input_pattern.resolved == .structural)
+            input_pattern.resolved.structural.fields
+        else infer: {
+            const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
+            if (!(infer(self.function_context.?, located.module_index, requirement, input, &bindings, context) catch |err| switch (err) {
+                error.ConflictingGenericArgument => return null,
+                else => return err,
+            })) return null;
+            break :infer primitives.Range(ir.ParameterizedFieldId){ .start = 0, .len = 0 };
+        };
         var virtual = false;
         var unresolved_actual = false;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
@@ -1434,7 +1488,10 @@ pub const Resolver = struct {
                     }
                     // Input patterns can mention associated elements. Infer what is
                     // available now, then check the entire selected signature below.
-                    _ = try self.inferOperationInputPattern(located.module_index, field.ty, actual_ty, &bindings);
+                    _ = self.inferOperationInputPattern(located.module_index, field.ty, actual_ty, &bindings) catch |err| switch (err) {
+                        error.ConflictingGenericArgument => return null,
+                        else => return err,
+                    };
                 }
             }
             if (!explicit) if (field.default_value) |value| {
@@ -1456,7 +1513,10 @@ pub const Resolver = struct {
                         }
                     }
                 }
-                _ = try self.inferOperationInputPattern(located.module_index, field.ty, ty, &bindings);
+                _ = self.inferOperationInputPattern(located.module_index, field.ty, ty, &bindings) catch |err| switch (err) {
+                    error.ConflictingGenericArgument => return null,
+                    else => return err,
+                };
             };
         }
         const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
@@ -1485,14 +1545,25 @@ pub const Resolver = struct {
                 return null;
             }
         }
-        const required = self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings) catch |err| {
+        if (requirement.parameters.len != 0 and !virtual) {
+            const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
+            if (!(infer(self.function_context.?, located.module_index, requirement, input, &bindings, context) catch |err| switch (err) {
+                error.ConflictingGenericArgument => return null,
+                else => return err,
+            })) {
+                if (unresolved_actual) deferred.* = true;
+                return null;
+            }
+        }
+        const required = self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings) catch |err| {
             if (err == error.OutOfMemory) return err;
             return null;
         };
         switch (try self.core.matchCallInputWithReach(global_types.fields(self.graph, required) orelse return error.InvalidContractRequirementInput, input, context)) {
             .applicable => {
+                const candidate = try self.captureOperationCandidate(declaration, participants, virtual, boundary);
                 transferred = true;
-                return .{ .declaration = declaration, .participants = participants, .virtual = virtual };
+                return candidate;
             },
             .deferred => deferred.* = true,
             .no_match => {},
@@ -1501,28 +1572,64 @@ pub const Resolver = struct {
     }
 
     pub fn callOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        return self.callSpecializedOperationCandidate(module_index, candidate, name, input, context, source, .{ .start = 0, .len = 0 });
+    }
+
+    pub fn callSpecializedOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !?global_sg.Node {
+        var materialized: ?[]global_sg.GlobalTypeId = null;
+        defer if (materialized) |values| self.allocator.free(values);
+        const participants = switch (candidate.participants) {
+            .stable => |values| values,
+            .transient => |recipe| values: {
+                const roots = try self.allocator.alloc(?global_sg.GlobalTypeId, recipe.roots.len);
+                defer self.allocator.free(roots);
+                @memset(roots, null);
+                try recipe.publish(self.allocator, self.generics, roots);
+                const values = try self.allocator.alloc(global_sg.GlobalTypeId, roots.len);
+                materialized = values;
+                for (values, roots) |*value, root| value.* = root.?;
+                break :values values;
+            },
+            .ambiguous => {
+                self.participant_conformance_failure = .{
+                    .source = source,
+                    .contract_name = self.graph.familyDefinitionName(candidate.declaration),
+                    .operation = name,
+                    .reason = "operation inputs do not determine a unique participant tuple; qualify the contract explicitly",
+                };
+                return error.InvalidContractOperation;
+            },
+        };
         if (candidate.virtual) {
             const located = self.findContractDefinition(candidate.declaration) orelse return null;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
             const requirement = for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
                 if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), name)) break requirement;
             } else return null;
+            if (requirement.parameters.len != 0) {
+                self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "generic contract operations require static specialization and cannot be virtualized" };
+                return null;
+            }
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
-            const interface = self.contractUse(candidate.participants[0]) orelse return null;
+            const interface = self.contractUse(participants[0]) orelse return null;
             if (!self.bindContractUseArguments(interface, located, &bindings)) return null;
-            bindings.types[located.definition.participants.start] = candidate.participants[0];
-            const required = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
-            if (!try self.core.completeCallInputFieldsWithReach(global_types.fields(self.graph, required).?, input, context)) return null;
+            bindings.types[located.definition.participants.start] = participants[0];
+            const required = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
+            if (!try self.core.completeRecordFieldsWithContext(global_types.fields(self.graph, required).?, input, context)) return null;
         }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        if (!candidate.virtual) for (candidate.participants) |participant|
+        if (!candidate.virtual) for (participants) |participant|
             try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
-        const base = try self.generics.internType(.{ .generic = .{ .base = candidate.declaration, .arguments = .{ .start = start, .len = if (candidate.virtual) 0 else @intCast(candidate.participants.len) } } });
-        return self.makeScopedOperationCall(module_index, base, name, input, context, source);
+        const base = try self.generics.internType(.{ .generic = .{ .base = candidate.declaration, .arguments = .{ .start = start, .len = if (candidate.virtual) 0 else @intCast(participants.len) } } });
+        return self.makeSpecializedScopedOperationCall(module_index, base, name, arguments, input, context, source);
     }
 
     pub fn makeScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        return self.makeSpecializedScopedOperationCall(module_index, base, name, .{ .start = 0, .len = 0 }, input, context, source);
+    }
+
+    pub fn makeSpecializedScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const use = self.typeContractUse(base) orelse return null;
         const located = self.findContractDefinition(use.declaration) orelse return null;
         var failure: ParticipantConformanceFailure = .{
@@ -1562,7 +1669,7 @@ pub const Resolver = struct {
             const start: u32 = @intCast(self.graph.generic_arguments.items.len);
             try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
             const bound = try self.generics.internType(.{ .generic = .{ .base = use.declaration, .arguments = .{ .start = start, .len = 1 } } });
-            return self.makeScopedOperationCall(module_index, bound, name, input, context, source);
+            return self.makeSpecializedScopedOperationCall(module_index, bound, name, arguments, input, context, source);
         }
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
@@ -1600,22 +1707,76 @@ pub const Resolver = struct {
             self.participant_conformance_failure = failure;
             return null;
         };
-        const method = try self.resolveOperationBinding(conformance, method_index);
         const requirement = storage.contract_requirements.items[located.definition.requirements.start + method_index];
-        const required_type = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
+        if (requirement.signature == null)
+            return self.makeImplementationOperationCall(module_index, selected.tuple, method_index, arguments, input, context, source);
+
+        self.generics.bindGlobalArgumentsPartial(located.module_index, requirement.parameters, arguments, &bindings) catch |err| {
+            failure.reason = switch (err) {
+                error.TooManyGenericArguments => "too many compile-time arguments for contract operation",
+                error.UnknownGenericArgument => "unknown compile-time argument for contract operation",
+                error.DuplicateGenericArgument => "duplicate compile-time argument for contract operation",
+                error.GenericArgumentKindMismatch => "compile-time argument kind does not match the operation parameter",
+                error.DefinitionParameterSignatureMismatch => "type-family argument does not match the operation parameter signature",
+                else => return err,
+            };
+            self.participant_conformance_failure = failure;
+            return null;
+        };
+        if (requirement.parameters.len != 0) {
+            const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
+            if (!try infer(self.function_context.?, located.module_index, requirement, input, &bindings, context)) return null;
+        }
+        const required_type = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
+        const required_output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
+        const method = if (requirement.parameters.len == 0)
+            self.resolveOperationBinding(conformance, method_index) catch |err| switch (err) {
+                error.DeferredGenericFunction, error.ComptimeExecutionPending => return null,
+                else => return err,
+            }
+        else generic: {
+            const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(method_index)) orelse return error.InvalidContractOperation;
+            if (!try self.materializeOperationValue(evidence.binding.definition)) return null;
+            const captures = try self.operationCaptureArguments(evidence);
+            const instantiate = self.instantiate_generic_operation orelse return error.MissingOperationInstantiator;
+            const method = instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), captures, required_type, required_output, evidence.binding.instantiate_associated) catch |err| {
+                failure.reason = switch (err) {
+                    error.ContextualSignatureMismatch, error.OperationAliasInputMismatch => "implementation operation has an incompatible input signature",
+                    error.ContextualOutputSignatureMismatch => "operation returns an incompatible associated result",
+                    error.OperationAliasConstraintMismatch => "the selected input signature does not satisfy the generic operation implementation bounds",
+                    error.GenericFunctionParameterizedNotFound, error.MissingGenericArgument => "the selected operation implementation cannot be specialized from its inputs",
+                    else => return err,
+                };
+                self.participant_conformance_failure = failure;
+                return null;
+            };
+            const function = self.graph.function(method);
+            if (!global_types.operationInputsCompatible(self.graph, global_types.fields(self.graph, required_type).?, function.input) or
+                !global_types.operationFieldsEqual(self.graph, global_types.fields(self.graph, required_output).?, function.output))
+            {
+                failure.reason = if (!global_types.operationInputsCompatible(self.graph, global_types.fields(self.graph, required_type).?, function.input))
+                    "implementation operation has an incompatible input signature"
+                else
+                    "operation returns an incompatible associated result";
+                self.participant_conformance_failure = failure;
+                return null;
+            }
+            try self.recordStaticSafetyContract(located, requirement, &bindings, participants[0], method, required_output, source, .{ .conformance = @intCast(selected.tuple), .index = @intCast(method_index) });
+            break :generic method;
+        };
         const required_fields = global_types.fields(self.graph, required_type) orelse return error.InvalidContractRequirementInput;
-        if (!try self.core.completeCallInputFieldsWithReach(required_fields, input, context)) return null;
+        if (!try self.core.completeRecordFieldsWithContext(required_fields, input, context)) return null;
         const function = self.graph.function(method);
-        switch (self.core.matchCallInput(function.input, input)) {
+        switch (try self.core.matchCallInputWithReach(function.input, input, context)) {
             .deferred => return null,
             .no_match => {
-                failure.reason = "arguments do not match the selected contract operation";
+                failure.reason = "arguments do not match the selected contract operation, including completed defaults and required reachable capabilities";
                 self.participant_conformance_failure = failure;
                 return null;
             },
             .applicable => {},
         }
-        if (!try self.core.completeCallInputFieldsWithReach(function.input, input, context)) return null;
+        if (!try self.core.completeRecordFieldsWithContext(function.input, input, context)) return null;
         try self.core.trackReachedCall(method, input, context, false);
         return .{
             .source = source,
@@ -1640,7 +1801,10 @@ pub const Resolver = struct {
         const requirement = for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
             if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), name)) break requirement;
         } else return null;
-        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const signature = requirement.signature orelse return null;
+        const pattern_type = storage.ir.representation(signature.input);
+        if (pattern_type != .resolved or pattern_type.resolved != .structural) return null;
+        const fields = pattern_type.resolved.structural.fields;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
             const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
             const pointer = pattern == .resolved and pattern.resolved == .pointer and
@@ -1670,20 +1834,21 @@ pub const Resolver = struct {
         const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         const declaration = switch (storage.types.items[@intFromEnum(pattern)]) {
             .concrete => |local| return global_types.conformanceParticipantOwner(self.graph, globalizer.globalType(self.offsets[module_index], local)),
-            .external => |external| try self.core.resolveDeclaration(
-                module_index,
-                self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
-                &.{.type},
-            ),
+            .external => |external| blk: {
+                const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)];
+                if (try self.core.resolveDefinitionReference(module_index, reference, &.{.type})) |family| break :blk family;
+                const concrete = (try self.core.resolveTypeValue(module_index, reference)) orelse return null;
+                return global_types.conformanceParticipantOwner(self.graph, concrete);
+            },
             .resolved => |resolved| switch (resolved) {
                 .pointer => |pointer| return self.templateParticipantOwner(module_index, pointer.child),
-                .generic => |nominal| try self.generics.resolveParameterizedDeclaration(module_index, nominal.base),
-                .declared => |reference| try self.generics.resolveParameterizedDeclaration(module_index, reference),
+                .generic => |nominal| try self.generics.resolveParameterizedFamily(module_index, nominal.base),
+                .nominal => |reference| return self.graph.moduleForTypeDefinition(globalizer.globalTypeDefinition(self.offsets[module_index], reference)),
                 else => return null,
             },
             else => return null,
         };
-        return self.graph.moduleForDeclaration(declaration);
+        return self.graph.moduleForFamilyDefinition(declaration);
     }
 
     fn templateOwnsParticipant(self: *Resolver, module_index: usize, conformance: parameterized_storage.ContractConformance) !bool {
@@ -1716,7 +1881,7 @@ pub const Resolver = struct {
                 if (!located.definition.hasExplicitParticipants()) continue;
                 var failure: ParticipantConformanceFailure = .{
                     .source = self.sourceFor(module_index, conformance.source),
-                    .contract_name = self.graph.text(self.graph.declaration(declaration).name),
+                    .contract_name = self.graph.familyDefinitionName(declaration),
                     .reason = "",
                 };
                 if (conformance.parameters.len != 0 and !self.core.sameDeclarationNamespace(located.module_index, module_index) and
@@ -1794,7 +1959,7 @@ pub const Resolver = struct {
         }
         if (conformance.parameters.len != 0) {
             // Templates are instantiated from participants by selection.
-            _ = try self.prepareOperationBindings(module_index, located, conformance, &failure);
+            _ = try self.prepareOperationBindings(module_index, located, conformance, null, &failure);
             return;
         }
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
@@ -1831,7 +1996,7 @@ pub const Resolver = struct {
                 return;
             }
         }
-        const operations = self.prepareOperationBindings(module_index, located, conformance, &failure) catch |err| {
+        const operations = self.prepareOperationBindings(module_index, located, conformance, &implementation_bindings, &failure) catch |err| {
             if (err != error.InvalidContractConformance) return err;
             self.participant_conformance_failure = failure;
             return;
@@ -1850,7 +2015,7 @@ pub const Resolver = struct {
         });
     }
 
-    fn prepareOperationBindings(self: *Resolver, module_index: usize, located: LocatedContractDefinition, conformance: parameterized_storage.ContractConformance, failure: *ParticipantConformanceFailure) !primitives.Range(global_sg.ContractOperationBindingId) {
+    fn prepareOperationBindings(self: *Resolver, module_index: usize, located: LocatedContractDefinition, conformance: parameterized_storage.ContractConformance, bindings: ?*generic_mod.Resolver.Bindings, failure: *ParticipantConformanceFailure) !primitives.Range(global_sg.ContractOperationBindingId) {
         const storage = &self.modules[module_index].semantic.parameterized_storage;
         const required_storage = &self.modules[located.module_index].semantic.parameterized_storage;
         const requirements = required_storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len];
@@ -1881,7 +2046,14 @@ pub const Resolver = struct {
                 return error.InvalidContractConformance;
             };
             failure.operation = name;
-            const declaration = self.resolveDeclarationRef(module_index, operation.function, .function) catch |err| {
+            // Dormant generic expressions are instantiated only after the
+            // participant pattern binds their lexical parameters.
+            if (bindings == null and operation.function == .expression) continue;
+            if (operation.associated_parameters.len != 0) {
+                const values = try self.generics.instantiateParameterizedArguments(module_index, conformance.associated_arguments, bindings.?);
+                try self.generics.bindGlobalArguments(module_index, operation.associated_parameters, values, bindings.?);
+            }
+            const definition = (self.resolveFunctionValue(module_index, operation.function, bindings, self.sourceFor(module_index, operation.source)) catch |err| {
                 failure.source = self.sourceFor(module_index, operation.source);
                 failure.reason = switch (err) {
                     error.UnknownGlobalDeclaration => "unknown or inaccessible implementation function",
@@ -1889,18 +2061,18 @@ pub const Resolver = struct {
                     else => return err,
                 };
                 return error.InvalidContractConformance;
-            };
+            }) orelse continue;
             try functions.append(self.allocator, .{
-                .contract_declaration = globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration),
+                .contract_definition = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)).?,
                 .requirement_index = @intCast(requirement_index),
                 .requirement_source = self.sourceFor(located.module_index, requirement.source),
                 .implementation_source = self.sourceFor(module_index, operation.source),
                 .alias_source = switch (operation.function) {
                     .external => |external| self.sourceFor(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)].source),
-                    .module => null,
+                    .module, .expression => null,
                 },
                 .name = try self.graph.addString(self.allocator, name),
-                .declaration = declaration,
+                .definition = definition,
                 .instantiate_associated = operation.instantiate_associated,
             });
         }
@@ -1909,11 +2081,85 @@ pub const Resolver = struct {
         return .{ .start = start, .len = @intCast(functions.items.len) };
     }
 
+    /// Complete the same captured expression whether demanded by a call or
+    /// declaration validation. setNode journals the monotonic completion.
+    fn materializeOperationValue(self: *Resolver, node: global_sg.GlobalNodeId) !bool {
+        const expression = self.graph.node(node);
+        if (expression.content != .captured_expression) return true;
+        const expressions = self.core.captured_expressions orelse return error.MissingOperationInstantiator;
+        const resolved = expressions.instantiate(expressions.context, expression.content.captured_expression, reach_context.Context.fromGlobal(&.{}, null)) catch |err| switch (err) {
+            error.ComptimeExecutionPending, error.DeferredGenericFunction => return false,
+            else => return err,
+        };
+        try self.graph.setNode(self.allocator, node, self.graph.node(resolved));
+        return true;
+    }
+
+    /// The selected conformance owns the callable definition. Ordinary function
+    /// inference determines its signature, defaults and reached capabilities.
+    fn operationCaptureArguments(self: *Resolver, evidence: contract_evidence.SelectedOperation) !primitives.Range(global_sg.GlobalGenericArgId) {
+        const captures = evidence.capturedArguments(self.graph) orelse return error.DeferredGenericFunction;
+        if (captures.lexical.len == 0) return captures.associated;
+        if (captures.associated.len == 0) return captures.lexical;
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        try self.graph.generic_arguments.ensureUnusedCapacity(self.allocator, captures.len());
+        for (0..captures.len()) |index|
+            self.graph.generic_arguments.appendAssumeCapacity(captures.at(self.graph, index));
+        return .{ .start = start, .len = @intCast(captures.len()) };
+    }
+
+    fn makeImplementationOperationCall(self: *Resolver, module_index: usize, conformance_index: usize, operation_index: usize, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        const conformance = self.graph.contract_conformances.items[conformance_index];
+        const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(operation_index)) orelse return error.InvalidContractOperation;
+        if (!try self.materializeOperationValue(evidence.binding.definition)) return null;
+        _ = evidence.definitionValue(self.graph) orelse return null;
+        const captures = try self.operationCaptureArguments(evidence);
+        const call = self.call_implementation_operation orelse return error.MissingOperationInstantiator;
+        var node = call(self.function_context.?, module_index, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), captures, arguments, input, context, source) catch |err| switch (err) {
+            error.DeferredGenericFunction, error.ComptimeExecutionPending => return null,
+            error.InvalidGenericCallArguments => {
+                self.participant_conformance_failure = .{
+                    .source = source,
+                    .contract_name = self.graph.familyDefinitionName(conformance.declaration),
+                    .reason = if (self.generics.comptime_failure) |failure| failure.reason else "arguments do not match the selected contract operation",
+                };
+                return error.InvalidContractOperation;
+            },
+            else => return err,
+        };
+        const method = node.content.function_call.callee;
+        if (standard_contracts.operationResultFailure(self.graph, conformance, method)) |reason| {
+            self.participant_conformance_failure = .{
+                .source = source,
+                .contract_name = self.graph.familyDefinitionName(conformance.declaration),
+                .reason = reason,
+            };
+            return error.InvalidContractOperation;
+        }
+        const definition = evidence.definitionValue(self.graph) orelse return error.DeferredGenericFunction;
+        if (self.graph.familyDefinition(definition.origin).parameter_count == definition.captures.len) {
+            const binding_id: global_sg.ContractOperationBindingId = @enumFromInt(conformance.operation_bindings.start + @as(u32, @intCast(operation_index)));
+            try self.graph.completeOperationBinding(self.allocator, binding_id, method);
+        }
+        node.content.function_call.contract_operation = .{ .conformance = @intCast(conformance_index), .index = @intCast(operation_index) };
+        return node;
+    }
+
     fn resolveOperationBinding(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(index)) orelse return error.InvalidContractOperation;
-        if (evidence.materializedFunction(self.graph)) |function| return function;
-        const method = try self.resolveOperationBody(conformance, index);
-        if (standard_contracts.standardDeclaration(self.graph, "Deinit") == conformance.declaration)
+        if (evidence.materializedFunction()) |function| return function;
+        const method = self.resolveOperationBody(conformance, index) catch |err| switch (err) {
+            error.ContextualSignatureMismatch, error.ContextualOutputSignatureMismatch => {
+                self.participant_conformance_failure = .{
+                    .source = conformance.source,
+                    .contract_name = self.graph.familyDefinitionName(conformance.declaration),
+                    .reason = if (err == error.ContextualSignatureMismatch) "implementation operation has an incompatible input signature" else if (standard_contracts.standardDefinition(self.graph, "Equal") == conformance.declaration) "Equal.equal must return exactly (.ok: Bool)" else "operation returns an incompatible associated result",
+                };
+                return error.InvalidContractOperation;
+            },
+            else => return err,
+        };
+        if (standard_contracts.standardDefinition(self.graph, "Deinit") == conformance.declaration)
             return self.makeDestructorOperation(method, try self.core.functionOutputType(method), conformance.source);
         return method;
     }
@@ -1921,20 +2167,23 @@ pub const Resolver = struct {
     fn resolveOperationBody(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(index)) orelse return error.InvalidContractOperation;
         const binding = evidence.binding;
-        if (self.graph.declaration(binding.declaration).function_id) |function| {
+        if (!try self.materializeOperationValue(binding.definition)) return error.DeferredGenericFunction;
+        _ = evidence.definitionValue(self.graph) orelse return error.DeferredGenericFunction;
+        if (self.graph.declaration(self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin)).function_id) |function| {
             return function;
         }
+        const located = self.findContractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, &bindings);
+        try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, &bindings);
+        const requirement = storage.contract_requirements.items[located.definition.requirements.start + index];
+        const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
+        const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
         if (!binding.instantiate_associated) {
-            const located = self.findContractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
-            const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
-            defer bindings.deinit(self.allocator);
-            try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, &bindings);
-            try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, &bindings);
-            const requirement = storage.contract_requirements.items[located.definition.requirements.start + index];
-            const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
             const instantiate_alias = self.instantiate_alias orelse return error.MissingOperationInstantiator;
-            return instantiate_alias(self.function_context.?, binding.declaration, input) catch |err| {
+            return instantiate_alias(self.function_context.?, evidence.definitionValue(self.graph) orelse return error.DeferredGenericFunction, input) catch |err| {
                 if (err == error.OutOfMemory) return err;
                 // Preserve a dependency's specific failure instead of masking
                 // it behind an alias-specialization error.
@@ -1954,15 +2203,23 @@ pub const Resolver = struct {
             };
         }
         const instantiate = self.instantiate_function orelse return error.MissingOperationInstantiator;
-        if (conformance.implementation_arguments.len == 0)
-            return instantiate(self.function_context.?, binding.declaration, conformance.associated_arguments);
-        var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
-        defer arguments.deinit(self.allocator);
-        try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
-        try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
-        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-        return instantiate(self.function_context.?, binding.declaration, .{ .start = start, .len = @intCast(arguments.items.len) });
+        return instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), try self.operationCaptureArguments(evidence), input, output);
+    }
+
+    /// Pending aliases may complete during resolution. Only diagnose their
+    /// participant types after the fixed point has stopped producing evidence.
+    pub fn diagnoseUnresolvedParticipants(self: *Resolver) void {
+        for (self.graph.contract_conformances.items) |conformance| {
+            for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+                if (argument.value != .type or !self.graph.isTypeUnresolved(argument.value.type)) continue;
+                self.participant_conformance_failure = .{
+                    .source = conformance.source,
+                    .contract_name = self.graph.familyDefinitionName(conformance.declaration),
+                    .reason = "an implementation participant type is unknown or unresolved",
+                };
+                return;
+            }
+        }
     }
 
     pub fn validateParticipantConformances(self: *Resolver) !void {
@@ -1972,7 +2229,7 @@ pub const Resolver = struct {
         // Validating an operation body can select evidence for a dependency.
         // Include those new entries in this pass rather than publishing calls
         // whose selected conformance has never been checked.
-        while (index < self.graph.contract_conformances.items.len) : (index += 1) {
+        conformances: while (index < self.graph.contract_conformances.items.len) : (index += 1) {
             const conformance = self.graph.contract_conformances.items[index];
             if (conformance.declaration_validated) continue;
             const module_index: usize = @intFromEnum(conformance.context);
@@ -1988,6 +2245,13 @@ pub const Resolver = struct {
                 .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
                 .reason = "",
             };
+            for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+                if (self.graph.isTypeUnresolved(argument.value.type)) {
+                    // Module aliases and generic applications can complete in
+                    // the pending-resolution loop after declaration discovery.
+                    continue :conformances;
+                }
+            }
             if (!self.core.sameDeclarationNamespace(located.module_index, module_index) and
                 !(self.modules[module_index].is_bundled_core and self.modules[located.module_index].is_bundled_core))
             {
@@ -2000,13 +2264,6 @@ pub const Resolver = struct {
                         };
                 }
                 if (!owns_participant) {
-                    for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
-                        if (self.graph.isTypeUnresolved(argument.value.type)) {
-                            failure.reason = "an implementation participant type is unknown or unresolved";
-                            self.participant_conformance_failure = failure;
-                            return;
-                        }
-                    }
                     failure.reason = "an implementation must belong to the contract module or a nominal participant module";
                     self.participant_conformance_failure = failure;
                     return;
@@ -2055,28 +2312,46 @@ pub const Resolver = struct {
                     return;
                 }
             }
-            var operations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            for (self.graph.contract_operation_bindings.items[conformance.operation_bindings.start..][0..conformance.operation_bindings.len]) |operation| {
+                if (!try self.materializeOperationValue(operation.definition)) continue :conformances;
+                if (global_types.definitionValue(self.graph, operation.definition)) |definition| {
+                    if (self.graph.familyDefinition(definition.origin).kind == .function) continue;
+                } else {
+                    const ty = self.graph.node(operation.definition).ty orelse continue :conformances;
+                    if (self.graph.isTypeUnresolved(ty)) continue :conformances;
+                }
+                failure.source = operation.implementation_source;
+                failure.operation = self.graph.text(operation.name);
+                failure.reason = "implementation operation must be a compile-time function definition value";
+                self.participant_conformance_failure = failure;
+                return;
+            }
+            var operations: std.ArrayList(struct { index: u32, function: global_sg.GlobalFunctionId }) = .empty;
             defer operations.deinit(self.allocator);
             const first = bindings.types[located.definition.participants.start].?;
             for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, operation_index| {
                 const name = self.modules[located.module_index].text(requirement.name);
-                const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
-                const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings);
+                if (requirement.parameters.len != 0 or requirement.signature == null) continue;
+                const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
+                const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
+                if (global_types.fields(self.graph, input) == null) {
+                    failure.operation = name;
+                    failure.reason = "contract operation input must be a record type";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
                 const selected: MethodSelection = selected: {
-                    const method = try self.resolveOperationBinding(conformance, operation_index);
+                    const method = self.resolveOperationBinding(conformance, operation_index) catch |err| switch (err) {
+                        error.DeferredGenericFunction, error.ComptimeExecutionPending => continue :conformances,
+                        error.ContextualSignatureMismatch => break :selected .missing,
+                        error.ContextualOutputSignatureMismatch => break :selected .incompatible_output,
+                        else => return err,
+                    };
                     const function = self.graph.function(method);
                     const required_inputs = global_types.fields(self.graph, input).?;
                     const required_outputs = global_types.fields(self.graph, output).?;
-                    if (!self.inputFieldsSatisfyRequirement(required_inputs, function.input)) break :selected .missing;
-                    for (0..required_inputs.len) |position| {
-                        if (!std.mem.eql(u8, self.graph.text(self.graph.fields.items[required_inputs.start + position].name), self.graph.text(self.graph.fields.items[function.input.start + position].name))) break :selected .missing;
-                    }
-                    if (required_outputs.len != function.output.len) break :selected .incompatible_output;
-                    for (0..required_outputs.len) |position| {
-                        const required = self.graph.fields.items[required_outputs.start + position];
-                        const actual = self.graph.fields.items[function.output.start + position];
-                        if (!global_types.equal(self.graph, required.ty, actual.ty) or !std.mem.eql(u8, self.graph.text(required.name), self.graph.text(actual.name))) break :selected .incompatible_output;
-                    }
+                    if (!global_types.operationInputsCompatible(self.graph, required_inputs, function.input)) break :selected .missing;
+                    if (!global_types.operationFieldsEqual(self.graph, required_outputs, function.output)) break :selected .incompatible_output;
                     break :selected .{ .function = method };
                 };
                 if (selected != .function) {
@@ -2086,48 +2361,24 @@ pub const Resolver = struct {
                     failure.reason = switch (selected) {
                         .missing => "implementation operation has an incompatible input signature",
                         .ambiguous => "ambiguous operation",
-                        .incompatible_output => if (standard_contracts.standardDeclaration(self.graph, "Equal") == conformance.declaration) "Equal.equal must return exactly (.ok: Bool)" else "operation returns an incompatible associated result",
+                        .incompatible_output => if (standard_contracts.standardDefinition(self.graph, "Equal") == conformance.declaration) "Equal.equal must return exactly (.ok: Bool)" else "operation returns an incompatible associated result",
                         .function => unreachable,
                     };
                     self.participant_conformance_failure = failure;
                     return;
                 }
-                if (standard_contracts.standardDeclaration(self.graph, "Init") == conformance.declaration) {
-                    const required_inputs = global_types.fields(self.graph, input).?;
-                    const required_outputs = global_types.fields(self.graph, output).?;
-                    const arguments = self.graph.fields.items[required_inputs.start].ty;
-                    _ = try self.generics.ensureGenericInstance(arguments);
-                    if (global_types.fields(self.graph, arguments) == null) {
-                        failure.reason = "Init.Args must be a record type describing construction arguments";
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
-                    const result = self.graph.fields.items[required_outputs.start].ty;
-                    if (!self.graph.isTypeUnresolved(result) and !global_types.resultMatchesTarget(self.graph, result, first)) {
-                        failure.reason = "Init.Result must be its participant type or one Errable containing that type";
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
-                }
-
-                if (standard_contracts.standardDeclaration(self.graph, "Convert") == conformance.declaration) {
-                    const required_outputs = global_types.fields(self.graph, output).?;
-                    const result = self.graph.fields.items[required_outputs.start].ty;
-                    const target = self.graph.generic_arguments.items[conformance.participants.start + 1].value.type;
-                    if (!self.graph.isTypeUnresolved(result) and !global_types.resultMatchesTarget(self.graph, result, target)) {
-                        failure.reason = "Convert.Result must be its target participant type or one Errable containing that type";
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
+                if (standard_contracts.operationResultFailure(self.graph, conformance, selected.function)) |reason| {
+                    failure.reason = reason;
+                    self.participant_conformance_failure = failure;
+                    return;
                 }
 
                 try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source, .{ .conformance = @intCast(index), .index = @intCast(operation_index) });
-                try operations.append(self.allocator, selected.function);
+                try operations.append(self.allocator, .{ .index = @intCast(operation_index), .function = selected.function });
             }
-            const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
-            try self.graph.function_refs.appendSlice(self.allocator, operations.items);
+            for (operations.items) |operation|
+                try self.graph.completeOperationBinding(self.allocator, @enumFromInt(conformance.operation_bindings.start + operation.index), operation.function);
             var completed = self.graph.contract_conformances.items[index];
-            completed.operations = .{ .start = operation_start, .len = @intCast(operations.items.len) };
             // Empty marker contracts are validated too. Keep retrying markers
             // with unresolved arguments so projection/alias resolution cannot
             // hide a later bound failure or duplicate participant tuple.
@@ -2178,7 +2429,7 @@ pub const Resolver = struct {
         }
         const value_start: u32 = @intCast(self.graph.value_fields.items.len);
         try self.graph.value_fields.appendSlice(self.allocator, values.items);
-        const input_type = try self.generics.internType(.{ .structural = .{ .fields = function.input } });
+        const input_type = function.input_type orelse try self.generics.internType(.{ .structural = .{ .fields = function.input } });
         const input: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = input_type, .content = .{ .struct_value_literal = .{ .fields = .{ .start = value_start, .len = function.input.len } } } });
         const call: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
@@ -2192,6 +2443,8 @@ pub const Resolver = struct {
             .declaration = function.declaration,
             .input = function.input,
             .output = function.output,
+            .input_type = input_type,
+            .output_type = function.output_type,
             .body = block,
             .input_bindings = .{ .start = binding_start, .len = function.input.len },
             .flags = .{ .is_deinit = true, .has_declared_body = true, .is_generic_instantiation = true },
@@ -2206,6 +2459,10 @@ pub const Resolver = struct {
         return contract_projections.resolveAssociatedType(context, base, member, source);
     }
 
+    pub fn resolveAssociatedDefinition(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.DefinitionValue {
+        return contract_projections.resolveAssociatedDefinition(context, base, member, source);
+    }
+
     pub fn resolveAssociatedInt(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!i64 {
         return contract_projections.resolveAssociatedInt(context, base, member, source);
     }
@@ -2214,11 +2471,11 @@ pub const Resolver = struct {
         return contract_projections.resolveAssociatedTypes(self);
     }
 
-    pub fn constraintDeclaration(
+    pub fn constraintDefinition(
         self: *Resolver,
         module_index: usize,
         constraint_id: parameterized_storage.ContractConstraintId,
-    ) !global_sg.GlobalDeclId {
+    ) !global_sg.GlobalFamilyDefinitionId {
         const storage = &self.modules[module_index].semantic.parameterized_storage;
         const constraint = storage.contract_constraints.items[@intFromEnum(constraint_id)];
         const key = ConstraintKey{ .module_index = @intCast(module_index), .constraint = constraint_id };
@@ -2231,7 +2488,7 @@ pub const Resolver = struct {
 
     pub fn constraintArgumentsKnown(self: *Resolver, module_index: usize, constraint_id: parameterized_storage.ContractConstraintId, bindings: *generic_mod.Resolver.Bindings) !bool {
         const constraint = self.modules[module_index].semantic.parameterized_storage.contract_constraints.items[@intFromEnum(constraint_id)];
-        const definition = self.findContractDefinition(try self.constraintDeclaration(module_index, constraint_id)) orelse return false;
+        const definition = self.findContractDefinition(try self.constraintDefinition(module_index, constraint_id)) orelse return false;
         if (!definition.definition.hasExplicitParticipants()) return false;
         _ = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, bindings) catch |err| {
             if (err == error.OutOfMemory) return err;
@@ -2250,7 +2507,7 @@ pub const Resolver = struct {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage;
         const constraint = storage.contract_constraints.items[@intFromEnum(constraint_id)];
-        const contract_decl = try self.constraintDeclaration(module_index, constraint_id);
+        const contract_decl = try self.constraintDefinition(module_index, constraint_id);
         const definition = self.findContractDefinition(contract_decl) orelse return false;
         if (!definition.definition.hasExplicitParticipants()) return false;
         if (constraint.arguments.len == 0 and definition.definition.participants.len == 1)
@@ -2260,7 +2517,7 @@ pub const Resolver = struct {
 
     // Participants select evidence first. Named associated restrictions compare
     // against that evidence; they never participate in choosing an implementation.
-    fn inferParticipantConstraint(self: *Resolver, module_index: usize, constraint: parameterized_storage.ContractConstraint, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, declaration: global_sg.GlobalDeclId, bindings: *generic_mod.Resolver.Bindings) !bool {
+    fn inferParticipantConstraint(self: *Resolver, module_index: usize, constraint: parameterized_storage.ContractConstraint, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, bindings: *generic_mod.Resolver.Bindings) !bool {
         const module = &self.modules[module_index];
         const target_module = &self.modules[located.module_index];
         const parameters = target_module.semantic.parameterized_storage.comptime_parameters.items;
@@ -2307,6 +2564,16 @@ pub const Resolver = struct {
                 const raw = located.definition.parameters.start + @as(u32, @intCast(index));
                 if (name.len == 0 or !std.mem.eql(u8, name, target_module.text(parameters[raw].name))) continue;
                 switch (argument.value) {
+                    .projection => |projection| {
+                        const value = try self.generics.instantiateArgumentProjection(module_index, projection, bindings);
+                        const actual: global_sg.GenericArgument.Value = switch (parameters[raw].kind) {
+                            .definition => .{ .definition = selected.definitions[raw] orelse return false },
+                            .type => .{ .type = selected.types[raw] orelse return false },
+                            .comptime_int => .{ .comptime_int = selected.ints[raw] orelse return false },
+                        };
+                        if (!global_types.genericArgumentValuesEqual(self.graph, value, actual)) return false;
+                    },
+                    .definition => |pattern| if (!try self.generics.inferDefinitionValue(module_index, pattern, selected.definitions[raw] orelse return false, bindings)) return false,
                     .type => |pattern| if (!try self.inferConstraintTypePattern(module_index, pattern, selected.types[raw] orelse return false, bindings)) return false,
                     .comptime_int => |pattern| if (!try self.inferConstraintIntPattern(module_index, pattern, selected.ints[raw] orelse return false, bindings)) return false,
                 }
@@ -2326,11 +2593,14 @@ pub const Resolver = struct {
                 .pointer => |pointer| supplied == .pointer and pointer.mutability == supplied.pointer.mutability,
                 .structural => |record| supplied == .structural and record.fields.len == supplied.structural.fields.len,
                 .generic => |nominal| blk: {
-                    if (supplied != .generic) break :blk false;
                     // Full matching owns diagnostics and ordered inference;
                     // this filter must not report a losing candidate's error.
-                    const declaration = self.generics.resolveParameterizedDeclaration(module_index, nominal.base) catch break :blk true;
-                    break :blk declaration == supplied.generic.base;
+                    const declaration = self.generics.resolveParameterizedFamily(module_index, nominal.base) catch break :blk true;
+                    if (supplied == .generic and declaration == supplied.generic.base) break :blk true;
+                    const located = self.generics.findTypeParameterized(declaration) orelse break :blk false;
+                    const body = self.modules[located.module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
+                    // Alias applications may preserve another producer's identity.
+                    break :blk body != .definition;
                 },
                 else => true,
             },
@@ -2347,6 +2617,26 @@ pub const Resolver = struct {
     ) !bool {
         const ir_storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         switch (ir_storage.types.items[@intFromEnum(pattern)]) {
+            .definition => {
+                const arguments = self.generics.definitionArguments(module_index, pattern, actual) orelse return false;
+                for (0..arguments.pattern.len) |position| {
+                    const wanted = ir_storage.generic_arguments.items[arguments.pattern.start + position];
+                    const given = self.graph.generic_arguments.items[arguments.actual.start + position];
+                    switch (wanted.value) {
+                        .projection => |projection| if (!global_types.genericArgumentValuesEqual(self.graph, try self.generics.instantiateArgumentProjection(module_index, projection, bindings), given.value)) return false,
+                        .definition => |definition_value| {
+                            if (given.value != .definition or !try self.generics.inferDefinitionValue(module_index, definition_value, given.value.definition, bindings)) return false;
+                        },
+                        .type => |ty| {
+                            if (given.value != .type or !try self.inferConstraintTypePattern(module_index, ty, given.value.type, bindings)) return false;
+                        },
+                        .comptime_int => |integer| {
+                            if (given.value != .comptime_int or !try self.inferConstraintIntPattern(module_index, integer, given.value.comptime_int, bindings)) return false;
+                        },
+                    }
+                }
+                return true;
+            },
             .parameter => |parameter| {
                 const slot = &bindings.types[@intFromEnum(parameter)];
                 if (slot.*) |previous|
@@ -2376,13 +2666,22 @@ pub const Resolver = struct {
                     return true;
                 },
                 .generic => |nominal| {
-                    const concrete = switch (self.graph.types.items[@intFromEnum(actual)]) {
-                        .generic => |value| value,
-                        else => return false,
-                    };
-                    const declaration = try self.generics.resolveParameterizedDeclaration(module_index, nominal.base);
-                    if (declaration != concrete.base) return false;
+                    const declaration = try self.generics.resolveParameterizedFamily(module_index, nominal.base);
                     const located = self.generics.findTypeParameterized(declaration) orelse return false;
+                    const actual_type = self.graph.types.items[@intFromEnum(actual)];
+                    if (actual_type != .generic or declaration != actual_type.generic.base) {
+                        // Applying an alias family preserves its result's nominal
+                        // identity. A closed alias may therefore have another
+                        // producer; matching fields never establishes equality.
+                        const body = self.modules[located.module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
+                        if (body == .definition) return false;
+                        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+                            error.ComptimeExecutionPending, error.OutOfMemory => return err,
+                            else => return false,
+                        };
+                        return global_types.equal(self.graph, expected, actual);
+                    }
+                    const concrete = actual_type.generic;
                     if (nominal.arguments.len != located.parameterized.parameters.len or concrete.arguments.len != nominal.arguments.len) return false;
                     for (0..located.parameterized.parameters.len) |position| {
                         const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
@@ -2445,13 +2744,13 @@ pub const Resolver = struct {
     // even when no value of the participant has been constructed yet. This
     // selects evidence only; operation bodies keep their ordinary lazy checks.
     pub fn prepareStorageCleanupEvidence(self: *Resolver, ty: global_sg.GlobalTypeId) !void {
-        const declaration = @import("standard_contracts.zig").standardDeclaration(self.graph, "Deinit") orelse return;
+        const declaration = @import("standard_contracts.zig").standardDefinition(self.graph, "Deinit") orelse return;
         var seen: std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void) = .empty;
         defer seen.deinit(self.allocator);
         try self.prepareStorageCleanupType(ty, declaration, &seen, 0);
     }
 
-    fn prepareStorageCleanupType(self: *Resolver, ty: global_sg.GlobalTypeId, declaration: global_sg.GlobalDeclId, seen: *std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void), depth: usize) anyerror!void {
+    fn prepareStorageCleanupType(self: *Resolver, ty: global_sg.GlobalTypeId, declaration: global_sg.GlobalFamilyDefinitionId, seen: *std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void), depth: usize) anyerror!void {
         if (depth > 256) return error.InvalidStorageCleanupType;
         if (seen.contains(ty)) return;
         try seen.put(self.allocator, ty, {});
@@ -2477,7 +2776,7 @@ pub const Resolver = struct {
     pub fn implements(
         self: *Resolver,
         concrete: global_sg.GlobalTypeId,
-        contract_decl: global_sg.GlobalDeclId,
+        contract_decl: global_sg.GlobalFamilyDefinitionId,
     ) !bool {
         self.stats.checks += 1;
         return self.implementsDepth(concrete, contract_decl, 0);
@@ -2490,6 +2789,7 @@ pub const Resolver = struct {
     pub fn runtimeBindingContract(self: *const Resolver, binding_id: global_sg.GlobalBindingId) ?ContractUse {
         const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
         if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) return null;
+        if (@import("types.zig").isStaticBinding(self.graph, binding_id)) return null;
         // Ordinary bindings cannot violate the contract/runtime boundary. Only
         // contract-typed bindings need the interface exception and its lookup.
         const use = self.contractUse(binding.ty) orelse return null;
@@ -2499,7 +2799,7 @@ pub const Resolver = struct {
 
     pub fn contractUse(self: *const Resolver, ty: global_sg.GlobalTypeId) ?ContractUse {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
-            .declared => |declaration| if (self.findContractDefinition(declaration) != null)
+            .definition => |declaration| if (self.findContractDefinition(declaration) != null)
                 .{ .declaration = declaration, .arguments = .{ .start = 0, .len = 0 } }
             else
                 null,
@@ -2525,9 +2825,9 @@ pub const Resolver = struct {
         const measurement = if (self.core.scan_profile) |profile| profile.begin(.generic_function_constraints) else null;
         defer if (measurement) |m| m.finish(false);
         for (self.graph.generic_function_instances.items) |instance| {
-            const owner = self.graph.moduleForDeclaration(instance.parameterized_declaration) orelse return error.InvalidGenericFunctionOwner;
+            const owner = self.graph.moduleForFamilyDefinition(instance.parameterized_definition) orelse return error.InvalidGenericFunctionOwner;
             const module_index: usize = @intFromEnum(owner);
-            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_declaration) orelse {
+            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_definition) orelse {
                 continue;
             };
             const module = &self.modules[module_index];
@@ -2638,7 +2938,7 @@ pub const Resolver = struct {
         // The selected proof is immutable. Revalidation must not allocate a
         // second outcome tree that cannot add any information to that proof.
         for (self.graph.contract_safety_conformances.items) |existing| {
-            if (std.meta.eql(existing.selection, selection)) return;
+            if (std.meta.eql(existing.selection, selection) and existing.method == method) return;
         }
         const contract = contract_safety.globalSafetyContract(self, located.module_index, declared, function.input, output) catch |err| switch (err) {
             error.UnknownOutcomeContractVariant, error.DuplicateOutcomeContract, error.InvalidOutcomeContract => {
@@ -2665,21 +2965,19 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{
                 .name = name,
                 .value = switch (parameter.kind) {
+                    .definition => .{ .definition = bindings.definitions[raw] orelse return error.UnboundDefinitionParameter },
                     .type => .{ .type = bindings.types[raw] orelse return error.UnboundGenericTypeParameter },
                     .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse return error.UnboundComptimeParameter },
                 },
             });
         }
-        const contract_decl = globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration);
+        const contract_decl = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)).?;
         const use = ContractUse{ .declaration = contract_decl, .arguments = .{ .start = start, .len = located.definition.parameters.len } };
         const domains = if (located.definition.domains.len == 0) &.{} else (try self.resolveStorageDomains(use, concrete, located, source)) orelse return;
         var receiver: ?u32 = null;
-        const input = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
-        for (storage.ir.fields.items[input.start..][0..input.len], 0..) |field, index| {
-            const ty = storage.ir.types.items[@intFromEnum(field.ty)];
-            if (ty == .resolved and ty.resolved == .pointer and
-                self.isUnaryReceiverParticipantType(located, ty.resolved.pointer.child))
-            {
+        for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+            const ty = self.graph.resolvedSemanticType(field.ty) orelse continue;
+            if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, concrete)) {
                 receiver = @intCast(index);
                 break;
             }
@@ -2687,13 +2985,13 @@ pub const Resolver = struct {
         try self.graph.contract_safety_conformances.append(self.allocator, .{ .selection = selection, .method = method, .contract = contract, .receiver_input_index = receiver, .domains = domains, .source = source });
     }
 
-    fn contractDeclFromType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {
+    fn contractDefinitionFromType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFamilyDefinitionId {
         const contract_ty = switch (self.graph.types.items[@intFromEnum(ty)]) {
             .virtual => |contract_type| contract_type,
             else => ty,
         };
         return switch (self.graph.types.items[@intFromEnum(contract_ty)]) {
-            .declared => |declaration| if (self.findContractDefinition(declaration) != null) declaration else null,
+            .definition => |declaration| if (self.findContractDefinition(declaration) != null) declaration else null,
             .generic => |generic| if (self.findContractDefinition(generic.base) != null) generic.base else null,
             else => null,
         };
@@ -2715,6 +3013,7 @@ pub const Resolver = struct {
                 before += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
 
@@ -2732,6 +3031,7 @@ pub const Resolver = struct {
                 after += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
             made_progress = after > before;
@@ -2747,57 +3047,112 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn resolveExternalContract(self: *Resolver, module_index: usize, id: module_entities.ExternalRefId) !global_sg.GlobalDeclId {
+    fn resolveExternalContract(self: *Resolver, module_index: usize, id: module_entities.ExternalRefId) !global_sg.GlobalFamilyDefinitionId {
         const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(id)];
-        return self.core.resolveDeclaration(module_index, reference, &.{.contract_type});
+        return (try self.core.resolveDefinitionReference(module_index, reference, &.{.contract_type})) orelse error.UnknownGlobalDeclaration;
     }
 
-    pub fn resolveDeclarationRef(
-        self: *Resolver,
-        module_index: usize,
-        reference: ir.DeclarationRef,
-        kind: primitives.DeclarationKind,
-    ) !global_sg.GlobalDeclId {
+    pub fn resolveDeclarationRef(self: *Resolver, module_index: usize, reference: ir.DeclarationRef, kind: primitives.DeclarationKind) !global_sg.GlobalFamilyDefinitionId {
         return switch (reference) {
-            .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
+            .module => |local| self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse error.ExpectedParameterizedDefinition,
             .external => |external| blk: {
                 const key = ContractRefKey{ .module_index = @intCast(module_index), .external = external, .kind = kind };
-                if (self.resolved_contract_refs.get(key)) |declaration| break :blk declaration;
-                // Module declarations are fixed after relocation. Cache only
-                // successful lookups so an unresolved reference can be retried.
-                const declaration = try self.core.resolveDeclaration(
-                    module_index,
-                    self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
-                    &.{kind},
-                );
-                try self.resolved_contract_refs.put(self.allocator, key, declaration);
-                break :blk declaration;
+                if (self.resolved_contract_refs.get(key)) |definition| break :blk definition;
+                const definition = (try self.core.resolveDefinitionReference(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{kind})) orelse return error.UnknownGlobalDeclaration;
+                try self.resolved_contract_refs.put(self.allocator, key, definition);
+                break :blk definition;
             },
         };
+    }
+
+    pub const FunctionTarget = union(enum) {
+        definition: global_sg.DefinitionValue,
+        expression: global_sg.GlobalNodeId,
+
+        pub fn value(self: FunctionTarget, graph: *const global_sg.GlobalSemanticGraph) ?global_sg.DefinitionValue {
+            return switch (self) {
+                .definition => |definition| definition,
+                .expression => |expression| global_types.definitionValue(graph, expression),
+            };
+        }
+    };
+
+    /// Name lookup retains an existing compile-time expression when the name
+    /// denotes a binding. Probing a direct definition allocates no graph nodes.
+    pub fn resolveFunctionTarget(self: *Resolver, module_index: usize, reference: parameterized_storage.ContractOperation.Function, bindings: ?*generic_mod.Resolver.Bindings) !FunctionTarget {
+        if (reference == .expression) {
+            const substitutions = bindings orelse return error.DeferredGenericFunction;
+            const instantiate = self.instantiate_operation_value orelse return error.MissingOperationInstantiator;
+            return .{ .expression = try instantiate(self.function_context.?, module_index, reference.expression, substitutions) };
+        }
+        if (reference == .external) {
+            const external = self.modules[module_index].semantic.external_refs.items[@intFromEnum(reference.external)];
+            if (external.module_path == null) {
+                if (self.core.staticSessionBinding(module_index, self.modules[module_index].text(external.name))) |binding|
+                    return .{ .expression = self.graph.binding(binding).initialization.? };
+            }
+            const alias = self.core.resolveDeclaration(module_index, external, &.{.binding}) catch |err| switch (err) {
+                error.UnknownGlobalDeclaration => null,
+                else => return err,
+            };
+            if (alias) |declaration| {
+                const binding_id = self.core.declarationBinding(declaration) orelse return error.UnknownGlobalDeclaration;
+                const binding = self.graph.binding(binding_id);
+                if (binding.mutability != .constant or binding.deferred_initialization) return error.UnknownGlobalDeclaration;
+                return .{ .expression = binding.initialization orelse return error.UnknownGlobalDeclaration };
+            }
+        }
+        const declaration = switch (reference) {
+            .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
+            .external => |external| try self.core.resolveDeclaration(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{.function}),
+            .expression => unreachable,
+        };
+        return .{ .definition = .{ .origin = self.graph.familyForDeclaration(declaration) orelse return error.UnknownGlobalDeclaration } };
+    }
+
+    /// Publish the ordinary expression once with the selected evidence. Deferred
+    /// aliases complete through their original binding, not a copied recipe.
+    fn resolveFunctionValue(self: *Resolver, module_index: usize, reference: parameterized_storage.ContractOperation.Function, bindings: ?*generic_mod.Resolver.Bindings, source: primitives.SourceRef) !?global_sg.GlobalNodeId {
+        if (reference == .expression) {
+            const substitutions = bindings orelse return null;
+            const node = try self.generics.recordCapturedExpression(module_index, reference.expression, null, substitutions);
+            var retained = self.graph.node(node);
+            retained.source = source;
+            try self.graph.setNode(self.allocator, node, retained);
+            return node;
+        }
+        const target = try self.resolveFunctionTarget(module_index, reference, bindings);
+        // Template validation checks member identities without publishing unused
+        // operation evidence or definition nodes. Concrete selection owns them.
+        if (bindings == null) return null;
+        if (target == .expression) return target.expression;
+        const definition = target.definition;
+        const node: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+        try self.graph.nodes.append(self.allocator, .{
+            .source = self.graph.familyDefinition(definition.origin).source,
+            .ty = try global_types.definitionClass(self.allocator, self.graph, definition.origin),
+            .content = .{ .definition_literal = definition },
+        });
+        return node;
     }
 
     pub fn sourceFor(self: *const Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
         return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
 
-    fn findFunctionParameterized(
-        self: *Resolver,
-        module_index: usize,
-        declaration: global_sg.GlobalDeclId,
-    ) ?parameterized_storage.ParameterizedFunction {
-        const base = self.offsets[module_index].declaration_base;
-        const raw = @intFromEnum(declaration);
-        if (raw < base) return null;
-        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.parameterized_storage.parameterized_functions.items) |parameterized|
-            if (parameterized.concrete_function == null and parameterized.declaration == local) return parameterized;
-        return null;
+    fn findFunctionParameterized(self: *Resolver, module_index: usize, definition: global_sg.GlobalFamilyDefinitionId) ?parameterized_storage.ParameterizedFunction {
+        const family = self.graph.familyDefinition(definition);
+        if (family.kind != .function) return null;
+        const index = family.template_index orelse return null;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        if (index >= storage.parameterized_functions.items.len) return null;
+        return storage.parameterized_functions.items[index];
     }
 };
 
 test "contract resolver keeps compile-time relation metadata outside GlobalSG" {
     try std.testing.expect(@sizeOf(Stats) <= 56);
-    try std.testing.expect(@sizeOf(global_sg.GlobalDeclId) == 4);
+    try std.testing.expect(@sizeOf(global_sg.GlobalFamilyDefinitionId) == 4);
 }
 
 test "closed symbolic patterns compare without substitutions or graph mutation" {
@@ -2809,7 +3164,7 @@ test "closed symbolic patterns compare without substitutions or graph mutation" 
         .{ .resolved = .{ .builtin = .UInt8 } },
         .{ .concrete = @enumFromInt(0) },
         .{ .concrete = @enumFromInt(1) },
-        .{ .resolved = .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } } },
+        .{ .resolved = .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } },
     });
     try module.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .type });
     var graph: global_sg.GlobalSemanticGraph = .{};
@@ -2825,9 +3180,9 @@ test "closed symbolic patterns compare without substitutions or graph mutation" 
     try std.testing.expect(try resolver.symbolicTypesEqual(int, int));
     try std.testing.expect(!try resolver.symbolicTypesEqual(int, byte));
     try std.testing.expect(try resolver.symbolicTypesEqual(concrete, equivalent));
-    const nominal = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(4) };
-    try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, nominal));
-    try std.testing.expect(!try resolver.symbolicTypesEqual(nominal, concrete));
+    const reference = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(4) };
+    try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, reference));
+    try std.testing.expect(!try resolver.symbolicTypesEqual(reference, concrete));
     try graph.markTypeUnresolved(allocator, @enumFromInt(1));
     try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, equivalent));
     try std.testing.expectEqual(@as(usize, 2), graph.types.items.len);
@@ -2848,13 +3203,15 @@ test "unconstrained generic types and functions need no constraint substitutions
     });
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
-    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 1 } });
+    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 1 }, .declarations = .{ .start = 0, .len = 1 } });
+    try graph.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .type, .parameter_count = 1, .template_index = 0 });
+    try graph.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .function, .parameter_count = 1, .template_index = 0 });
     try graph.types.append(allocator, .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } } });
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.generic_arguments.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } });
     try graph.generic_function_instances.append(allocator, .{
         .function = @enumFromInt(0),
-        .parameterized_declaration = @enumFromInt(0),
+        .parameterized_definition = @enumFromInt(1),
         .arguments = .{ .start = 0, .len = 1 },
     });
     const modules = [_]module_sg.ModuleSemanticGraph{module};
@@ -2883,14 +3240,18 @@ fn extendTemplateIndex(allocator: std.mem.Allocator) !void {
         .associated_arguments = .{ .start = 0, .len = 0 },
         .source = .{ .file_index = 0, .offset = 0 },
     };
-    try second.semantic.parameterized_storage.contract_conformances.appendNTimes(a, template, 32);
+    try second.semantic.parameterized_storage.contract_conformances.appendNTimes(a, template, 16);
+    var concrete = template;
+    concrete.parameters.len = 0;
+    try second.semantic.parameterized_storage.contract_conformances.appendNTimes(a, concrete, 16);
     const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
     const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .family_definition = @enumFromInt(0) });
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = modules[0..1], .offsets = offsets[0..1], .core = undefined, .generics = undefined };
     defer resolver.deinit();
-    const declaration: global_sg.GlobalDeclId = @enumFromInt(0);
+    const declaration: global_sg.GlobalFamilyDefinitionId = @enumFromInt(0);
     try std.testing.expectEqual(@as(usize, 0), (try resolver.implementationTemplates(declaration, 1)).len);
     const saved = resolver.checkpointResolution();
     resolver.modules = &modules;

@@ -3,26 +3,28 @@ unsafe_allocation := import ("../../_support/unsafe_allocation")
 SlotProtocol#(.Participant: Type): Contract = (
     domain contents
 
-    .put: (.self: $&Participant, .value: Allocation) -> () where retains(self.contents, value)
-    .take: (.self: $&Participant) -> (.value: Allocation) where {
+    .put  : (.self: $&Participant, .value: Allocation) -> () where retains(self.contents, value)
+    .take : (.self: $&Participant) -> (.value: Allocation) where {
         owns(value)
         from_storage(value, self.contents)
         empties(self.contents)
     }
 )
 
-Slot: Type = (.storage: Allocation)
+Slot := (.storage: Allocation)
 
-implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where { contents(self.storage) }
+implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where {
+    contents(self.storage)
+}
 
-_impl_put_Slot := (.self: $&Slot, .value: Allocation) -> ()  {
+_impl_put_Slot := (.self: $&Slot, .value: Allocation) -> () {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
     trusted_opaque_move_in#(Allocation, Allocation)($&self&.storage, slot, ~value)
 }
 
-_impl_take_Slot := (.self: $&Slot) -> (.value: Allocation)  {
+_impl_take_Slot := (.self: $&Slot) -> (.value: Allocation) {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
@@ -30,15 +32,15 @@ _impl_take_Slot := (.self: $&Slot) -> (.value: Allocation)  {
     trusted_opaque_mark_empty($&self&.storage)
 }
 
-forward_put(.slot: $&Virtual#(SlotProtocol), .value: Allocation) -> () := {
+forward_put := (.slot: $&Virtual#(SlotProtocol), .value: Allocation) -> () {
     put(slot, ~value)
 }
 
-forward_take(.slot: $&Virtual#(SlotProtocol)) -> (.value: Allocation) := {
+forward_take := (.slot: $&Virtual#(SlotProtocol)) -> (.value: Allocation) {
     value = take(slot)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     implementation ::= Slot(unwrap_or_abort(allocate#(Allocation)(allocator)))
     slot ::= to_virtual#(SlotProtocol)($&implementation)

@@ -8,7 +8,7 @@ StringFormatting#(.Value: Type, .Provider: Type): Contract = (
     )
 )
 
-format_into#(.Value: Type, .Provider: Type: Allocator) := (
+format_into := #(.Value: Type, .Provider: Type: Allocator) (
     .out: $&String, .value: Value, .allocator: $&Provider = reach allocator
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     result = StringFormatting#(
@@ -16,7 +16,7 @@ format_into#(.Value: Type, .Provider: Type: Allocator) := (
     ).append(.out = out, .value = ~value, .allocator = allocator)
 }
 
-format#(.Value: Type, .Provider: Type: Allocator) := (
+format := #(.Value: Type, .Provider: Type: Allocator) (
     .value: Value, .allocator: $&Provider = reach allocator
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     result = ~StringFormatting#(Value, Provider).render(.value = ~value, .allocator = allocator)

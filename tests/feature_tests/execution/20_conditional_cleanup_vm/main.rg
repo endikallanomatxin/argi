@@ -1,6 +1,6 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
 Manager: Type = ()
 
@@ -21,7 +21,7 @@ release_resource := (.self: &Manager, .resource: $&Resource, .consume: Bool) -> 
     result = ..none
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     manager ::= Manager()
     {

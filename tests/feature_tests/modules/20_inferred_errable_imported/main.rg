@@ -1,5 +1,5 @@
-main () -> (.status_code: Int32) := {
-    dep := import("./dep")
+main := () -> (.status_code: Int32) {
+    dep := import ("./dep")
     outcome := dep.load()
 
     match outcome {
@@ -7,7 +7,7 @@ main () -> (.status_code: Int32) := {
             status_code = payload
             return
         }
-        ..error & err {
+        ..error&err {
             match err&.reason {
                 ..import_error {
                     status_code = 43

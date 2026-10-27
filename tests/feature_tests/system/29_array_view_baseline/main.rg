@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     data: Array#(.n = 4, .t: Int32) = (0, 0, 0, 0)
     values ::= view(.self = $&data)
 

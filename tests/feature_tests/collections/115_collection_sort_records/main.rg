@@ -1,4 +1,4 @@
-Record: Type = (.key: Int32, .tag: UIntNative)
+Record := (.key: Int32, .tag: UIntNative)
 
 implement ImplicitlyCopyable#(Record) ()
 
@@ -10,7 +10,7 @@ implement OrderPolicy#(ByKey, Record) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     records: [6]Record = (
         (.key = 3, .tag = 0),
         (.key = 1, .tag = 1),

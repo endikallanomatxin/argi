@@ -1,7 +1,7 @@
 ..invalid_option
 ..missing_option_value
 
-CliOption: Type = (.name: StringView, .value: ?StringView, .short: Bool)
+CliOption := (.name: StringView, .value: ?StringView, .short: Bool)
 
 implement ImplicitlyCopyable#(CliOption) ()
 
@@ -13,28 +13,34 @@ implement ImplicitlyCopyable#(CliArgument) ()
 -- positionals, and --. Names and attached values borrow the source. Schema
 -- validation belongs to callers; take_value consumes the next token verbatim,
 -- so negative numeric values do not accidentally become options.
-CliParser#(.t: Type: ArgumentSource#(t)): Type = (
+CliParser := #(.t: Type: ArgumentSource#(t)) (
     ._source       : &t,
     ._index        : UIntNative,
     ._short_offset : UIntNative,
     ._positionals  : Bool
 )
 
-implement#(.t: Type: ArgumentSource#(t)) Init#(
-    CliParser#(.t: t), (.source: &t, .start: UIntNative = 0)
-) (
-    .Result : Type = CliParser#(.t: t)
-    .init   = (.args: (.source: &t, .start: UIntNative = 0)) -> (.result: Result) {
-        source ::= args.source
-        start ::= args.start
+CliParserInitArgs: Type = #(.t: Type: ArgumentSource#(t)) (.source: &t, .start: UIntNative = 0)
 
-        result = (._source = source, ._index = start, ._short_offset = 0, ._positionals = false)
+implement#(.t: Type: ArgumentSource#(t)) Init#(CliParser#(.t: t), CliParserInitArgs#(t)) (
+    .Result : Type = CliParser#(.t: t)
+
+    .init = CliParserInitArgs#(t) -> (.result: Result) {
+        _init_source ::= source
+        _init_start ::= start
+
+        result = (
+            ._source       = _init_source
+            ._index        = _init_start
+            ._short_offset = 0
+            ._positionals  = false
+        )
     }
 )
 
-next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
+next := #(.t: Type: ArgumentSource#(t)) (.self: $&CliParser#(.t: t)) -> (
     .result : Errable#(?CliArgument, (..invalid_option, ..invalid_utf8, ..out_of_bounds))
-) := {
+) {
     while self&._index < length(self&._source).count {
         text ::= get(self&._source, .index = self&._index)!
         if self&._short_offset > 0 {
@@ -107,9 +113,9 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
     result = ..ok ..none
 }
 
-take_value#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t), .option: CliOption) -> (
+take_value := #(.t: Type: ArgumentSource#(t)) (.self: $&CliParser#(.t: t), .option: CliOption) -> (
     .result : Errable#(StringView, (..missing_option_value, ..invalid_utf8, ..out_of_bounds))
-) := {
+) {
     match option.value { ..some entry {
             result = ..ok entry.value
             return

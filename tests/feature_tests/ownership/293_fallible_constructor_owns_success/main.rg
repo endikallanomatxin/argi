@@ -1,20 +1,26 @@
-Owned : Type = (.allocation: Allocation)
+Owned := (.allocation: Allocation)
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, (.allocator: $&AllocatorProvider, .fail: Bool)) (
-    .Result: Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
-    .init = (.args: (.allocator: $&AllocatorProvider, .fail: Bool)) -> (.result: Result) {
-        allocator ::= ~args.allocator
-        fail ::= ~args.fail
+OwnedInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
+    .allocator : $&AllocatorProvider,
+    .fail      : Bool
+)
+
+implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, OwnedInitArgs#(AllocatorProvider)) (
+    .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
+
+    .init = OwnedInitArgs#(AllocatorProvider) -> (.result: Result) {
+        _init_allocator ::= ~allocator
+        _init_fail ::= ~fail
 
         constructed :: Owned
 
-        allocated ::= allocate_bytes(.self = allocator, .size = 1)
+        allocated ::= allocate_bytes(.self = _init_allocator, .size = 1)
         match allocated {
             ..error _ {
                 result = ..error(.reason = ..out_of_memory)
             }
-            ..ok ~ payload {
-                if fail {
+            ..ok ~payload {
+                if _init_fail {
                     deinit(.self = $&payload)
                     result = ..error(.reason = ..out_of_memory)
                     return
@@ -32,19 +38,19 @@ implement Deinit#(Owned) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     success ::= Owned(.allocator = $&allocator_storage, .fail = false)
     match success {
         ..error _ { status_code = 1 }
-        ..ok ~ value {
+        ..ok ~value {
             owned ::= ~value
             deinit(.self = $&owned)
         }
     }
     failure ::= Owned(.allocator = $&allocator_storage, .fail = true)
     match failure {
-        ..ok ~ value {
+        ..ok ~value {
             owned ::= ~value
             deinit(.self = $&owned)
             status_code = 2

@@ -1,16 +1,16 @@
-CountingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .alloc_count   : Int32 = 0
-    .dealloc_count : Int32 = 0
+CountingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .alloc_count   : Int32                      = 0
+    .dealloc_count : Int32                      = 0
 )
 
-Wrapper: Type = (
+Wrapper := (
     .text : String
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage :: CountingAllocator = (
-        .ffi = system.ffi
+        .ffi           = system.ffi
         .alloc_count   = 0
         .dealloc_count = 0
     )
@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
 implement Allocator#(CountingAllocator) (
     .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)

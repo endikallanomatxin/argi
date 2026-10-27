@@ -1,6 +1,6 @@
-compute() -> (.value: Int32 = 42) := {}
+compute := () -> (.value: Int32 = 42) {}
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     runtime :: Int32 = 7
     known := compute()
     first := #run () -> (.answer: Int32) {

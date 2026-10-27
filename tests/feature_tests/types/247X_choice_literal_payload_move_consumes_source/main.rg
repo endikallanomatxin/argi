@@ -4,11 +4,11 @@ Result : Type = (
     ..error Int32
 )
 
-read(.pointer: $&UInt8) -> (.value: UInt8) := {
+read := (.pointer: $&UInt8) -> (.value: UInt8)  {
     value = pointer&
 }
 
-main(.system: System) -> (.status_code: Int32 = 1) := {
+main := (.system: System) -> (.status_code: Int32 = 1)  {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocated ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match allocated {

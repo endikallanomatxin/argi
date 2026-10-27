@@ -1,18 +1,23 @@
-DummyWriter: Type = (
+DummyWriter := (
     .bytes : String
 )
 
+DummyWriterInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
+    .allocator : $&AllocatorProvider
+)
+
 implement#(.AllocatorProvider: Type: Allocator) Init#(
-    DummyWriter, (.allocator: $&AllocatorProvider)
+    DummyWriter, DummyWriterInitArgs#(AllocatorProvider)
 ) (
     .Result : Type = DummyWriter
-    .init   = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
-        allocator ::= ~args.allocator
 
-        assume allocator
+    .init = DummyWriterInitArgs#(AllocatorProvider) -> (.result: Result) {
+        _init_allocator ::= ~allocator
+
+        assume allocator := _init_allocator
 
         result.bytes = unwrap_or_abort(
-            .value = string_with_capacity(.allocator = allocator, .capacity = 16)
+            .value = string_with_capacity(.allocator = _init_allocator, .capacity = 16)
         )
     }
 )
@@ -23,9 +28,9 @@ implement Deinit#(DummyWriter) (
     }
 )
 
-append_test_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
+append_test_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&DummyWriter, .byte: UInt8, .allocator: $&AllocatorType
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
     assume allocator
 
     pushed ::= push_ascii(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
@@ -36,7 +41,7 @@ append_test_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok(.value = Void())
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

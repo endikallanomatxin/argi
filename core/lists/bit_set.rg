@@ -1,19 +1,20 @@
 -- A bounded bit set borrows initialized bytes. Bit zero is the low bit of
 -- byte zero. Construction clears only the bytes needed for the requested bits.
-BitSetView: Type = (._bytes: MutableArrayView#(.t: UInt8), ._count: UIntNative)
+BitSetView := (._bytes: MutableArrayView#(.t: UInt8), ._count: UIntNative)
 
-implement Init#(BitSetView, (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative)) (
+BitSetViewInitArgs: Type = (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative)
+
+implement Init#(BitSetView, BitSetViewInitArgs) (
     .Result : Type = Errable#(BitSetView, (..out_of_bounds))
-    .init   = (.args: (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative)) -> (
-        .result : Result
-    ) {
-        bytes ::= args.bytes
-        count ::= args.count
 
-        needed ::= count / 8
+    .init = BitSetViewInitArgs -> (.result: Result) {
+        _init_bytes ::= bytes
+        _init_count ::= count
 
-        if count % 8 != 0 { needed = needed + 1 }
-        if needed > length(&bytes).count {
+        needed ::= _init_count / 8
+
+        if _init_count % 8 != 0 { needed = needed + 1 }
+        if needed > length(&_init_bytes).count {
             result = ..error(.reason = ..out_of_bounds)
             return
         }
@@ -21,16 +22,18 @@ implement Init#(BitSetView, (.bytes: MutableArrayView#(.t: UInt8), .count: UIntN
         index :: UIntNative = 0
 
         while index < needed {
-            target ::= unwrap_or_abort(.value = get_mutable_reference($&bytes, .index = index))
+            target ::= unwrap_or_abort(
+                .value = get_mutable_reference($&_init_bytes, .index = index)
+            )
             target&= 0
             index = index + 1
         }
 
-        result = ..ok(._bytes = bytes, ._count = count)
+        result = ..ok(._bytes = _init_bytes, ._count = _init_count)
     }
 )
 
-_collection_length_bit_set(.self: &BitSetView) -> (.count: UIntNative) := {
+_collection_length_bit_set := (.self: &BitSetView) -> (.count: UIntNative) {
     count = self&._count
 }
 
@@ -38,7 +41,7 @@ implement CollectionLength#(BitSetView) (
     .measure_length = _collection_length_bit_set
 )
 
-_bit_set_mask(.index: UIntNative) -> (.mask: UInt8 = 1) := {
+_bit_set_mask := (.index: UIntNative) -> (.mask: UInt8 = 1) {
     offset ::= index % 8
 
     while offset > 0 {
@@ -47,9 +50,9 @@ _bit_set_mask(.index: UIntNative) -> (.mask: UInt8 = 1) := {
     }
 }
 
-_bit_query_BitSetView(.self: &BitSetView, .index: UIntNative) -> (
+_bit_query_BitSetView := (.self: &BitSetView, .index: UIntNative) -> (
     .result : Errable#(Bool, (..out_of_bounds))
-) := {
+) {
     if index >= self&._count {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -61,9 +64,9 @@ _bit_query_BitSetView(.self: &BitSetView, .index: UIntNative) -> (
     result = ..ok byte&/ mask % 2 != 0
 }
 
-_bit_write_BitSetView(.self: $&BitSetView, .index: UIntNative, .value: Bool = true) -> (
+_bit_write_BitSetView := (.self: $&BitSetView, .index: UIntNative, .value: Bool = true) -> (
     .result : Errable#(Void, (..out_of_bounds)) = ..ok Void()
-) := {
+) {
     present ::= contains_bit(self, .index = index)!
 
     if present == value { return }
@@ -73,7 +76,9 @@ _bit_write_BitSetView(.self: $&BitSetView, .index: UIntNative, .value: Bool = tr
     if value { byte&= byte&+ mask } else { byte&= byte&- mask }
 }
 
-_bit_set_count(.bytes: ArrayView#(.t: UInt8), .extent: UIntNative) -> (.count: UIntNative = 0) := {
+_bit_set_count := (.bytes: ArrayView#(.t: UInt8), .extent: UIntNative) -> (
+    .count : UIntNative = 0
+) {
     full ::= extent / 8
     index :: UIntNative = 0
 
@@ -95,7 +100,7 @@ _bit_set_count(.bytes: ArrayView#(.t: UInt8), .extent: UIntNative) -> (.count: U
     }
 }
 
-_bit_count_BitSetView(.self: &BitSetView) -> (.count: UIntNative) := {
+_bit_count_BitSetView := (.self: &BitSetView) -> (.count: UIntNative) {
     count = _bit_set_count(
         .bytes = as_readonly(&self&._bytes).view, .extent = self&._count
     ).count

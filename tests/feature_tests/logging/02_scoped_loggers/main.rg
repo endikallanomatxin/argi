@@ -35,9 +35,8 @@ check := (.system: System) -> (.result: Errable#(Void, logging.LogReasons) = ..o
     logging.Logger#().log(.self = $&null_logger, .level = ..error, .message = "ignored")!
 }
 
-main#(.WriterType: Type: Writer#(WriterType)) := (
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     check(.system = system)!!!
     status_code = 0
 }

@@ -93,7 +93,7 @@ implement _IntegerFitsUIntNative#(UInt16) ()
     implement _IntegerFitsUInt16#(UIntNative) ()
 }
 
-_integer_conversion_unchecked#(.Source: Type, .Target: Type) := (.value: Source) -> (
+_integer_conversion_unchecked := #(.Source: Type, .Target: Type) (.value: Source) -> (
     .result : Target
 ) {
     result = __integer_conversion#(.to: Target)(.value = value)
@@ -101,7 +101,7 @@ _integer_conversion_unchecked#(.Source: Type, .Target: Type) := (.value: Source)
 
 -- Bounds are constants in the source representation. The comparison always
 -- precedes truncation or a signedness change; failure retains the active tracer.
-_checked_integer_conversion#(.Source: Type, .Target: Type) := (.value: Source) -> (
+_checked_integer_conversion := #(.Source: Type, .Target: Type) (.value: Source) -> (
     .result : Errable#(Target, (..out_of_range))
 ) {
     minimum ::= __integer_conversion_lower_bound#(.from: Source, .to: Target)()

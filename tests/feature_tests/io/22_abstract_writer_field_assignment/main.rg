@@ -1,21 +1,26 @@
-DummyWriter: Type = (
+DummyWriter := (
     .flush_count : Int32 = 0
 )
 
-Holder#(.WriterType: Type: Writer#(WriterType)): Type = (
+Holder := #(.WriterType: Type: Writer#(WriterType)) (
     .writer : $&WriterType
 )
 
-implement#(.WriterType: Type: Writer#(WriterType)) Init#(Holder#(WriterType), (.writer : $&WriterType)) (
-    .Result: Type = Holder#(WriterType)
-    .init = (.args: (.writer : $&WriterType)) -> (.result: Result) {
-        writer ::= ~args.writer
+HolderInitArgs: Type = #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType)
 
-        result.writer = writer
+implement#(.WriterType: Type: Writer#(WriterType)) Init#(
+    Holder#(WriterType), HolderInitArgs#(WriterType)
+) (
+    .Result : Type = Holder#(WriterType)
+
+    .init = HolderInitArgs#(WriterType) -> (.result: Result) {
+        _init_writer ::= ~writer
+
+        result.writer = _init_writer
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     writer :: DummyWriter = (
         .flush_count = 0
     )
@@ -32,22 +37,17 @@ main() -> (.status_code: Int32) := {
     }
 }
 
-implement Writer#(DummyWriter)(
-    .write_byte = (
-            .self : $&DummyWriter,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+implement Writer#(DummyWriter) (
+    .write_byte = (.self: $&DummyWriter, .byte: UInt8) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         _ ::= byte
         result = ..ok(.value = Void())
     }
 
-    .flush = (
-            .self : $&DummyWriter
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .flush = (.self: $&DummyWriter) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         self&.flush_count = self&.flush_count + 1
         result = ..ok(.value = Void())
     }

@@ -7,13 +7,13 @@ ContiguousView#(.View: Type): Contract = (
     )
 )
 
-data#(.View: Type: ContiguousView#(View)) := (.self: &View) -> (
+data := #(.View: Type: ContiguousView#(View)) (.self: &View) -> (
     .pointer : ContiguousView#(View).Reference
 ) {
     pointer = ContiguousView#(View).base(.self = self)
 }
 
-slice#(.View: Type: ContiguousView#(View)) := (
+slice := #(.View: Type: ContiguousView#(View)) (
     .self: &View, .start: UIntNative, .count: UIntNative
 ) -> (.result: Errable#(View, (..out_of_bounds))) {
     result = ContiguousView#(View).subrange(.self = self, .start = start, .count = count)

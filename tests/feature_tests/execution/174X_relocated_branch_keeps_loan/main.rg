@@ -1,14 +1,14 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-ReferenceRecord: Type = (.value: &Resource)
+ReferenceRecord := (.value: &Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {}
 )
 
-choose(.left: ReferenceRecord, .right: ReferenceRecord, .use_left: Bool) -> (
+choose := (.left: ReferenceRecord, .right: ReferenceRecord, .use_left: Bool) -> (
     .result : ReferenceRecord
-) := {
+) {
     if use_left {
         relocate(.source = $&left, .destination = $&result)
     } else {
@@ -16,7 +16,7 @@ choose(.left: ReferenceRecord, .right: ReferenceRecord, .use_left: Bool) -> (
     }
 }
 
-main() -> () := {
+main := () -> () {
     first :: Resource = Resource(41)
     second :: Resource = Resource(42)
     reference ::= choose(

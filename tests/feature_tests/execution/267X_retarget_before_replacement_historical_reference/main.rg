@@ -1,8 +1,8 @@
-Counter: Type = (.drops: Int32 = 0, .selections: Int32 = 0)
+Counter := (.drops: Int32 = 0, .selections: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
-Holder: Type = (.reference: $&Resource)
+Holder := (.reference: $&Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -10,16 +10,16 @@ implement Deinit#(Resource) (
     }
 )
 
-retarget_first(.holder: $&Holder, .other: $&Resource, .counter: $&Counter) -> () := {
+retarget_first := (.holder: $&Holder, .other: $&Resource, .counter: $&Counter) -> () {
     holder&.reference = other
     holder&.reference&= Resource(.counter = counter, .value = 9)
 }
 
-retarget_wrapped(.counter: $&Counter, .other: $&Resource, .holder: $&Holder) -> () := {
+retarget_wrapped := (.counter: $&Counter, .other: $&Resource, .holder: $&Holder) -> () {
     retarget_first(.holder = holder, .other = other, .counter = counter)
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     owner :: Resource = Resource(.counter = $&counter, .value = 1)
     other :: Resource = Resource(.counter = $&counter, .value = 2)

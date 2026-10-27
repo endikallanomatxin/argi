@@ -1,5 +1,5 @@
-Token : Type = (
-    .value: Int32,
+Token := (
+    .value : Int32,
 )
 
 implement Deinit#(Token) (
@@ -8,16 +8,16 @@ implement Deinit#(Token) (
     }
 )
 
-Result : Type = (
+Result: Type = (
     ..ok(.token: Token),
     ..error,
 )
 
-main () -> (.status_code: Int32) := {
-    value : Result = ..ok(.token = Token(.value = 7))
+main := () -> (.status_code: Int32) {
+    value: Result = ..ok(.token = Token(.value = 7))
 
     match value {
-        ..ok ~ payload {
+        ..ok ~payload {
             status_code = payload.token.value - 7
         }
         ..error {

@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume ffi := system.ffi
     arena :: ArenaAllocator
     initialized ::= ArenaAllocator(.allocator = system.page_allocator, .block_size = 64)

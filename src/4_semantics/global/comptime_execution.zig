@@ -15,6 +15,8 @@ pub const Scheduler = struct {
     functions: *Functions,
     stable_type_count: usize,
     stable_declaration_count: usize = 0,
+    stable_type_definition_count: usize = 0,
+    stable_family_definition_count: usize = 0,
     stable_node_count: usize = 0,
     requests: std.ArrayList(Request) = .empty,
     // Sparse descriptions do not enlarge every ordinary request record.
@@ -28,6 +30,8 @@ pub const Scheduler = struct {
         rewrites: usize,
         stable_types: usize,
         stable_declarations: usize,
+        stable_type_definitions: usize = 0,
+        stable_family_definitions: usize = 0,
         stable_nodes: usize,
     };
 
@@ -49,7 +53,7 @@ pub const Scheduler = struct {
     /// The caller supplies the resolver bound to its cloned semantic graph;
     /// materialized node/type identities remain valid because graph IDs match.
     pub fn clone(self: *const Scheduler, allocator: std.mem.Allocator, functions: *Functions) !Scheduler {
-        var result: Scheduler = .{ .allocator = allocator, .functions = functions, .stable_type_count = self.stable_type_count, .stable_declaration_count = self.stable_declaration_count, .stable_node_count = self.stable_node_count };
+        var result: Scheduler = .{ .allocator = allocator, .functions = functions, .stable_type_count = self.stable_type_count, .stable_declaration_count = self.stable_declaration_count, .stable_type_definition_count = self.stable_type_definition_count, .stable_family_definition_count = self.stable_family_definition_count, .stable_node_count = self.stable_node_count };
         errdefer result.deinit();
         for (self.type_recipes.items) |*recipe| {
             var copy = try recipe.clone(allocator);
@@ -81,7 +85,7 @@ pub const Scheduler = struct {
     /// A session checkpoint covers completions as well as appended requests.
     /// Probe callbacks below intentionally retain their narrower enqueue boundary.
     pub fn checkpointState(self: *const Scheduler) StateCheckpoint {
-        return .{ .requests = self.requests.items.len, .recipes = self.type_recipes.items.len, .rewrites = self.rewrites.items.len, .stable_types = self.stable_type_count, .stable_declarations = self.stable_declaration_count, .stable_nodes = self.stable_node_count };
+        return .{ .requests = self.requests.items.len, .recipes = self.type_recipes.items.len, .rewrites = self.rewrites.items.len, .stable_types = self.stable_type_count, .stable_declarations = self.stable_declaration_count, .stable_type_definitions = self.stable_type_definition_count, .stable_family_definitions = self.stable_family_definition_count, .stable_nodes = self.stable_node_count };
     }
 
     pub fn rollbackState(self: *Scheduler, saved: StateCheckpoint) void {
@@ -100,6 +104,8 @@ pub const Scheduler = struct {
         self.type_recipes.shrinkRetainingCapacity(saved.recipes);
         self.stable_type_count = saved.stable_types;
         self.stable_declaration_count = saved.stable_declarations;
+        self.stable_type_definition_count = saved.stable_type_definitions;
+        self.stable_family_definition_count = saved.stable_family_definitions;
         self.stable_node_count = saved.stable_nodes;
     }
 
@@ -152,7 +158,7 @@ pub const Scheduler = struct {
         const temporary = for (bindings.types) |ty| {
             if (ty) |id| if (@intFromEnum(id) >= self.stable_type_count) break true;
         } else false;
-        var types: ?TypeRecipe = if (temporary) TypeRecipe.capture(self.allocator, self.functions.graph, .{ .types = self.stable_type_count, .declarations = self.stable_declaration_count, .nodes = self.stable_node_count }, bindings.types) catch |err| switch (err) {
+        var types: ?TypeRecipe = if (temporary) TypeRecipe.capture(self.allocator, self.functions.graph, .{ .types = self.stable_type_count, .declarations = self.stable_declaration_count, .type_definitions = self.stable_type_definition_count, .family_definitions = self.stable_family_definition_count, .nodes = self.stable_node_count }, bindings.types) catch |err| switch (err) {
             error.ComptimeTypeRecipePending => return error.ComptimeExecutionPending,
             else => return err,
         } else null;

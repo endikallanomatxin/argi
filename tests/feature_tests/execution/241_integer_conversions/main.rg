@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume error_tracer ::= $&noop_error_tracer
     negative: Int8 = -42
     wide ::= negative | convert#(.to: Int64)(_)

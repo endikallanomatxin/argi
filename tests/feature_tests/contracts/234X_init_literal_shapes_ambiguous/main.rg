@@ -1,10 +1,19 @@
-Packet: Type = (.value: Int32)
-implement Init#(Packet, (.value: Int32)) (
-    .Result: Type = Packet
-    .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) }
+Packet := (.value: Int32)
+
+PacketInitArgs: Type = (.value: Int32)
+
+implement Init#(Packet, PacketInitArgs) (
+    .Result : Type = Packet
+
+    .init = PacketInitArgs -> (.result: Result) { result = (.value = value) }
 )
-implement Init#(Packet, (.value: UInt64)) (
-    .Result: Type = Packet
-    .init = (.args: (.value: UInt64)) -> (.result: Result) { result = (.value = 0) }
+
+PacketInitArgs2: Type = (.value: UInt64)
+
+implement Init#(Packet, PacketInitArgs2) (
+    .Result : Type = Packet
+
+    .init = PacketInitArgs2 -> (.result: Result) { result = (.value = 0) }
 )
+
 main := () -> () { packet ::= Packet(.value = 10) }

@@ -150,9 +150,9 @@ The compiler could use this information to choose implementations or tiling.
 ```text
 kernel vector_add_kernel(
     executor: ParallelProcessingUnit,
-    vector_a: Vector<Float32>,
-    vector_b: Vector<Float32>
-) -> (result: Vector<Float32>) {
+    vector_a: Vector#(Float32),
+    vector_b: Vector#(Float32)
+) -> (result: Vector#(Float32)) {
     parallel for (i in executor.parallel_groups[0]) {
         result[i] = vector_a[i] + vector_b[i]
     }

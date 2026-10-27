@@ -1,22 +1,22 @@
+_ArgumentsInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 argi_runtime_argc() -> (.count: UIntNative): ExternFunction
 
 argi_runtime_argv() -> (.address: UIntNative): ExternFunction
 
-Arguments: Type = (
+Arguments := (
     ._ffi    : $&ForeignFunctionInterface
     .count   : UIntNative
     .address : UIntNative
 )
 
-ArgumentsIterator: Type = (
+ArgumentsIterator := (
     .args  : &Arguments
     .index : UIntNative
 )
 
-once _acquire_arguments := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : Arguments
-) {
-    assume ffi := args.ffi
+_acquire_arguments := once _ArgumentsInitArgs -> (.result: Arguments) {
+    assume ffi := ffi
 
     result = (
         ._ffi    = ffi
@@ -25,21 +25,24 @@ once _acquire_arguments := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi
     )
 }
 
-implement Init#(Arguments, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+ArgumentsInitArgs: Type = _ArgumentsInitArgs
+
+implement Init#(Arguments, ArgumentsInitArgs) (
     .Result : Type = Arguments
-    .init   = _acquire_arguments
+
+    .init = _acquire_arguments
 )
 
-has_argument(.self: &Arguments, .index: UIntNative) -> (.ok: Bool) := {
+has_argument := (.self: &Arguments, .index: UIntNative) -> (.ok: Bool) {
     ok = index < self&.count
 }
 
-argument_pointer_address(.self: &Arguments, .index: UIntNative) -> (.address: UIntNative) := {
+argument_pointer_address := (.self: &Arguments, .index: UIntNative) -> (.address: UIntNative) {
     stride :: UIntNative = size_of(.type = UIntNative)
     address = self&.address + index * stride
 }
 
-argument_at(.self: &Arguments, .index: UIntNative) -> (.text: &CChar) := {
+argument_at := (.self: &Arguments, .index: UIntNative) -> (.text: &CChar) {
     addr ::= argument_pointer_address(self, .index = index).address
     raw ::= raw_pointer#(.t: UIntNative)(.address = addr)
     ptr ::= trusted_establish_inherited_reference#(.t: UIntNative)(
@@ -53,9 +56,9 @@ argument_at(.self: &Arguments, .index: UIntNative) -> (.text: &CChar) := {
     text = read_reference#(.t: CChar)(.base = inherited).reference
 }
 
-argument_view_at(.self: &Arguments, .index: UIntNative) -> (
+argument_view_at := (.self: &Arguments, .index: UIntNative) -> (
     .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
-) := {
+) {
     if index >= self&.count {
         result = ..error(.reason = ..out_of_bounds)
         return

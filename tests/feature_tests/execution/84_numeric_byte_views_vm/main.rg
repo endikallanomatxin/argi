@@ -1,4 +1,4 @@
-Record: Type = (.first: UInt32, .second: UInt32)
+Record := (.first: UInt32, .second: UInt32)
 
 exercise := () -> (.result: Int32) {
     value :: Record = (.first = 0, .second = 42)

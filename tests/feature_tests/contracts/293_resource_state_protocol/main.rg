@@ -1,21 +1,25 @@
-Latch: Type = (.open: Bool)
-Retryable: Type = (.open: Bool, .busy: Bool)
+Latch := (.open: Bool)
+
+Retryable := (.open: Bool, .busy: Bool)
 
 implement OpenState#(Latch) (
     .check_open = (.self: &Latch) -> (.ok: Bool) { ok = self&.open }
 )
+
 implement OpenState#(Retryable) (
     .check_open = (.self: &Retryable) -> (.ok: Bool) { ok = self&.open }
 )
+
 implement Closeable#(Latch) (
-    .Result: Type = Void
+    .Result         : Type = Void
     .close_resource = (.self: $&Latch) -> (.result: Void) {
         self&.open = false
         result = Void()
     }
 )
+
 implement Closeable#(Retryable) (
-    .Result: Type = Errable#(Void, (..busy))
+    .Result         : Type = Errable#(Void, (..busy))
     .close_resource = (.self: $&Retryable) -> (.result: Result) {
         if self&.busy {
             result = ..error(.reason = ..busy)
@@ -26,13 +30,13 @@ implement Closeable#(Retryable) (
     }
 )
 
-finish#(.Resource: Type: Closeable#(Resource)) := (
-    .self: $&Resource
-) -> (.result: Closeable#(Resource).Result) {
+finish := #(.Resource: Type: Closeable#(Resource)) (.self: $&Resource) -> (
+    .result : Closeable#(Resource).Result
+) {
     result = ~close(.self = self)
 }
 
-resource_open#(.Resource: Type: OpenState#(Resource)) := (.self: &Resource) -> (.ok: Bool) {
+resource_open := #(.Resource: Type: OpenState#(Resource)) (.self: &Resource) -> (.ok: Bool) {
     ok = is_open(.self = self).ok
 }
 

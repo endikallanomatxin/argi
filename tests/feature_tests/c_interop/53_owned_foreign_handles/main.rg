@@ -1,25 +1,27 @@
-owned := import("../../_support/owned_foreign_handle")
+owned := import ("../../_support/owned_foreign_handle")
 ..operation_failed
 
-_return_early(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.value: CInt) := {
-    assume ffi := ffi
+_return_early := (.ffi: $&ForeignFunctionInterface = reach ffi) -> (.value: CInt) {
+    assume ffi
     handle ::= unwrap_or_abort(.value = owned.OwnedHandle(.value = 17))
     value = owned.read(.self = &handle)
     return
 }
 
-_fail() -> (.result: Errable#(.t: Void, .reasons: (..operation_failed))) := {
+_fail := () -> (.result: Errable#(.t: Void, .reasons: (..operation_failed))) {
     result = ..error(.reason = ..operation_failed)
 }
 
-_propagate_failure(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Errable#(.t: Void, .reasons: (..operation_failed))) := {
-    assume ffi := ffi
+_propagate_failure := (.ffi: $&ForeignFunctionInterface = reach ffi) -> (
+    .result : Errable#(.t: Void, .reasons: (..operation_failed))
+) {
+    assume ffi
     handle ::= unwrap_or_abort(.value = owned.OwnedHandle(.value = 23))
     _fail()!
     result = ..ok Void()
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     {
         first ::= unwrap_or_abort(.value = owned.OwnedHandle(.value = 42))
@@ -63,7 +65,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             return
         }
     }
-    if owned.live() != 0 or owned.created() != 5 or owned.destroyed() != 5 or owned.violations() != 0 {
+    if [
+        owned.live() != 0
+        or owned.created() != 5
+        or owned.destroyed() != 5
+        or owned.violations() != 0
+    ] {
         status_code = 8
         return
     }

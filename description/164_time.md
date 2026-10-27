@@ -12,13 +12,13 @@ through the full `UInt64` range. Durations never represent negative intervals.
 
 The named factories `duration_from_microseconds`,
 `duration_from_milliseconds`, and `duration_from_seconds` return
-`Errable<Duration, out_of_range>` because scaling to nanoseconds may overflow.
+`Errable#(Duration, out_of_range)` because scaling to nanoseconds may overflow.
 The accessors `nanoseconds`, `microseconds`, `milliseconds`, and `seconds`
 receive `.self: &Duration` and return `.value: UInt64`; coarser units discard
 the fractional part.
 
 `add(.left: Duration, .right: Duration)` and `subtract` return
-`Errable<Duration, out_of_range>`. Addition rejects overflow and subtraction
+`Errable#(Duration, out_of_range)`. Addition rejects overflow and subtraction
 rejects a negative result. Neither operation wraps or saturates. Equality
 uses `==` or `!=`; `compare(.left, .right).order` is -1, 0, or 1.
 
@@ -27,7 +27,7 @@ uses `==` or `!=`; `compare(.left, .right).order` is -1, 0, or 1.
 `MonotonicInstant` has an unspecified native origin. Its private nanosecond
 count cannot be constructed from a civil timestamp. Use
 `elapsed(.start: MonotonicInstant, .end: MonotonicInstant)` to obtain
-`Errable<Duration, out_of_range>`; an end preceding the start is rejected.
+`Errable#(Duration, out_of_range)`; an end preceding the start is rejected.
 Repeated identical readings yield a zero duration. Readings in the same native
 clock domain can be compared with `==`, `!=`, and `compare`.
 
@@ -36,7 +36,7 @@ plus a nonnegative nanosecond fraction below 1,000,000,000. For example, one
 nanosecond before the epoch is seconds -1 and fraction 999,999,999.
 `UnixTimestamp(.seconds: Int64)` returns a value directly with zero fraction;
 `unix_timestamp_precise(.seconds: Int64, .nanoseconds: UInt32)` returns
-`Errable<UnixTimestamp, out_of_range>` and rejects an unnormalized fraction.
+`Errable#(UnixTimestamp, out_of_range)` and rejects an unnormalized fraction.
 The fields are private. `unix_seconds(.self: &UnixTimestamp).value` returns
 `Int64`, and `nanoseconds(.self).value` returns `UInt32`. Equality and `compare`
 use chronological order, comparing seconds before the fractional component.
@@ -54,11 +54,11 @@ retains its foreign-call dependency; constructing one requires a reachable
 `ForeignFunctionInterface` and follows the ordinary `once` rules.
 
 - `monotonic_now(.self: &Clock = reach clock)` returns
-  `Errable<MonotonicInstant, clock_read_failed/out_of_range>`.
+  `Errable#(MonotonicInstant, clock_read_failed/out_of_range)`.
 - `wall_now(.self: &Clock = reach clock)` returns
-  `Errable<UnixTimestamp, clock_read_failed/out_of_range>`.
+  `Errable#(UnixTimestamp, clock_read_failed/out_of_range)`.
 - `sleep(.duration: Duration, .self: &Clock = reach clock)` returns
-  `Errable<Void, sleep_failed>`.
+  `Errable#(Void, sleep_failed)`.
 
 A failed platform read reports `clock_read_failed`; a successful monotonic
 reading exceeding the nanosecond representation reports `out_of_range`.

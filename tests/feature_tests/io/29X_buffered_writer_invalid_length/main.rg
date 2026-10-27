@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     buffered ::= BufferedWriter#(.base_type: File)(
         .base = $&system.terminal&.stdout, .buffer = view(.self = $&zeroed#(.t: [4]UInt8)())
     )

@@ -26,46 +26,38 @@ implement _BuiltinArithmetic#(Float32) ()
 
 implement _BuiltinArithmetic#(Float64) ()
 
-implement#(.Value: Type: _BuiltinArithmetic) Add#(Value, Value, (.left: Value, .right: Value)) (
+implement#(.Value: Type: _BuiltinArithmetic) Add#(Value, Value) (
     .Result : Type = Value
-    .add    = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
-        result = __scalar_add(.left = args.left, .right = args.right)
+    .add    = (.left: Value, .right: Value) -> (.result: Result) {
+        result = __scalar_add(.left = left, .right = right)
     }
 )
 
-implement#(.Value: Type: _BuiltinArithmetic) Subtract#(
-    Value, Value, (.left: Value, .right: Value)
-) (
+implement#(.Value: Type: _BuiltinArithmetic) Subtract#(Value, Value) (
     .Result   : Type = Value
-    .subtract = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
-        result = __scalar_subtract(.left = args.left, .right = args.right)
+    .subtract = (.left: Value, .right: Value) -> (.result: Result) {
+        result = __scalar_subtract(.left = left, .right = right)
     }
 )
 
-implement#(.Value: Type: _BuiltinArithmetic) Multiply#(
-    Value, Value, (.left: Value, .right: Value)
-) (
+implement#(.Value: Type: _BuiltinArithmetic) Multiply#(Value, Value) (
     .Result   : Type = Value
-    .multiply = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
-        result = __scalar_multiply(.left = args.left, .right = args.right)
+    .multiply = (.left: Value, .right: Value) -> (.result: Result) {
+        result = __scalar_multiply(.left = left, .right = right)
     }
 )
 
-implement#(.Value: Type: _BuiltinArithmetic) Divide#(
-    Value, Value, (.left: Value, .right: Value)
-) (
+implement#(.Value: Type: _BuiltinArithmetic) Divide#(Value, Value) (
     .Result : Type = Value
-    .divide = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
-        result = __scalar_divide(.left = args.left, .right = args.right)
+    .divide = (.left: Value, .right: Value) -> (.result: Result) {
+        result = __scalar_divide(.left = left, .right = right)
     }
 )
 
-implement#(.Value: Type: _BuiltinArithmetic) Remainder#(
-    Value, Value, (.left: Value, .right: Value)
-) (
+implement#(.Value: Type: _BuiltinArithmetic) Remainder#(Value, Value) (
     .Result    : Type = Value
-    .remainder = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
-        result = __scalar_remainder(.left = args.left, .right = args.right)
+    .remainder = (.left: Value, .right: Value) -> (.result: Result) {
+        result = __scalar_remainder(.left = left, .right = right)
     }
 )
 
@@ -97,11 +89,11 @@ implement _BuiltinEquality#(Float64) ()
 
 implement _BuiltinEquality#(Bool) ()
 
-implement _BuiltinEquality#(RawPointer) ()
+implement#(.Element: Type) _BuiltinEquality#(RawPointer#(.t: Element)) ()
 
-implement#(.Value: Type: _BuiltinEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
-    .equal = (.args: (.left: Value, .right: Value)) -> (.ok: Bool) {
-        ok = __scalar_equal(.left = args.left, .right = args.right)
+implement#(.Value: Type: _BuiltinEquality) Equal#(Value, Value) (
+    .equal = (.left: Value, .right: Value) -> (.ok: Bool) {
+        ok = __scalar_equal(.left = left, .right = right)
     }
 )
 
@@ -162,7 +154,7 @@ implement _BuiltinOrdering#(Float64) ()
 
 implement _BuiltinOrdering#(Bool) ()
 
-implement _BuiltinOrdering#(RawPointer) ()
+implement#(.Element: Type) _BuiltinOrdering#(RawPointer#(.t: Element)) ()
 
 implement TotalOrder#(Int8, Int8) ()
 

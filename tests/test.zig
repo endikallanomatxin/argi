@@ -603,7 +603,7 @@ test "installed argi resolves core from its installation prefix outside repo" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\}
         \\
         ,
@@ -1018,7 +1018,7 @@ test "argi build package builds all executables" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/cli/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\}
         \\
         ,
@@ -1026,7 +1026,7 @@ test "argi build package builds all executables" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/server/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\}
         \\
         ,
@@ -1080,7 +1080,7 @@ test "argi run package uses configured default and selected executable" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/cli/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 7) := {
+        \\main := () -> (.status_code: Int32 = 7)  {
         \\}
         \\
         ,
@@ -1088,7 +1088,7 @@ test "argi run package uses configured default and selected executable" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/server/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 11) := {
+        \\main := () -> (.status_code: Int32 = 11)  {
         \\}
         \\
         ,
@@ -1133,7 +1133,7 @@ test "argi run package uses single executable without run default" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/cli/main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 9) := {
+        \\main := () -> (.status_code: Int32 = 9)  {
         \\}
         \\
         ,
@@ -1286,15 +1286,15 @@ test "build persists module snapshots across processes and dependency edits" {
     try tmp.dir.createDirPath(io, "dep");
     try tmp.dir.writeFile(io, .{
         .sub_path = "app/main.rg",
-        .data = "dep := import(\"../dep\")\nmain() -> (.status_code: Int32) := { status_code = dep.answer().result }\n",
+        .data = "dep := import(\"../dep\")\nmain := () -> (.status_code: Int32)  { status_code = dep.answer().result }\n",
     });
-    const source = "answer() -> (.result: Int32) := { result = 7 }\n";
+    const source = "answer := () -> (.result: Int32)  { result = 7 }\n";
     try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = source });
     for (0..4) |revision| {
         if (revision == 1) {
-            try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = "answer() -> (.result: Int32) := { result = 9 }\n" });
+            try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = "answer := () -> (.result: Int32)  { result = 9 }\n" });
         } else if (revision == 2) {
-            try tmp.dir.writeFile(io, .{ .sub_path = "dep/extra.rg", .data = "extra() -> (.result: Int32) := { result = 11 }\n" });
+            try tmp.dir.writeFile(io, .{ .sub_path = "dep/extra.rg", .data = "extra := () -> (.result: Int32)  { result = 11 }\n" });
         } else if (revision == 3) {
             try tmp.dir.deleteFile(io, "dep/extra.rg");
             try tmp.dir.rename("dep/answer.rg", tmp.dir, "dep/renamed.rg", io);
@@ -1528,27 +1528,27 @@ test "feature_tests/basics/08_struct_field_store" {
 
 test "feature_tests/basics/09X_integer_literal_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/09X_integer_literal_overflow",
-        \\tests/feature_tests/basics/09X_integer_literal_overflow/main.rg:2:21: error: integer literal 300 does not fit in 'UInt8' (max 255)
-        \\      value : UInt8 = 300
-        \\                      ^
+        \\tests/feature_tests/basics/09X_integer_literal_overflow/main.rg:2:20: error: integer literal 300 does not fit in 'UInt8' (max 255)
+        \\      value: UInt8 = 300
+        \\                     ^
         \\
     );
 }
 
 test "feature_tests/basics/10X_signed_integer_literal_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/10X_signed_integer_literal_overflow",
-        \\tests/feature_tests/basics/10X_signed_integer_literal_overflow/main.rg:2:20: error: integer literal 128 does not fit in 'Int8' (min -128, max 127)
-        \\      value : Int8 = 128
-        \\                     ^
+        \\tests/feature_tests/basics/10X_signed_integer_literal_overflow/main.rg:2:19: error: integer literal 128 does not fit in 'Int8' (min -128, max 127)
+        \\      value: Int8 = 128
+        \\                    ^
         \\
     );
 }
 
 test "feature_tests/basics/11X_negative_integer_literal_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/11X_negative_integer_literal_overflow",
-        \\tests/feature_tests/basics/11X_negative_integer_literal_overflow/main.rg:2:20: error: integer literal -129 does not fit in 'Int8' (min -128, max 127)
-        \\      value : Int8 = -129
-        \\                     ^
+        \\tests/feature_tests/basics/11X_negative_integer_literal_overflow/main.rg:2:19: error: integer literal -129 does not fit in 'Int8' (min -128, max 127)
+        \\      value: Int8 = -129
+        \\                    ^
         \\
     );
 }
@@ -1661,9 +1661,9 @@ test "feature_tests/functions/15_output_default_implicit_return" {
 
 test "feature_tests/functions/16X_function_signature_requires_explicit_types" {
     try buildExpectFailExact("tests/feature_tests/functions/16X_function_signature_requires_explicit_types",
-        \\tests/feature_tests/functions/16X_function_signature_requires_explicit_types/main.rg:1:30: error: function output field '.result' requires an explicit type
-        \\  identity(.value: Int32) -> (.result) := {
-        \\                               ^
+        \\tests/feature_tests/functions/16X_function_signature_requires_explicit_types/main.rg:1:34: error: function output field '.result' requires an explicit type
+        \\  identity := (.value: Int32) -> (.result) {
+        \\                                   ^
         \\
     );
 }
@@ -1711,7 +1711,7 @@ test "feature_tests/pointers/02_read-only_vs_read-and-write_pointers" {
 test "feature_tests/pointers/03X_assign_through_readonly_pointer" {
     try buildExpectFailExact("tests/feature_tests/pointers/03X_assign_through_readonly_pointer",
         \\tests/feature_tests/pointers/03X_assign_through_readonly_pointer/main.rg:5:11: error: cannot assign through pointer '&Int32' because it is read-only; use '$&' when acquiring it
-        \\      reader& = 1
+        \\      reader&= 1
         \\            ^
         \\
     );
@@ -1719,9 +1719,9 @@ test "feature_tests/pointers/03X_assign_through_readonly_pointer" {
 
 test "feature_tests/pointers/04X_read-write_pointer_to_constant" {
     try buildExpectFailExact("tests/feature_tests/pointers/04X_read-write_pointer_to_constant",
-        \\tests/feature_tests/pointers/04X_read-write_pointer_to_constant/main.rg:4:32: error: binding 'value' is immutable; declare it with '::' or use '&value'
-        \\      mutable_view : $&Int32 = $&value
-        \\                                 ^
+        \\tests/feature_tests/pointers/04X_read-write_pointer_to_constant/main.rg:4:31: error: binding 'value' is immutable; declare it with '::' or use '&value'
+        \\      mutable_view: $&Int32 = $&value
+        \\                                ^
         \\
     );
 }
@@ -1730,7 +1730,7 @@ test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
     try buildExpectFailExact("tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param",
         \\tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param/main.rg:9:14: error: no function named 'increment' accepts arguments (.ptr: &Int32). Available signatures:
         \\  - increment (.ptr: $&Int32) -> ()
-        \\      increment(.ptr=reader)
+        \\      increment(.ptr = reader)
         \\               ^
         \\
     );
@@ -1899,7 +1899,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
-        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:18:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:21:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      second := first
         \\                ^
         \\
@@ -1908,7 +1908,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:22:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:25:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1917,16 +1917,16 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:22:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
-        \\      wrapped : Wrapper = (.res = handle)
-        \\                                  ^
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:25:32: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\      wrapped: Wrapper = (.res = handle)
+        \\                                 ^
         \\
     );
 }
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:17:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:20:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      out = res
         \\            ^
         \\
@@ -1959,7 +1959,7 @@ test "feature_tests/ownership/13_move_operator" {
 
 test "feature_tests/ownership/14X_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/14X_use_after_move",
-        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:23:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:22:34)
+        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:26:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:25:34)
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1968,7 +1968,7 @@ test "feature_tests/ownership/14X_use_after_move" {
 
 test "feature_tests/ownership/15X_reassign_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/15X_reassign_after_move",
-        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:23:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:22:34)
+        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:26:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:25:34)
         \\      handle = Resource()
         \\      ^
         \\
@@ -2009,7 +2009,7 @@ test "feature_tests/basics/20_c_enum_baseline" {
 test "feature_tests/basics/21X_c_enum_payload" {
     try buildExpectFailExact("tests/feature_tests/basics/21X_c_enum_payload",
         \\tests/feature_tests/basics/21X_c_enum_payload/main.rg:3:7: error: CEnum variant '..exists' cannot carry a payload
-        \\      ..exists (.code: Int32),
+        \\      ..exists(.code: Int32),
         \\        ^
         \\
     );
@@ -2151,7 +2151,7 @@ test "feature_tests/types/28X_match_omit_payload_pattern" {
 
 test "feature_tests/types/32X_match_value_noncopyable_payload" {
     try buildExpectFailExact("tests/feature_tests/types/32X_match_value_noncopyable_payload",
-        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:20:14: error: type '{...}' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:20:14: error: type '<anonymous>' cannot be copied implicitly; use '~value' to transfer ownership
         \\          ..ok payload {
         \\               ^
         \\
@@ -2324,7 +2324,7 @@ test "feature_tests/types/20_struct_initializer_without_init" {
 }
 
 test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "construction arguments do not match the selected Init.Args");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "construction arguments cannot infer a matching Init target");
 }
 
 test "feature_tests/collections/16_dynamic_array_iterator_manual" {
@@ -2656,9 +2656,9 @@ test "feature_tests/types/46_report_error_helper" {
     try runExpectStderr(test_path, 0,
         \\error: project build failed
         \\error trace (most recent first):
-        \\  at tests/feature_tests/types/46_report_error_helper/main.rg:13:23: loading project config
-        \\        value := middle() !! "loading project config"
-        \\                          ^
+        \\  at tests/feature_tests/types/46_report_error_helper/main.rg:13:22: loading project config
+        \\        value := middle()!! "loading project config"
+        \\                         ^
         \\  at tests/feature_tests/types/46_report_error_helper/main.rg:8:20
         \\        value := fail()!
         \\                       ^
@@ -3087,7 +3087,7 @@ test "feature_tests/ownership/35_system_move_by_value" {
 
 test "feature_tests/ownership/36X_double_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/36X_double_move",
-        \\tests/feature_tests/ownership/36X_double_move/main.rg:23:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:22:34)
+        \\tests/feature_tests/ownership/36X_double_move/main.rg:26:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:25:34)
         \\      status_code = consume(.res = ~handle)
         \\                                    ^
         \\
@@ -3223,9 +3223,9 @@ test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
 
 test "feature_tests/polymorphism/21X_generic_bound_requires_type_keyword" {
     try buildExpectFailExact("tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword",
-        \\tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword/main.rg:3:15: error: generic parameter bounds use '.t: Type: Constraint'
-        \\  foo#(.t: Int32: ExampleAbstract)(.value: Int32) -> (.result: Int32) := {
-        \\                ^
+        \\tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword/main.rg:3:19: error: generic parameter bounds use '.t: Type: Constraint'
+        \\  foo := #(.t: Int32: ExampleAbstract ) (.value: Int32) -> (.result: Int32) {
+        \\                    ^
         \\
     );
 }
@@ -3306,9 +3306,9 @@ test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
 
 test "feature_tests/ownership/42X_reference_use_after_root_end" {
     try buildExpectFailExact("tests/feature_tests/ownership/42X_reference_use_after_root_end",
-        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:12:8: error: reference depends on a root that has ended
-        \\      if reference& == 0 {
-        \\         ^
+        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:15:16: error: reference depends on a root that has ended
+        \\              if reference&== 0 {
+        \\                 ^
         \\
     );
 }
@@ -3323,9 +3323,9 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:8: error: reference depends on a root that has ended
-        \\      if b&.size == 1 {
-        \\         ^
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:16: error: reference depends on a root that has ended
+        \\              if b&.size == 1 {
+        \\                 ^
         \\
     );
 }
@@ -3349,9 +3349,9 @@ test "feature_tests/ownership/58X_null_safe_reference" {
 
 test "feature_tests/ownership/59X_branch_deinit_then_use" {
     try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
-        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:13:19: error: place rooted at 'allocation' is maybe_initialized and cannot be used
-        \\      if allocation.size == 1 {
-        \\                    ^
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:13:27: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\              if allocation.size == 1 {
+        \\                            ^
         \\
     );
 }
@@ -3384,9 +3384,9 @@ test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
 
 test "feature_tests/ownership/64X_owned_root_cycle" {
     try buildExpectFailExact("tests/feature_tests/ownership/64X_owned_root_cycle",
-        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:18:5: error: root ownership must be acyclic
-        \\      slot_b& = ~a
-        \\      ^
+        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:35:21: error: root ownership must be acyclic
+        \\                      slot_b&= ~a
+        \\                      ^
         \\
     );
 }
@@ -4388,9 +4388,9 @@ test "feature_tests/ownership/218X_conditional_opaque_reference_source_closes_ow
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
-        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:21:8: error: reference depends on a root that has ended
-        \\      if alias& == 0 {
-        \\         ^
+        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:26:16: error: reference depends on a root that has ended
+        \\              if alias&== 0 {
+        \\                 ^
         \\
     );
 }
@@ -4401,9 +4401,9 @@ test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
 
 test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
     try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
-        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:15:10: error: reference depends on a root that has ended
-        \\      if b.to_a& == 0 {
-        \\           ^
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:18:18: error: reference depends on a root that has ended
+        \\              if b.to_a&== 0 {
+        \\                   ^
         \\
     );
 }
@@ -4438,7 +4438,7 @@ test "feature_tests/ownership/49X_structural_field_use_after_move" {
 
 test "feature_tests/ownership/50X_branch_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/50X_branch_may_move_value",
-        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:9:24: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:7:26)
+        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:10:24: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:8:26)
         \\      status_code = pair.left
         \\                         ^
         \\
@@ -4447,7 +4447,7 @@ test "feature_tests/ownership/50X_branch_may_move_value" {
 
 test "feature_tests/ownership/51X_loop_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/51X_loop_may_move_value",
-        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:32: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:26)
+        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:8:32: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:8:26)
         \\          consume(.value = ~pair.left)
         \\                                 ^
         \\
@@ -4480,7 +4480,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
-        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:18:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:21:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := resources
         \\                ^
         \\
@@ -5375,9 +5375,9 @@ test "feature_tests/modules/06X_private_module_value" {
 
 test "feature_tests/modules/07X_private_module_type" {
     try buildExpectFailExact("tests/feature_tests/modules/07X_private_module_type",
-        \\tests/feature_tests/modules/07X_private_module_type/main.rg:3:14: error: type '_HiddenStatus' is private to its module
-        \\      hidden : dep._HiddenStatus = (.code = 0)
-        \\               ^
+        \\tests/feature_tests/modules/07X_private_module_type/main.rg:3:13: error: type '_HiddenStatus' is private to its module
+        \\      hidden: dep._HiddenStatus = (.code = 0)
+        \\              ^
         \\
     );
 }
@@ -5420,7 +5420,7 @@ test "feature_tests/modules/11X_import_cycle" {
 test "feature_tests/modules/12X_import_requires_binding" {
     try buildExpectFailExact("tests/feature_tests/modules/12X_import_requires_binding",
         \\tests/feature_tests/modules/12X_import_requires_binding/main.rg:1:1: error: import must be assigned to a name
-        \\  import("./dep")
+        \\  import ("./dep")
         \\  ^
         \\
     );
@@ -5429,7 +5429,7 @@ test "feature_tests/modules/12X_import_requires_binding" {
 test "feature_tests/modules/13X_import_requires_binding_nested" {
     try buildExpectFailExact("tests/feature_tests/modules/13X_import_requires_binding_nested",
         \\tests/feature_tests/modules/13X_import_requires_binding_nested/main.rg:3:9: error: import must be assigned to a name
-        \\          import("./dep")
+        \\          import ("./dep")
         \\          ^
         \\
     );
@@ -5515,9 +5515,9 @@ test "feature_tests/modules/27_imported_abstract_qualified_signature" {
 
 test "feature_tests/modules/25X_private_choice_option_imported" {
     try buildExpectFailExact("tests/feature_tests/modules/25X_private_choice_option_imported",
-        \\tests/feature_tests/modules/25X_private_choice_option_imported/main.rg:4:10: error: choice option '_hidden_reason' is private to its module
-        \\      dep.._hidden_reason
-        \\           ^
+        \\tests/feature_tests/modules/25X_private_choice_option_imported/main.rg:4:11: error: choice option '_hidden_reason' is private to its module
+        \\      dep .._hidden_reason
+        \\            ^
         \\
     );
 }
@@ -5540,7 +5540,7 @@ test "feature_tests/modules/29X_imported_abstract_ambiguous_overload" {
 test "feature_tests/modules/30X_nonconstant_module_binding_initialization" {
     try buildExpectFailExact("tests/feature_tests/modules/30X_nonconstant_module_binding_initialization",
         \\tests/feature_tests/modules/30X_nonconstant_module_binding_initialization/main.rg:5:1: error: module-level binding 'computed' must use a constant initializer for now
-        \\  computed : Int32 = make_value().value
+        \\  computed: Int32 = make_value().value
         \\  ^
         \\
     );
@@ -6227,7 +6227,7 @@ test "dormant match payload copy diagnostics respect reachability" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\Token : Type = (.value: Int32)
+        \\Token := (.value: Int32)
         \\
         \\implement Deinit#(Token) (.deinit = (.self: $&Token) -> () {})
         \\
@@ -6236,7 +6236,7 @@ test "dormant match payload copy diagnostics respect reachability" {
         \\    ..error
         \\)
         \\
-        \\dormant() -> () := {
+        \\dormant := () -> ()  {
         \\    value : Result = ..ok(.token = Token(.value = 7))
         \\    match value {
         \\        ..ok payload {
@@ -6246,7 +6246,7 @@ test "dormant match payload copy diagnostics respect reachability" {
         \\    }
         \\}
         \\
-        \\main() -> (.status_code: Int32 = 0) := {}
+        \\main := () -> (.status_code: Int32 = 0)  {}
         \\
         ,
     });
@@ -6272,13 +6272,13 @@ test "dormant pointer diagnostics respect reachability" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\dormant() -> () := {
+        \\dormant := () -> ()  {
         \\    value :: Int32 = 0
         \\    reader : &Int32 = &value
         \\    reader& = 1
         \\}
         \\
-        \\main() -> (.status_code: Int32 = 0) := {}
+        \\main := () -> (.status_code: Int32 = 0)  {}
         \\
         ,
     });
@@ -6304,13 +6304,13 @@ test "argi check validates dormant function bodies" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\dormant() -> () := {
+        \\dormant := () -> ()  {
         \\    value :: Int32 = 0
         \\    reader : &Int32 = &value
         \\    reader& = 1
         \\}
         \\
-        \\main() -> (.status_code: Int32 = 0) := {}
+        \\main := () -> (.status_code: Int32 = 0)  {}
         \\
         ,
     });
@@ -6467,7 +6467,7 @@ test "feature_tests/system/48X_general_purpose_backing_ended" {
 }
 
 test "feature_tests/system/49X_initializer_temporary_ends_backing" {
-    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:31:30: error: reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:34:30: error: reference depends on a root that has ended");
 }
 
 test "feature_tests/system/49_general_purpose_allocator_on_arena" {
@@ -6577,7 +6577,7 @@ test "feature_tests/ownership/294X_fallible_constructor_preserves_root" {
 test "feature_tests/types/267X_initializer_wrong_result" {
     try buildExpectFail(
         "tests/feature_tests/types/267X_initializer_wrong_result",
-        "operation returns an incompatible associated result",
+        "Init.Result must be its participant type",
     );
 }
 
@@ -6628,9 +6628,9 @@ test "feature_tests/types/66_error_tracer_context_copy" {
         \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:14:11: AB
         \\        fail()!! view
         \\              ^
-        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:3:31
-        \\    fail() -> !Void := { result = ..error(.reason = ..copy_test_failure) }
-        \\                                  ^
+        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:3:32
+        \\    fail := () -> !Void { result = ..error(.reason = ..copy_test_failure) }
+        \\                                   ^
         \\
     );
 }
@@ -6654,9 +6654,9 @@ test "feature_tests/types/69_error_tracer_truncation" {
         \\        add_context_text(.context = "latest")
         \\        ^
         \\  <context truncated>
-        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:3:31
-        \\    fail() -> !Void := { result = ..error(.reason = ..truncated_test_failure) }
-        \\                                  ^
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:3:32
+        \\    fail := () -> !Void { result = ..error(.reason = ..truncated_test_failure) }
+        \\                                   ^
         \\
     );
 }
@@ -6703,7 +6703,7 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     defer allocator.free(source_path);
     const source = try std.Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(1024 * 1024));
     defer allocator.free(source);
-    const entry = std.mem.indexOf(u8, source, "main(") orelse return error.MissingParityEntry;
+    const entry = std.mem.indexOf(u8, source, "main :=") orelse return error.MissingParityEntry;
     const renamed = try std.fmt.allocPrint(allocator, "{s}parity_body{s}", .{ source[0..entry], source[entry + 4 ..] });
     defer allocator.free(renamed);
     const relocated = try std.mem.replaceOwned(u8, allocator, renamed, "../../_support/unsafe_allocation", "./support");
@@ -6716,17 +6716,17 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     defer allocator.free(opaque_calls);
     const constructor_calls = try std.mem.replaceOwned(u8, allocator, opaque_calls, "Owned(.allocator =", "parity_owned(.allocator =");
     defer allocator.free(constructor_calls);
-    const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned : Type") != null)
-        if (std.mem.indexOf(u8, relocated, ".fail: Bool") != null)
-            "parity_owned#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator, .fail = fail) }\n"
+    const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned :=") != null)
+        if (std.mem.indexOf(u8, relocated, ".fail =") != null)
+            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) { result = Owned(.allocator = allocator, .fail = fail) }\n"
         else
-            "parity_owned#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator) }\n"
+            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) { result = Owned(.allocator = allocator) }\n"
     else
         "";
-    const arguments = if (std.mem.startsWith(u8, source[entry..], "main(.system: System")) ".system = system" else "";
+    const arguments = if (std.mem.startsWith(u8, source[entry..], "main := (.system: System")) ".system = system" else "";
     const wrapped = try std.fmt.allocPrint(
         allocator,
-        "{s}\nmain(.system: System) -> (.status_code: Int32) := {{\n    status_code = parity_body({s})\n}}\n",
+        "{s}\nmain := (.system: System) -> (.status_code: Int32) {{\n    status_code = parity_body({s})\n}}\n",
         .{ constructor_calls, arguments },
     );
     defer allocator.free(wrapped);
@@ -6736,8 +6736,8 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     try tmp.dir.writeFile(io, .{ .sub_path = "module/main.rg", .data = wrapped });
     const transfers = try std.fmt.allocPrint(
         allocator,
-        "parity_deinit#(.t: Type)(.self: $&t) -> () := {{ deinit(.self = self) }}\n" ++
-            "parity_drop#(.t: Type)(.slot: $&t) -> () := {{ trusted_opaque_drop(.slot = slot) }}\n{s}",
+        "parity_deinit := #(.t: Type) (.self: $&t) -> () {{ deinit(.self = self) }}\n" ++
+            "parity_drop := #(.t: Type) (.slot: $&t) -> () {{ trusted_opaque_drop(.slot = slot) }}\n{s}",
         .{constructor_wrapper},
     );
     defer allocator.free(transfers);
@@ -6814,13 +6814,11 @@ test "feature_tests/basics/27X_mixed_width_arithmetic" {
     );
 }
 
-test "feature_tests/basics/28X_unsupported_initializer_expression" {
-    try buildExpectFailExact("tests/feature_tests/basics/28X_unsupported_initializer_expression",
-        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:3:19: error: choice option '..first_reason' needs a concrete choice type
-        \\  Wrong : Choice = (..first_reason, ..second_reason)
-        \\                    ^
-        \\
-    );
+test "feature_tests/basics/28_choice_type_initializer" {
+    const path = "tests/feature_tests/basics/28_choice_type_initializer";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
 }
 
 test "safety statistics preserve composed allocator behavior" {
@@ -7252,9 +7250,9 @@ test "tests/feature_tests/basics/29_unsigned_literal_extrema" {
 
 test "tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow",
-        \\tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow/main.rg:2:22: error: integer literal magnitude exceeds the supported 64-bit range
-        \\      value : UInt64 = 18446744073709551616
-        \\                       ^
+        \\tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow/main.rg:2:21: error: integer literal magnitude exceeds the supported 64-bit range
+        \\      value: UInt64 = 18446744073709551616
+        \\                      ^
         \\
     );
 }
@@ -7269,9 +7267,9 @@ test "tests/feature_tests/basics/32X_int64_negative_literal_overflow" {
 
 test "tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow" {
     try buildExpectFailExact("tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow",
-        \\tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow/main.rg:1:52: error: integer literal magnitude exceeds the supported 64-bit range
-        \\  maximum#(.t: Type)() -> (.result: t) := { result = 18446744073709551616 }
-        \\                                                     ^
+        \\tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow/main.rg:1:54: error: integer literal magnitude exceeds the supported 64-bit range
+        \\  maximum := #(.t: Type) () -> (.result: t) { result = 18446744073709551616 }
+        \\                                                       ^
         \\
     );
 }
@@ -7473,7 +7471,7 @@ test "feature_tests/types/273_specialized_comparison_operators" {
 }
 
 test "feature_tests/types/274X_specialized_comparison_missing" {
-    try buildExpectFail("tests/feature_tests/types/274X_specialized_comparison_missing", "no matching comparison operator '==' for 'Record' and 'Record'");
+    try buildExpectFail("tests/feature_tests/types/274X_specialized_comparison_missing", "no conformance for the qualified operation's participants");
 }
 
 test "feature_tests/types/275X_specialized_ordering_missing" {
@@ -7481,7 +7479,7 @@ test "feature_tests/types/275X_specialized_ordering_missing" {
 }
 
 test "feature_tests/types/276X_specialized_numeric_comparison_mismatch" {
-    try buildExpectFail("tests/feature_tests/types/276X_specialized_numeric_comparison_mismatch", "no matching comparison operator '==' for 'UInt64' and 'Int64'");
+    try buildExpectFail("tests/feature_tests/types/276X_specialized_numeric_comparison_mismatch", "no conformance for the qualified operation's participants");
 }
 
 test "feature_tests/types/277_specialized_comparison_assumed_input" {
@@ -7497,7 +7495,7 @@ test "feature_tests/collections/84_collection_search" {
 }
 
 test "feature_tests/collections/85X_collection_search_missing_equality" {
-    try buildExpectFail("tests/feature_tests/collections/85X_collection_search_missing_equality", "no matching comparison operator '==' for 'Record' and 'Record'");
+    try buildExpectFail("tests/feature_tests/collections/85X_collection_search_missing_equality", "no conformance for the qualified operation's participants");
 }
 
 test "feature_tests/collections/86_ring_buffer" {
@@ -7736,7 +7734,7 @@ test "argi run inherits stdin stdout and stderr" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\main(.system: System) -> (.status_code: Int32 = 7) := {
+        \\main := (.system: System) -> (.status_code: Int32 = 7)  {
         \\    input ::= unwrap_or_abort(.value = Reader#().read_byte(.self = $&system.terminal&.stdin))
         \\    match input {
         \\        ..ok byte {
@@ -8359,8 +8357,23 @@ test "feature_tests/modules/32_qualified_comptime_calls" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/modules/33X_qualified_comptime_call_missing_input" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/modules/33X_qualified_comptime_call_missing_input", "ExpectedLeftParen", "failed without a diagnostic");
+test "feature_tests/modules/33_qualified_definition_values" {
+    const path = "tests/feature_tests/modules/33_qualified_definition_values";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/modules/34X_specialized_function_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/34X_specialized_function_argument", "arguments do not match this specialized function definition", "failed without a diagnostic");
+}
+
+test "feature_tests/modules/35X_specialized_function_rebinding" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/35X_specialized_function_rebinding", "too many compile-time arguments", "failed without a diagnostic");
+}
+
+test "feature_tests/modules/36X_function_definition_argument_kind" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/36X_function_definition_argument_kind", "compile-time argument kind does not match the definition parameter", "failed without a diagnostic");
 }
 
 test "C interop invokes host-managed scalar and record callbacks" {
@@ -8822,8 +8835,8 @@ test "formatter CLI checks prints and atomically updates source" {
     defer std.testing.allocator.free(root);
     const path = try std.fs.path.join(std.testing.allocator, &.{ root, "main.rg" });
     defer std.testing.allocator.free(path);
-    const source = "main()->(.status_code:Int32=0):={ status_code=0 }\n";
-    const expected = "main() -> (.status_code: Int32 = 0) := { status_code = 0 }\n";
+    const source = "main := ()->(.status_code:Int32=0){ status_code=0 }\n";
+    const expected = "main := () -> (.status_code: Int32 = 0) { status_code = 0 }\n";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = source });
     const printed = try runArgiCommand(&.{ "format", path, "--stdout" });
     defer std.testing.allocator.free(printed.stdout);
@@ -8864,7 +8877,7 @@ test "formatter prepares all files before changing any source" {
     defer tmp.cleanup();
     const root = try tmpDirRootPath(&tmp);
     defer std.testing.allocator.free(root);
-    const source = "main()->(.status_code:Int32=0):={}\n";
+    const source = "main := ()->(.status_code:Int32=0){}\n";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.rg", .data = source });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "b.rg", .data = "main(]" });
     const result = try runArgiCommand(&.{ "format", root });
@@ -9312,7 +9325,7 @@ test "feature_tests/basics/76_fallible_main_trace" {
     try expect(std.mem.indexOf(u8, result.stderr, "error trace") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
-    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:3:" else "76_fallible_main_trace/main.rg:3:";
+    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:4:" else "76_fallible_main_trace/main.rg:4:";
     try expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }
 
@@ -9409,7 +9422,7 @@ test "feature_tests/basics/83_fallible_main_local_tracer" {
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("", result.stdout);
     try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
-    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:4:" else "83_fallible_main_local_tracer/main.rg:4:";
+    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:5:" else "83_fallible_main_local_tracer/main.rg:5:";
     try expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }
 
@@ -12024,7 +12037,7 @@ test "feature_tests/contracts/86_constant_projection_concrete_arithmetic" {
 }
 
 test "feature_tests/contracts/87X_constant_projection_constructor_unknown_member" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/87X_constant_projection_constructor_unknown_member", "unknown associated constant", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/87X_constant_projection_constructor_unknown_member", "unknown associated element", "failed without a diagnostic");
 }
 
 test "feature_tests/contracts/88X_constant_projection_constructor_missing_tuple" {
@@ -12056,7 +12069,7 @@ test "feature_tests/contracts/93_constant_projection_imported_concrete_call" {
 }
 
 test "feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch", "associated element is not an integer constant", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch", "compile-time argument kind does not match its parameter", "failed without a diagnostic");
 }
 
 test "feature_tests/contracts/95X_constant_projection_concrete_unknown_participant" {
@@ -12501,11 +12514,11 @@ test "feature_tests/contracts/193X_init_legacy_collision" {
 }
 
 test "feature_tests/contracts/194X_init_scalar_arguments" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "Init.Args must be a record type");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "contract operation input must be a record type");
 }
 
 test "feature_tests/contracts/195X_init_generic_default_type" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "default value is incompatible with its selected Init.Args field type");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "arguments do not match the selected contract operation, including completed defaults", "no function named");
 }
 
 test "feature_tests/contracts/196_init_generic_defaults" {
@@ -12645,7 +12658,7 @@ test "feature_tests/contracts/221_init_generic_choice_defaults" {
 }
 
 test "feature_tests/contracts/222X_init_generic_default_out_of_range" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/222X_init_generic_default_out_of_range", "default value is incompatible with its selected Init.Args field type");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/222X_init_generic_default_out_of_range", "integer literal 128 does not fit");
 }
 
 test "feature_tests/contracts/223_deinit_collection_reached_capability" {
@@ -12715,7 +12728,7 @@ test "feature_tests/contracts/233_init_argument_specialization" {
 }
 
 test "feature_tests/contracts/234X_init_literal_shapes_ambiguous" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous Init argument shapes");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous Init participants");
 }
 
 test "feature_tests/contracts/235_init_target_inferred_from_args" {
@@ -12725,7 +12738,7 @@ test "feature_tests/contracts/235_init_target_inferred_from_args" {
 }
 
 test "feature_tests/contracts/236X_init_target_not_inferred_from_result" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/236X_init_target_not_inferred_from_result", "construction arguments do not match");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/236X_init_target_not_inferred_from_result", "construction arguments cannot infer a matching Init target");
 }
 
 test "feature_tests/contracts/237_init_owned_policy_failure_cleanup" {
@@ -12741,7 +12754,7 @@ test "feature_tests/contracts/238_init_target_inferred_in_generic_body" {
 }
 
 test "feature_tests/contracts/239X_init_inferred_target_ambiguous" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/239X_init_inferred_target_ambiguous", "ambiguous Init argument shapes");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/239X_init_inferred_target_ambiguous", "ambiguous Init participants");
 }
 
 test "feature_tests/contracts/240_init_once_operation_alias" {
@@ -12849,7 +12862,7 @@ test "feature_tests/contracts/260X_legacy_add_operator" {
 }
 
 test "feature_tests/contracts/261X_add_args_ambiguous" {
-    try buildExpectFail("tests/feature_tests/contracts/261X_add_args_ambiguous", "ambiguous Add argument shapes");
+    try buildExpectFail("tests/feature_tests/contracts/261X_add_args_ambiguous", "ambiguous conformances for the same participant tuple");
 }
 
 test "feature_tests/contracts/262_add_borrowed_result" {
@@ -12871,12 +12884,13 @@ test "feature_tests/contracts/265_add_qualified_argument_shape" {
 }
 
 test "feature_tests/contracts/266X_add_missing_reached_argument" {
-    try buildExpectFail("tests/feature_tests/contracts/266X_add_missing_reached_argument", "Add.Args requires a reachable capability");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/266X_add_missing_reached_argument", "required reachable capabilities", "without a diagnostic");
 }
 
 test "feature_tests/contracts/267_equal_scoped_specialization" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/267_equal_scoped_specialization");
     try runExpect("tests/feature_tests/contracts/267_equal_scoped_specialization", 0);
+    try vmExpect("tests/feature_tests/contracts/267_equal_scoped_specialization", 0, null);
 }
 
 test "feature_tests/contracts/268X_legacy_equal_operator" {
@@ -12892,11 +12906,11 @@ test "feature_tests/contracts/270X_equal_result_must_be_bool" {
 }
 
 test "feature_tests/contracts/271X_equal_missing_reached_argument" {
-    try buildExpectFail("tests/feature_tests/contracts/271X_equal_missing_reached_argument", "Equal.Args requires a reachable capability");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/271X_equal_missing_reached_argument", "required reachable capabilities", "without a diagnostic");
 }
 
 test "feature_tests/contracts/272X_equal_argument_shapes_ambiguous" {
-    try buildExpectFail("tests/feature_tests/contracts/272X_equal_argument_shapes_ambiguous", "ambiguous Equal argument shapes");
+    try buildExpectFail("tests/feature_tests/contracts/272X_equal_argument_shapes_ambiguous", "ambiguous conformances for the same participant tuple");
 }
 
 test "feature_tests/contracts/273_scalar_arithmetic_evidence" {
@@ -12916,6 +12930,7 @@ test "feature_tests/contracts/275X_scalar_arithmetic_external_override" {
 test "feature_tests/contracts/276_matrix_shape_product_specialization" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/276_matrix_shape_product_specialization");
     try runExpect("tests/feature_tests/contracts/276_matrix_shape_product_specialization", 0);
+    try vmExpect("tests/feature_tests/contracts/276_matrix_shape_product_specialization", 0, null);
 }
 
 test "feature_tests/contracts/277X_matrix_product_element_mismatch" {
@@ -12929,6 +12944,7 @@ test "feature_tests/contracts/278X_diagonal_product_dimension_mismatch" {
 test "feature_tests/contracts/279_scalar_equality_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/279_scalar_equality_evidence");
     try runExpect("tests/feature_tests/contracts/279_scalar_equality_evidence", 0);
+    try vmExpect("tests/feature_tests/contracts/279_scalar_equality_evidence", 0, null);
 }
 
 test "feature_tests/contracts/280_linear_algebra_add_evidence" {
@@ -13085,11 +13101,11 @@ test "feature_tests/contracts/313X_scoped_virtual_association_mismatch" {
 }
 
 test "feature_tests/contracts/314X_legacy_ordinary_duplicate_identity" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/314X_legacy_ordinary_duplicate_identity", "ordinary function 'value' has more than one declaration", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/314X_legacy_ordinary_duplicate_identity", "legacy ordinary function declarations are unsupported", "panic");
 }
 
 test "feature_tests/contracts/315X_legacy_ordinary_compiletime_identity" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/315X_legacy_ordinary_compiletime_identity", "ordinary function 'value' has more than one declaration", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/315X_legacy_ordinary_compiletime_identity", "legacy ordinary function declarations are unsupported", "panic");
 }
 
 test "feature_tests/contracts/316X_ordinary_concrete_generic_identity" {
@@ -13395,7 +13411,7 @@ test "feature_tests/collections/164_standard_hasher_vectors" {
 }
 
 test "feature_tests/collections/163X_custom_hash_policy_required" {
-    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "construction arguments do not match the selected Init.Args");
+    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "construction arguments cannot infer a matching Init target");
 }
 
 test "feature_tests/contracts/338X_partial_constructor_unknown_parameter" {
@@ -14397,7 +14413,7 @@ fn expectReplFixtureWithDiagnostic(fixture_path: ?[]const u8, commands: []const 
     if (fixture_path) |path| {
         const fixture = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(64 * 1024));
         defer std.testing.allocator.free(fixture);
-        const definitions_end = std.mem.indexOf(u8, fixture, "main()") orelse return error.MissingFixtureEntrypoint;
+        const definitions_end = std.mem.indexOf(u8, fixture, "main :=") orelse return error.MissingFixtureEntrypoint;
         try child.stdin.?.writeStreamingAll(std.testing.io, ":begin\n");
         try child.stdin.?.writeStreamingAll(std.testing.io, fixture[0..definitions_end]);
         try child.stdin.?.writeStreamingAll(std.testing.io, ":end\n");
@@ -15017,7 +15033,7 @@ test "feature_tests/execution/251_prepared_zero_sized_resources" {
 
 test "argi repl retains prepared generic resource slots across submissions" {
     const commands =
-        \\Box#(.T: Type): Type = (.value: T)
+        \\Box := #(.T: Type) (.value: T)
         \\implement#(.T: Type) Deinit#(Box#(T)) (
         \\    .deinit = (.self: $&Box#(T)) -> () {}
         \\)
@@ -15059,7 +15075,7 @@ test "feature_tests/execution/255_acquired_borrowed_records" {
 
 test "argi repl retains acquired reference companions across submissions" {
     const commands =
-        \\Pair: Type = (.source: &Int32)
+        \\Pair := (.source: &Int32)
         \\value :: Int32 = 42
         \\memory ::= unwrap_or_abort(.value = allocate#(.t: Pair)(.self = allocator))
         \\raw ::= raw_pointer#(.t: Pair)(.address = memory.data.address).raw
@@ -15080,7 +15096,7 @@ test "feature_tests/execution/256_acquired_virtual_records" {
 
 test "argi repl retains acquired virtual witnesses across submissions" {
     const commands =
-        \\Counter: Type = (.value: Int32)
+        \\Counter := (.value: Int32)
         \\Counting#(.State: Type): Contract = (
         \\    .bump: (.self: $&State, .amount: Int32) -> () where {}
         \\    .read: (.self: &State) -> (.result: Int32) where {}
@@ -15089,7 +15105,7 @@ test "argi repl retains acquired virtual witnesses across submissions" {
         \\    .bump = (.self: $&Counter, .amount: Int32) -> () { self&.value = self&.value + amount }
         \\    .read = (.self: &Counter) -> (.result: Int32) { result = self&.value }
         \\)
-        \\Holder: Type = (.counter: Virtual#(.contract: Counting))
+        \\Holder := (.counter: Virtual#(.contract: Counting))
         \\counter :: Counter = (.value = 7)
         \\memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = allocator))
         \\raw ::= raw_pointer#(.t: Holder)(.address = memory.data.address).raw
@@ -15122,8 +15138,8 @@ test "feature_tests/execution/259_acquired_choice_resources" {
 
 test "argi repl retains acquired choice cleanup identities across submissions" {
     const commands =
-        \\Counter: Type = (.drops: Int32 = 0)
-        \\Resource: Type = (.counter: $&Counter, .id: Int32)
+        \\Counter := (.drops: Int32 = 0)
+        \\Resource := (.counter: $&Counter, .id: Int32)
         \\Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
         \\implement Deinit#(Resource) (
         \\    .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + self&.id }
@@ -15283,15 +15299,15 @@ test "feature_tests/execution/272_acquired_partial_extraction_cleanup" {
 test "argi repl preserves indexed replacement destinations across submissions" {
     const commands =
         \\:begin
-        \\select_array_index(.selection: $&UIntNative, .counter: $&Counter) -> (.result: UIntNative) := {
+        \\select_array_index := (.selection: $&UIntNative, .counter: $&Counter) -> (.result: UIntNative)  {
         \\    counter&.selections = counter&.selections + 1
         \\    result = selection&
         \\}
-        \\make_array_resource(.selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Resource, (..stop))) := {
+        \\make_array_resource := (.selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Resource, (..stop)))  {
         \\    selection&= 1
         \\    if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.counter = counter, .value = 9) }
         \\}
-        \\replace_array(.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Int32, (..stop))) := {
+        \\replace_array := (.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Int32, (..stop)))  {
         \\    values&[select_array_index(.selection = selection, .counter = counter)] = make_array_resource(.selection = selection, .counter = counter, .fail = fail)!
         \\    result = ..ok 42
         \\}
@@ -15420,42 +15436,42 @@ test "argi repl recovers from aborted allocated System evaluations" {
     try expectReplFixtureWithDiagnostic("tests/feature_tests/execution/279_generic_comptime_system_entry/main.rg", commands, "_0 = 41\n_1 = 42\n_2 = 42\n", "#run evaluation aborted");
 }
 
-test "feature_tests/types/289_nominal_underlying" {
-    try expectSuccessfulBuild("tests/feature_tests/types/289_nominal_underlying");
-    try run("tests/feature_tests/types/289_nominal_underlying");
+test "feature_tests/types/289_annotated_type_aliases" {
+    try expectSuccessfulBuild("tests/feature_tests/types/289_annotated_type_aliases");
+    try run("tests/feature_tests/types/289_annotated_type_aliases");
 }
 
-test "feature_tests/types/290X_nominal_underlying_mismatch" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/290X_nominal_underlying_mismatch", "no function named 'accept' accepts arguments (.value: EdgeId)");
+test "feature_tests/types/290X_nominal_record_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/290X_nominal_record_mismatch", "no function named 'accept' accepts arguments (.value: EdgeId)");
 }
 
-test "feature_tests/types/291X_nominal_underlying_base_mismatch" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/291X_nominal_underlying_base_mismatch", "no function named 'accept' accepts arguments (.value: UIntNative)");
+test "feature_tests/types/291X_nominal_record_base_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/291X_nominal_record_base_mismatch", "no function named 'accept' accepts arguments (.value: UIntNative)");
 }
 
-test "feature_tests/types/292X_nominal_underlying_range" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/292X_nominal_underlying_range", "integer literal 256 does not fit in 'UInt8'");
+test "feature_tests/types/292X_annotated_alias_range" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/292X_annotated_alias_range", "integer literal 256 does not fit in 'UInt8'");
 }
 
-test "feature_tests/types/293X_nominal_underlying_cycle" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/293X_nominal_underlying_cycle", "cyclic underlying type");
+test "feature_tests/types/293X_type_alias_cycle" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/293X_type_alias_cycle", "cyclic type alias");
 }
 
-test "feature_tests/types/294_nominal_underlying_shapes" {
-    try expectSuccessfulBuild("tests/feature_tests/types/294_nominal_underlying_shapes");
-    try run("tests/feature_tests/types/294_nominal_underlying_shapes");
+test "feature_tests/types/294_annotated_alias_shapes" {
+    try expectSuccessfulBuild("tests/feature_tests/types/294_annotated_alias_shapes");
+    try run("tests/feature_tests/types/294_annotated_alias_shapes");
 }
 
-test "feature_tests/types/295X_nominal_underlying_contract" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/295X_nominal_underlying_contract", "does not satisfy contract constraint 'Marked'");
+test "feature_tests/types/295X_independent_record_contract" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/295X_independent_record_contract", "does not satisfy contract constraint 'Marked'");
 }
 
-test "feature_tests/types/296X_nominal_underlying_assignment" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/296X_nominal_underlying_assignment", "distinct nominal types require explicit conversion");
+test "feature_tests/types/296X_nominal_record_assignment" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/296X_nominal_record_assignment", "distinct nominal types require explicit conversion");
 }
 
-test "feature_tests/types/297X_nominal_underlying_raw_argument" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/297X_nominal_underlying_raw_argument", "no function named 'accept_raw' accepts arguments (.value: VertexId)");
+test "feature_tests/types/297X_nominal_record_raw_argument" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/297X_nominal_record_raw_argument", "no function named 'accept_raw' accepts arguments (.value: VertexId)");
 }
 
 test "feature_tests/testing/21_modern_test_syntax" {
@@ -15463,7 +15479,7 @@ test "feature_tests/testing/21_modern_test_syntax" {
         "tests/feature_tests/testing/21_modern_test_syntax",
         &.{},
         0,
-        "PASS modern\nPASS multiline\nPASS legacy\n",
+        "PASS modern\nPASS multiline\nPASS explicit\n",
     );
 }
 
@@ -15573,7 +15589,7 @@ test "feature_tests/modules/36X_nested_private_submodule" {
 
 test "bytecode nominal underlying scalar and aggregate representations" {
     try vmExpect("tests/feature_tests/execution/281_nominal_scalar_representations", 0, null);
-    try vmExpect("tests/feature_tests/types/294_nominal_underlying_shapes", 0, null);
+    try vmExpect("tests/feature_tests/types/294_annotated_alias_shapes", 0, null);
 }
 
 test "feature_tests/execution/281_nominal_scalar_representations" {
@@ -15628,4 +15644,473 @@ test "feature_tests/basics/100X_main_extra_outputs" {
 
 test "feature_tests/modules/37X_inferred_nested_aggregate" {
     try buildExpectFailWithoutNoise("tests/feature_tests/modules/37X_inferred_nested_aggregate", "cannot infer the type of 'record'; add an explicit type annotation", "without a diagnostic");
+}
+
+test "feature_tests/types/301_definition_expressions" {
+    const path = "tests/feature_tests/types/301_definition_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/302_type_value_aliases" {
+    const path = "tests/feature_tests/types/302_type_value_aliases";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/303_definition_value_aliases" {
+    const path = "tests/feature_tests/types/303_definition_value_aliases";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/304_named_nominal_signatures" {
+    const path = "tests/feature_tests/types/304_named_nominal_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/305X_named_signature_conflicting_types" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/305X_named_signature_conflicting_types", "conflicting inferred generic parameters", "failed without a diagnostic");
+}
+
+test "feature_tests/types/306_nested_nominal_choices" {
+    const path = "tests/feature_tests/types/306_nested_nominal_choices";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/307_imported_nominal_signatures" {
+    const path = "tests/feature_tests/types/307_imported_nominal_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/308X_imported_signature_requires_record" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/308X_imported_signature_requires_record", "function input signature must be a record type", "failed without a diagnostic");
+}
+
+test "feature_tests/types/309X_nested_nominal_record_assignment" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/309X_nested_nominal_record_assignment", "distinct nominal types require explicit conversion", "without a diagnostic");
+}
+
+test "feature_tests/types/310X_array_nominal_record_assignment" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/310X_array_nominal_record_assignment", "distinct nominal types require explicit conversion", "without a diagnostic");
+}
+
+test "feature_tests/types/311X_nominal_construction_recontextualization" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/311X_nominal_construction_recontextualization", "distinct nominal types require explicit conversion", "without a diagnostic");
+}
+
+test "feature_tests/types/312_named_operation_alias_signatures" {
+    const path = "tests/feature_tests/types/312_named_operation_alias_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/313_generic_contract_operation" {
+    const path = "tests/feature_tests/types/313_generic_contract_operation";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/314X_generic_operation_result_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/314X_generic_operation_result_mismatch", "operation returns an incompatible associated result", "without a diagnostic");
+}
+
+test "feature_tests/types/315X_virtual_generic_contract_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/315X_virtual_generic_contract_operation", "generic contract operations require static specialization and cannot be virtualized", "without a diagnostic");
+}
+
+test "feature_tests/types/316_generic_operation_candidate_bounds" {
+    const path = "tests/feature_tests/types/316_generic_operation_candidate_bounds";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/317X_generic_operation_identity_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/317X_generic_operation_identity_ambiguity", "multiple applicable operation identities", "without a diagnostic");
+}
+
+test "feature_tests/types/318X_unknown_operation_parameter" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/318X_unknown_operation_parameter", "unknown compile-time argument", "without a diagnostic");
+}
+
+test "feature_tests/types/319X_excess_operation_parameters" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/319X_excess_operation_parameters", "too many compile-time arguments", "without a diagnostic");
+}
+
+test "feature_tests/types/320_named_contract_signatures" {
+    const path = "tests/feature_tests/types/320_named_contract_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/321X_named_contract_signature_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/321X_named_contract_signature_escape", "root that has ended", "without a diagnostic");
+}
+
+test "feature_tests/types/322X_generic_operation_conflicting_inputs" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/322X_generic_operation_conflicting_inputs", "conflicting inferred generic parameters in call to 'pair'", "without a diagnostic");
+}
+
+test "feature_tests/types/323_generic_operation_losing_pattern" {
+    const path = "tests/feature_tests/types/323_generic_operation_losing_pattern";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/324_type_family_arguments" {
+    const path = "tests/feature_tests/types/324_type_family_arguments";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/325X_type_family_signature_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/325X_type_family_signature_mismatch", "type-family argument does not match its parameter signature", "without a diagnostic");
+}
+
+test "feature_tests/types/326_associated_type_family" {
+    const path = "tests/feature_tests/types/326_associated_type_family";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/327X_associated_family_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/327X_associated_family_signature", "associated type-family argument does not match its parameter signature", "without a diagnostic");
+}
+
+test "feature_tests/types/328X_associated_type_as_family" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/328X_associated_type_as_family", "associated element is not a type family", "without a diagnostic");
+}
+
+test "feature_tests/types/329X_associated_family_capture_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/329X_associated_family_capture_identity", "distinct nominal types require explicit conversion", "without a diagnostic");
+}
+
+test "feature_tests/types/330X_explicit_operation_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/330X_explicit_operation_identity", "multiple applicable operation identities", "without a diagnostic");
+}
+
+test "feature_tests/types/331X_nested_family_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/331X_nested_family_signature", "type-family argument does not match its parameter signature", "without a diagnostic");
+}
+
+test "feature_tests/types/332_contextual_text_literal" {
+    const path = "tests/feature_tests/types/332_contextual_text_literal";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/333X_text_value_nominal_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/333X_text_value_nominal_identity", "no function named 'accept_c_text' accepts arguments", "without a diagnostic");
+}
+
+test "feature_tests/types/334_associated_argument_family_inference" {
+    const path = "tests/feature_tests/types/334_associated_argument_family_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/335X_family_integer_parameter_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/335X_family_integer_parameter_type", "type-family argument does not match its parameter signature", "failed without a diagnostic");
+}
+
+test "feature_tests/types/336_family_integer_parameter_alias" {
+    const path = "tests/feature_tests/types/336_family_integer_parameter_alias";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/337X_nested_family_integer_parameter_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/337X_nested_family_integer_parameter_type", "type-family argument does not match its parameter signature", "failed without a diagnostic");
+}
+
+test "feature_tests/types/338_named_array_dimensions" {
+    const path = "tests/feature_tests/types/338_named_array_dimensions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/339X_runtime_array_dimension" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/339X_runtime_array_dimension", "runtime values cannot be used", "failed without a diagnostic");
+}
+
+test "feature_tests/types/340X_family_added_constraint" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/340X_family_added_constraint", "type-family argument does not match its parameter signature", "failed without a diagnostic");
+}
+
+test "feature_tests/types/341_family_weaker_constraint" {
+    const path = "tests/feature_tests/types/341_family_weaker_constraint";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/342_associated_family_arguments" {
+    const path = "tests/feature_tests/types/342_associated_family_arguments";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/343X_family_incompatible_bound" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/343X_family_incompatible_bound", "type-family argument does not match its parameter signature", "without a diagnostic");
+}
+
+test "feature_tests/types/344_family_alpha_equivalent_bounds" {
+    const path = "tests/feature_tests/types/344_family_alpha_equivalent_bounds";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/types/345X_family_bound_arguments" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/345X_family_bound_arguments", "type-family argument does not match its parameter signature", "without a diagnostic");
+}
+
+test "feature_tests/types/346_comptime_signature_identity" {
+    const path = "tests/feature_tests/types/346_comptime_signature_identity";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/contracts/332_implementation_operation_signatures" {
+    const path = "tests/feature_tests/contracts/332_implementation_operation_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/contracts/333X_virtual_implementation_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/333X_virtual_implementation_signature", "implementation-defined operation signatures require static selection and cannot be virtualized", "panic");
+}
+
+test "feature_tests/contracts/334X_implementation_operation_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/334X_implementation_operation_local_escape", "local storage", "panic");
+}
+
+test "feature_tests/basics/130X_once_declaration_prefix" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/basics/130X_once_declaration_prefix", "place once after :=, before the function definition", "without a diagnostic");
+}
+
+test "feature_tests/polymorphism/340X_once_value_alias_reuse" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/340X_once_value_alias_reuse", "once function 'acquire' is consumed more than once", "without a diagnostic");
+}
+
+test "feature_tests/c_interop/130_c_function_definition_value" {
+    const path = "tests/feature_tests/c_interop/130_c_function_definition_value";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+}
+
+test "feature_tests/polymorphism/341_once_and_function_alias_values" {
+    const path = "tests/feature_tests/polymorphism/341_once_and_function_alias_values";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/c_interop/131X_generic_c_function_definition_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/131X_generic_c_function_definition_value", "CFunction requires a concrete non-generic definition", "without a diagnostic");
+}
+
+test "feature_tests/contracts/337X_inline_once_init_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/337X_inline_once_init_value", "is consumed more than once", "without a diagnostic");
+}
+
+test "feature_tests/polymorphism/342X_once_generic_value_reuse" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/342X_once_generic_value_reuse", "is consumed more than once", "without a diagnostic");
+}
+
+test "feature_tests/contracts/338X_arithmetic_signature_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/338X_arithmetic_signature_result", "arithmetic operation must return exactly (.result: Result)", "without a diagnostic");
+}
+
+test "feature_tests/contracts/339_arithmetic_callable_provider" {
+    const path = "tests/feature_tests/contracts/339_arithmetic_callable_provider";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/347X_generic_record_missing_context" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/347X_generic_record_missing_context", "add an explicit type annotation", "without a diagnostic");
+}
+
+test "feature_tests/types/348_generic_contextual_records" {
+    const path = "tests/feature_tests/types/348_generic_contextual_records";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/340_tag_choice_equality" {
+    const path = "tests/feature_tests/contracts/340_tag_choice_equality";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/341X_tag_choice_nominal_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/341X_tag_choice_nominal_identity", "no conformance for the qualified operation's participants", "without a diagnostic");
+}
+
+test "feature_tests/contracts/342_open_operation_inference" {
+    const path = "tests/feature_tests/contracts/342_open_operation_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/343X_open_operation_identity_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/343X_open_operation_identity_ambiguity", "multiple applicable operation identities", "without a diagnostic");
+}
+
+test "feature_tests/contracts/344X_open_operation_participant_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/344X_open_operation_participant_ambiguity", "operation inputs do not determine a unique participant tuple", "without a diagnostic");
+}
+
+test "feature_tests/contracts/345_open_operation_provider" {
+    const path = "tests/feature_tests/contracts/345_open_operation_provider";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "argi repl preserves inferred operation participants across rejected submissions" {
+    const commands =
+        \\first ::= build_cell(42)
+        \\number :: UInt8 = 5
+        \\bad ::= build_cell(number) + true
+        \\first.value
+        \\second ::= build_cell(7)
+        \\first = second
+        \\first.value
+        \\third ::= build_cell(number)
+        \\third.value
+        \\
+    ;
+    try expectReplFixtureWithDiagnostic("tests/feature_tests/contracts/342_open_operation_inference/main.rg", commands, "_0 = 42\n_1 = 7\n_2 = 5\n", "operator '+' is not defined");
+}
+
+test "feature_tests/contracts/346_bound_operation_values" {
+    const path = "tests/feature_tests/contracts/346_bound_operation_values";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/347X_bound_once_operation_reuse" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/347X_bound_once_operation_reuse", "is consumed more than once", "without a diagnostic");
+}
+
+test "feature_tests/contracts/348X_bound_operation_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/348X_bound_operation_signature", "the selected input signature does not match the generic operation alias", "without a diagnostic");
+}
+
+test "feature_tests/contracts/349X_non_function_operation_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/349X_non_function_operation_value", "implementation operation must be a compile-time function definition value", "without a diagnostic");
+}
+
+test "argi repl preserves bound operation definition values" {
+    const commands =
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
+        \\int_identity := identity#(Int32)
+        \\Bound#(.T: Type): Contract = (.bound_value: _)
+        \\implement Bound#(Int32) (.bound_value = int_identity)
+        \\bound_value(42)
+        \\bound_value(7)
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n_1 = 7\n");
+}
+
+test "feature_tests/contracts/350_operation_value_expressions" {
+    const path = "tests/feature_tests/contracts/350_operation_value_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/351X_operation_expression_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/351X_operation_expression_value", "implementation operation must be a compile-time function definition value", "without a diagnostic");
+}
+
+test "argi repl resolves operation value expressions" {
+    const commands =
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
+        \\Direct#(.T: Type): Contract = (.direct_value: _)
+        \\implement Direct#(Int32) (.direct_value = identity#(Int32))
+        \\direct_value(42)
+        \\Box := #(.T: Type) (.value: T)
+        \\make_box := #(.T: Type) (.value: T) -> (.result: Box#(T)) { result = (.value = value) }
+        \\BoxInitArgs: Type = #(.T: Type) (.value: T)
+        \\
+        \\implement#(.T: Type) Init#(Box#(T), BoxInitArgs#(T)) (
+        \\    .Result: Type = Box#(T)
+        \\.init = make_box#(T))
+        \\value ::= Box(7)
+        \\value.value
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n_1 = 7\n");
+}
+
+test "feature_tests/contracts/352_associated_operation_expressions" {
+    const path = "tests/feature_tests/contracts/352_associated_operation_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/353_init_argument_participants" {
+    const path = "tests/feature_tests/contracts/353_init_argument_participants";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/354X_init_argument_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/354X_init_argument_ambiguity", "ambiguous Init participants", "without a diagnostic");
+}
+
+test "feature_tests/polymorphism/350_named_signature_assume" {
+    const path = "tests/feature_tests/polymorphism/350_named_signature_assume";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/types/355X_generic_scalar_input_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/355X_generic_scalar_input_signature", "arguments do not match this specialized function definition", "failed without a diagnostic");
+}
+
+test "feature_tests/types/356X_generic_scalar_output_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/356X_generic_scalar_output_signature", "function output signature must be a record type", "failed without a diagnostic");
+}
+
+test "feature_tests/types/357_record_signature_validation" {
+    const path = "tests/feature_tests/types/357_record_signature_validation";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
 }

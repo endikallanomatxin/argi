@@ -1,27 +1,24 @@
 -- Borrows both the reader and an initialized byte buffer. Construction does
 -- not allocate. Returned bytes are copied values independent of the buffer.
-BufferedReader#(.base_type: Type: Reader#(base_type)): Type = (
+BufferedReader := #(.base_type: Type: Reader#(base_type)) (
     .base   : $&base_type
     .buffer : MutableArrayView#(.t: UInt8)
     .start  : UIntNative
     .end    : UIntNative
 )
 
+BufferedReaderInitArgs: Type = #(.base_type: Type: Reader#(base_type)) (
+    .base   : $&base_type,
+    .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
+)
+
 implement#(.base_type: Type: Reader#(base_type)) Init#(
-    BufferedReader#(.base_type: base_type),
-    (
-        .base   : $&base_type,
-        .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
-    )
+    BufferedReader#(.base_type: base_type), BufferedReaderInitArgs#(base_type)
 ) (
     .Result : Type = BufferedReader#(.base_type: base_type)
-    .init   = (
-        .args : (
-            .base   : $&base_type,
-            .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
-        )
-    ) -> (.result: Result) {
-        result = (.base = args.base, .buffer = args.buffer, .start = 0, .end = 0)
+
+    .init = BufferedReaderInitArgs#(base_type) -> (.result: Result) {
+        result = (.base = base, .buffer = buffer, .start = 0, .end = 0)
     }
 )
 

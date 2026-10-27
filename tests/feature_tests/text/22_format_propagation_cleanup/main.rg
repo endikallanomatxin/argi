@@ -1,19 +1,22 @@
-FailFirstAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
+FailFirstAllocator := (
+    .ffi           : $&ForeignFunctionInterface
     .allocations   : Int32
     .deallocations : Int32
 )
 
-implement Init#(FailFirstAllocator, (.ffi: $&ForeignFunctionInterface)) (
+FailFirstAllocatorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+
+implement Init#(FailFirstAllocator, FailFirstAllocatorInitArgs) (
     .Result : Type = FailFirstAllocator
-    .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        assume ffi := ~args.ffi
+
+    .init = FailFirstAllocatorInitArgs -> (.result: Result) {
+        assume ffi := ~ffi
 
         result = (.ffi = ffi, .allocations = 0, .deallocations = 0)
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     backing ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     out ::= unwrap_or_abort(
         .value = string_with_capacity(.allocator = $&backing, .capacity = 1)

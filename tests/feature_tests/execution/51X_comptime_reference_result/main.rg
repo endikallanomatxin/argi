@@ -1,7 +1,7 @@
 value: Int32 = 42
 
-reference() -> (.result: &Int32) := { result = &value }
+reference := () -> (.result: &Int32) { result = &value }
 
-main() -> () := {
+main := () -> () {
     pointer ::= #run () -> (.value: &Int32) { value = reference() }
 }

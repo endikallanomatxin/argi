@@ -1,18 +1,22 @@
 -- Known sequences are generated with an independent exact-integer model of
 -- PCG's 64-bit recurrence and XSH-RR output permutation.
-expect_word(.self: $&Pcg32, .expected: UInt32) -> () := {
+expect_word := (.self: $&Pcg32, .expected: UInt32) -> () {
     if next_uint32(.self = self).value != expected { abort }
 }
-expect_float16(.actual: Float16, .expected: Float16) -> () := {
+
+expect_float16 := (.actual: Float16, .expected: Float16) -> () {
     if actual != expected { abort }
 }
-expect_float32(.actual: Float32, .expected: Float32) -> () := {
+
+expect_float32 := (.actual: Float32, .expected: Float32) -> () {
     if actual != expected { abort }
 }
-expect_float64(.actual: Float64, .expected: Float64) -> () := {
+
+expect_float64 := (.actual: Float64, .expected: Float64) -> () {
     if actual != expected { abort }
 }
-main() -> (.status_code: Int32 = 0) := {
+
+main := () -> (.status_code: Int32 = 0) {
     generator ::= Pcg32(.seed = 0)
     reseed(.self = $&generator, .seed = 0)
     expect_word(.self = $&generator, .expected = 3894649422)
@@ -190,189 +194,319 @@ main() -> (.status_code: Int32 = 0) := {
     if next_uint64(.self = $&generator).value != 2799931182190657983 { abort }
     expect_word(.self = $&generator, .expected = 3080190163)
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 1)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 1)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2055130073) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2055130073) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 3)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 3)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2055130073) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 10)).result != 2 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 10)).result
+        != 2
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2055130073) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2147483649)).result != 1747165773 {
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint32(.self = $&generator, .upper_bound = 2147483649)
+        ).result
+        != 1747165773
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2055130073) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 4294967295)).result != 3894649422 {
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint32(.self = $&generator, .upper_bound = 4294967295)
+        ).result
+        != 3894649422
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2055130073) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 1)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 1)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1795671209) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1795671209) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 3)).result != 2 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 3)).result
+        != 2
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1795671209) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 10)).result != 6 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 10)).result
+        != 6
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1795671209) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2147483649)).result != 1123384277 {
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint32(.self = $&generator, .upper_bound = 2147483649)
+        ).result
+        != 1123384277
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1795671209) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 4294967295)).result != 3270867926 {
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint32(.self = $&generator, .upper_bound = 4294967295)
+        ).result
+        != 3270867926
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1795671209) -- 1 attempt
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 1)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 1)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1613493245) -- 1 attempt
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1613493245) -- 1 attempt
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 3)).result != 2 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 3)).result
+        != 2
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 3894649422) -- 2 attempts
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 10)).result != 5 {
+    if [
+        unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 10)).result
+        != 5
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 3894649422) -- 2 attempts
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 2147483649)).result != 1747165773 {
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint32(.self = $&generator, .upper_bound = 2147483649)
+        ).result
+        != 1747165773
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2055130073) -- 3 attempts
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 4294967295)).result != 1613493245 {
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint32(.self = $&generator, .upper_bound = 4294967295)
+        ).result
+        != 1613493245
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 3894649422) -- 2 attempts
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 1)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 1)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2315086854) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 2)).result != 1 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 2)).result
+        != 1
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2315086854) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 3)).result != 2 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 3)).result
+        != 2
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2315086854) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 10)).result != 5 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 10)).result
+        != 5
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 2315086854) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator,
-            .upper_bound = 9223372036854775809)).result != 7504019862075657176 { abort }
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint64(.self = $&generator, .upper_bound = 9223372036854775809)
+        ).result
+        != 7504019862075657176
+    ] { abort }
     expect_word(.self = $&generator, .expected = 2315086854) -- 1 attempt
     reseed(.self = $&generator, .seed = 0)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator,
-            .upper_bound = 18446744073709551615)).result != 16727391898930432985 { abort }
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint64(.self = $&generator, .upper_bound = 18446744073709551615)
+        ).result
+        != 16727391898930432985
+    ] { abort }
     expect_word(.self = $&generator, .expected = 2315086854) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 1)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 1)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1924641435) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 2)).result != 1 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 2)).result
+        != 1
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1924641435) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 3)).result != 1 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 3)).result
+        != 1
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1924641435) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 10)).result != 5 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 10)).result
+        != 5
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 1924641435) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator,
-            .upper_bound = 9223372036854775809)).result != 4824898736646243496 { abort }
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint64(.self = $&generator, .upper_bound = 9223372036854775809)
+        ).result
+        != 4824898736646243496
+    ] { abort }
     expect_word(.self = $&generator, .expected = 1924641435) -- 1 attempt
     reseed(.self = $&generator, .seed = 42)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator,
-            .upper_bound = 18446744073709551615)).result != 14048270773501019305 { abort }
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint64(.self = $&generator, .upper_bound = 18446744073709551615)
+        ).result
+        != 14048270773501019305
+    ] { abort }
     expect_word(.self = $&generator, .expected = 1924641435) -- 1 attempt
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 1)).result != 0 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 1)).result
+        != 0
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 3894649422) -- 1 attempt
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 2)).result != 1 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 2)).result
+        != 1
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 3894649422) -- 1 attempt
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 3)).result != 2 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 3)).result
+        != 2
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 3894649422) -- 1 attempt
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 10)).result != 5 {
+    if [
+        unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 10)).result
+        != 5
+    ] {
         abort
     }
     expect_word(.self = $&generator, .expected = 3894649422) -- 1 attempt
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator,
-            .upper_bound = 9223372036854775809)).result != 7504019862075657176 { abort }
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint64(.self = $&generator, .upper_bound = 9223372036854775809)
+        ).result
+        != 7504019862075657176
+    ] { abort }
     expect_word(.self = $&generator, .expected = 2315086854) -- 2 attempts
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    if unwrap_or_abort(.value = uniform_uint64(.self = $&generator,
-            .upper_bound = 18446744073709551615)).result != 1613493245 { abort }
+    if [
+        unwrap_or_abort(
+            .value = uniform_uint64(.self = $&generator, .upper_bound = 18446744073709551615)
+        ).result
+        != 1613493245
+    ] { abort }
     expect_word(.self = $&generator, .expected = 3894649422) -- 1 attempt
     -- Invalid bounds report an error without consuming generator state.
     saved ::= generator
     invalid32 ::= uniform_uint32(.self = $&generator, .upper_bound = 0)
     if is(.value = invalid32, .variant = ..error) {
         if invalid32 ..error.reason != ..invalid_range { abort }
-    } else { abort }
+    } else {
+        abort
+    }
     invalid64 ::= uniform_uint64(.self = $&generator, .upper_bound = 0)
     if is(.value = invalid64, .variant = ..error) {
         if invalid64 ..error.reason != ..invalid_range { abort }
-    } else { abort }
+    } else {
+        abort
+    }
     expect_word(.self = $&generator, .expected = next_uint32(.self = $&saved).value)
     reseed(.self = $&generator, .seed = 0)
     if next_bool(.self = $&generator).value != true { abort }
@@ -381,12 +515,15 @@ main() -> (.status_code: Int32 = 0) := {
     expect_float16(.actual = next_float16(.self = $&generator).value, .expected = 0.90673828125)
     expect_word(.self = $&generator, .expected = 2055130073)
     reseed(.self = $&generator, .seed = 0)
-    expect_float32(.actual = next_float32(.self = $&generator).value,
-        .expected = 0.90679371356964111328125)
+    expect_float32(
+        .actual = next_float32(.self = $&generator).value, .expected = 0.90679371356964111328125
+    )
     expect_word(.self = $&generator, .expected = 2055130073)
     reseed(.self = $&generator, .seed = 0)
-    expect_float64(.actual = next_float64(.self = $&generator).value,
-        .expected = 0.90679373184184008938046872572158463299274444580078125)
+    expect_float64(
+        .actual   = next_float64(.self = $&generator).value
+        .expected = 0.90679373184184008938046872572158463299274444580078125
+    )
     expect_word(.self = $&generator, .expected = 2315086854)
     reseed(.self = $&generator, .seed = 42)
     if next_bool(.self = $&generator).value != true { abort }
@@ -395,12 +532,16 @@ main() -> (.status_code: Int32 = 0) := {
     expect_float16(.actual = next_float16(.self = $&generator).value, .expected = 0.76123046875)
     expect_word(.self = $&generator, .expected = 1795671209)
     reseed(.self = $&generator, .seed = 42)
-    expect_float32(.actual = next_float32(.self = $&generator).value,
-        .expected = 0.761558234691619873046875)
+    expect_float32(
+        .actual   = next_float32(.self = $&generator).value
+        .expected = 0.761558234691619873046875
+    )
     expect_word(.self = $&generator, .expected = 1795671209)
     reseed(.self = $&generator, .seed = 42)
-    expect_float64(.actual = next_float64(.self = $&generator).value,
-        .expected = 0.76155828461472108159568961127661168575286865234375)
+    expect_float64(
+        .actual   = next_float64(.self = $&generator).value
+        .expected = 0.76155828461472108159568961127661168575286865234375
+    )
     expect_word(.self = $&generator, .expected = 1924641435)
     reseed(.self = $&generator, .seed = 9624256412291681990)
     if next_bool(.self = $&generator).value != false { abort }
@@ -412,8 +553,10 @@ main() -> (.status_code: Int32 = 0) := {
     expect_float32(.actual = next_float32(.self = $&generator).value, .expected = 0.0)
     expect_word(.self = $&generator, .expected = 1613493245)
     reseed(.self = $&generator, .seed = 9624256412291681990)
-    expect_float64(.actual = next_float64(.self = $&generator).value,
-        .expected = 0.0000000000874675887274634078494273126125335693359375)
+    expect_float64(
+        .actual   = next_float64(.self = $&generator).value
+        .expected = 0.0000000000874675887274634078494273126125335693359375
+    )
     expect_word(.self = $&generator, .expected = 3894649422)
     reseed(.self = $&generator, .seed = 8160223694559104710)
     if next_bool(.self = $&generator).value != true { abort }
@@ -422,12 +565,16 @@ main() -> (.status_code: Int32 = 0) := {
     expect_float16(.actual = next_float16(.self = $&generator).value, .expected = 0.99951171875)
     expect_word(.self = $&generator, .expected = 4190648745)
     reseed(.self = $&generator, .seed = 8160223694559104710)
-    expect_float32(.actual = next_float32(.self = $&generator).value,
-        .expected = 0.999999940395355224609375)
+    expect_float32(
+        .actual   = next_float32(.self = $&generator).value
+        .expected = 0.999999940395355224609375
+    )
     expect_word(.self = $&generator, .expected = 4190648745)
     reseed(.self = $&generator, .seed = 8160223694559104710)
-    expect_float64(.actual = next_float64(.self = $&generator).value,
-        .expected = 0.99999999999434485697946684013004414737224578857421875)
+    expect_float64(
+        .actual   = next_float64(.self = $&generator).value
+        .expected = 0.99999999999434485697946684013004414737224578857421875
+    )
     expect_word(.self = $&generator, .expected = 1482006935)
     reseed(.self = $&generator, .seed = 18446744073709551615)
     if next_bool(.self = $&generator).value != true { abort }
@@ -436,12 +583,15 @@ main() -> (.status_code: Int32 = 0) := {
     expect_float16(.actual = next_float16(.self = $&generator).value, .expected = 0.84814453125)
     expect_word(.self = $&generator, .expected = 3444271506)
     reseed(.self = $&generator, .seed = 18446744073709551615)
-    expect_float32(.actual = next_float32(.self = $&generator).value,
-        .expected = 0.84840679168701171875)
+    expect_float32(
+        .actual = next_float32(.self = $&generator).value, .expected = 0.84840679168701171875
+    )
     expect_word(.self = $&generator, .expected = 3444271506)
     reseed(.self = $&generator, .seed = 18446744073709551615)
-    expect_float64(.actual = next_float64(.self = $&generator).value,
-        .expected = 0.84840680444658078673825229998328723013401031494140625)
+    expect_float64(
+        .actual   = next_float64(.self = $&generator).value
+        .expected = 0.84840680444658078673825229998328723013401031494140625
+    )
     expect_word(.self = $&generator, .expected = 2072954526)
     zero16: Float16 = 0.0
     one16: Float16 = 1.0
@@ -457,10 +607,20 @@ main() -> (.status_code: Int32 = 0) := {
         if sample16 < zero16 or sample16 >= one16 { abort }
         if sample32 < zero32 or sample32 >= one32 { abort }
         if sample64 < zero64 or sample64 >= one64 { abort }
-        if unwrap_or_abort(.value = uniform_uint32(.self = $&generator, .upper_bound = 37)).result >= 37 {
+        if [
+            unwrap_or_abort(
+                .value = uniform_uint32(.self = $&generator, .upper_bound = 37)
+            ).result
+            >= 37
+        ] {
             abort
         }
-        if unwrap_or_abort(.value = uniform_uint64(.self = $&generator, .upper_bound = 1000000000000)).result >= 1000000000000 {
+        if [
+            unwrap_or_abort(
+                .value = uniform_uint64(.self = $&generator, .upper_bound = 1000000000000)
+            ).result
+            >= 1000000000000
+        ] {
             abort
         }
         count = count + 1

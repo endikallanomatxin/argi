@@ -1,13 +1,13 @@
 Mover#(.Participant: Type): Contract = (
-    .transfer: (.self: &Participant, .source: $&Resource, .destination: $&Resource) -> ()
+    .transfer : (.self: &Participant, .source: $&Resource, .destination: $&Resource) -> ()
     where relocates(destination, source)
 )
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
 implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -17,15 +17,15 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-_impl_transfer_Manager := (.self: &Manager, .source: $&Resource, .destination: $&Resource) -> ()  {
+_impl_transfer_Manager := (.self: &Manager, .source: $&Resource, .destination: $&Resource) -> () {
     if self&.unused == 1 { relocate(source, destination) }
 }
 
-transfer_owned(.mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource) -> () := {
+transfer_owned := (.mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource) -> () {
     transfer(mover, source, destination)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)
 

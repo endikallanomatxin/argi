@@ -1,10 +1,13 @@
-Box#(.Value: Type, .Tag: Type = Int32): Type = (.value: Value)
+Box := #(.Value: Type, .Tag: Type = Int32) (.value: Value)
 
-implement#(.Value: Type, .Tag: Type) Init#(Box#(Value, Tag), (.value: Value)) (
+BoxInitArgs: Type = #(.Value: Type, .Tag: Type) (.value: Value)
+
+implement#(.Value: Type, .Tag: Type) Init#(Box#(Value, Tag), BoxInitArgs#(Value, Tag)) (
     .Result : Type = Box#(Value, Tag)
-    .init   = (.args: (.value: Value)) -> (.result: Result) { result = (.value = args.value) }
+
+    .init = BoxInitArgs#(Value, Tag) -> (.result: Result) { result = (.value = value) }
 )
 
-main() -> () := {
+main := () -> () {
     value ::= Box#(.Missing: Int32)(.value = 7)
 }

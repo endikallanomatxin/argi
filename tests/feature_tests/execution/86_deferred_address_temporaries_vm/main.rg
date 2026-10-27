@@ -1,10 +1,11 @@
-Resource: Type = (.active: Bool)
+Resource := (.active: Bool)
+State := (.used: Bool)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {}
 )
 
-produce := (.state: $&(.used: Bool)) -> (.result: Resource) {
+produce := (.state: $&State) -> (.result: Resource) {
     if state&.used {
         result = (.active = false)
     } else {
@@ -18,7 +19,7 @@ observe := (.value: &Resource) -> (.result: Bool) {
 }
 
 exercise := () -> (.result: Int32) {
-    state :: (.used: Bool) = (.used = false)
+    state :: State = (.used = false)
     while observe(.value = &produce(.state = $&state)) {}
     if state.used == false { abort }
     result = 42

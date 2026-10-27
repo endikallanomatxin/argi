@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     source :: [4]UInt8 = (1, 0, 255, 7)
     reader ::= ByteReader(.bytes = view(.self = &source))
     destination :: [3]UInt8 = (9, 9, 9)
@@ -29,8 +29,9 @@ main() -> (.status_code: Int32 = 0) := {
     partial ::= ByteWriter(.bytes = view(.self = $&another))
     if [
         unwrap_or_abort(
-            .value = BlockWriter#(
-            ).write_block(.self = $&partial, .buffer = view(.self = &source))
+            .value = BlockWriter#().write_block(
+                .self = $&partial, .buffer = view(.self = &source)
+            )
         )
         != 2
     ] { abort }

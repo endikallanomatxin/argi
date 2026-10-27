@@ -1,3 +1,5 @@
+_ProcessManagerInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 -- The native adapter owns temporary argument copies and opaque child records.
 -- Addresses are private handles, never safe references or acquisition receipts.
 _process_builder() -> (.address: UIntNative): CFunction(.symbol = "_argi_process_builder")
@@ -43,19 +45,19 @@ _process_stream_write(.handle: UIntNative, .byte: UInt8) -> (.status: Int32): CF
     .symbol = "_argi_process_stream_write"
 )
 
-ProcessManager: Type = (._ffi: $&ForeignFunctionInterface)
+ProcessManager := (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_process_manager := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : ProcessManager
-) {
-    ffi ::= args.ffi
+_acquire_process_manager := once _ProcessManagerInitArgs -> (.result: ProcessManager) {
 
     result = (._ffi = ffi)
 }
 
-implement Init#(ProcessManager, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+ProcessManagerInitArgs: Type = _ProcessManagerInitArgs
+
+implement Init#(ProcessManager, ProcessManagerInitArgs) (
     .Result : Type = ProcessManager
-    .init   = _acquire_process_manager
+
+    .init = _acquire_process_manager
 )
 
 ProcessStreamMode: Type = (..inherit, ..pipe, ..discard)
@@ -73,13 +75,13 @@ implement ImplicitlyCopyable#(ProcessExitStatus) ()
 
 -- Unbuffered endpoints are owned by their process. An inherited/discarded
 -- stream has no parent endpoint; direction is checked before crossing FFI.
-ProcessStream: Type = (
+ProcessStream := (
     ._ffi      : $&ForeignFunctionInterface
     ._handle   : UIntNative
     ._writable : Bool
 )
 
-Process: Type = (
+Process := (
     ._ffi    : $&ForeignFunctionInterface
     ._handle : UIntNative
     .stdin   : ProcessStream
@@ -87,7 +89,7 @@ Process: Type = (
     .stderr  : ProcessStream
 )
 
-_process_mode(.value: ProcessStreamMode) -> (.mode: Int32) := {
+_process_mode := (.value: ProcessStreamMode) -> (.mode: Int32) {
     if is(.value = value, .variant = ..pipe) {
         mode = 1
         return
@@ -101,13 +103,13 @@ _process_mode(.value: ProcessStreamMode) -> (.mode: Int32) := {
     mode = 0
 }
 
-_process_no_arguments() -> (.value: ArrayView#(.t: StringView)) := {
+_process_no_arguments := () -> (.value: ArrayView#(.t: StringView)) {
     value = empty_array_view#(.t: StringView)()
 }
 
-_process_inherit() -> (.value: ProcessStreamMode) := { value = ..inherit }
+_process_inherit := () -> (.value: ProcessStreamMode) { value = ..inherit }
 
-spawn(
+spawn := (
     .executable : StringView,
     .arguments  : ArrayView#(.t: StringView) = _process_no_arguments(),
     .stdin      : ProcessStreamMode          = _process_inherit(),
@@ -118,7 +120,7 @@ spawn(
     .result : Errable#(
         Process, (..invalid_process_argument, ..out_of_memory, ..process_spawn_failed)
     )
-) := {
+) {
     assume ffi := self&._ffi
     builder ::= _process_builder().address
 
@@ -184,7 +186,7 @@ spawn(
     )
 }
 
-wait(.self: $&Process) -> (.result: Errable#(ProcessExitStatus, (..process_wait_failed))) := {
+wait := (.self: $&Process) -> (.result: Errable#(ProcessExitStatus, (..process_wait_failed))) {
     assume ffi := self&._ffi
 
     if self&._handle == 0 {
@@ -208,7 +210,7 @@ wait(.self: $&Process) -> (.result: Errable#(ProcessExitStatus, (..process_wait_
     result = ..ok ..exited(.code = code)
 }
 
-terminate(.self: $&Process) -> (.result: Errable#(Void, (..process_terminate_failed))) := {
+terminate := (.self: $&Process) -> (.result: Errable#(Void, (..process_terminate_failed))) {
     assume ffi := self&._ffi
 
     if self&._handle == 0 {
@@ -224,11 +226,11 @@ terminate(.self: $&Process) -> (.result: Errable#(Void, (..process_terminate_fai
     result = ..ok Void()
 }
 
-_is_open_ProcessStream(.self: &ProcessStream) -> (.ok: Bool) := { ok = self&._handle != 0 }
+_is_open_ProcessStream := (.self: &ProcessStream) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_close_ProcessStream(.self: $&ProcessStream) -> (
+_close_ProcessStream := (.self: $&ProcessStream) -> (
     .result : Errable#(Void, (..stream_close_failed))
-) := {
+) {
     assume ffi := self&._ffi
     handle ::= self&._handle
     self&._handle = 0

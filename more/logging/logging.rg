@@ -10,7 +10,7 @@ Logger#(.Value: Type): Contract = (
     ) where {}
 )
 
-_rank(.level: LogLevel) -> (.value: Int32) := {
+_rank := (.level: LogLevel) -> (.value: Int32) {
     match level {
         ..debug { value = 0 } ..info { value = 1 } ..warning { value = 2 } ..error {
             value = 3
@@ -18,7 +18,7 @@ _rank(.level: LogLevel) -> (.value: Int32) := {
     }
 }
 
-_prefix(.level: LogLevel) -> (.text: StringView) := {
+_prefix := (.level: LogLevel) -> (.text: StringView) {
     match level {
         ..debug { text = "DEBUG" } ..info { text = "INFO" } ..warning { text = "WARN" } ..error {
             text = "ERROR"
@@ -29,9 +29,9 @@ _prefix(.level: LogLevel) -> (.text: StringView) := {
 -- Records borrow text and require no allocation. Escape line breaks to keep
 -- each record on one line. Writes can fail after a prefix; callers decide
 -- whether logging failures should affect their application. Flush is explicit.
-_write_record#(.WriterType: Type: Writer#(WriterType))(
+_write_record := #(.WriterType: Type: Writer#(WriterType)) (
     .writer: $&WriterType, .level: LogLevel, .message: StringView
-) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) := {
+) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
     write(.self = writer, .value = _prefix(.level = level).text)!
     write(.self = writer, .value = ": ")!
     index :: UIntNative = 0
@@ -53,14 +53,15 @@ _write_record#(.WriterType: Type: Writer#(WriterType))(
     write(.self = writer, .value = "\n")!
 }
 
-FileLogger#(.t: Type: Writer#(t)): Type = (._writer: $&t, .minimum: LogLevel)
+FileLogger := #(.t: Type: Writer#(t)) (._writer: $&t, .minimum: LogLevel)
 
-implement#(.t: Type: Writer#(t)) Init#(
-    FileLogger#(.t: t), (.writer: $&t, .minimum: LogLevel = ..info)
-) (
+FileLoggerInitArgs: Type = #(.t: Type: Writer#(t)) (.writer: $&t, .minimum: LogLevel = ..info)
+
+implement#(.t: Type: Writer#(t)) Init#(FileLogger#(.t: t), FileLoggerInitArgs#(t)) (
     .Result : Type = FileLogger#(.t: t)
-    .init   = (.args: (.writer: $&t, .minimum: LogLevel = ..info)) -> (.result: Result) {
-        result = (._writer = args.writer, .minimum = args.minimum)
+
+    .init = FileLoggerInitArgs#(t) -> (.result: Result) {
+        result = (._writer = writer, .minimum = minimum)
     }
 )
 
@@ -73,25 +74,31 @@ implement#(.t: Type: Writer#(t)) Logger#(FileLogger#(.t: t)) (
     }
 )
 
-flush#(.t: Type: Writer#(t)) := (.self: $&FileLogger#(.t: t)) -> (
-    .result : Errable#(Void, LogReasons)
-) { result = Writer#().flush(.self = self&._writer) }
+flush := #(.t: Type: Writer#(t)) (.self: $&FileLogger#(.t: t)) -> (
+    .result : Errable#(Void, LogReasons) = ..ok Void()
+) {
+    Writer#().flush(.self = self&._writer)!
+}
 
-StdLogger#(.out: Type: Writer#(out), .err: Type: Writer#(err)): Type = (
+StdLogger := #(.out: Type: Writer#(out), .err: Type: Writer#(err)) (
     ._out    : $&out,
     ._err    : $&err,
     .minimum : LogLevel
 )
 
+StdLoggerInitArgs: Type = #(.out: Type: Writer#(out), .err: Type: Writer#(err)) (
+    .writer       : $&out,
+    .error_writer : $&err,
+    .minimum      : LogLevel = ..info
+)
+
 implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Init#(
-    StdLogger#(.out: out, .err: err),
-    (.writer: $&out, .error_writer: $&err, .minimum: LogLevel = ..info)
+    StdLogger#(.out: out, .err: err), StdLoggerInitArgs#(out, err)
 ) (
     .Result : Type = StdLogger#(.out: out, .err: err)
-    .init   = (.args: (.writer: $&out, .error_writer: $&err, .minimum: LogLevel = ..info)) -> (
-        .result : Result
-    ) {
-        result = (._out = args.writer, ._err = args.error_writer, .minimum = args.minimum)
+
+    .init = StdLoggerInitArgs#(out, err) -> (.result: Result) {
+        result = (._out = writer, ._err = error_writer, .minimum = minimum)
     }
 )
 

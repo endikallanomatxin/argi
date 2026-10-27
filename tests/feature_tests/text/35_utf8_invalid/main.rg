@@ -1,4 +1,4 @@
-invalid(.bytes: [4]UInt8, .count: UIntNative) -> () := {
+invalid := (.bytes: [4]UInt8, .count: UIntNative) -> () {
     text ::= unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = count))
     match validate_utf8_bytes(.bytes = text) { ..ok _ { abort } ..error _ {} }
     match utf8_decode_bytes(.bytes = text) { ..ok _ { abort } ..error _ {} }
@@ -7,7 +7,8 @@ invalid(.bytes: [4]UInt8, .count: UIntNative) -> () := {
     if position(.self = &decoder).count != 0 { abort }
 }
 
-run_main() -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     invalid(.bytes = (128, 0, 0, 0), .count = 1)
     invalid(.bytes = (191, 0, 0, 0), .count = 1)
     invalid(.bytes = (192, 128, 0, 0), .count = 2)
@@ -28,7 +29,7 @@ run_main() -> !Void = ..ok Void() := {
     match UnicodeScalar(.value = 1114112) { ..ok _ { abort } ..error _ {} }
     match UnicodeScalar(.value = 4294967295) { ..ok _ { abort } ..error _ {} }
     bytes :: [4]UInt8 = (17, 18, 19, 20)
-    scalar ::= UnicodeScalar(.value = 128578)!
+    scalar ::= UnicodeScalar(.value = 128578)!!!
     match utf8_encode(.scalar = scalar, .buffer = view(.self = $&bytes), .offset = 1) {
         ..ok _ { abort } ..error _ {}
     }
@@ -43,15 +44,9 @@ run_main() -> !Void = ..ok Void() := {
     mixed_bytes :: [2]UInt8 = (65, 255)
     mixed ::= view(&mixed_bytes)
     decoder ::= Utf8Decoder(.bytes = mixed)
-    next_codepoint(.self = $&decoder)!
+    next_codepoint(.self = $&decoder)!!!
     if position(.self = &decoder).count != 1 { abort }
     match next_codepoint(.self = $&decoder) { ..ok _ { abort } ..error _ {} }
     if position(.self = &decoder).count != 1 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (
-    .status_code : Int32 = 1
-) := {
-    run_main()!!!
     status_code = 0
 }

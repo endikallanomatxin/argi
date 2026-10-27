@@ -1,14 +1,14 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .id: Int32)
+Resource := (.counter: $&Counter, .id: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { self&.counter&.count = self&.counter&.count + 1 }
 )
 
-borrow(.owner: $&Resource) -> (.result: $&Resource) := { result = owner }
+borrow := (.owner: $&Resource) -> (.result: $&Resource) { result = owner }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     owner :: Resource = Resource(.counter = $&counter, .id = 1)
     sibling := &owner.id

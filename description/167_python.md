@@ -21,7 +21,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 ## Ownership and execution
 
 `Python(.ffi, .program_name = "python3", .home = "")` returns
-`Errable<Python, python_initialization_failed>`. A context owns the interpreter
+`Errable#(Python, python_initialization_failed)`. A context owns the interpreter
 and must remain on its creating thread. One interpreter initialization attempt is allowed
 per process. Cleanup finalizes CPython; interpreter restart and subinterpreters
 are outside this contract. A pre-existing interpreter cannot be adopted.
@@ -41,11 +41,11 @@ generation require separate contracts.
 
 ## Objects and conversions
 
-Object-producing operations return `Errable<Object, python_error>`:
+Object-producing operations return `Errable#(Object, python_error)`:
 
 - `import_module(.self: &Python, .name: StringView)` and
   `attribute(.self: &Object, .name: StringView)`.
-- `call(.self: &Object, .arguments: ArrayView<&Object>, .keywords: ?&Object)`.
+- `call(.self: &Object, .arguments: ArrayView#(&Object), .keywords: ?&Object)`.
   Arguments default to empty; keywords default to absent and otherwise must be
   a Python dictionary. Each argument remains borrowed during the call.
 - `none`, `boolean(.value: Bool)`, `integer(.value: Int64 or UInt64)`,
@@ -56,8 +56,8 @@ Object-producing operations return `Errable<Object, python_error>`:
 
 `append(.self: &Object, .value: &Object)` requires a list.
 `set_item(.self: &Object, .key: &Object, .value: &Object)` follows Python's
-item-assignment protocol. Both return `Errable<Void, python_error>`.
-`length(.self: &Object)` returns `Errable<UIntNative, python_error>` using
+item-assignment protocol. Both return `Errable#(Void, python_error)`.
+`length(.self: &Object)` returns `Errable#(UIntNative, python_error)` using
 Python's length protocol. These calls can mutate Python objects through shared
 Argi references; Python's own object model governs that mutation.
 
@@ -118,7 +118,7 @@ no borrow of the input collection. Nested collections convert recursively.
 `Argument` is an implicitly copyable choice for heterogeneous inputs, with
 `none`, `boolean Bool`, `integer Int64`, `unsigned UInt64`, `floating Float64`,
 `text StringView`, and `object &Object` alternatives. It owns no Python reference;
-conversion acquires one. `positional_arguments(.self, .values: ArrayView<T>)`
+conversion acquires one. `positional_arguments(.self, .values: ArrayView#(T))`
 converts a homogeneous view or an Argument view into an owning Python tuple.
 Pass that tuple as `.arguments: &Object` to `call`.
 
@@ -135,13 +135,13 @@ errors follow `call`, including prepared tuple arguments. Method lookup occurs
 in Python during execution; Argi dispatch selects an ordinary library function.
 
 `set_attribute(.self: &Object, .name: StringView, .value: &Object)` returns
-`Errable<Void, python_error>` using Python's attribute assignment protocol.
-`tuple(.self: &Python, .values: ArrayView<&Object>)` creates an owning tuple,
+`Errable#(Void, python_error)` using Python's attribute assignment protocol.
+`tuple(.self: &Python, .values: ArrayView#(&Object))` creates an owning tuple,
 with an empty default value view. Python retains its elements independently of
 the Argi view.
 
 `iterate(.self: &Object)` returns an owning `PythonIterator` in an Errable.
-`next(.self: $&PythonIterator)` returns `Errable<Nullable<Object>, python_error>`:
+`next(.self: $&PythonIterator)` returns `Errable#(Nullable#(Object), python_error)`:
 an owned item, successful exhaustion (`none`), or a captured exception. It does
 not implement core's Iterator abstract, whose next operation is infallible.
 The iterator keeps its Python source alive and borrows only its interpreter.
@@ -158,15 +158,15 @@ ordinary FFI capability, with no borrowed Python objects or buffers.
 
 `exception_type`, `exception_message`, and `exception_traceback` accept
 `.self: &Exception` and `.allocator: $&Allocator` and return owning Strings in
-an `Errable<String, out_of_memory>`. `clone(.self: &Exception)` acquires another
+an `Errable#(String, out_of_memory)`. `clone(.self: &Exception)` acquires another
 snapshot reference, returned as `.result`. The unique clone entry selects an
 associated Result: Exception for snapshots, Errable containing Object for Python
 objects. Exceptions are not implicitly copyable and clean up normally.
 Native allocation exhaustion uses an immutable MemoryError fallback rather than
 silently retaining details from an earlier failure.
 
-`capture(.self: &Python, .value: Errable<T, python_error>)` returns
-`Outcome<T>`, an ordinary module-defined choice of `ok T` or `error Exception`.
+`capture(.self: &Python, .value: Errable#(T, python_error))` returns
+`Outcome#(T)`, an ordinary module-defined choice of `ok T` or `error Exception`.
 Wrap an operation immediately, for example:
 
 ```rg
@@ -203,7 +203,7 @@ environment; explicit non-default program names continue to override it.
 
 ## Numeric buffers and NumPy
 
-`numeric_buffer(.self: &Python, .values: ArrayView<T> or MutableArrayView<T>)` copies
+`numeric_buffer(.self: &Python, .values: ArrayView#(T) or MutableArrayView#(T))` copies
 initialized numeric elements into a Python-owned bytearray in one operation.
 The numeric transfer functions have unique ordinary identities; private scalar
 and view contracts select their element widths, native formats and dtype names.
@@ -216,7 +216,7 @@ matching native dtype. The array keeps the copied Python bytearray alive and is
 writable. It has no dependency on the Argi input's lifetime. NumPy is an optional
 Python package, with no NumPy headers or compiler hooks required.
 
-`copy_numeric(.self: &Object, .destination: MutableArrayView<T>)` copies a Python buffer
+`copy_numeric(.self: &Object, .destination: MutableArrayView#(T))` copies a Python buffer
 into an already-initialized writable Argi view and returns the copied element
 count in an Errable. It requires a one-dimensional scalar numeric buffer with
 matching signedness/type, width, and native byte order. Read-only Python buffers

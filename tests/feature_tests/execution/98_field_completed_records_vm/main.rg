@@ -1,4 +1,4 @@
-Pair: Type = (.first: Int32, .second: (.value: Int32))
+Pair := (.first: Int32, .second: (.value: Int32))
 
 read := (.value: Pair) -> (.result: Int32) {
     result = value.first + value.second.value

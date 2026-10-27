@@ -33,9 +33,12 @@ supplied participants establish selection before associated results are resolved
 
 ## Constructors and destruction
 
-A call to `T(...)` supplies T and infers its Args record, then selects the most
-specific applicable `Init#(T, Args)` implementation. The associated Result is
-validated after selection. Structural construction remains available without Init.
+A call to `T(...)` fixes the target participant of `Init#(Target, Args)` and
+infers Args from applicable input signatures, including static providers. Inputs
+can also infer missing target parameters. Different inferred participant tuples
+require disambiguation; specificity only compares conformances for one tuple.
+The associated Result is checked after selection and never supplies missing
+participant bindings. Structural construction remains available without Init.
 
 Explicit destruction and automatic cleanup use the same selected `Deinit#(T)`
 evidence. Ordinary functions named `deinit` retain ordinary call effects and do
@@ -46,8 +49,8 @@ nominal family registry or global overload fallback.
 
 Init, Deinit and Convert use contract dispatch throughout bundled core, official
 more and compiler fixtures. Their former declaration syntax and numeric type-call
-conversions are rejected. Custom addition and equality use Add and Equal with an
-Args participant to retain static dispatch for auxiliary capabilities. The !=
+conversions are rejected. Custom addition and equality use Add and Equal with the operand types as
+participants. Auxiliary capabilities belong to the selected operation signature. The !=
 symbol negates the selected Equal operation, never selecting a second identity.
 Legacy operator declarations, their metadata and global selectors are removed.
 

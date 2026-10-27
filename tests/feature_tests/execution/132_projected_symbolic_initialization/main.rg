@@ -1,22 +1,22 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-Holder: Type = (.item: Resource, .sibling: Resource)
+Holder := (.item: Resource, .sibling: Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { self&.counter&.count = self&.counter&.count + 1 }
 )
 
-destroy_item(.self: $&Holder) -> () := { deinit(.self = $&self&.item) }
+destroy_item := (.self: $&Holder) -> () { deinit(.self = $&self&.item) }
 
-renew(.self: $&Holder, .counter: $&Counter) -> () := {
+renew := (.self: $&Holder, .counter: $&Counter) -> () {
     target ::= $&self&.item
     destroy_item(.self = self)
     target&= Resource(.counter = counter)
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         holder :: Holder = Holder(

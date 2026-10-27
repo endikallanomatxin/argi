@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -9,7 +9,9 @@ main(.system: System) -> (.status_code: Int32) := {
         .data = "tests/feature_tests/system/26_file_system_error_reasons/build/renamed.txt"
     )
 
-    open_result ::= File(.file_system = system.file_system, .path = missing_path, .mode = ..read)
+    open_result ::= open_file(
+        .file_system = system.file_system, .path = missing_path, .mode = ..read
+    )
     if is(.value = open_result, .variant = ..error) {
     } else {
         status_code = 1
@@ -35,7 +37,9 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    rename_result ::= rename(.self = system.file_system, .from = missing_path, .to = renamed_path)
+    rename_result ::= rename(
+        .self = system.file_system, .from = missing_path, .to = renamed_path
+    )
     if is(.value = rename_result, .variant = ..error) {
     } else {
         status_code = 5

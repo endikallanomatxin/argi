@@ -1,6 +1,6 @@
-make#(.AllocatorType: Type: Allocator#(AllocatorType))(
+make := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .allocator: $&AllocatorType, .value: &Int32
-) -> (.result: DynamicArray#(&Int32)) := {
+) -> (.result: DynamicArray#(&Int32)) {
     assume allocator
     array ::= unwrap_or_abort(DynamicArray#(&Int32)(.capacity = 1))
 
@@ -8,7 +8,7 @@ make#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ~array
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     local :: Int32 = 7
     array ::= make(allocator, &local)

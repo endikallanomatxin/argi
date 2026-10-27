@@ -1,22 +1,22 @@
-Repeated: Type = (.count: UIntNative, .value: Int32, .reads: $&UIntNative)
+Repeated := (.count: UIntNative, .value: Int32, .reads: $&UIntNative)
 
 implement Indexable#(Repeated) (
-    .Item : Type = Int32
+    .Item          : Type = Int32
     .length        = repeated_length
     .get_reference = repeated_ref
 )
 
-repeated_length(.self: &Repeated) -> (.count: UIntNative) := { count = self&.count }
+repeated_length := (.self: &Repeated) -> (.count: UIntNative) { count = self&.count }
 
-repeated_ref(.self: &Repeated, .index: UIntNative) -> (
-    .result : Errable#(.t: &Int32, .reasons: (..out_of_bounds))
-) := {
+repeated_ref := (.self: &Repeated, .index: UIntNative) -> (
+    .result: Errable#(.t: &Int32, .reasons: (..out_of_bounds))
+) {
     if index >= self&.count { abort }
     self&.reads&= self&.reads&+ 1
     result = ..ok&self&.value
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     bits ::= size_of(.type = UIntNative) * 8
     count :: UIntNative = 0
     bit :: UIntNative = 0

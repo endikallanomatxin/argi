@@ -5,7 +5,7 @@ Direction : Type = (
     ..west,
 )
 
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     dir : Direction = ..south
 
     if dir == ..south {

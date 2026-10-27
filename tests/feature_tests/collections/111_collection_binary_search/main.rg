@@ -1,4 +1,4 @@
-Record: Type = (.key: Int32, .tag: Int32)
+Record := (.key: Int32, .tag: Int32)
 
 implement ImplicitlyCopyable#(Record) ()
 
@@ -18,14 +18,14 @@ implement OrderPolicy#(Descending, Int32) (
     }
 )
 
-expect_index(.result: ?UIntNative, .expected: UIntNative) -> () := {
+expect_index := (.result: ?UIntNative, .expected: UIntNative) -> () {
     match result {
         ..none { abort }
         ..some entry { if entry.value != expected { abort } }
     }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= system.page_allocator
     order ::= Int32OrderPolicy()
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 6))

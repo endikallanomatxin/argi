@@ -1,8 +1,11 @@
-Resource : Type = ()
+Resource: Type = ()
 
-implement Init#(Resource, ()) (
-    .Result: Type = Resource
-    .init = (.args: ()) -> (.result: Result) {
+ResourceInitArgs: Type = ()
+
+implement Init#(Resource, ResourceInitArgs) (
+    .Result : Type = Resource
+
+    .init = ResourceInitArgs -> (.result: Result) {
         result = ()
     }
 )
@@ -13,22 +16,21 @@ implement Deinit#(Resource) (
     }
 )
 
-
-_ordinary_copy_0(.self: &Resource, .tag: Int32 = 1) -> (.value: Resource) := {
+_ordinary_copy_0 := (.self: &Resource, .tag: Int32 = 1) -> (.value: Resource) {
     value = Resource()
 }
 
-_ordinary_copy_1(.self: &Resource, .flag: Bool = true) -> (.value: Resource) := {
+_ordinary_copy_1 := (.self: &Resource, .flag: Bool = true) -> (.value: Resource) {
     value = Resource()
 }
 
-Wrapper : Type = (
-    .res: Resource
+Wrapper := (
+    .res : Resource
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     handle := Resource()
-    wrapped : Wrapper = (.res = handle)
+    wrapped: Wrapper = (.res = handle)
     _ = wrapped
     status_code = 0
 }

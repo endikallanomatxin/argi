@@ -1,28 +1,28 @@
-Cell: Type = (.value: Int32)
+Cell := (.value: Int32)
 
 Empty: Type = ()
 
-Box#(.T: Type): Type = (.value: T)
+Box := #(.T: Type) (.value: T)
 
-width#(.T: Type) := () -> (.count: UIntNative) { count = size_of(.type = T) }
+width := #(.T: Type) () -> (.count: UIntNative) { count = size_of(.type = T) }
 
-choose#(.T: Type) := (.value: T) -> (.result: Int32) {
+choose := #(.T: Type) (.value: T) -> (.result: Int32) {
     #if width#(.T: T)() > 0 { result = 42 } #else { result = 0 }
 }
 
-pointer#(.T: Type) := (.value: T) -> (.result: Int32) {
+pointer := #(.T: Type) (.value: T) -> (.result: Int32) {
     result = choose#(.T: &T)(.value = &value)
 }
 
-array#(.T: Type) := (.value: T) -> (.result: Int32) {
+array := #(.T: Type) (.value: T) -> (.result: Int32) {
     result = choose#(.T: [2]T)(.value = (value, value))
 }
 
-record#(.T: Type) := (.value: T) -> (.result: Int32) {
+record := #(.T: Type) (.value: T) -> (.result: Int32) {
     result = choose#(.T: (.item: T))(.value = (.item = value))
 }
 
-nominal#(.T: Type) := (.value: T) -> (.result: Int32) {
+nominal := #(.T: Type) (.value: T) -> (.result: Int32) {
     result = choose#(.T: Box#(T))(.value = (.value = value))
 }
 

@@ -5,7 +5,7 @@ const primitives = @import("../primitives/schema.zig");
 
 /// Stable operation identity, independent of specialization and body aliases.
 pub const Operation = struct {
-    contract: graph_mod.GlobalDeclId,
+    contract: graph_mod.GlobalFamilyDefinitionId,
     index: u32,
 };
 
@@ -14,9 +14,59 @@ pub const SelectedOperation = struct {
     conformance: graph_mod.ContractConformance,
     binding: graph_mod.ContractOperationBinding,
 
-    pub fn materializedFunction(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph) ?graph_mod.GlobalFunctionId {
-        if (self.identity.index >= self.conformance.operations.len) return null;
-        return graph.function_refs.items[self.conformance.operations.start + self.identity.index];
+    pub fn definitionValue(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph) ?graph_mod.DefinitionValue {
+        const definition = @import("types.zig").definitionValue(graph, self.binding.definition) orelse return null;
+        return if (graph.familyDefinition(definition.origin).kind == .function) definition else null;
+    }
+
+    /// Stable ranges describe the same lexical prefix for dispatch and proof
+    /// queries. Reading them never copies arguments or selects a conformance.
+    pub const CapturedArguments = struct {
+        lexical: primitives.Range(graph_mod.GlobalGenericArgId),
+        associated: primitives.Range(graph_mod.GlobalGenericArgId),
+
+        pub fn len(self: CapturedArguments) usize {
+            return @as(usize, self.lexical.len) + self.associated.len;
+        }
+
+        pub fn at(self: CapturedArguments, graph: *const graph_mod.GlobalSemanticGraph, index: usize) graph_mod.GenericArgument {
+            return graph.generic_arguments.items[
+                if (index < self.lexical.len)
+                    self.lexical.start + index
+                else
+                    self.associated.start + index - self.lexical.len
+            ];
+        }
+    };
+
+    pub fn capturedArguments(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph) ?CapturedArguments {
+        const definition = self.definitionValue(graph) orelse return null;
+        return if (self.binding.instantiate_associated)
+            .{ .lexical = self.conformance.implementation_arguments, .associated = self.conformance.associated_arguments }
+        else
+            .{ .lexical = definition.captures, .associated = .{ .start = 0, .len = 0 } };
+    }
+
+    pub fn materializedFunction(self: SelectedOperation) ?graph_mod.GlobalFunctionId {
+        return self.binding.materialized_function;
+    }
+
+    pub fn acceptsFunction(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId) bool {
+        if (self.materializedFunction()) |selected| return selected == function;
+        const definition = self.definitionValue(graph) orelse return false;
+        const family = definition.origin;
+        for (graph.generic_function_instances.items) |instance| {
+            if (instance.function != function or instance.parameterized_definition != family) continue;
+            const captures = self.capturedArguments(graph) orelse return false;
+            if (instance.arguments.len < captures.len()) return false;
+            for (0..captures.len()) |index| {
+                const expected = captures.at(graph, index);
+                const actual = graph.generic_arguments.items[instance.arguments.start + index];
+                if (!@import("types.zig").genericArgumentValuesEqual(graph, expected.value, actual.value)) return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     pub fn participant(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph, index: usize) ?graph_mod.GlobalTypeId {
@@ -41,13 +91,13 @@ pub fn operationInConformance(graph: *const graph_mod.GlobalSemanticGraph, confo
     };
 }
 
-fn contractDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
+pub fn contractDefinition(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFamilyDefinitionId {
     const declaration = switch (graph.semanticType(ty)) {
-        .declared => |declaration| declaration,
+        .definition => |declaration| declaration,
         .generic => |identity| identity.base,
         else => return null,
     };
-    return if (graph.declaration(declaration).kind == .contract_type) declaration else null;
+    return if (graph.familyDefinition(declaration).kind == .contract) declaration else null;
 }
 
 pub fn virtualContractType(graph: *const graph_mod.GlobalSemanticGraph, call: graph_mod.VirtualCall) ?graph_mod.GlobalTypeId {
@@ -58,7 +108,7 @@ pub fn virtualContractType(graph: *const graph_mod.GlobalSemanticGraph, call: gr
     };
     const handle = graph.semanticType(referent);
     if (handle == .virtual) return handle.virtual;
-    if (contractDeclaration(graph, referent) != null) return referent;
+    if (contractDefinition(graph, referent) != null) return referent;
     // The fixed erased signature remains authoritative if the handle's
     // expression has been adapted during call materialization.
     const fields = @import("types.zig").fields(graph, call.input_type) orelse return null;
@@ -68,12 +118,12 @@ pub fn virtualContractType(graph: *const graph_mod.GlobalSemanticGraph, call: gr
         .pointer => |pointer| pointer.child,
         else => receiver,
     };
-    return if (contractDeclaration(graph, child) != null) child else null;
+    return if (contractDefinition(graph, child) != null) child else null;
 }
 
 pub fn virtualOperation(graph: *const graph_mod.GlobalSemanticGraph, call: graph_mod.VirtualCall) ?Operation {
     const ty = virtualContractType(graph, call) orelse return null;
-    const contract = contractDeclaration(graph, ty) orelse return null;
+    const contract = contractDefinition(graph, ty) orelse return null;
     return .{ .contract = contract, .index = call.method_index };
 }
 
@@ -86,7 +136,7 @@ pub fn associatedElement(graph: *const graph_mod.GlobalSemanticGraph, conformanc
 /// cache and therefore needs no independent invalidation or rollback.
 pub const MaterializedOperations = struct {
     graph: *const graph_mod.GlobalSemanticGraph,
-    contract: graph_mod.GlobalDeclId,
+    contract: graph_mod.GlobalFamilyDefinitionId,
     conformance_index: usize = 0,
     operation_index: u32 = 0,
 
@@ -94,10 +144,11 @@ pub const MaterializedOperations = struct {
         while (self.conformance_index < self.graph.contract_conformances.items.len) {
             const conformance = self.graph.contract_conformances.items[self.conformance_index];
             if (conformance.declaration == self.contract) {
-                while (self.operation_index < conformance.operations.len) {
+                while (self.operation_index < conformance.operation_bindings.len) {
                     const index = self.operation_index;
                     self.operation_index += 1;
-                    if (operationInConformance(self.graph, conformance, index)) |selected| return selected;
+                    if (operationInConformance(self.graph, conformance, index)) |selected|
+                        if (selected.materializedFunction() != null) return selected;
                 }
             }
             self.conformance_index += 1;
@@ -107,14 +158,17 @@ pub const MaterializedOperations = struct {
     }
 };
 
-pub fn materializedOperations(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalDeclId) MaterializedOperations {
+pub fn materializedOperations(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalFamilyDefinitionId) MaterializedOperations {
     return .{ .graph = graph, .contract = contract };
 }
 
-pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalDeclId, function: graph_mod.GlobalFunctionId) ?SelectedOperation {
-    var operations = materializedOperations(graph, contract);
-    while (operations.next()) |selected| {
-        if (selected.materializedFunction(graph) == function) return selected;
+pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalFamilyDefinitionId, function: graph_mod.GlobalFunctionId) ?SelectedOperation {
+    for (graph.contract_conformances.items) |conformance| {
+        if (conformance.declaration != contract) continue;
+        for (0..conformance.operation_bindings.len) |index| {
+            const selected = operationInConformance(graph, conformance, @intCast(index)) orelse continue;
+            if (selected.acceptsFunction(graph, function)) return selected;
+        }
     }
     return null;
 }
@@ -140,3 +194,46 @@ pub const PossibleVirtualMethods = struct {
         return null;
     }
 };
+
+test "selected operation evidence checks bound definition captures" {
+    const std = @import("std");
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.family_definitions.append(allocator, .{ .kind = .function, .source = source, .parameter_count = 1 });
+    const name = try graph.addString(allocator, "T");
+    try graph.types.appendSlice(allocator, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool } });
+    try graph.generic_arguments.appendSlice(allocator, &.{
+        .{ .name = name, .value = .{ .type = @enumFromInt(0) } },
+        .{ .name = name, .value = .{ .type = @enumFromInt(1) } },
+    });
+    try graph.nodes.append(allocator, .{
+        .source = source,
+        .ty = null,
+        .content = .{ .definition_literal = .{ .origin = @enumFromInt(0), .captures = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.generic_function_instances.appendSlice(allocator, &.{
+        .{ .function = @enumFromInt(0), .parameterized_definition = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } },
+        .{ .function = @enumFromInt(1), .parameterized_definition = @enumFromInt(0), .arguments = .{ .start = 1, .len = 1 } },
+    });
+    const evidence: SelectedOperation = .{
+        .identity = .{ .contract = @enumFromInt(0), .index = 0 },
+        .conformance = .{
+            .declaration = @enumFromInt(0),
+            .source = source,
+            .participants = .{ .start = 0, .len = 0 },
+            .associated_arguments = .{ .start = 0, .len = 0 },
+        },
+        .binding = .{
+            .contract_definition = @enumFromInt(0),
+            .requirement_index = 0,
+            .requirement_source = source,
+            .implementation_source = source,
+            .name = name,
+            .definition = @enumFromInt(0),
+        },
+    };
+    try std.testing.expect(evidence.acceptsFunction(&graph, @enumFromInt(0)));
+    try std.testing.expect(!evidence.acceptsFunction(&graph, @enumFromInt(1)));
+}

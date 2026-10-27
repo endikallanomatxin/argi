@@ -1269,7 +1269,7 @@ test "didOpen publishes diagnostics" {
 
     const rel_path = "main.rg";
     const code =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 = 1
         \\    copy := value
         \\}
@@ -1311,7 +1311,7 @@ test "didOpen publishes diagnostics" {
         \\  "textDocument": {{
         \\    "uri": "{s}",
         \\    "version": 1,
-        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 = 1\n    copy := value\n}}\n"
+        \\    "text": "main := () -> (.status_code: Int32 = 0)  {{\n    value :: Int32 = 1\n    copy := value\n}}\n"
         \\  }}
         \\}}
     ,
@@ -1339,13 +1339,13 @@ test "didChange publishes diagnostics and ignores stale versions" {
 
     const rel_path = "main.rg";
     const fixed_code =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 = 1
         \\}
         \\
     ;
     const broken_code =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 =
         \\}
         \\
@@ -1385,7 +1385,7 @@ test "didChange publishes diagnostics and ignores stale versions" {
         \\  "textDocument": {{
         \\    "uri": "{s}",
         \\    "version": 2,
-        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 = 1\n}}\n"
+        \\    "text": "main := () -> (.status_code: Int32 = 0)  {{\n    value :: Int32 = 1\n}}\n"
         \\  }}
         \\}}
     ,
@@ -1408,7 +1408,7 @@ test "didChange publishes diagnostics and ignores stale versions" {
         \\    "version": 3
         \\  }},
         \\  "contentChanges": [{{
-        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 =\n}}\n"
+        \\    "text": "main := () -> (.status_code: Int32 = 0)  {{\n    value :: Int32 =\n}}\n"
         \\  }}]
         \\}}
     ,
@@ -1472,7 +1472,7 @@ test "didClose publishes empty diagnostics" {
 
     const rel_path = "main.rg";
     const code =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    value :: Int32 = 1
         \\}
         \\
@@ -1512,7 +1512,7 @@ test "didClose publishes empty diagnostics" {
         \\  "textDocument": {{
         \\    "uri": "{s}",
         \\    "version": 1,
-        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 = 1\n}}\n"
+        \\    "text": "main := () -> (.status_code: Int32 = 0)  {{\n    value :: Int32 = 1\n}}\n"
         \\  }}
         \\}}
     ,
@@ -1557,11 +1557,11 @@ test "definition responds with target location over protocol" {
 
     const rel_path = "main.rg";
     const code =
-        \\helper() -> (.value: Int32) := {
+        \\helper := () -> (.value: Int32)  {
         \\    value = 42
         \\}
         \\
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    status_code = helper()
         \\}
         \\
@@ -1601,7 +1601,7 @@ test "definition responds with target location over protocol" {
         \\  "textDocument": {{
         \\    "uri": "{s}",
         \\    "version": 1,
-        \\    "text": "helper() -> (.value: Int32) := {{\n    value = 42\n}}\n\nmain() -> (.status_code: Int32 = 0) := {{\n    status_code = helper()\n}}\n"
+        \\    "text": "helper := () -> (.value: Int32)  {{\n    value = 42\n}}\n\nmain := () -> (.status_code: Int32 = 0)  {{\n    status_code = helper()\n}}\n"
         \\  }}
         \\}}
     ,
@@ -1662,7 +1662,7 @@ fn parsePosition(value: json.Value) ?service.Position {
 test "LSP completion response uses standard kinds and a full identifier text edit" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const code = "main(.system: System) -> (.status_code: Int32 = 0) := {\n    print(.value = \"hello\", .stdout = $&system.terminal&.stdout)\n}\n";
+    const code = "main := (.system: System) -> (.status_code: Int32 = 0)  {\n    print(.value = \"hello\", .stdout = $&system.terminal&.stdout)\n}\n";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
     const path = try test_support.tmpFilePath(&tmp, "main.rg");
     defer std.testing.allocator.free(path);
@@ -1708,7 +1708,7 @@ test "document symbols response uses standard LSP names and ranges" {
     server.service = service.LanguageService.init(std.testing.allocator, std.testing.io);
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const code = "main() -> (.status_code: Int32 = 0) := {}";
+    const code = "main := () -> (.status_code: Int32 = 0)  {}";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
     const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
     defer std.testing.allocator.free(path);

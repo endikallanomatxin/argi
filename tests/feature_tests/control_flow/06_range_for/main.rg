@@ -1,4 +1,4 @@
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     sum :: Int32 = 0
 
     for i in Range(.start = 1, .end = 5) {

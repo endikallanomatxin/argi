@@ -1,6 +1,6 @@
-check_order#(.t: Type: ImplicitlyCopyable, .policy: Type: OrderPolicy#(policy, t))(
+check_order := #(.t: Type: ImplicitlyCopyable, .policy: Type: OrderPolicy#(policy, t)) (
     .order: &policy, .left: t, .right: t
-) -> () := {
+) -> () {
     if OrderPolicy#(policy, t).less(.self = order, .left = &left, .right = &right).ok == false {
         abort
     }
@@ -16,7 +16,7 @@ implement OrderPolicy#(Descending, Int32) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     integers ::= Int32OrderPolicy()
     check_order(.order = &integers, .left = -2147483648, .right = 2147483647)
     native ::= UIntNativeOrderPolicy()
@@ -45,11 +45,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     right ::= view(&right_storage)
-    if OrderPolicy#(
-        StringViewOrderPolicy, StringView
-    ).less(.self = &text, .left = &left, .right = &right).ok { abort }
-    if OrderPolicy#(
-        StringViewOrderPolicy, StringView
-    ).less(.self = &text, .left = &right, .right = &left).ok { abort }
+    if OrderPolicy#(StringViewOrderPolicy, StringView).less(
+        .self = &text, .left = &left, .right = &right
+    ).ok { abort }
+    if OrderPolicy#(StringViewOrderPolicy, StringView).less(
+        .self = &text, .left = &right, .right = &left
+    ).ok { abort }
     check_order(.order = &text, .left = left, .right = "ab")
 }

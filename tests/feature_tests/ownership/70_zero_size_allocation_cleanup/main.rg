@@ -1,9 +1,9 @@
-CountingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
+CountingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
     .deallocations : Int32
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage :: CountingAllocator = (.ffi = system.ffi, .deallocations = 0)
     assume allocator ::= $&allocator_storage
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 0)
@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
 implement Allocator#(CountingAllocator) (
     .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         storage ::= malloc(.size = 1, .ffi = self&.ffi)
         deallocator ::= to_virtual#(.contract: Deallocator)(.value = self)

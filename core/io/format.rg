@@ -1,13 +1,13 @@
 -- Numeric stream formatting has one scoped operation identity. It never flushes
 -- implicitly; a failed byte stops emission and preserves preceding writes.
-_write_integer_value#(.Stream: Type: Writer#(Stream), .Value: Type: Int) := (
+_write_integer_value := #(.Stream: Type: Writer#(Stream), .Value: Type: Int) (
     .self: $&Stream, .value: Value
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     encoded ::= _decimal_encode#(.t: Value)(.value = value)
     result = write(self, .value = _decimal_view(&encoded).view)
 }
 
-_write_float_value#(.Stream: Type: Writer#(Stream), .Value: Type: Float) := (
+_write_float_value := #(.Stream: Type: Writer#(Stream), .Value: Type: Float) (
     .self: $&Stream, .value: Value
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     encoded ::= _float_encode(.value = value)

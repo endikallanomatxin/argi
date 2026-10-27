@@ -1,13 +1,11 @@
-DummyInput: Type = (
+DummyInput := (
     .index : Int32 = 0
 )
 
-implement Reader#(DummyInput)(
-    .read_byte = (
-            .self : $&DummyInput,
-        ) -> (
-            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-        ) {
+implement Reader#(DummyInput) (
+    .read_byte = (.self: $&DummyInput) -> (
+        .result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
         if self&.index == 0 {
             self&.index = 1
             result = ..ok ..ok 79
@@ -24,7 +22,7 @@ implement Reader#(DummyInput)(
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     stdin_storage :: DummyInput = DummyInput()
     assume reader ::= $&stdin_storage
     first_result ::= Reader#().read_byte(.self = $&stdin_storage)

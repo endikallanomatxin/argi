@@ -1,22 +1,21 @@
 ..failed
 
 Mover#(.Participant: Type): Contract = (
-    .transfer: (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
-        .count  : Int32,
-        .result : ?Large
+    .transfer : (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
+        .count: Int32, .result: ?Large
     ) where {
         on result ..some { relocates(destination, source) }
         on result ..none {}
     }
 )
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
 implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
 
-Large: Type = (.values: [128]Int32)
+Large := (.values: [128]Int32)
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -27,14 +26,8 @@ implement Deinit#(Resource) (
 drops :: Int32 = 0
 
 _impl_transfer_Manager := (
-        .self        : &Manager,
-        .source      : $&Resource,
-        .destination : $&Resource,
-        .move        : Bool
-    ) -> (
-        .count  : Int32,
-        .result : ?Large
-    )  {
+    .self: &Manager, .source: $&Resource, .destination: $&Resource, .move: Bool
+) -> (.count: Int32, .result: ?Large) {
     count = 42
     if move {
         relocate(source, destination)
@@ -45,19 +38,14 @@ _impl_transfer_Manager := (
     result = ..none
 }
 
-forward(
-        .mover       : &Virtual#(Mover),
-        .source      : $&Resource,
-        .destination : $&Resource,
-        .move        : Bool
-    ) -> (
-        .result : Errable#(?Large, (..failed))
-    ) := {
+forward := (.mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
+    .result: Errable#(?Large, (..failed))
+) {
     returned ::= transfer(mover, source, destination, move)
     result = ..ok returned.result
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)
 
@@ -90,7 +78,9 @@ main() -> (.status_code: Int32 = 0) := {
             ..ok ~optional {
                 match optional {
                     ..some _ { status_code = 4 }
-                    ..none { if previous&.value != 43 or source.value != 43 { status_code = 5 } }
+                    ..none {
+                        if previous&.value != 43 or source.value != 43 { status_code = 5 }
+                    }
                 }
             }
             ..error _ { status_code = 90 }

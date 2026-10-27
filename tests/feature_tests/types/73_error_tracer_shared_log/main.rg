@@ -3,24 +3,24 @@
 
 Failures: Type = (..first_failure, ..second_failure)
 
-Probe: Type = (.count: UIntNative = 0, .sum: UIntNative = 0)
+Probe := (.count: UIntNative = 0, .sum: UIntNative = 0)
 
-fail(.second: Bool) -> (.result: Errable#(.t: Void, .reasons: Failures)) := {
-    if second { result = ..error(.reason = ..second_failure) } else {
+fail := (.second: Bool) -> (.result: Errable#(.t: Void, .reasons: Failures)) {
+    if second {
+        result = ..error(.reason = ..second_failure)
+    } else {
         result = ..error(.reason = ..first_failure)
     }
 }
 
-forward(
-        .value : Errable#(.t: Void, .reasons: Failures)
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: Failures)
-    ) := {
+forward := (.value: Errable#(.t: Void, .reasons: Failures)) -> (
+    .result: Errable#(.t: Void, .reasons: Failures)
+) {
     value!! "after reset"
     result = ..ok Void()
 }
 
-report_value(.value: &Errable#(.t: Void, .reasons: Failures), .writer: $&Probe) -> () := {
+report_value := (.value: &Errable#(.t: Void, .reasons: Failures), .writer: $&Probe) -> () {
     writer&.count = 0
     writer&.sum = 0
     match value&{
@@ -31,7 +31,7 @@ report_value(.value: &Errable#(.t: Void, .reasons: Failures), .writer: $&Probe) 
     }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
     virtual ::= to_virtual#(ErrorTracer)($&tracer)
     assume error_tracer ::= $&virtual
@@ -98,13 +98,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if writer.count != 43 { status_code = 11 }
 }
 
-implement Writer#(Probe)(
-    .write_byte = (
-            .self : $&Probe,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+implement Writer#(Probe) (
+    .write_byte = (.self: $&Probe, .byte: UInt8) -> (
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         self&.count = self&.count + 1
         remaining :: UInt8 = byte
         while remaining != 0 {
@@ -114,9 +111,7 @@ implement Writer#(Probe)(
         result = ..ok Void()
     }
 
-    .flush = (
-            .self : $&Probe
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) { result = ..ok Void() }
+    .flush = (.self: $&Probe) -> (
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) { result = ..ok Void() }
 )

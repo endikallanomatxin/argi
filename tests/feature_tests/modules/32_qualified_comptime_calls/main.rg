@@ -1,6 +1,6 @@
-dep := import("./dep")
+dep := import ("./dep")
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     named := dep.identity#(.t: Int32)(.value = 42)
     positional := dep.identity#(Int32)(.value = 43)
     inferred := dep.identity(.value = 44)

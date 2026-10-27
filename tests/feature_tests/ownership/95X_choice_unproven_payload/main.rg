@@ -1,9 +1,9 @@
-Choice : Type = (
+Choice: Type = (
     ..a Int32
     ..b Int32
 )
 
-choose(.condition: Bool) -> (.value: Choice) := {
+choose := (.condition: Bool) -> (.value: Choice) {
     if condition {
         value = ..a 7
     } else {
@@ -11,8 +11,8 @@ choose(.condition: Bool) -> (.value: Choice) := {
     }
 }
 
-main(.condition: Bool = true) -> (.status_code: Int32) := {
+main := (.condition: Bool = true) -> (.status_code: Int32) {
     value ::= choose(.condition = condition)
-    payload ::= value..a
+    payload ::= value ..a
     status_code = payload
 }

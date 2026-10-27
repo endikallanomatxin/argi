@@ -1,6 +1,6 @@
 python := import ("python")
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     interpreter ::= unwrap_or_abort(.value = python.Python(.ffi = system.ffi)).result
     input: [4]Float64 = (1.0, 2.0, 3.0, 4.0)
     array ::= unwrap_or_abort(

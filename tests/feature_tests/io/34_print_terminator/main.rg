@@ -1,4 +1,4 @@
-RecordingWriter: Type = (
+RecordingWriter := (
     .expected      : StringView
     .count         : UIntNative = 0
     .flush_calls   : UIntNative = 0
@@ -6,7 +6,7 @@ RecordingWriter: Type = (
     .flush_failure : Bool       = false
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     base ::= RecordingWriter(.expected = "a\nb<>c\r\nd\nd=.!x")
     assume writer ::= $&base
@@ -58,7 +58,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Writer#(RecordingWriter) (
     .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         if self&.count == self&.fail_at {
             if self&.flush_failure {
@@ -80,7 +80,7 @@ implement Writer#(RecordingWriter) (
     }
 
     .flush = (.self: $&RecordingWriter) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()

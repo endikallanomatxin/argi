@@ -1,7 +1,13 @@
-Box#(.T: Type): Type = (._value: T)
-implement#(.T: Type) Init#(Box#(T), (.value: T = 7)) (
-    .Result: Type = Box#(T)
-    .init = (.args: (.value: T = 7)) -> (.result: Result) { result = (._value = args.value) }
+Box := #(.T: Type) (._value: T)
+
+BoxInitArgs: Type = #(.T: Type) (.value: T = 7)
+
+implement#(.T: Type) Init#(Box#(T), BoxInitArgs#(T)) (
+    .Result : Type = Box#(T)
+
+    .init = BoxInitArgs#(T) -> (.result: Result) { result = (._value = value) }
 )
-Record: Type = (.value: Int32)
+
+Record := (.value: Int32)
+
 main := () -> () { Box#(Record)() }

@@ -1,4 +1,4 @@
-Dog: Type = (
+Dog := (
     .name : Int32 = 0
 )
 
@@ -13,6 +13,6 @@ _impl_speak_Dog := (.who: Dog) -> (.s: Int32) {
     s = 42
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     status_code = 0
 }

@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     policy ::= StandardHashPolicy()
     minimum: Int64 = -9223372036854775808
     same: Int64 = -9223372036854775808
@@ -7,9 +7,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         abort
     }
     if [
-        HashPolicy#(
-            StandardHashPolicy, Int64
-        ).equal(&policy, .left = &minimum, .right = &same).ok
+        HashPolicy#(StandardHashPolicy, Int64).equal(
+            &policy, .left = &minimum, .right = &same
+        ).ok
         == false
     ] { abort }
     maximum: UInt64 = 18446744073709551615
@@ -19,16 +19,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .value = string_from_bytes(.bytes = view(&bytes), .allocator = system.page_allocator)
     )
     text ::= view(&storage)
-    owned_hash ::= HashPolicy#(
-        StandardHashPolicy, String
-    ).hash(&policy, .key = view(&storage)).hash
-    borrowed_hash ::= HashPolicy#(
-        StandardHashPolicy, StringView
-    ).hash(&policy, .key = text).hash
+    owned_hash ::= HashPolicy#(StandardHashPolicy, String).hash(
+        &policy, .key = view(&storage)
+    ).hash
+    borrowed_hash ::= HashPolicy#(StandardHashPolicy, StringView).hash(&policy, .key = text).hash
     if owned_hash != borrowed_hash { abort }
-    if HashPolicy#(
-        StandardHashPolicy, StringView
-    ).equal(&policy, .left = text, .right = "ab").ok { abort }
+    if HashPolicy#(StandardHashPolicy, StringView).equal(&policy, .left = text, .right = "ab").ok {
+        abort
+    }
     seeded: StandardHashPolicy = (.seed = 99)
     if [
         HashPolicy#(StandardHashPolicy, StringView).hash(&seeded, .key = text).hash

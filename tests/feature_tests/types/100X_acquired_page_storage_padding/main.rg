@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume ffi := system.ffi
     deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(.value = system.memory)
     storage ::= unwrap_or_abort(.value = acquire_page_storage(.memory = system.memory, .size = 8, .alignment = 8))

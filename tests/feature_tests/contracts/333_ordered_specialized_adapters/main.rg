@@ -1,59 +1,34 @@
-Box#(.T: Type): Type = (.value: T)
+Box := #(.T: Type) (.value: T)
 
 classifications :: Int32 = 0
 generic_predicates :: Int32 = 0
 concrete_predicates :: Int32 = 0
 
 implement#(.T: Type: ImplicitlyCopyable) Compare#(&Box#(T), &Box#(T)) (
-        .compare = (
-                .left  : &Box#(T),
-                .right : &Box#(T)
-            ) -> (
-                .order : Ordering
-            ) {
-            classifications = classifications + 1
-            order = Compare#(T, T).compare(.left = left&.value, .right = right&.value).order
-        }
-    )
+    .compare = (.left: &Box#(T), .right: &Box#(T)) -> (.order: Ordering) {
+        classifications = classifications + 1
+        order = Compare#(T, T).compare(.left = left&.value, .right = right&.value).order
+    }
+)
 
 implement#(.T: Type: ImplicitlyCopyable) CompareRelations#(&Box#(T), &Box#(T)) (
-        .less_than = (
-                .left  : &Box#(T),
-                .right : &Box#(T)
-            ) -> (
-                .ok : Bool
-            ) {
-            generic_predicates = generic_predicates + 1
-            ok = left&.value < right&.value
-        }
-        .less_than_or_equal = (
-                .left  : &Box#(T),
-                .right : &Box#(T)
-            ) -> (
-                .ok : Bool
-            ) {
-            generic_predicates = generic_predicates + 1
-            ok = left&.value <= right&.value
-        }
-        .greater_than = (
-                .left  : &Box#(T),
-                .right : &Box#(T)
-            ) -> (
-                .ok : Bool
-            ) {
-            generic_predicates = generic_predicates + 1
-            ok = left&.value > right&.value
-        }
-        .greater_than_or_equal = (
-                .left  : &Box#(T),
-                .right : &Box#(T)
-            ) -> (
-                .ok : Bool
-            ) {
-            generic_predicates = generic_predicates + 1
-            ok = left&.value >= right&.value
-        }
-    )
+    .less_than = (.left: &Box#(T), .right: &Box#(T)) -> (.ok: Bool) {
+        generic_predicates = generic_predicates + 1
+        ok = left&.value < right&.value
+    }
+    .less_than_or_equal = (.left: &Box#(T), .right: &Box#(T)) -> (.ok: Bool) {
+        generic_predicates = generic_predicates + 1
+        ok = left&.value <= right&.value
+    }
+    .greater_than = (.left: &Box#(T), .right: &Box#(T)) -> (.ok: Bool) {
+        generic_predicates = generic_predicates + 1
+        ok = left&.value > right&.value
+    }
+    .greater_than_or_equal = (.left: &Box#(T), .right: &Box#(T)) -> (.ok: Bool) {
+        generic_predicates = generic_predicates + 1
+        ok = left&.value >= right&.value
+    }
+)
 
 implement CompareRelations#(&Box#(Int32), &Box#(Int32)) (
     .less_than = (.left: &Box#(Int32), .right: &Box#(Int32)) -> (.ok: Bool) {
@@ -74,7 +49,7 @@ implement CompareRelations#(&Box#(Int32), &Box#(Int32)) (
     }
 )
 
-ordered#(.T: Type)(.a: &T, .b: &T) -> (.ok: Bool) := {
+ordered := #(.T: Type) (.a: &T, .b: &T) -> (.ok: Bool) {
     ok = a < b and a <= b and b > a and b >= a
 }
 

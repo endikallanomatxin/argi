@@ -1,4 +1,4 @@
 Cell: Type = ()
 Cell satisfies
 
-main() -> () := {}
+main := () -> () {}

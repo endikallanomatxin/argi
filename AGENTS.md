@@ -166,15 +166,18 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
-  Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left,
-  Right and Args participants. Custom equality uses Equal with the same tuple;
+  Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left and
+  Right participants and implementation-owned operation signatures. Auxiliary
+  providers specialize the selected callable, never the conformance. Custom
+  equality uses Equal with Left and Right;
+  borrowed equality uses reference participants and direct operation inputs.
   Equal returns (.ok: Bool), and != negates one selected operation call.
   Ordering uses CompareRelations#(Left, Right), with explicit operand types and
   four Bool predicates. Its blanket implementation consumes Compare#(Left, Right)
   and ordinary Ordering interpreters; scalar specializations retain direct predicates.
   These contracts have no Args participant or default operations. Unordered maps
   to false for all four predicates; TotalOrder excludes unordered by semantic promise.
-  C enum and callback equality selects Equal evidence;
+  Payloadless choice, C enum and callback equality selects Equal evidence;
   the compiler supplies only their private empty representation classification.
   Infer participant bindings from Args, including reached generic providers,
   never from Result. Concrete and specialized generic expressions share the
@@ -191,17 +194,21 @@ feature first.
   MatrixProduct shares the inner-dimension binding and can specialize Result.
   Nominal Multiply adapters delegate to that protocol. Dynamic multiplication
   stores its static provider in Args; no ordinary multiply overload is retained.
-  Canonical construction for migrated types uses `implement Init#(T, Args)`, with
-  an Args record participant and a Result of T or Errable containing T. Type calls
-  infer Args from target/input patterns, complete defaults and reached capabilities
-  and invoke the selected scoped init operation. Selected evidence supplies
-  initializer safety and projected output dependencies; never add a second
-  constructor registry. Generic type calls can infer their target parameters from
-  Args in concrete and specialized bodies; never infer those parameters from Result.
-  Closed/generic tuples remain ambiguous when they infer incomparable targets.
-  Move owning Args fields into lexical owners before fallible construction steps.
+  Canonical construction uses `implement Init#(Target, Args)` with nominal input
+  records and associated Result. The fixed init signature is Args -> (.result: Result).
+  Type calls fix Target and infer Args, including allocator types, from candidate
+  signatures and explicit/reached values. Never synthesize structural identities
+  for argument literals. Result is Target or one Errable containing Target;
+  it never selects a conformance. Different inferred targets or argument types
+  require disambiguation; specificity only compares one complete participant tuple.
+  Preserve every explicitly supplied target parameter during inference.
+  Captured implementation parameters and callable parameters have separate IDs;
+  transfer bindings by capture position, never by names. Preserve selected safety
+  evidence and output dependencies without a second constructor registry.
+  Owning inputs still require lexical owners before fallible construction steps.
   All bundled core and more constructor families now use Init. Single-use
-  capabilities reuse named once functions as their init operations; preserve
+  capabilities reuse named once function values (`acquire := once ...`) as their
+  init operations; preserve
   their function identity through lifecycle wrappers and entrypoint analysis.
   Reach defaults describe lexical lookup, not values to type-check before lookup.
   Scaled durations, relative deadlines, precise Unix timestamps and copied paths

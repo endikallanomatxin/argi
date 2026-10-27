@@ -1,11 +1,11 @@
-increment_and_is_true(.value: $&Int32) -> (.ok: Bool) := {
-    value& = value& + 1
+increment_and_is_true := (.value: $&Int32) -> (.ok: Bool) {
+    value&= value&+ 1
     ok = true
 }
 
 test language_regression_slice := (.system: System) -> !() {
-    present : ?Int32 = ..some(.value = 5)
-    missing : ?Int32 = ..none
+    present: ?Int32 = ..some(.value = 5)
+    missing: ?Int32 = ..none
     left ::= present unwrap_or 1
     right ::= missing unwrap_or 7
     testing.expect_equal(.expected = 12, .actual = left + right)!

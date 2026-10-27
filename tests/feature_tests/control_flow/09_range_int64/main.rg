@@ -1,4 +1,4 @@
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     start :: Int64 = 1
     finish :: Int64 = 7
     step :: Int64 = 2

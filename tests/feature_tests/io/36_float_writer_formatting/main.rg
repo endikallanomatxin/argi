@@ -1,4 +1,4 @@
-RecordingWriter: Type = (
+RecordingWriter := (
     .expected      : StringView
     .count         : UIntNative = 0
     .flush_calls   : UIntNative = 0
@@ -6,7 +6,7 @@ RecordingWriter: Type = (
     .flush_failure : Bool       = false
 )
 
-expect_written#(.t: Type: Float)(.value: t, .expected: StringView) -> () := {
+expect_written := #(.t: Type: Float) (.value: t, .expected: StringView) -> () {
     base ::= RecordingWriter(.expected = expected)
     unwrap_or_abort(
         .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
@@ -24,7 +24,7 @@ expect_written#(.t: Type: Float)(.value: t, .expected: StringView) -> () := {
 
 -- Expected texts come from exact rational midpoint intervals, independently
 -- generated for varied significands and all three binary widths.
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     value16 :: Float16 = 0.0
     expect_written(.value = value16, .expected = "0.0")
     value16 = -0.0
@@ -851,9 +851,9 @@ main() -> (.status_code: Int32 = 0) := {
     }
     if partial.count != 2 or partial.flush_calls != 0 { abort }
     first ::= RecordingWriter(.expected = "", .fail_at = 0, .flush_failure = true)
-    first_failed ::= WriteValue#(
-        RecordingWriter, Float64
-    ).write_value(.self = $&first, .value = value64)
+    first_failed ::= WriteValue#(RecordingWriter, Float64).write_value(
+        .self = $&first, .value = value64
+    )
     if is(.value = first_failed, .variant = ..error) {
         if first_failed ..error.reason != ..stream_flush_failed { abort }
     } else {
@@ -871,7 +871,7 @@ main() -> (.status_code: Int32 = 0) := {
 
 implement Writer#(RecordingWriter) (
     .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         if self&.count == self&.fail_at {
             if self&.flush_failure {
@@ -893,7 +893,7 @@ implement Writer#(RecordingWriter) (
     }
 
     .flush = (.self: $&RecordingWriter) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()

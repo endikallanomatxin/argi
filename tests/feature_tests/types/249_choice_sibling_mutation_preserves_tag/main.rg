@@ -1,4 +1,4 @@
-Payload : Type = (.value: Int32)
+Payload := (.value: Int32)
 implement ImplicitlyCopyable#(Payload) ()
 
 Result : Type = (
@@ -6,12 +6,12 @@ Result : Type = (
     ..error Int32
 )
 
-Wrapper : Type = (
+Wrapper := (
     .result: Result
     .counter: Int32
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     wrapper :: Wrapper = (
         .result = ..ok Payload(.value = 42),
         .counter = 0,

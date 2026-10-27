@@ -2,7 +2,7 @@ drops :: Int32 = 0
 
 record_drop := () -> () { drops = drops + 1 }
 
-Policy: Type = (.id: Int32)
+Policy := (.id: Int32)
 
 implement Deinit#(Policy) (
     .deinit = (.self: $&Policy) -> () { record_drop() }
@@ -22,7 +22,7 @@ FailAllocator: Type = ()
 
 implement Allocator#(FailAllocator) (
     .allocate = (.self: $&FailAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
+        .result: Errable#(Allocation, (..out_of_memory))
     ) {
         result = ..error(.reason = ..out_of_memory)
     }

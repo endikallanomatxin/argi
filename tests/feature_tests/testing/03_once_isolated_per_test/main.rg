@@ -1,7 +1,7 @@
-once setup() -> () := {
+setup := once () -> () {
 }
 
-helper() -> () := {
+helper := () -> () {
     setup()
 }
 

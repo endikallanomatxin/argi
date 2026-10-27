@@ -1,5 +1,5 @@
 -- A small consumer of declarative options, owned paths and directory walking.
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     assume file_system := system.file_system

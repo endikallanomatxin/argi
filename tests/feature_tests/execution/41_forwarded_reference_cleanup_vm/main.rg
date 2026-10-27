@@ -1,8 +1,8 @@
-Counter: Type = (.count: Int32 = 0, .calls: Int32 = 0)
+Counter := (.count: Int32 = 0, .calls: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .id: Int32)
+Resource := (.counter: $&Counter, .id: Int32)
 
-Args: Type = (.target: $&Resource)
+Args := (.target: $&Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -10,18 +10,20 @@ implement Deinit#(Resource) (
     }
 )
 
-borrow(.owner: $&Resource) -> (.result: $&Resource) := { result = owner }
+borrow := (.owner: $&Resource) -> (.result: $&Resource) { result = owner }
 
-forward#(.Value: Type)(.value: Value) -> (.result: Value) := { result = value }
+forward := #(.Value: Type) (.value: Value) -> (.result: Value) { result = value }
 
-second(.first: $&Resource, .second: $&Resource) -> (.result: $&Resource) := { result = second }
+second := (.first: $&Resource, .second: $&Resource) -> (.result: $&Resource) {
+    result = second
+}
 
-observe(.counter: $&Counter, .owner: $&Resource) -> (.result: $&Resource) := {
+observe := (.counter: $&Counter, .owner: $&Resource) -> (.result: $&Resource) {
     counter&.calls = counter&.calls + 1
     result = owner
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter, .id = 1)

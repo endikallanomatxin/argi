@@ -1,6 +1,7 @@
 Shape#(.Input: Type): Contract = (
-    .Count: Int
+    .Count : Int
 )
+
 Cell: Type = ()
 
 implement Shape#(Cell) (.Count: Int = 2)

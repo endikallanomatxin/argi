@@ -1,5 +1,6 @@
 Product#(.Input: Type): Contract = (
-    .Result: Type
-    .Result: Int
+    .Result : Type
+    .Result : Int
 )
-main() -> () := {}
+
+main := () -> () {}

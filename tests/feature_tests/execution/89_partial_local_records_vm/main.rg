@@ -1,4 +1,4 @@
-Pair: Type = (.first: Int32, .second: (.value: Int32))
+Pair := (.first: Int32, .second: (.value: Int32))
 
 set_number := (.destination: $&Int32, .value: Int32) -> () {
     destination&= value
@@ -23,9 +23,9 @@ main := () -> (.status_code: Int32 = 0) {
     status_code = exercise()
 }
 
-Counter: Type = (.count: Int32)
+Counter := (.count: Int32)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {

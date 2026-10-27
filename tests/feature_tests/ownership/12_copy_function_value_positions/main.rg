@@ -1,8 +1,11 @@
-Resource : Type = ()
+Resource: Type = ()
 
-implement Init#(Resource, ()) (
-    .Result: Type = Resource
-    .init = (.args: ()) -> (.result: Result) {
+ResourceInitArgs: Type = ()
+
+implement Init#(Resource, ResourceInitArgs) (
+    .Result : Type = Resource
+
+    .init = ResourceInitArgs -> (.result: Result) {
         result = ()
     }
 )
@@ -19,17 +22,17 @@ implement InfalliblyCopyable#(Resource) (
     }
 )
 
-consume(.res: Resource) -> (.status_code: Int32) := {
+consume := (.res: Resource) -> (.status_code: Int32) {
     status_code = 0
 }
 
-Wrapper : Type = (
-    .res: Resource
+Wrapper := (
+    .res : Resource
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     first := Resource()
     second := copy(.self = &first)
-    wrapped : Wrapper = (.res = copy(.self = &first))
+    wrapped: Wrapper = (.res = copy(.self = &first))
     status_code = consume(.res = ~second)
 }

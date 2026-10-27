@@ -1,16 +1,16 @@
-select_nullable#(.T: Type)(.value: ?T, .fallback: T) -> (.result: T) := {
+select_nullable := #(.T: Type) (.value: ?T, .fallback: T) -> (.result: T) {
     match value {
         ..some payload { result = payload.value }
         ..none { result = fallback }
     }
 }
 
-computed() -> (.result: Int32) := {
+computed := () -> (.result: Int32) {
     value: ?Int32 = ..some(.value = 42)
     result = select_nullable(.value = value, .fallback = 0)
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value: ?UIntNative = ..some(.value = 42)
     absent: ?UIntNative = ..none
     zero: UIntNative = 0

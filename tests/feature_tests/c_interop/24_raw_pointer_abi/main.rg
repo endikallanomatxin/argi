@@ -1,11 +1,24 @@
-_static() -> (.pointer: RawPointer#(.t: UInt8)) : CFunction(.symbol = "argi_c_static")
-_read(.pointer: RawPointer#(.t: UInt8)) -> (.value: Int32) : CFunction(.symbol = "argi_c_read")
-_echo(.pointer: RawPointer#(.t: UInt8)) -> (.result: RawPointer#(.t: UInt8)) : CFunction(.symbol = "argi_c_echo")
-_probe() -> (.status: Int32) : CFunction(.symbol = "argi_c_pointer_probe")
-_forward() -> (.pointer: RawPointer#(.t: UInt8)) := { pointer = _static() }
-_identity(.pointer: RawPointer#(.t: UInt8)) -> (.result: RawPointer#(.t: UInt8)) : CFunction := { result = pointer }
-argi_pointer_export(.pointer: RawPointer#(.t: UInt8)) -> (.result: RawPointer#(.t: UInt8)) : CFunction(.export = true) := { result = pointer }
-main(.system: System) -> (.status_code: Int32 = 0) := {
+_static() -> (.pointer: RawPointer#(.t: UInt8)): CFunction(.symbol = "argi_c_static")
+
+_read(.pointer: RawPointer#(.t: UInt8)) -> (.value: Int32): CFunction(.symbol = "argi_c_read")
+
+_echo(.pointer: RawPointer#(.t: UInt8)) -> (.result: RawPointer#(.t: UInt8)): CFunction(
+    .symbol = "argi_c_echo"
+)
+
+_probe() -> (.status: Int32): CFunction(.symbol = "argi_c_pointer_probe")
+
+_forward := () -> (.pointer: RawPointer#(.t: UInt8)) { pointer = _static() }
+
+_identity(.pointer: RawPointer#(.t: UInt8)) -> (.result: RawPointer#(.t: UInt8)): CFunction := {
+    result = pointer
+}
+
+argi_pointer_export(.pointer: RawPointer#(.t: UInt8)) -> (.result: RawPointer#(.t: UInt8)): CFunction(
+    .export = true
+) := { result = pointer }
+
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     pointer := _forward()
     if pointer.address == 0 { status_code = 1 }

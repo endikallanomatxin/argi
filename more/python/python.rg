@@ -3,9 +3,9 @@
 -- become Argi safe references.
 _PyObject: CIncomplete
 
-Python: Type = (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
+Python := (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
 
-Object: Type = (._handle: RawPointer#(.t: _PyObject), ._python: &Python)
+Object := (._handle: RawPointer#(.t: _PyObject), ._python: &Python)
 
 ..python_error
 ..python_initialization_failed
@@ -85,32 +85,26 @@ _tuple_set(
     .object  : RawPointer#(.t: _PyObject)
 ) -> (.status: Int32): CFunction(.symbol = "_argi_python_tuple_set")
 
-implement Init#(
-    Python,
-    (
-        .ffi          : $&ForeignFunctionInterface,
-        .program_name : StringView                  = "python3",
-        .home         : StringView                  = "",
-    )
-) (
-    .Result : Type = Errable#(Python, (..python_initialization_failed))
-    .init   = (
-        .args : (
-            .ffi          : $&ForeignFunctionInterface,
-            .program_name : StringView                  = "python3",
-            .home         : StringView                  = "",
-        )
-    ) -> (.result: Result) {
-        ffi ::= args.ffi
-        program_name ::= args.program_name
-        home ::= args.home
+PythonInitArgs: Type = (
+    .ffi          : $&ForeignFunctionInterface,
+    .program_name : StringView                  = "python3",
+    .home         : StringView                  = "",
+)
 
-        assume ffi
+implement Init#(Python, PythonInitArgs) (
+    .Result : Type = Errable#(Python, (..python_initialization_failed))
+
+    .init = PythonInitArgs -> (.result: Result) {
+        _init_ffi ::= ffi
+        _init_program_name ::= program_name
+        _init_home ::= home
+
+        assume ffi := _init_ffi
         handle ::= _start(
-            .program        = byte_data(.text = program_name).reference
-            .program_length = byte_length(&program_name).count
-            .home           = byte_data(.text = home).reference
-            .home_length    = byte_length(&home).count
+            .program        = byte_data(.text = _init_program_name).reference
+            .program_length = byte_length(&_init_program_name).count
+            .home           = byte_data(.text = _init_home).reference
+            .home_length    = byte_length(&_init_home).count
         ).handle
 
         if handle == 0 {
@@ -118,7 +112,7 @@ implement Init#(
             return
         }
 
-        result = ..ok(._handle = handle, ._ffi = ffi)
+        result = ..ok(._handle = handle, ._ffi = _init_ffi)
     }
 )
 
@@ -136,9 +130,9 @@ implement Deinit#(Object) (
     }
 )
 
-_owned(.self: &Python, .handle: RawPointer#(.t: _PyObject)) -> (
+_owned := (.self: &Python, .handle: RawPointer#(.t: _PyObject)) -> (
     .result : Errable#(Object, (..python_error))
-) := {
+) {
     if handle.address == 0 {
         result = ..error(.reason = ..python_error)
         return
@@ -147,9 +141,9 @@ _owned(.self: &Python, .handle: RawPointer#(.t: _PyObject)) -> (
     result = ..ok(._handle = handle, ._python = self)
 }
 
-import_module(.self: &Python, .name: StringView) -> (
+import_module := (.self: &Python, .name: StringView) -> (
     .result : Errable#(Object, (..python_error))
-) := {
+) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -162,7 +156,7 @@ import_module(.self: &Python, .name: StringView) -> (
     )
 }
 
-string(.self: &Python, .value: StringView) -> (.result: Errable#(Object, (..python_error))) := {
+string := (.self: &Python, .value: StringView) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -175,9 +169,9 @@ string(.self: &Python, .value: StringView) -> (.result: Errable#(Object, (..pyth
     )
 }
 
-bytes(.self: &Python, .value: ArrayView#(UInt8)) -> (
+bytes := (.self: &Python, .value: ArrayView#(UInt8)) -> (
     .result : Errable#(Object, (..python_error))
-) := {
+) {
     assume ffi := self&._ffi
     empty: UInt8 = 0
     source :: &UInt8 = &empty
@@ -189,7 +183,7 @@ bytes(.self: &Python, .value: ArrayView#(UInt8)) -> (
     )
 }
 
-_python_object_clone(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
+_python_object_clone := (.self: &Object) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._python&._ffi
 
     result = _owned(
@@ -198,7 +192,9 @@ _python_object_clone(.self: &Object) -> (.result: Errable#(Object, (..python_err
     )
 }
 
-attribute(.self: &Object, .name: StringView) -> (.result: Errable#(Object, (..python_error))) := {
+attribute := (.self: &Object, .name: StringView) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume ffi := self&._python&._ffi
 
     result = _owned(
@@ -212,7 +208,7 @@ attribute(.self: &Object, .name: StringView) -> (.result: Errable#(Object, (..py
     )
 }
 
-get_item(.self: &Object, .key: &Object) -> (.result: Errable#(Object, (..python_error))) := {
+get_item := (.self: &Object, .key: &Object) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._python&._ffi
 
     result = _owned(
@@ -223,7 +219,7 @@ get_item(.self: &Object, .key: &Object) -> (.result: Errable#(Object, (..python_
     )
 }
 
-repr(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
+repr := (.self: &Object) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._python&._ffi
 
     result = _owned(
@@ -232,7 +228,7 @@ repr(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
     )
 }
 
-to_int64(.self: &Object) -> (.result: Errable#(Int64, (..python_error))) := {
+to_int64 := (.self: &Object) -> (.result: Errable#(Int64, (..python_error))) {
     assume ffi := self&._python&._ffi
     value :: Int64 = 0
 
@@ -249,7 +245,7 @@ to_int64(.self: &Object) -> (.result: Errable#(Int64, (..python_error))) := {
     result = ..ok value
 }
 
-to_uint64(.self: &Object) -> (.result: Errable#(UInt64, (..python_error))) := {
+to_uint64 := (.self: &Object) -> (.result: Errable#(UInt64, (..python_error))) {
     assume ffi := self&._python&._ffi
     value :: UInt64 = 0
 
@@ -266,7 +262,7 @@ to_uint64(.self: &Object) -> (.result: Errable#(UInt64, (..python_error))) := {
     result = ..ok value
 }
 
-to_float64(.self: &Object) -> (.result: Errable#(Float64, (..python_error))) := {
+to_float64 := (.self: &Object) -> (.result: Errable#(Float64, (..python_error))) {
     assume ffi := self&._python&._ffi
     value :: Float64 = 0.0
 
@@ -283,17 +279,17 @@ to_float64(.self: &Object) -> (.result: Errable#(Float64, (..python_error))) := 
     result = ..ok value
 }
 
-_no_arguments() -> (.value: ArrayView#(.t: &Object)) := {
+_no_arguments := () -> (.value: ArrayView#(.t: &Object)) {
     value = empty_array_view#(.t: &Object)()
 }
 
-_no_keywords() -> (.value: ?&Object) := { value = ..none }
+_no_keywords := () -> (.value: ?&Object) { value = ..none }
 
-_call_from_view(
+_call_from_view := (
     .self      : &Object,
     .arguments : ArrayView#(.t: &Object) = _no_arguments(),
     .keywords  : ?&Object                = _no_keywords()
-) -> (.result: Errable#(Object, (..python_error))) := {
+) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._python&._ffi
     tuple ::= _tuple(
         .context = self&._python&._handle, .length = length(&arguments).count
@@ -390,7 +386,7 @@ _error_copy(.context: UIntNative, .destination: RawPointer#(.t: UInt8), .length:
     .status : Int32
 ): CFunction(.symbol = "_argi_python_error_copy")
 
-none(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
+none := (.self: &Python) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -405,7 +401,7 @@ none(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
     )
 }
 
-boolean(.self: &Python, .value: Bool) -> (.result: Errable#(Object, (..python_error))) := {
+boolean := (.self: &Python, .value: Bool) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -420,9 +416,9 @@ boolean(.self: &Python, .value: Bool) -> (.result: Errable#(Object, (..python_er
     )
 }
 
-_python_signed_integer(.self: &Python, .value: Int64) -> (
+_python_signed_integer := (.self: &Python, .value: Int64) -> (
     .result : Errable#(Object, (..python_error))
-) := {
+) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -437,9 +433,9 @@ _python_signed_integer(.self: &Python, .value: Int64) -> (
     )
 }
 
-_python_unsigned_integer(.self: &Python, .value: UInt64) -> (
+_python_unsigned_integer := (.self: &Python, .value: UInt64) -> (
     .result : Errable#(Object, (..python_error))
-) := {
+) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -454,7 +450,7 @@ _python_unsigned_integer(.self: &Python, .value: UInt64) -> (
     )
 }
 
-floating(.self: &Python, .value: Float64) -> (.result: Errable#(Object, (..python_error))) := {
+floating := (.self: &Python, .value: Float64) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -469,7 +465,7 @@ floating(.self: &Python, .value: Float64) -> (.result: Errable#(Object, (..pytho
     )
 }
 
-list(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
+list := (.self: &Python) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -484,7 +480,7 @@ list(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
     )
 }
 
-dictionary(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
+dictionary := (.self: &Python) -> (.result: Errable#(Object, (..python_error))) {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -499,11 +495,11 @@ dictionary(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
     )
 }
 
-_boolean_int(.value: Bool) -> (.number: Int64) := {
+_boolean_int := (.value: Bool) -> (.number: Int64) {
     if value { number = 1 } else { number = 0 }
 }
 
-to_bool(.self: &Object) -> (.result: Errable#(Bool, (..python_error))) := {
+to_bool := (.self: &Object) -> (.result: Errable#(Bool, (..python_error))) {
     assume ffi := self&._python&._ffi
     status ::= _bool(.context = self&._python&._handle, .object = self&._handle).status
 
@@ -517,7 +513,7 @@ to_bool(.self: &Object) -> (.result: Errable#(Bool, (..python_error))) := {
     result = ..ok value
 }
 
-is_none(.self: &Object) -> (.result: Errable#(Bool, (..python_error))) := {
+is_none := (.self: &Object) -> (.result: Errable#(Bool, (..python_error))) {
     assume ffi := self&._python&._ffi
     status ::= _is_none(.context = self&._python&._handle, .object = self&._handle).status
 
@@ -531,7 +527,7 @@ is_none(.self: &Object) -> (.result: Errable#(Bool, (..python_error))) := {
     result = ..ok value
 }
 
-length(.self: &Object) -> (.result: Errable#(UIntNative, (..python_error))) := {
+length := (.self: &Object) -> (.result: Errable#(UIntNative, (..python_error))) {
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
 
@@ -548,7 +544,7 @@ length(.self: &Object) -> (.result: Errable#(UIntNative, (..python_error))) := {
     result = ..ok count
 }
 
-append(.self: &Object, .value: &Object) -> (.result: Errable#(Void, (..python_error))) := {
+append := (.self: &Object, .value: &Object) -> (.result: Errable#(Void, (..python_error))) {
     assume ffi := self&._python&._ffi
 
     if [
@@ -564,9 +560,9 @@ append(.self: &Object, .value: &Object) -> (.result: Errable#(Void, (..python_er
     result = ..ok Void()
 }
 
-set_item(.self: &Object, .key: &Object, .value: &Object) -> (
+set_item := (.self: &Object, .key: &Object, .value: &Object) -> (
     .result : Errable#(Void, (..python_error))
-) := {
+) {
     assume ffi := self&._python&._ffi
 
     if [
@@ -585,9 +581,9 @@ set_item(.self: &Object, .key: &Object, .value: &Object) -> (
     result = ..ok Void()
 }
 
-_copy_python_bytes#(.AllocatorType: Type: Allocator#(AllocatorType))(
+_copy_python_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: &Object, .kind: Int32, .allocator: $&AllocatorType
-) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) := {
+) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) {
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
 
@@ -624,23 +620,23 @@ _copy_python_bytes#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~text
 }
 
-to_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
+to_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: &Object, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) := {
+) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) {
     bytes ::= _copy_python_bytes(.self = self, .kind = 0, .allocator = allocator)!
     decoded ::= _native_text(.bytes = view(&bytes), .allocator = allocator)!
     result = ..ok ~decoded
 }
 
-to_bytes#(.AllocatorType: Type: Allocator#(AllocatorType))(
+to_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: &Object, .allocator: $&AllocatorType
-) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) := {
+) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) {
     result = _copy_python_bytes(.self = self, .kind = 1, .allocator = allocator)
 }
 
-error_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
+error_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: &Python, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) := {
+) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) {
     assume ffi := self&._ffi
     count ::= _error_size(.context = self&._handle).length
     text ::= _native_byte_buffer(.allocator = allocator, .count = count)!
@@ -662,8 +658,8 @@ error_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~decoded
 }
 
-_zero_signed() -> (.value: Int64) := { value = 0 }
+_zero_signed := () -> (.value: Int64) { value = 0 }
 
-_zero_unsigned() -> (.value: UInt64) := { value = 0 }
+_zero_unsigned := () -> (.value: UInt64) { value = 0 }
 
-_zero_float() -> (.value: Float64) := { value = 0.0 }
+_zero_float := () -> (.value: Float64) { value = 0.0 }

@@ -1,22 +1,18 @@
-HashMapROEntry#(.key: Type, .value: Type): Type = (.key: &key, .value: &value)
+HashMapROEntry := #(.key: Type, .value: Type) (.key: &key, .value: &value)
 
 implement#(.key: Type, .value: Type) ImplicitlyCopyable#(
     HashMapROEntry#(.key: key, .value: value)
 ) ()
 
-HashMapBorrowIterator#(
-    .key    : Type,
-    .value  : Type,
-    .policy : Type: HashPolicy#(policy, key)
-): Type = (
+HashMapBorrowIterator := #(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) (
     ._owner      : &HashMap#(.key: key, .value: value, .policy: policy),
     ._generation : &Any,
     ._index      : UIntNative
 )
 
-_hash_next#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
+_hash_next := #(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) (
     .self: &HashMap#(.key: key, .value: value, .policy: policy), .start: UIntNative
-) -> (.index: UIntNative) := {
+) -> (.index: UIntNative) {
     index = start
 
     while index < capacity(self).count {
@@ -78,7 +74,7 @@ implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) It
 
 -- Iteration scans initialized slots, skips tombstones, and never invokes policy code.
 -- Table order is unspecified. The owner loan retains the table shape generation.
-HashMapRWEntry#(.key: Type, .value: Type): Type = (
+HashMapRWEntry := #(.key: Type, .value: Type) (
     .key   : &key,
     .value : $&value
 )
@@ -87,43 +83,18 @@ implement#(.key: Type, .value: Type) ImplicitlyCopyable#(
     HashMapRWEntry#(.key: key, .value: value)
 ) ()
 
-HashMapKeyIterator#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type,
-    .policy : Type: HashPolicy#(policy, key)
-): Type = (
-    ._owner : &HashMap#(.key: key, .value: value, .policy: policy),
-    ._index : UIntNative
-)
-
-to_key_iterator#(
+HashMapKeyIterator := #(
     .key: Type: ImplicitlyCopyable, .value: Type, .policy: Type: HashPolicy#(policy, key)
-)(.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
-    .iterator : HashMapKeyIterator#(.key: key, .value: value, .policy: policy)
-) := {
-    owner ::= depend_on#(.t: &HashMap#(.key: key, .value: value, .policy: policy))(
-        .value = value, .on = erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
-    ).result
-    iterator = (
-        ._owner = owner
-        ._index = 0
-    )
-}
-
-HashMapValueIterator#(
-    .key    : Type,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-): Type = (
+) (
     ._owner : &HashMap#(.key: key, .value: value, .policy: policy),
     ._index : UIntNative
 )
 
-to_value_iterator#(
-    .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
-)(.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
-    .iterator : HashMapValueIterator#(.key: key, .value: value, .policy: policy)
-) := {
+to_key_iterator := #(
+    .key: Type: ImplicitlyCopyable, .value: Type, .policy: Type: HashPolicy#(policy, key)
+) (.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
+    .iterator : HashMapKeyIterator#(.key: key, .value: value, .policy: policy)
+) {
     owner ::= depend_on#(.t: &HashMap#(.key: key, .value: value, .policy: policy))(
         .value = value, .on = erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
     ).result
@@ -133,25 +104,42 @@ to_value_iterator#(
     )
 }
 
-to_ro_entry_iterator#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
+HashMapValueIterator := #(
+    .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
+) (
+    ._owner : &HashMap#(.key: key, .value: value, .policy: policy),
+    ._index : UIntNative
+)
+
+to_value_iterator := #(
+    .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
+) (.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
+    .iterator : HashMapValueIterator#(.key: key, .value: value, .policy: policy)
+) {
+    owner ::= depend_on#(.t: &HashMap#(.key: key, .value: value, .policy: policy))(
+        .value = value, .on = erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
+    ).result
+    iterator = (
+        ._owner = owner
+        ._index = 0
+    )
+}
+
+to_ro_entry_iterator := #(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) (
     .value : &HashMap#(.key: key, .value: value, .policy: policy)
-) -> (.iterator: HashMapBorrowIterator#(.key: key, .value: value, .policy: policy)) := {
+) -> (.iterator: HashMapBorrowIterator#(.key: key, .value: value, .policy: policy)) {
     iterator = to_iterator(.value = value).iterator
 }
 
-HashMapRWEntryIterator#(
-    .key    : Type,
-    .value  : Type,
-    .policy : Type: HashPolicy#(policy, key)
-): Type = (
+HashMapRWEntryIterator := #(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) (
     ._owner      : $&HashMap#(.key: key, .value: value, .policy: policy),
     ._generation : &Any,
     ._index      : UIntNative
 )
 
-to_rw_entry_iterator#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
+to_rw_entry_iterator := #(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) (
     .value : $&HashMap#(.key: key, .value: value, .policy: policy)
-) -> (.iterator: HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)) := {
+) -> (.iterator: HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)) {
     owner ::= depend_on#(.t: $&HashMap#(.key: key, .value: value, .policy: policy))(
         .value = value, .on = erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
     ).result

@@ -1,6 +1,6 @@
 python := import ("python")
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     match python.Python(.ffi = system.ffi, .program_name = "") {
         ..error _ {} ..ok _ { abort }
     }

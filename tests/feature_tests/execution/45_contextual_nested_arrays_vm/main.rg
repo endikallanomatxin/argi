@@ -1,8 +1,8 @@
-Pair: Type = (.sum: Int32, .items: [2]Int32)
+Pair := (.sum: Int32, .items: [2]Int32)
 
-Nested: Type = (.pair: Pair)
+Nested := (.pair: Pair)
 
-calculate(.base: Int32) -> (.result: Nested) := {
+calculate := (.base: Int32) -> (.result: Nested) {
     sum :: Int32 = base
     index :: Int32 = 0
     while index < 2 {
@@ -12,7 +12,7 @@ calculate(.base: Int32) -> (.result: Nested) := {
     result = (.pair = (.sum = sum, .items = (base, sum)))
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     result ::= calculate(.base = 40)
     if result.pair.items[0] != 40 { abort }
     if result.pair.items[1] != result.pair.sum { abort }

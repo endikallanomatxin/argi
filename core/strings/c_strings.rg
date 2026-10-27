@@ -2,16 +2,16 @@
 -- v1 keeps C-string interop as raw `&CChar` plus explicit helpers.
 -- There is intentionally no separate nominal `CString` type in core.
 --
-OwnedCString: Type = (
+OwnedCString := (
     .text    : &CChar
     .storage : Allocation
 )
 
-from_literal(.data: &CChar) -> (.text: &CChar) := {
+from_literal := (.data: &CChar) -> (.text: &CChar) {
     text = data
 }
 
-as_c_string(.self: &String) -> (.text: &CChar) := {
+as_c_string := (.self: &String) -> (.text: &CChar) {
     text = trusted_reinterpret_reference#(.from: UInt8, .to: CChar)(
         .base = _trusted_allocation_byte_ro(
             .allocation = &self&._allocation, .offset = 0
@@ -19,7 +19,7 @@ as_c_string(.self: &String) -> (.text: &CChar) := {
     ).reference
 }
 
-copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
+copy_c_string := #(.Provider: Type: Allocator#(Provider)) (
     .self: StringView, .allocator: $&Provider
 ) -> (.result: Errable#(OwnedCString, (..out_of_memory))) {
     assume allocator
@@ -64,7 +64,7 @@ copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-_c_string_bytes(.text: &CChar) -> (.bytes: ArrayView#(UInt8)) := {
+_c_string_bytes := (.text: &CChar) -> (.bytes: ArrayView#(UInt8)) {
     size ::= c_string_length(.text = text).length
     if size == 0 {
         bytes = empty_array_view#(UInt8)().array
@@ -78,9 +78,9 @@ _c_string_bytes(.text: &CChar) -> (.bytes: ArrayView#(UInt8)) := {
     ).array
 }
 
-string_from_c_string#(.Provider: Type: Allocator)(
+string_from_c_string := #(.Provider: Type: Allocator) (
     .text: &CChar, .allocator: $&Provider = reach allocator
-) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) := {
+) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
     assume allocator
     result = string_from_bytes(.bytes = _c_string_bytes(.text = text), .allocator = allocator)
 }

@@ -1,4 +1,4 @@
-_bounded_stream_maximum() -> (.value: UIntNative) := {
+_bounded_stream_maximum := () -> (.value: UIntNative) {
     maximum :: UIntNative = 0
     byte_index :: UIntNative = 0
     native_bytes ::= size_of(.type = UIntNative)
@@ -15,7 +15,7 @@ StreamCopyEnd: Type = (..end, ..limit)
 
 implement ImplicitlyCopyable#(StreamCopyEnd) ()
 
-StreamCopyResult: Type = (.count: UIntNative, .termination: StreamCopyEnd)
+StreamCopyResult := (.count: UIntNative, .termination: StreamCopyEnd)
 
 implement ImplicitlyCopyable#(StreamCopyResult) ()
 
@@ -23,9 +23,9 @@ implement ImplicitlyCopyable#(StreamCopyResult) ()
 
 -- A limit is a stopping point, not an assertion that the source ended. No
 -- lookahead byte is consumed, including when the limit is zero or exactly met.
-copy_stream_limited#(
+copy_stream_limited := #(
     .ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType)
-)(
+) (
     .reader : $&ReaderType,
     .writer : $&WriterType,
     .buffer : MutableArrayView#(.t: UInt8),
@@ -40,7 +40,7 @@ copy_stream_limited#(
             ..invalid_stream_buffer
         )
     )
-) := {
+) {
     copied :: UIntNative = 0
 
     if limit == 0 {
@@ -75,9 +75,9 @@ copy_stream_limited#(
 
 -- Return complete binary data or release the partial owner on every error.
 -- Capacity growth is capped independently of the caller's scratch extent.
-read_all_limited#(
+read_all_limited := #(
     .SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
-)(
+) (
     .self      : $&SelfType,
     .buffer    : MutableArrayView#(.t: UInt8),
     .limit     : UIntNative,
@@ -92,7 +92,7 @@ read_all_limited#(
             ..out_of_memory
         )
     )
-) := {
+) {
     assume allocator
     size ::= length(&buffer).count
 

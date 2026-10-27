@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     values :: [3]Int32 = (4, 5, 6)
     borrowed_view :: MutableArrayView#(Int32) = view(.self = $&values)
     read_view :: ArrayView#(Int32) = view(.self = &values)

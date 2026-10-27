@@ -1,23 +1,25 @@
-FileSystem: Type = (._ffi: $&ForeignFunctionInterface)
+_FileSystemInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+
+FileSystem := (._ffi: $&ForeignFunctionInterface)
 
 ..path_open_failed
 ..path_remove_failed
 ..path_rename_failed
 
-once _acquire_file_system := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : FileSystem
-) {
-    ffi ::= args.ffi
+_acquire_file_system := once _FileSystemInitArgs -> (.result: FileSystem) {
 
     result._ffi = ffi
 }
 
-implement Init#(FileSystem, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+FileSystemInitArgs: Type = _FileSystemInitArgs
+
+implement Init#(FileSystem, FileSystemInitArgs) (
     .Result : Type = FileSystem
-    .init   = _acquire_file_system
+
+    .init = _acquire_file_system
 )
 
-_read_c_file#(.Provider: Type: Allocator#(Provider)) := (
+_read_c_file := #(.Provider: Type: Allocator#(Provider)) (
     .self: &FileSystem, .path: &CChar, .allocator: $&Provider
 ) -> (
     .result : Errable#(
@@ -97,7 +99,7 @@ _read_c_file#(.Provider: Type: Allocator#(Provider)) := (
     result = ..ok ~text
 }
 
-_read_string_file#(.Provider: Type: Allocator#(Provider)) := (
+_read_string_file := #(.Provider: Type: Allocator#(Provider)) (
     .self: &FileSystem, .path: &String, .allocator: $&Provider
 ) -> (
     .result : Errable#(
@@ -119,7 +121,7 @@ _read_string_file#(.Provider: Type: Allocator#(Provider)) := (
     result = read_file(self, .path = c_path, .allocator = allocator)
 }
 
-_read_view_file#(.Provider: Type: Allocator#(Provider)) := (
+_read_view_file := #(.Provider: Type: Allocator#(Provider)) (
     .self: &FileSystem, .path: StringView, .allocator: $&Provider
 ) -> (
     .result : Errable#(
@@ -146,7 +148,7 @@ _read_view_file#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-_read_path_file#(.Provider: Type: Allocator#(Provider)) := (
+_read_path_file := #(.Provider: Type: Allocator#(Provider)) (
     .self: &FileSystem, .path: &Path, .allocator: $&Provider
 ) -> (
     .result : Errable#(

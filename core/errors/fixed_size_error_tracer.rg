@@ -1,11 +1,11 @@
-ErrorTraceEntry: Type = (.location: SourceLocationId, .context_length: UIntNative)
+ErrorTraceEntry := (.location: SourceLocationId, .context_length: UIntNative)
 
 implement ImplicitlyCopyable#(ErrorTraceEntry) ()
 
 -- Fixed slots bound both context copy work and memory use. The first half
 -- retains early frames; the second half replaces recent frames in a ring.
 -- All errors referring to this tracer share the same diagnostic log.
-FixedSizeErrorTracer: Type = (
+FixedSizeErrorTracer := (
     ._buffer   : MutableArrayView#(.t: UInt8)
     ._capacity : UIntNative
     ._length   : UIntNative
@@ -13,21 +13,23 @@ FixedSizeErrorTracer: Type = (
     ._dropped  : Bool
 )
 
-_error_trace_stride() -> (.size: UIntNative) := {
+_error_trace_stride := () -> (.size: UIntNative) {
     size = size_of(.type = ErrorTraceEntry) + 128
 }
 
 -- The buffer is initialized caller-owned storage, not an allocation owned by
 -- the tracer. Trailing bytes that do not fit a complete slot are unused.
-implement Init#(FixedSizeErrorTracer, (.buffer: MutableArrayView#(.t: UInt8))) (
+FixedSizeErrorTracerInitArgs: Type = (.buffer: MutableArrayView#(.t: UInt8))
+
+implement Init#(FixedSizeErrorTracer, FixedSizeErrorTracerInitArgs) (
     .Result : Type = FixedSizeErrorTracer
 
-    .init = (.args: (.buffer: MutableArrayView#(.t: UInt8))) -> (.result: Result) {
-        buffer ::= args.buffer
-        capacity ::= length(&buffer).count / _error_trace_stride().size
+    .init = FixedSizeErrorTracerInitArgs -> (.result: Result) {
+        _init_buffer ::= buffer
+        capacity ::= length(&_init_buffer).count / _error_trace_stride().size
 
         result = (
-            ._buffer   = buffer
+            ._buffer   = _init_buffer
             ._capacity = capacity
             ._length   = 0
             ._next     = capacity / 2
@@ -42,9 +44,9 @@ implement Deinit#(FixedSizeErrorTracer) (
     }
 )
 
-_error_trace_header(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
+_error_trace_header := (.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
     .header : MutableArrayView#(.t: UInt8)
-) := {
+) {
     local_noop :: NoopErrorTracer = (.marker = 0)
     local_trace ::= to_virtual#(.contract: ErrorTracer)(.value = $&local_noop)
     assume error_tracer ::= $&local_trace
@@ -62,9 +64,9 @@ _error_trace_header(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
 -- Slot headers are copied as bytes into or out of aligned local values.
 -- A byte buffer (including an offset slice) need not align ErrorTraceEntry.
 -- Only numeric fields are stored; no reference is reconstructed from bytes.
-_error_trace_store_entry(
+_error_trace_store_entry := (
     .self: $&FixedSizeErrorTracer, .index: UIntNative, .entry: ErrorTraceEntry
-) -> () := {
+) -> () {
     first ::= trusted_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(
         .base = &entry
     ).reference
@@ -72,9 +74,9 @@ _error_trace_store_entry(
     memcpy_bytes(.dst = _error_trace_header(self, .index = index), .src = bytes)
 }
 
-_error_trace_load_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
+_error_trace_load_entry := (.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
     .entry : ErrorTraceEntry
-) := {
+) {
     entry = (.location = (.value = 0), .context_length = 0)
     first ::= trusted_mutable_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(
         .base = $&entry

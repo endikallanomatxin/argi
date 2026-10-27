@@ -1,5 +1,5 @@
-fail() -> () := { abort }
+fail := () -> () { abort }
 
-middle() -> () := { fail() }
+middle := () -> () { fail() }
 
-main() -> () := { middle() }
+main := () -> () { middle() }

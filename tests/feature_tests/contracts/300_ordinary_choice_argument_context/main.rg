@@ -1,4 +1,5 @@
 Mode: Type = (..read, ..write)
+
 implement ImplicitlyCopyable#(Mode) ()
 
 read_mode := (.mode: Mode) -> (.ok: Bool) {
@@ -12,7 +13,7 @@ optional_byte := (.value: ?UInt8) -> (.byte: UInt8) {
     }
 }
 
-check_modes#(.Marker: Type) := (.marker: Marker) -> (.ok: Bool) {
+check_modes := #(.Marker: Type) (.marker: Marker) -> (.ok: Bool) {
     named ::= read_mode(.mode = ..read)
     positional ::= read_mode(..write)
     payload ::= optional_byte(.value = ..some(.value = 250))

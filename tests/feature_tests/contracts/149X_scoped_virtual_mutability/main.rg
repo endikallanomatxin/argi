@@ -2,9 +2,9 @@ Input#(.Stream: Type): Contract = (
     .read_byte : (.self: $&Stream) -> (.result: UInt8) where {}
 )
 
-Cursor: Type = (.value: UInt8 = 7)
+Cursor := (.value: UInt8 = 7)
 
-implement Input#(Cursor)(
+implement Input#(Cursor) (
     .read_byte = (.self: $&Cursor) -> (.result: UInt8) { result = self&.value }
 )
 

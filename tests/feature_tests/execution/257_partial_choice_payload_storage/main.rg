@@ -1,11 +1,11 @@
 drops :: Int32 = 0
 whole_drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
 
-Envelope: Type = (.choice: Choice, .marker: Int32)
+Envelope := (.choice: Choice, .marker: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { drops = drops + 1 }
@@ -24,7 +24,7 @@ implement Deinit#(Choice) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         envelope :: Envelope
         envelope.choice = ..pair(.left = (.value = 1), .right = (.value = 2))
