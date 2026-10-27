@@ -469,3 +469,11 @@ test "compact syntaxing uses hash parameters on contract and implementation head
     try std.testing.expectEqual(@as(usize, 1), implementation.generic_params.len);
     try std.testing.expect(tree.syntaxType(implementation.contract_type).? == .generic);
 }
+
+test "compact syntaxing retains implementation-defined operation declarations" {
+    var tree = try parseTestSource("open_operation.rg", "Factory#(.T: Type): Contract = (.make: _)\n");
+    defer tree.deinit(std.testing.allocator);
+    const contract = tree.contractDeclaration(tree.roots[0]).?;
+    try std.testing.expectEqual(@as(usize, 1), contract.requires_functions.len);
+    try std.testing.expectEqual(.contract_inferred_operation_requirement, tree.tag(contract.requires_functions[0]));
+}

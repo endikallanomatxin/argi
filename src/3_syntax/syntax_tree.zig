@@ -77,6 +77,7 @@ pub const Node = struct {
         contract_declaration,
         contract_conformance,
         contract_function_requirement,
+        contract_inferred_operation_requirement,
         contract_domain,
         contract_outcome,
         c_function_pointer_declaration,

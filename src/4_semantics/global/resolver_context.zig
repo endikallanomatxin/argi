@@ -146,6 +146,7 @@ pub const Context = struct {
         self.contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
         self.contracts.infer_operation_parameters = generic_functions_mod.Resolver.inferOperationParameters;
         self.contracts.instantiate_generic_operation = generic_functions_mod.Resolver.instantiateGenericOperation;
+        self.contracts.call_implementation_operation = generic_functions_mod.Resolver.callImplementationOperation;
         self.argument_defaults = .{
             .context = &self.generic_functions,
             .checkpoint = generic_functions_mod.Resolver.checkpointDefaultEffects,

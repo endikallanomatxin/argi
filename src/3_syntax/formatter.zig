@@ -760,6 +760,7 @@ fn memberName(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) ?syn.TokenIn
     if (tree.valueField(node)) |value| return value.name_token;
     if (tree.structTypeField(node)) |value| return value.name_token;
     if (tree.functionDeclaration(node)) |value| return value.name_token;
+    if (tree.tag(node) == .contract_inferred_operation_requirement) return tree.mainToken(node);
     if (tree.contractFunctionRequirement(node)) |value| return value.name_token;
     return null;
 }
@@ -1538,4 +1539,8 @@ test "formatter attaches parameters to contract and implementation headers" {
         "Example #( .Item: Type ): Contract = ()\nimplement #( .Item: Type ) Example#(.Item: Item) ()\n",
         "Example#(.Item: Type): Contract = ()\n\nimplement#(.Item: Type) Example#(.Item: Item) ()\n",
     );
+}
+
+test "formatter preserves implementation-defined operation requirements" {
+    try expectFormat("Factory#(.T:Type):Contract=(.make:_)\n", "Factory#(.T: Type): Contract = (.make: _)\n");
 }

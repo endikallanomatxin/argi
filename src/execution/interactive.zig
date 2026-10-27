@@ -1733,3 +1733,24 @@ test "interactive associated family arguments survive rejected selections" {
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("first.value")).?.value.runtime.integer);
     try session.close();
 }
+
+test "interactive implementation-defined operations retain selected signatures across rejection" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Factory#(.T: Type): Contract = (.make: _)");
+    try session.submitDefinitions("Record := (.value: Int32)");
+    try session.submitDefinitions("implement Factory#(Record) (.make = #(.Provider: Type) (.value: Int32, .provider: &Provider) -> (.result: Record) { result = (.value = value) })");
+    try session.submitStatements("provider := true");
+    try session.submitStatements("first ::= Factory#(Record).make(.value = 42, .provider = &provider)");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("first.value")).?.value.runtime.integer);
+    const revision = session.compiler.revision;
+    const arguments = session.compiler.semantic.resolvers.core.graph.generic_arguments.items.len;
+    try std.testing.expectError(error.Reported, session.submitInput("Factory#(Record).make(.unknown = 7, .provider = &provider)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(arguments, session.compiler.semantic.resolvers.core.graph.generic_arguments.items.len);
+    try session.submitStatements("second ::= Factory#(Record).make(.value = 7, .provider = &provider)");
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("second.value")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("first.value")).?.value.runtime.integer);
+    try session.close();
+}

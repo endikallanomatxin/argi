@@ -60,8 +60,8 @@ pub const ContractRequirement = struct {
     parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
     name: primitives.StringRange,
-    input: ir.ParameterizedTypeId,
-    output: ir.ParameterizedTypeId,
+    /// Null means that the selected implementation provides its own signature.
+    signature: ?struct { input: ir.ParameterizedTypeId, output: ir.ParameterizedTypeId } = null,
     safety_contract: ?primitives.MethodSafetyContract = null,
 };
 

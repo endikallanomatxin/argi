@@ -108,13 +108,18 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
     for (storage.contract_requirements.items) |requirement| {
         try require(verify.rangeFits(requirement.parameters, storage.comptime_parameters.items.len));
         try require(verify.stringFits(requirement.name, graph.strings.items));
-        try require(verify.idFits(requirement.input, storage.ir.types.items.len));
-        try require(verify.idFits(requirement.output, storage.ir.types.items.len));
+        if (requirement.signature == null) {
+            try require(requirement.parameters.len == 0 and requirement.safety_contract == null);
+            try require(verify.sourceFits(requirement.source, graph.file_offsets.items.len));
+            continue;
+        }
+        try require(verify.idFits(requirement.signature.?.input, storage.ir.types.items.len));
+        try require(verify.idFits(requirement.signature.?.output, storage.ir.types.items.len));
         try require(verify.sourceFits(requirement.source, graph.file_offsets.items.len));
         if (requirement.safety_contract) |contract| {
             try require(verify.sourceFits(contract.source, graph.file_offsets.items.len));
-            const input = views.signatureFields(graph, requirement.input) orelse return error.InvalidModuleSemanticGraph;
-            const output = views.signatureFields(graph, requirement.output) orelse return error.InvalidModuleSemanticGraph;
+            const input = views.signatureFields(graph, requirement.signature.?.input) orelse return error.InvalidModuleSemanticGraph;
+            const output = views.signatureFields(graph, requirement.signature.?.output) orelse return error.InvalidModuleSemanticGraph;
             try require(contract.output_count == output.count());
             for (contract.owned_outputs) |index| try require(index < contract.output_count);
             for (contract.outcomes) |outcome| try verifyOutcome(graph, outcome, contract.output_count, input.count());

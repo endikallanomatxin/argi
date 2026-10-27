@@ -2150,12 +2150,36 @@ pub const Resolver = struct {
         return true;
     }
 
+    pub fn callImplementationOperation(context: *anyopaque, module_index: usize, declaration: global_sg.GlobalDeclId, captures: primitives.Range(global_sg.GlobalGenericArgId), arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) anyerror!global_sg.Node {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        if (self.findParameterized(declaration) != null) {
+            const family = self.graph.familyForDeclaration(declaration) orelse return error.GenericFunctionParameterizedNotFound;
+            const reference = module_entities.ExternalRef{ .kind = .function, .module_path = null, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = source.file_index - self.offsets[module_index].file_base, .offset = source.offset } };
+            return self.makeDefinitionCall(module_index, reference, .{ .origin = family, .captures = captures }, arguments, input, reach, source);
+        }
+        if (arguments.len != 0) return error.TooManyGenericArguments;
+        const function = self.graph.declaration(declaration).function_id orelse return error.DeferredGenericFunction;
+        const signature = self.graph.function(function);
+        switch (self.core.matchCallInput(signature.input, input)) {
+            .deferred => return error.DeferredGenericFunction,
+            .no_match => {
+                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match the selected implementation operation" };
+                return error.InvalidGenericCallArguments;
+            },
+            .applicable => {},
+        }
+        if (!try self.core.completeCallInputFieldsWithReach(signature.input, input, reach)) return error.DeferredGenericFunction;
+        try self.core.trackReachedCall(function, input, reach, false);
+        return .{ .source = source, .ty = try self.core.functionOutputType(function), .content = .{ .function_call = .{ .callee = function, .input = input } } };
+    }
+
     pub fn inferOperationParameters(context: *anyopaque, module_index: usize, requirement: @import("../module/parameterized/storage.zig").ContractRequirement, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, reach: ReachInferenceContext) anyerror!bool {
+        const signature = requirement.signature orelse return false;
         const self: *Resolver = @ptrCast(@alignCast(context));
         const saved_constraint = self.failed_constraint;
         defer self.failed_constraint = saved_constraint;
-        if (!try self.inferBindingsFromInput(module_index, requirement.input, input, bindings)) return false;
-        if (!try self.inferBindingsFromReachDefaults(module_index, requirement.input, input, bindings, reach)) return false;
+        if (!try self.inferBindingsFromInput(module_index, signature.input, input, bindings)) return false;
+        if (!try self.inferBindingsFromReachDefaults(module_index, signature.input, input, bindings, reach)) return false;
         if (!try self.inferAndValidateConstraints(module_index, requirement.parameters, bindings)) return false;
         return self.parametersBound(module_index, requirement.parameters, bindings);
     }

@@ -330,6 +330,20 @@ pub const Context = struct {
                         try domains.append(self.allocator, try self.writer.addString(text));
                     }
                     for (contract.requires_functions) |requirement_node| {
+                        if (self.tree.tag(requirement_node) == .contract_inferred_operation_requirement) {
+                            const operation_name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(requirement_node));
+                            for (self.graph.semantic.parameterized_storage.contract_requirements.items[req_start..]) |previous| {
+                                if (std.mem.eql(u8, self.graph.text(previous.name), operation_name))
+                                    try self.contractError(requirement_node, "duplicate contract operation identity");
+                            }
+                            for (self.parameters.items) |binding| if (std.mem.eql(u8, binding.name, operation_name))
+                                try self.contractError(requirement_node, "contract operations and associated elements require distinct names");
+                            try self.graph.semantic.parameterized_storage.contract_requirements.append(self.allocator, .{
+                                .source = self.sourceRef(requirement_node),
+                                .name = try self.writer.addString(operation_name),
+                            });
+                            continue;
+                        }
                         const requirement = self.tree.contractFunctionRequirement(requirement_node) orelse continue;
                         const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, requirement.name_token));
                         for (self.graph.semantic.parameterized_storage.contract_requirements.items[req_start..]) |previous| {
@@ -354,8 +368,7 @@ pub const Context = struct {
                             .parameters = operation_parameters,
                             .source = .{ .file_index = self.sourceRef(requirement_node).file_index, .offset = self.tree.tokenLocation(requirement.name_token).offset },
                             .name = name,
-                            .input = input,
-                            .output = output,
+                            .signature = .{ .input = input, .output = output },
                             .safety_contract = safety_contract,
                         });
                     }

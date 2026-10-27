@@ -903,12 +903,12 @@ test "unary and tuple contracts retain explicit symbolic participants" {
         try std.testing.expectEqual(@intFromEnum(participant), definition.participants.start);
         try std.testing.expect(participant != @as(@import("parameterized/storage.zig").ComptimeParameterId, @enumFromInt(definition.parameters.start)));
         const requirement = storage.contract_requirements.items[definition.requirements.start];
-        const fields = storage.ir.representation(requirement.input).resolved.structural.fields;
+        const fields = storage.ir.representation(requirement.signature.?.input).resolved.structural.fields;
         const other = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
         const receiver = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start + 1].ty)].resolved.pointer.child;
         try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(receiver)].parameter);
         try std.testing.expect(storage.ir.types.items[@intFromEnum(other)].parameter != participant);
-        const output = storage.ir.representation(requirement.output).resolved.structural.fields;
+        const output = storage.ir.representation(requirement.signature.?.output).resolved.structural.fields;
         const returned = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[output.start].ty)].resolved.pointer.child;
         try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(returned)].parameter);
     }
@@ -921,10 +921,10 @@ test "unary and tuple contracts retain explicit symbolic participants" {
     try std.testing.expectEqualStrings("Count", graph.text(storage.comptime_parameters.items[pair.parameters.start + 1].name));
     try std.testing.expectEqual(.comptime_int, storage.comptime_parameters.items[pair.parameters.start + 1].kind);
     const pair_requirement = storage.contract_requirements.items[pair.requirements.start];
-    const pair_output = storage.ir.representation(pair_requirement.output).resolved.structural.fields;
+    const pair_output = storage.ir.representation(pair_requirement.signature.?.output).resolved.structural.fields;
     const result_type = storage.ir.fields.items[pair_output.start].ty;
     try std.testing.expectEqual(pair.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(result_type)].parameter));
-    const pair_input = storage.ir.representation(pair_requirement.input).resolved.structural.fields;
+    const pair_input = storage.ir.representation(pair_requirement.signature.?.input).resolved.structural.fields;
     const left = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[pair_input.start].ty)].resolved.pointer.child;
     try std.testing.expectEqual(pair.participants.start, @intFromEnum(storage.ir.types.items[@intFromEnum(left)].parameter));
 }
@@ -954,7 +954,7 @@ test "contract participants require ordinary bindings in generic evaluation" {
         var bindings = try generics.Resolver.Bindings.init(allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(allocator);
         const requirement = storage.contract_requirements.items[definition.requirements.start];
-        const fields = storage.ir.representation(requirement.input).resolved.structural.fields;
+        const fields = storage.ir.representation(requirement.signature.?.input).resolved.structural.fields;
         const parameter_type = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
         try std.testing.expectError(error.UnboundGenericTypeParameter, resolver.instantiateParameterizedType(0, parameter_type, &bindings));
         bindings.types[definition.participants.start] = int_type;
@@ -1441,13 +1441,13 @@ test "contract operation parameters have independent lexical scopes and do not s
     try std.testing.expectEqual(@as(u32, 1), copy.parameters.len);
     try std.testing.expect(make.parameters.start != copy.parameters.start);
     try std.testing.expect(make.parameters.start >= definition.participants.start + definition.participants.len);
-    const make_input = storage.ir.representation(make.input).resolved.structural.fields;
+    const make_input = storage.ir.representation(make.signature.?.input).resolved.structural.fields;
     const make_value = storage.ir.fields.items[make_input.start + 1].ty;
     try std.testing.expectEqual(make.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(make_value)].parameter));
-    const make_output = storage.ir.representation(make.output).resolved.structural.fields;
+    const make_output = storage.ir.representation(make.signature.?.output).resolved.structural.fields;
     const make_result = storage.ir.fields.items[make_output.start].ty;
     try std.testing.expectEqual(definition.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(make_result)].parameter));
-    const copy_output = storage.ir.representation(copy.output).resolved.structural.fields;
+    const copy_output = storage.ir.representation(copy.signature.?.output).resolved.structural.fields;
     const copy_result = storage.ir.fields.items[copy_output.start].ty;
     try std.testing.expectEqual(copy.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(copy_result)].parameter));
     try @import("verify.zig").verifyModule(&graph);
@@ -1531,7 +1531,7 @@ test "contract safety selectors read ordinary named signature fields" {
     try std.testing.expectEqual(@as(usize, 1), contract.dependencies.len);
     try std.testing.expectEqual(@as(u32, 0), contract.dependencies[0].output_index);
     try std.testing.expectEqual(@as(u32, 0), contract.dependencies[0].input_index);
-    const fields = @import("views.zig").signatureFields(&graph, requirement.input).?;
+    const fields = @import("views.zig").signatureFields(&graph, requirement.signature.?.input).?;
     try std.testing.expect(fields == .concrete);
     try @import("verify.zig").verifyModule(&graph);
 }
@@ -1551,7 +1551,7 @@ test "contract safety selectors traverse a named signature family without instan
     defer graph.deinit(allocator);
     _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
     const requirement = graph.semantic.parameterized_storage.contract_requirements.items[0];
-    const fields = @import("views.zig").signatureFields(&graph, requirement.input).?;
+    const fields = @import("views.zig").signatureFields(&graph, requirement.signature.?.input).?;
     try std.testing.expectEqual(@as(u32, 2), fields.count());
     try std.testing.expectEqualStrings("flag", graph.text(fields.name(&graph, 1)));
     try std.testing.expectEqual(@as(u32, 1), requirement.safety_contract.?.dependencies[0].input_index);

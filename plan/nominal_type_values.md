@@ -495,3 +495,45 @@ captured inputs use an explicit internal transport record. Deinit alias wrappers
 also preserve their delegated function's signature types instead of rebuilding
 identity from field ranges. Module-graph tests inspect these identities directly,
 complementing execution tests.
+
+## Implementation-owned operation signatures
+
+A contract can reserve an operation identity without prescribing one universal
+signature:
+
+```argi
+Factory#(.Target: Type): Contract = (.make: _)
+
+implement Factory#(Point) (
+    .make = (.x: Int32 = 0) -> (.result: Point) {
+        result = (.x = x)
+    }
+)
+```
+
+The selected implementation supplies the ordinary function definition or alias.
+Its compile-time parameters, input inference, defaults, reached capabilities and
+Safety analysis use the existing function pipeline. Generic implementations bind
+their captured participants before inferring operation-local parameters. Signature
+freedom does not create additional conformances for the same participant tuple.
+
+Static qualified calls now support this form, including generic operations inside
+generic implementations, aliases and compile-time execution. Interactive tests
+cover retained selected signatures across rejected submissions. Virtualization
+rejects this form explicitly: an erased interface needs a fixed declared signature.
+Unqualified participant inference, projected signature properties and migration of
+Init/arithmetic remain pending; the old Args participant has not yet been removed.
+
+The broad contracts/types/polymorphism validation also identifies outstanding
+migration cases: independently declared Args records previously matched through
+structural equality, duplicate constructor argument shapes remain ambiguous, and
+some negative tests still expect pre-migration diagnostics. Do not restore
+structural type equality to make these tests pass; migrate the protocols and their
+fixtures to the nominal model, then repeat the complete validation.
+
+Validation for implementation-owned signatures: selected internal contract,
+associated-element and interactive tests pass. Three dedicated program fixtures
+pass: generic/captured/aliased calls with defaults and borrowed results (native,
+VM and compile time), rejection of virtual erasure, and rejection of a local
+reference escaping through the selected operation. This does not establish
+completion of the broader nominal migration.

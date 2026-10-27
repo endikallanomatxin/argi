@@ -15892,3 +15892,18 @@ test "feature_tests/types/346_comptime_signature_identity" {
     try runExpect(path, 42);
     try vmExpect(path, 42, null);
 }
+
+test "feature_tests/contracts/332_implementation_operation_signatures" {
+    const path = "tests/feature_tests/contracts/332_implementation_operation_signatures";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
+}
+
+test "feature_tests/contracts/333X_virtual_implementation_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/333X_virtual_implementation_signature", "implementation-defined operation signatures require static selection and cannot be virtualized", "panic");
+}
+
+test "feature_tests/contracts/334X_implementation_operation_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/334X_implementation_operation_local_escape", "local storage", "panic");
+}

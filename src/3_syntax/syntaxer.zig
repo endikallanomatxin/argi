@@ -542,6 +542,16 @@ pub const Syntaxer = struct {
                     return SyntaxerError.ExpectedStructField;
                 }
                 self.advanceOne();
+                if (self.currentIdentifierEquals("_")) {
+                    self.advanceOne();
+                    try self.scratch.append(self.allocator, try self.addNode(.contract_inferred_operation_requirement, member.token, .{ .unused = .{ 0, 0 } }));
+                    self.skipNewLinesAndComments();
+                    if (self.tokenIs(.comma)) {
+                        self.advanceOne();
+                        self.skipNewLinesAndComments();
+                    }
+                    continue;
+                }
                 const parameters = if (self.tokenIs(.hash)) try self.parseGenericParamsStruct() else null;
                 var member_type = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
                 if (self.tokenIs(.arrow)) {
@@ -638,7 +648,7 @@ pub const Syntaxer = struct {
         index = scratch_top;
         while (index < items_end) : (index += 1) {
             const item = self.scratch.items[index];
-            if (self.file.tag(item) == .contract_function_requirement) try self.scratch.append(self.allocator, item);
+            if (self.file.tag(item) == .contract_function_requirement or self.file.tag(item) == .contract_inferred_operation_requirement) try self.scratch.append(self.allocator, item);
         }
         const domains_start = self.scratch.items.len;
         index = scratch_top;
