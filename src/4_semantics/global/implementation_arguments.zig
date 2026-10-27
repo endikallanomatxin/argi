@@ -130,6 +130,17 @@ pub const Resolver = struct {
             const parameter = family_module.semantic.parameterized_storage.comptime_parameters.items[raw];
             const argument = self.generics.findPatternArgument(module_index, generic.arguments, index, family_module.text(parameter.name)) orelse continue;
             switch (argument.value) {
+                .projection => |projection| {
+                    const value = self.generics.instantiateArgumentProjection(module_index, projection, bindings) catch |err| switch (err) {
+                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
+                        else => return err,
+                    };
+                    switch (value) {
+                        .definition => |v| inferred.definitions[raw] = v,
+                        .type => |v| inferred.types[raw] = v,
+                        .comptime_int => |v| inferred.ints[raw] = v,
+                    }
+                },
                 .type => |ty| inferred.types[raw] = self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
                     error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
                     else => return err,
@@ -159,6 +170,15 @@ pub const Resolver = struct {
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
             const argument = self.generics.findPatternArgument(module_index, patterns, index, module.text(parameter.name)) orelse continue;
             switch (argument.value) {
+                .projection => |projection| {
+                    const value = try self.generics.instantiateArgumentProjection(module_index, projection, bindings);
+                    const bound_value: graph_mod.GenericArgument.Value = switch (parameter.kind) {
+                        .definition => .{ .definition = actual.definitions[raw] orelse return false },
+                        .type => .{ .type = actual.types[raw] orelse return false },
+                        .comptime_int => .{ .comptime_int = actual.ints[raw] orelse return false },
+                    };
+                    if (!types.genericArgumentValuesEqual(self.graph, value, bound_value)) return false;
+                },
                 .type => |ty| if (actual.types[raw]) |value| {
                     if (!try self.contracts.inferConstraintTypePattern(module_index, ty, value, bindings)) return false;
                 },

@@ -1153,9 +1153,8 @@ pub const Context = struct {
     }
 
     fn lowerTypeArgument(self: *Context, node: syn.NodeIndex, allow_self: bool) !ir.GenericArgument.Value {
-        // A bare name can denote a family value. Compound type syntax, including
-        // associated projections, retains the meaning of a type annotation.
-        if (self.tree.tag(node) == .identifier or self.tree.tag(node) == .type_name)
+        // Names and associated projections retain their compile-time value kind.
+        if (self.tree.tag(node) == .identifier or self.tree.tag(node) == .type_name or self.tree.tag(node) == .associated_type_projection)
             return self.lowerGenericValue(node, allow_self);
         return .{ .type = try self.lowerType(node, allow_self) };
     }
@@ -1187,10 +1186,50 @@ pub const Context = struct {
         return .{ .definition = .{ .literal = .{ .origin = reference, .captures = .{ .start = start, .len = @intCast(captures.items.len) } } } };
     }
 
+    /// An associated family annotation supplies the expected entity kind even
+    /// when its name belongs to an imported or earlier interactive module.
+    pub fn lowerFamilyValue(self: *Context, node: syn.NodeIndex) anyerror!ir.GenericArgument.Value {
+        if (self.tree.typeReference(node)) |reference| if (reference == .name) {
+            const name = self.tree.tokenTextFromSource(self.source, reference.name.name_token);
+            if (reference.name.qualifier_token != null or (self.parameter(name) == null and self.localType(name) == null and primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget()) == null)) {
+                const external = try self.writer.addExternalRef(.{
+                    .kind = .type,
+                    .module_path = if (reference.name.qualifier_token) |token_index| try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, token_index, reference.name.name_token) else null,
+                    .name = try self.writer.addString(name),
+                    .source = self.sourceRef(node),
+                });
+                const declarations = &self.graph.semantic.parameterized_storage.ir.declarations;
+                const id: ir.ParameterizedDeclId = @enumFromInt(declarations.items.len);
+                try declarations.append(self.allocator, .{ .target = .{ .external = external } });
+                return .{ .definition = .{ .literal = .{ .origin = id } } };
+            }
+        };
+        const value = try self.lowerGenericValue(node, false);
+        const target: ir.DefinitionRef = switch (value) {
+            .definition => return value,
+            .projection => |projection| .{ .projection = projection },
+            .type => |ty| switch (self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(ty)]) {
+                .external => |external| .{ .external = external },
+                else => return error.ExpectedParameterizedDefinition,
+            },
+            else => return error.ExpectedParameterizedDefinition,
+        };
+        const declarations = &self.graph.semantic.parameterized_storage.ir.declarations;
+        const id: ir.ParameterizedDeclId = @enumFromInt(declarations.items.len);
+        try declarations.append(self.allocator, .{ .target = target });
+        return .{ .definition = .{ .literal = .{ .origin = id } } };
+    }
+
     pub fn lowerGenericValue(self: *Context, node: syn.NodeIndex, allow_self: bool) !ir.GenericArgument.Value {
         if (self.tree.typeDeclaration(node) != null) return self.lowerDefinitionArgument(node);
-        // A value argument uses integer projections; type arguments use lowerType.
-        if (self.tree.tag(node) == .associated_type_projection) return .{ .comptime_int = try self.lowerIntExpression(node) };
+        if (self.tree.tag(node) == .associated_type_projection) {
+            const projection = self.tree.syntaxType(node).?.projection;
+            return .{ .projection = .{
+                .base = try self.lowerType(projection.base, allow_self),
+                .member = try self.writer.addString(self.tree.tokenTextFromSource(self.source, projection.member_token)),
+                .source = self.sourceRef(node),
+            } };
+        }
         if (self.tree.tag(node) == .identifier or self.tree.tag(node) == .type_name) {
             const token = self.tree.mainToken(node);
             const name = self.tree.tokenTextFromSource(self.source, token);

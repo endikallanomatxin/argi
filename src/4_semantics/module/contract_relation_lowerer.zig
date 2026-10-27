@@ -102,8 +102,13 @@ const Context = struct {
                     if (self.tree.parameterizedDefinition(annotation) != null) {
                         var lowerer = self.parameterizedContext();
                         defer lowerer.bindings.deinit();
-                        const argument = try lowerer.lowerGenericValue(value, false);
-                        if (argument != .definition) try self.conformanceError(member_node, "associated family implementations require a parameterized definition value");
+                        const argument = lowerer.lowerFamilyValue(value) catch |err| switch (err) {
+                            error.ExpectedParameterizedDefinition => {
+                                try self.conformanceError(member_node, "associated family implementations require a parameterized definition value");
+                                unreachable;
+                            },
+                            else => return err,
+                        };
                         try arguments.append(self.allocator, .{ .name = try self.writer.addString(member_name), .value = argument });
                         continue;
                     }
@@ -229,11 +234,7 @@ const Context = struct {
     fn lowerConformanceInt(self: *Context, node: syn.NodeIndex) !ir.ParameterizedIntExprId {
         var lowerer = self.parameterizedContext();
         defer lowerer.bindings.deinit();
-        const value = try lowerer.lowerGenericValue(node, false);
-        return switch (value) {
-            .comptime_int => |integer| integer,
-            .type, .definition => error.InvalidContractArgument,
-        };
+        return lowerer.lowerIntExpression(node);
     }
 
     fn lowerDomainMappings(self: *Context, optional: ?syn.NodeIndex) ![]const parameterized_storage.DomainMapping {

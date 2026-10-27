@@ -80,6 +80,11 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (storage.generic_arguments.items) |value| {
         try require(verify.stringFits(value.name, graph.strings.items));
         switch (value.value) {
+            .projection => |projection| {
+                try require(verify.idFits(projection.base, storage.types.items.len));
+                try require(verify.stringFits(projection.member, graph.strings.items));
+                try require(verify.sourceFits(projection.source, graph.file_offsets.items.len));
+            },
             .definition => |definition| switch (definition) {
                 .parameter => |id| {
                     try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len));

@@ -135,6 +135,7 @@ pub const Context = struct {
         };
         self.generics.projection_context = &self.contracts;
         self.generics.projection_resolver = contract_mod.Resolver.resolveAssociatedType;
+        self.generics.value_projection_resolver = @import("contract_projections.zig").resolveAssociatedValue;
         self.generics.definition_projection_resolver = contract_mod.Resolver.resolveAssociatedDefinition;
         self.generics.constant_projection_resolver = contract_mod.Resolver.resolveAssociatedInt;
         self.constructors.contracts = &self.contracts;

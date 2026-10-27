@@ -1711,3 +1711,25 @@ test "interactive specialized definition values preserve captures across rejecti
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("record.value")).?.value.runtime.integer);
     try session.close();
 }
+
+test "interactive associated family arguments survive rejected selections" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Owner := (.flag: Bool)");
+    try session.submitDefinitions("Arguments := <.Item: Type> (.value: Item)");
+    try session.submitDefinitions("Factory<.Participant: Type>: Contract = (.Args: <.Item: Type> Type, .Element: Type)");
+    try session.submitDefinitions("implement Factory<Owner> (.Args: <.Item: Type> Type = Arguments, .Element: Type = Int32)");
+    try session.submitDefinitions("make := <.Family: <.Item: Type> Type> (.value: Int32) -> (.result: Family<Int32>) { result = (.value = value) }");
+    try session.submitStatements("first ::= make<.Family = Factory<Owner>.Args>(.value = 42)");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("first.value")).?.value.runtime.integer);
+    const revision = session.compiler.revision;
+    const arguments = session.compiler.semantic.resolvers.core.graph.generic_arguments.items.len;
+    try std.testing.expectError(error.Reported, session.submitInput("make<.Family = Factory<Owner>.Element>(.value = 7)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(arguments, session.compiler.semantic.resolvers.core.graph.generic_arguments.items.len);
+    try session.submitStatements("second ::= make<.Family = Factory<Owner>.Args>(.value = 7)");
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("second.value")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("first.value")).?.value.runtime.integer);
+    try session.close();
+}

@@ -105,6 +105,11 @@ provide compile-time guarantees; specialization and monomorphization produce
 ordinary concrete calls. Constraints are checks on known or inferred parameters,
 not a general constraint-solving mechanism.
 
+An associated family is also a compile-time value. For example, passing
+`Factory<Owner>.Args` to a family parameter preserves the selected definition
+and its captures. The known participants select the conformance first; the
+associated value does not infer an otherwise unknown participant.
+
 ## Standard operations
 
 Construction uses `Init<T, Args>`, with an associated `Result` and an `init`

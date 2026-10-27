@@ -77,12 +77,14 @@ pub const VariantRef = union(enum) {
 
 pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo };
 
+pub const AssociatedProjection = struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef };
+
 pub const IntExpression = union(enum) {
     literal: i64,
     // Retain ordinary executable IR for staged compile-time evaluation.
     execution: ParameterizedNodeId,
     parameter: ComptimeParameterId,
-    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
+    projection: AssociatedProjection,
     binary: struct {
         operator: IntBinaryOperator,
         left: ParameterizedIntExprId,
@@ -99,7 +101,7 @@ pub const Type = union(enum) {
         arguments: primitives.Range(ParameterizedGenericArgId),
     },
     parameter: ComptimeParameterId,
-    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
+    projection: AssociatedProjection,
     external: entities.ExternalRefId,
     array: struct {
         length: ParameterizedIntExprId,
@@ -111,7 +113,7 @@ pub const Type = union(enum) {
 };
 
 pub const DefinitionRef = union(enum) {
-    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
+    projection: AssociatedProjection,
     module: entities.ModuleDeclId,
     external: entities.ExternalRefId,
     parameter: ComptimeParameterId,
@@ -128,6 +130,7 @@ pub const GenericArgument = struct {
     value: Value,
 
     pub const Value = union(enum) {
+        projection: AssociatedProjection,
         definition: union(enum) {
             literal: primitives.DefinitionValue(Ids),
             parameter: ComptimeParameterId,

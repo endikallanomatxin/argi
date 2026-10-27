@@ -24,18 +24,23 @@ pub fn resolveAssociatedDefinition(context: *anyopaque, base: global_sg.GlobalTy
     return (try resolveAssociatedElement(self, base, member, source, .definition)).definition;
 }
 
-fn resolveAssociatedElement(self: *Resolver, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef, kind: ParameterKind) anyerror!global_sg.GenericArgument.Value {
+pub fn resolveAssociatedValue(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.GenericArgument.Value {
+    const self: *Resolver = @ptrCast(@alignCast(context));
+    return resolveAssociatedElement(self, base, member, source, null);
+}
+
+fn resolveAssociatedElement(self: *Resolver, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef, kind: ?ParameterKind) anyerror!global_sg.GenericArgument.Value {
     const want_type = kind != .comptime_int;
-    const wrong_kind = switch (kind) {
+    const wrong_kind = if (kind) |expected| switch (expected) {
         .type => "associated element is not a type",
         .comptime_int => "associated element is not an integer constant",
         .definition => "associated element is not a type family",
-    };
-    const unknown_member = switch (kind) {
+    } else "invalid associated element";
+    const unknown_member = if (kind) |expected| switch (expected) {
         .type => "unknown associated type",
         .comptime_int => "unknown associated constant",
         .definition => "unknown associated type family",
-    };
+    } else "unknown associated element";
     if (self.graph.isTypeUnresolved(base)) return error.UnresolvedAssociatedType;
     const generic = switch (self.graph.types.items[@intFromEnum(base)]) {
         .generic => |value| value,
@@ -58,7 +63,7 @@ fn resolveAssociatedElement(self: *Resolver, base: global_sg.GlobalTypeId, membe
     for (0..located.definition.parameters.len) |i| {
         const parameter = storage.comptime_parameters.items[located.definition.parameters.start + i];
         if (std.mem.eql(u8, self.modules[located.module_index].text(parameter.name), member)) {
-            if (parameter.kind != kind) return associatedProjectionError(self, want_type, source, wrong_kind, member);
+            if (kind) |expected| if (parameter.kind != expected) return associatedProjectionError(self, want_type, source, wrong_kind, member);
             position = i;
             break;
         }

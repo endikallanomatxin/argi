@@ -2397,6 +2397,15 @@ pub const Resolver = struct {
                 const raw = located.definition.parameters.start + @as(u32, @intCast(index));
                 if (name.len == 0 or !std.mem.eql(u8, name, target_module.text(parameters[raw].name))) continue;
                 switch (argument.value) {
+                    .projection => |projection| {
+                        const value = try self.generics.instantiateArgumentProjection(module_index, projection, bindings);
+                        const actual: global_sg.GenericArgument.Value = switch (parameters[raw].kind) {
+                            .definition => .{ .definition = selected.definitions[raw] orelse return false },
+                            .type => .{ .type = selected.types[raw] orelse return false },
+                            .comptime_int => .{ .comptime_int = selected.ints[raw] orelse return false },
+                        };
+                        if (!global_types.genericArgumentValuesEqual(self.graph, value, actual)) return false;
+                    },
                     .definition => |pattern| if (!try self.generics.inferDefinitionValue(module_index, pattern, selected.definitions[raw] orelse return false, bindings)) return false,
                     .type => |pattern| if (!try self.inferConstraintTypePattern(module_index, pattern, selected.types[raw] orelse return false, bindings)) return false,
                     .comptime_int => |pattern| if (!try self.inferConstraintIntPattern(module_index, pattern, selected.ints[raw] orelse return false, bindings)) return false,
@@ -2444,6 +2453,7 @@ pub const Resolver = struct {
                     const wanted = ir_storage.generic_arguments.items[arguments.pattern.start + position];
                     const given = self.graph.generic_arguments.items[arguments.actual.start + position];
                     switch (wanted.value) {
+                        .projection => |projection| if (!global_types.genericArgumentValuesEqual(self.graph, try self.generics.instantiateArgumentProjection(module_index, projection, bindings), given.value)) return false,
                         .definition => |definition_value| {
                             if (given.value != .definition or !try self.generics.inferDefinitionValue(module_index, definition_value, given.value.definition, bindings)) return false;
                         },

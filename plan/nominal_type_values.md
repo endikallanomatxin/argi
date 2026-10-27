@@ -397,7 +397,13 @@ before adding implementation exceptions.
   family or nominal wrapper. A definition-reference projection carries its source,
   contract base and member through retained IR. Tests distinguish concrete type
   members from family members and preserve identity against the named family.
-  Passing an unspecialized projection as a family argument remains pending.
+  Unspecialized projections in compile-time argument position now retain a
+  value-projection recipe until conformance selection determines whether the
+  associated element is a type, integer or family. Ordinary specialization,
+  signature inference and constraint matching consume the same selected value;
+  they do not infer participants backwards from an associated result.
+  Native/VM/`#run` fixtures cover all three kinds and generic forwarding; a REPL
+  regression checks rejection rollback and continued use of accepted values.
 
 - Inline associated type-family definitions share private declaration discovery,
   nominal type lowering and ordinary specialization with named definitions. Generic

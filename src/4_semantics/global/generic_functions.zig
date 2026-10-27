@@ -805,6 +805,17 @@ pub const Resolver = struct {
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
             const argument = self.generics.findPatternArgument(module_index, application.arguments, offset, module.text(parameter.name)) orelse continue;
             switch (argument.value) {
+                .projection => |projection| {
+                    const value = self.generics.instantiateArgumentProjection(module_index, projection, bindings) catch |err| switch (err) {
+                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
+                        else => return err,
+                    };
+                    switch (value) {
+                        .definition => |v| local.definitions[raw] = v,
+                        .type => |v| local.types[raw] = v,
+                        .comptime_int => |v| local.ints[raw] = v,
+                    }
+                },
                 .definition => |definition_value| local.definitions[raw] = self.generics.instantiateDefinitionValue(module_index, definition_value, bindings) catch |err| switch (err) {
                     error.UnboundDefinitionParameter => null,
                     else => return err,
@@ -850,6 +861,15 @@ pub const Resolver = struct {
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
             const argument = self.generics.findPatternArgument(module_index, application.arguments, offset, module.text(parameter.name)) orelse continue;
             switch (argument.value) {
+                .projection => |projection| {
+                    const value = try self.generics.instantiateArgumentProjection(module_index, projection, bindings);
+                    const actual: global_sg.GenericArgument.Value = switch (parameter.kind) {
+                        .definition => .{ .definition = local.definitions[raw] orelse return false },
+                        .type => .{ .type = local.types[raw] orelse return false },
+                        .comptime_int => .{ .comptime_int = local.ints[raw] orelse return false },
+                    };
+                    if (!global_types.genericArgumentValuesEqual(self.graph, value, actual)) return false;
+                },
                 .definition => |definition_value| if (local.definitions[raw]) |actual| {
                     if (!try self.generics.inferDefinitionValue(module_index, definition_value, actual, bindings)) return false;
                 },
@@ -1765,6 +1785,7 @@ pub const Resolver = struct {
                     const wanted = storage.generic_arguments.items[arguments.pattern.start + position];
                     const given = self.graph.generic_arguments.items[arguments.actual.start + position];
                     switch (wanted.value) {
+                        .projection => |projection| if (!global_types.genericArgumentValuesEqual(self.graph, try self.generics.instantiateArgumentProjection(module_index, projection, bindings), given.value)) return false,
                         .definition => |definition| {
                             if (given.value != .definition) return false;
                             if (!try self.generics.inferDefinitionValue(module_index, definition, given.value.definition, bindings)) return false;
@@ -1871,6 +1892,7 @@ pub const Resolver = struct {
                         const argument = self.generics.findPatternArgument(module_index, generic.arguments, position - definition.captures.len, name) orelse return false;
                         const concrete = self.generics.findGlobalArgument(name, value.arguments, position) orelse return false;
                         switch (argument.value) {
+                            .projection => |projection| if (!global_types.genericArgumentValuesEqual(self.graph, try self.generics.instantiateArgumentProjection(module_index, projection, bindings), concrete.value)) return false,
                             .definition => |definition_value| {
                                 if (concrete.value != .definition or !try self.generics.inferDefinitionValue(module_index, definition_value, concrete.value.definition, bindings)) return false;
                             },

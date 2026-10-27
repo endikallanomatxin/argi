@@ -60,6 +60,7 @@ pub const Resolver = struct {
     argument_failure: ?struct { declaration: global_sg.GlobalFamilyDefinitionId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
+    value_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GenericArgument.Value = null,
     definition_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.DefinitionValue = null,
     constant_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!i64 = null,
     pointer_types: @import("identity_cache.zig").IdentityCache(PointerKey, global_sg.GlobalTypeId) = .empty,
@@ -1018,6 +1019,11 @@ pub const Resolver = struct {
         };
     }
 
+    pub fn instantiateArgumentProjection(self: *Resolver, module_index: usize, projection: @FieldType(ir.Type, "projection"), bindings: *Bindings) !global_sg.GenericArgument.Value {
+        const base = try self.instantiateParameterizedType(module_index, projection.base, bindings);
+        return self.value_projection_resolver.?(self.projection_context.?, base, self.modules[module_index].text(projection.member), self.globalSource(module_index, projection.source));
+    }
+
     pub fn instantiateParameterizedArguments(
         self: *Resolver,
         module_index: usize,
@@ -1033,6 +1039,7 @@ pub const Resolver = struct {
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(argument.name)),
                 .value = switch (argument.value) {
+                    .projection => |projection| try self.instantiateArgumentProjection(module_index, projection, bindings),
                     .definition => |value| .{ .definition = try self.instantiateDefinitionValue(module_index, value, bindings) },
                     .type => |value| .{ .type = try self.instantiateParameterizedType(module_index, value, bindings) },
                     .comptime_int => |value| .{ .comptime_int = try self.evalInt(module_index, value, bindings) },
