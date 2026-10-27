@@ -1622,3 +1622,40 @@ test "inline associated families retain private definition identities and lexica
     try std.testing.expectEqual(conformance.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(capture)].parameter));
     try @import("verify.zig").verifyModule(&module.graph);
 }
+
+test "compile-time entries retain nominal output signatures" {
+    const a = std.testing.allocator;
+    const source =
+        "main := () -> () { " ++
+        "pair ::= #run () -> (.first: Bool, .second: Bool) { first = true; second = false } " ++
+        "host_pair ::= #run (.system: System) -> (.first: Bool, .second: Bool) { first = true; second = false } " ++
+        "}";
+    var tree = try parseSource(a, source, @enumFromInt(0));
+    defer tree.deinit(a);
+    var module = try module_semantizer.build(a, "entry_signature", &.{.{ .path = "entry_signature/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(a);
+    const views = @import("views.zig");
+    var entries: usize = 0;
+    for (module.graph.functions.items) |function| {
+        if (!function.flags.is_comptime_entry) continue;
+        entries += 1;
+        try std.testing.expectEqual(@as(u32, 2), function.output.len);
+        const output_type = function.output_type orelse return error.MissingEntryOutputType;
+        const output = try views.typeView(&module.graph, output_type);
+        try std.testing.expect(output == .resolved and output.resolved == .nominal);
+        const fields = module.graph.semantic.type_definitions.items[@intFromEnum(output.resolved.nominal)].struct_fields.?;
+        try std.testing.expectEqual(function.output, fields);
+        var calls: usize = 0;
+        for (module.graph.semantic.nodes.items) |entry| {
+            if (entry != .resolved) continue;
+            const node = entry.resolved;
+            if (node.content != .function_call) continue;
+            const callee = module.graph.functions.items[@intFromEnum(node.content.function_call.callee)];
+            if (callee.output_type != output_type) continue;
+            calls += 1;
+            try std.testing.expectEqual(output_type, node.ty.?);
+        }
+        try std.testing.expect(calls != 0);
+    }
+    try std.testing.expectEqual(@as(usize, 3), entries);
+}

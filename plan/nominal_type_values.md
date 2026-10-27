@@ -480,3 +480,10 @@ migrating trace expectations and giving the duplicate-conformance fixture one
 shared nominal Args family. Conformance validation diagnoses unresolved
 participants before checking ownership or associated results. This category run
 does not replace full-suite validation or complete the Init/arithmetic migration.
+
+Compile-time entry lowering now retains nominal input/output signature types.
+Multi-output calls and System host wrappers share the original output identity;
+captured inputs use an explicit internal transport record. Deinit alias wrappers
+also preserve their delegated function's signature types instead of rebuilding
+identity from field ranges. Module-graph tests inspect these identities directly,
+complementing execution tests.

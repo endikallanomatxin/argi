@@ -2264,7 +2264,7 @@ pub const Resolver = struct {
         }
         const value_start: u32 = @intCast(self.graph.value_fields.items.len);
         try self.graph.value_fields.appendSlice(self.allocator, values.items);
-        const input_type = try self.generics.internType(.{ .structural = .{ .fields = function.input } });
+        const input_type = function.input_type orelse try self.generics.internType(.{ .structural = .{ .fields = function.input } });
         const input: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = input_type, .content = .{ .struct_value_literal = .{ .fields = .{ .start = value_start, .len = function.input.len } } } });
         const call: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
@@ -2278,6 +2278,8 @@ pub const Resolver = struct {
             .declaration = function.declaration,
             .input = function.input,
             .output = function.output,
+            .input_type = input_type,
+            .output_type = function.output_type,
             .body = block,
             .input_bindings = .{ .start = binding_start, .len = function.input.len },
             .flags = .{ .is_deinit = true, .has_declared_body = true, .is_generic_instantiation = true },

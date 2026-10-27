@@ -3323,9 +3323,9 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:8: error: reference depends on a root that has ended
-        \\      if b&.size == 1 {
-        \\         ^
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:16: error: reference depends on a root that has ended
+        \\              if b&.size == 1 {
+        \\                 ^
         \\
     );
 }
@@ -3349,9 +3349,9 @@ test "feature_tests/ownership/58X_null_safe_reference" {
 
 test "feature_tests/ownership/59X_branch_deinit_then_use" {
     try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
-        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:13:19: error: place rooted at 'allocation' is maybe_initialized and cannot be used
-        \\      if allocation.size == 1 {
-        \\                    ^
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:13:27: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\              if allocation.size == 1 {
+        \\                            ^
         \\
     );
 }
@@ -15884,4 +15884,11 @@ test "feature_tests/types/344_family_alpha_equivalent_bounds" {
 
 test "feature_tests/types/345X_family_bound_arguments" {
     try buildExpectFailWithoutNoise("tests/feature_tests/types/345X_family_bound_arguments", "type-family argument does not match its parameter signature", "without a diagnostic");
+}
+
+test "feature_tests/types/346_comptime_signature_identity" {
+    const path = "tests/feature_tests/types/346_comptime_signature_identity";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
+    try vmExpect(path, 42, null);
 }

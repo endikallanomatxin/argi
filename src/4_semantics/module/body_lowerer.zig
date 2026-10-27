@@ -816,17 +816,20 @@ const Context = struct {
         } }, expected orelse fallback.ty);
     }
 
-    fn entryFields(self: *Context, syntax: ?syn.NodeIndex) !graph_mod.FieldRange {
-        const node = syntax orelse return .{ .start = 0, .len = 0 };
+    const EntrySignature = struct { fields: graph_mod.FieldRange, ty: ?entities.ModuleTypeId };
+
+    fn entrySignature(self: *Context, syntax: ?syn.NodeIndex) !EntrySignature {
+        const node = syntax orelse return .{ .fields = .{ .start = 0, .len = 0 }, .ty = null };
         const literal = self.tree.structTypeLiteral(node) orelse return error.InvalidComptimeEntrySignature;
         var lowerer = self.typeLowerer();
-        const ty = try views.typeView(self.graph, try lowerer.lowerRecordFields(node, literal));
+        const type_id = try lowerer.lowerRecordFields(node, literal);
+        const ty = try views.typeView(self.graph, type_id);
         if (ty != .resolved) return error.InvalidComptimeEntrySignature;
         const fields = switch (ty.resolved) {
             .nominal => |definition| self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields orelse return error.InvalidComptimeEntrySignature,
             else => return error.InvalidComptimeEntrySignature,
         };
-        return .{ .start = fields.start, .len = fields.len };
+        return .{ .fields = .{ .start = fields.start, .len = fields.len }, .ty = type_id };
     }
 
     fn resolveStagedEntryCapture(context: *anyopaque, node: syn.NodeIndex, name: []const u8) anyerror!?@import("parameterized/lowerer.zig").EntryCaptureSource.Value {
@@ -845,8 +848,10 @@ const Context = struct {
         const entry = self.tree.comptimeEntry(node).?;
         _ = entry_interface.classifyInput(self.tree, self.source, entry.input, .isolated) catch
             return self.foreignOptionError(node, entry_interface.comptime_input_message);
-        const input = try self.entryFields(entry.input);
-        const output = try self.entryFields(entry.output);
+        const input_signature = try self.entrySignature(entry.input);
+        const output_signature = try self.entrySignature(entry.output);
+        const input = input_signature.fields;
+        const output = output_signature.fields;
         const declaration_id: entities.ModuleDeclId = @enumFromInt(self.graph.declarations.items.len);
         const function_id: entities.ModuleFunctionId = @enumFromInt(self.graph.functions.items.len);
         const generated_name = try std.fmt.allocPrint(self.allocator, "_comptime_entry_{d}_{d}", .{ self.file_index, self.sourceRef(node).offset });
@@ -860,7 +865,7 @@ const Context = struct {
             .function_id = function_id,
         });
         self.graph.generated_declaration_count += 1;
-        try self.graph.functions.append(self.allocator, .{ .declaration = declaration_id, .input = input, .output = output });
+        try self.graph.functions.append(self.allocator, .{ .declaration = declaration_id, .input = input, .output = output, .input_type = input_signature.ty, .output_type = output_signature.ty });
         // A separate function scope cannot borrow the enclosing runtime frame.
         // Used outer values become ordinary call inputs, checked for constancy
         // by the shared compile-time evaluator before execution.
@@ -916,6 +921,10 @@ const Context = struct {
             try self.graph.semantic.value_fields.append(self.allocator, .{ .name = capture.name, .value = capture.value });
         }
         self.graph.functions.items[@intFromEnum(function_id)].input = .{ .start = captured_fields_start, .len = input.len + @as(u32, @intCast(body.entry_captures.items.len)) };
+        if (body.entry_captures.items.len != 0) {
+            const captured_input = self.graph.functions.items[@intFromEnum(function_id)].input;
+            self.graph.functions.items[@intFromEnum(function_id)].input_type = try self.writer.addResolvedType(.{ .structural = .{ .fields = captured_input } });
+        }
         const input_bindings = try self.writer.appendBindingRefs(captured_bindings.items);
         const previous = self.graph.functions.items[@intFromEnum(function_id)];
         self.graph.functions.items[@intFromEnum(function_id)] = .{
@@ -932,7 +941,7 @@ const Context = struct {
         const result_type = if (output.len == 0) try self.builtin(.Void) else if (output.len == 1)
             (try views.fieldView(self.graph, @enumFromInt(output.start))).ty
         else
-            try self.writer.addResolvedType(.{ .structural = .{ .fields = .{ .start = output.start, .len = output.len } } });
+            output_signature.ty.?;
         if (input.len != 0) {
             return self.lowerSystemEntryWrapper(node, function_id, output, result_type, body.entry_captures.items);
         }
@@ -961,7 +970,9 @@ const Context = struct {
         const input_start: u32 = @intCast(self.graph.semantic.fields.items.len);
         for (captures) |capture| _ = try self.writer.addField(.{ .name = capture.name, .source = source, .ty = capture.ty });
         const input: graph_mod.FieldRange = .{ .start = input_start, .len = @intCast(captures.len) };
-        try self.graph.functions.append(self.allocator, .{ .declaration = declaration, .input = input, .output = output });
+        const output_type = self.graph.functions.items[@intFromEnum(callee)].output_type;
+        const input_type = try self.writer.addResolvedType(.{ .structural = .{ .fields = input } });
+        try self.graph.functions.append(self.allocator, .{ .declaration = declaration, .input = input, .output = output, .input_type = input_type, .output_type = output_type });
 
         const text = entry_interface.bootstrap_source;
         var tree = try entry_interface.parseSystemScope(self.allocator);
