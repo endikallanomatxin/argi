@@ -16099,3 +16099,11 @@ test "feature_tests/polymorphism/350_named_signature_assume" {
     try runExpect(path, 0);
     try vmExpect(path, 0, null);
 }
+
+test "feature_tests/types/355X_generic_scalar_input_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/355X_generic_scalar_input_signature", "arguments do not match this specialized function definition", "failed without a diagnostic");
+}
+
+test "feature_tests/types/356X_generic_scalar_output_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/types/356X_generic_scalar_output_signature", "function output signature must be a record type", "failed without a diagnostic");
+}

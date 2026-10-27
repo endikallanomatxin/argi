@@ -236,8 +236,8 @@ pub const Resolver = struct {
         const outputs = try context.instantiateSignatureBindings(template.output_bindings, output_fields, .variable);
         function.input_type = input;
         function.output_type = output;
-        function.input = try self.materializeInterfaceDefaults(input_fields, inputs);
-        function.output = try self.materializeInterfaceDefaults(output_fields, outputs);
+        function.input = input_fields;
+        function.output = try self.outputFieldsWithInitializers(output_fields, outputs);
         function.input_bindings = inputs;
         function.output_bindings = outputs;
         function.flags.uses_inferred_error_reasons = false;
@@ -1873,52 +1873,8 @@ pub const Resolver = struct {
             if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
             return .deferred;
         };
-        const fields = self.interfaceFields(ty) catch return .deferred;
-        const matching_fields = self.materializeDefaultPresenceForMatch(module_index, pattern, fields) catch return .deferred;
-        return self.core.matchCallInput(matching_fields, input);
-    }
-
-    /// Dispatch only needs to know whether an omitted field has a default. Its
-    /// concrete node is instantiated after selecting the generic declaration.
-    fn materializeDefaultPresenceForMatch(
-        self: *Resolver,
-        module_index: usize,
-        pattern: ir.ParameterizedTypeId,
-        fields: global_sg.FieldRange,
-    ) !global_sg.FieldRange {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        const shape = switch (storage.representation(pattern)) {
-            .resolved => |resolved| switch (resolved) {
-                .structural => |shape| shape,
-                else => return fields,
-            },
-            else => return fields,
-        };
-        if (shape.fields.len != fields.len) return fields;
-        var has_defaults = false;
-        for (storage.fields.items[shape.fields.start..][0..shape.fields.len]) |field|
-            if (field.default_value != null) {
-                has_defaults = true;
-                break;
-            };
-        if (!has_defaults) return fields;
-
-        const copied = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[fields.start..][0..fields.len]);
-        defer self.allocator.free(copied);
-        const start: u32 = @intCast(self.graph.fields.items.len);
-        try self.graph.fields.appendSlice(self.allocator, copied);
-        for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, offset| {
-            if (field.default_value == null) continue;
-            const global_field = &self.graph.fields.items[start + @as(u32, @intCast(offset))];
-            const marker: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-            try self.graph.nodes.append(self.allocator, .{
-                .source = global_field.source,
-                .ty = global_field.ty,
-                .content = .break_statement,
-            });
-            global_field.default_value = marker;
-        }
-        return .{ .start = start, .len = fields.len };
+        const fields = global_types.fields(self.graph, ty) orelse return if (self.unresolvedSignature(ty) == .deferred) .deferred else .no_match;
+        return self.core.matchCallInput(fields, input);
     }
 
     /// Reach defaults and index receivers may synthesize an address when a
@@ -2524,8 +2480,9 @@ pub const Resolver = struct {
 
         const input_ty = if (expected) |signature| try self.contextualSignatureType(located.module_index, located.parameterized.input, signature.input, .input, true, &substitutions) else try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
         const output_ty = if (expected) |signature| try self.contextualSignatureType(located.module_index, located.parameterized.output, signature.output, .output, false, &substitutions) else try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
-        const input_shape = try self.interfaceFields(input_ty);
-        const output_shape = try self.interfaceFields(output_ty);
+        const signature_source = self.graph.declaration(declaration).source;
+        const input_shape = try self.requireRecordSignature(input_ty, signature_source, .input);
+        const output_shape = try self.requireRecordSignature(output_ty, signature_source, .output);
         var inferred_errors = false;
         for (self.graph.fields.items[output_shape.start..][0..output_shape.len]) |field| {
             inferred_errors = inferred_errors or self.graph.types.items[@intFromEnum(field.ty)] == .inferred_errable;
@@ -2538,8 +2495,8 @@ pub const Resolver = struct {
         context.expected_signature = expected;
         const input_bindings = try context.instantiateSignatureBindings(located.parameterized.input_bindings, input_shape, .constant);
         const output_bindings = try context.instantiateSignatureBindings(located.parameterized.output_bindings, output_shape, .variable);
-        const input_fields = try self.materializeInterfaceDefaults(input_shape, input_bindings);
-        const output_fields = try self.materializeInterfaceDefaults(output_shape, output_bindings);
+        const input_fields = input_shape;
+        const output_fields = try self.outputFieldsWithInitializers(output_shape, output_bindings);
 
         const function_id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(self.graph.functions.items.len)));
         try self.graph.functions.append(self.allocator, .{
@@ -2731,35 +2688,37 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn interfaceFields(self: *Resolver, ty: global_sg.GlobalTypeId) !global_sg.FieldRange {
-        if (global_types.fields(self.graph, ty)) |range| return range;
-        const name = try self.graph.addString(self.allocator, "value");
-        const start: u32 = @intCast(self.graph.fields.items.len);
-        try self.graph.fields.append(self.allocator, .{
-            .name = name,
-            .ty = ty,
-            .source = .{ .file_index = 0, .offset = 0 },
-        });
-        return .{ .start = start, .len = 1 };
+    fn requireRecordSignature(self: *Resolver, ty: global_sg.GlobalTypeId, source: primitives.SourceRef, comptime direction: enum { input, output }) !global_sg.FieldRange {
+        if (global_types.fields(self.graph, ty)) |fields| return fields;
+        if (self.unresolvedSignature(ty) == .deferred) return error.DeferredGenericFunction;
+        self.generics.comptime_failure = .{
+            .source = source,
+            .reason = "function " ++ @tagName(direction) ++ " signature must be a record type",
+        };
+        return error.InvalidGenericCallArguments;
     }
 
-    /// Function interface fields are owned by the concrete instance. Generic
-    /// structural types can be interned and shared, so their canonical fields
-    /// must not be mutated when defaults become concrete nodes.
-    fn materializeInterfaceDefaults(
-        self: *Resolver,
-        shape: global_sg.FieldRange,
-        bindings: global_sg.BindingRange,
-    ) !global_sg.FieldRange {
-        const fields = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[shape.start..][0..shape.len]);
-        defer self.allocator.free(fields);
+    /// Inputs reuse their type's fields and unevaluated default recipes. Output
+    /// bindings can instead hold concrete entry initializers; retain a separate
+    /// range only when those differ from the stable result type's defaults.
+    fn outputFieldsWithInitializers(self: *Resolver, shape: global_sg.FieldRange, bindings: global_sg.BindingRange) !global_sg.FieldRange {
+        if (shape.len != bindings.len) return error.ContextualOutputSignatureMismatch;
+        var changed = false;
+        for (0..shape.len) |offset| {
+            const binding = self.graph.binding_refs.items[bindings.start + offset];
+            if (self.graph.fields.items[shape.start + offset].default_value != self.graph.binding(binding).initialization) {
+                changed = true;
+                break;
+            }
+        }
+        if (!changed) return shape;
         const start: u32 = @intCast(self.graph.fields.items.len);
-        try self.graph.fields.appendSlice(self.allocator, fields);
-        const count = @min(shape.len, bindings.len);
-        for (0..count) |offset| {
-            const binding_id = self.graph.binding_refs.items[bindings.start + @as(u32, @intCast(offset))];
-            self.graph.fields.items[start + @as(u32, @intCast(offset))].default_value =
-                self.graph.bindings.items[@intFromEnum(binding_id)].initialization;
+        try self.graph.fields.ensureUnusedCapacity(self.allocator, shape.len);
+        for (0..shape.len) |offset| {
+            var field = self.graph.fields.items[shape.start + offset];
+            const binding = self.graph.binding_refs.items[bindings.start + offset];
+            field.default_value = self.graph.binding(binding).initialization;
+            self.graph.fields.appendAssumeCapacity(field);
         }
         return .{ .start = start, .len = shape.len };
     }
@@ -2907,7 +2866,7 @@ pub const Resolver = struct {
             inline for (.{ "input", "output" }) |direction| {
                 const range = @field(self.parameterized, direction ++ "_bindings");
                 if (raw >= range.start and raw - range.start < range.len) {
-                    const fields = try self.resolver.interfaceFields(@field(signature, direction));
+                    const fields = global_types.fields(self.resolver.graph, @field(signature, direction)) orelse return error.ContextualSignatureMismatch;
                     const offset = raw - range.start;
                     if (offset >= fields.len) return null;
                     return self.resolver.graph.fields.items[fields.start + offset].ty;

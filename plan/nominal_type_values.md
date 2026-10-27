@@ -255,3 +255,28 @@ and rejected submissions. Operation compatibility is centralized in types.zig;
 inline contextual signatures reuse required identities without equating unrelated
 nominal types. LLVM inspection of contract case 353 confirms direct calls to the
 selected conformances; native and VM execution both succeed.
+
+## Resolution cleanup
+
+Constructor inference now retains both Target and Args through the selected Init
+call. Input signatures reuse their type fields and captured defaults; only output
+entry initializers that differ from the result type need separate fields. Candidate
+matching reads the same defaults without synthetic marker nodes. Scalar signature
+wrappers are removed and negative cases cover specialized inputs and outputs.
+
+Participant inference and dispatch share the transactional implementation catalog,
+including concrete and generic templates. SelectedOperation defines the captured
+argument prefix used both to instantiate operations and recognize their evidence;
+prefixes already stored in one range are reused without an intermediate allocation.
+
+Signature inference, contextualization and final checking remain separate stages:
+inference binds patterns, contextualization supplies identities to definition
+literals, and final compatibility checks field names/types and defaulted extra
+inputs. Named types preserve nominal equality. Combining these algorithms would
+mix their responsibilities; the concrete operation compatibility rule remains in
+types.zig.
+
+Cleanup validation passes: 2,446 program cases and 1,045 Debug internal tests,
+with 11 optional program skips and one internal skip. Official formatting and
+zig fmt checks pass. The transactional catalog test includes concrete and generic
+entries and exercises allocation failures and rollback.

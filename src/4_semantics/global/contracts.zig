@@ -77,7 +77,7 @@ pub const Resolver = struct {
         kind: primitives.DeclarationKind,
     };
     const TemplateGroup = struct { declaration: global_sg.GlobalFamilyDefinitionId, arity: usize };
-    const ImplementationTemplate = struct { module: usize, index: usize };
+    pub const ImplementationTemplate = struct { module: usize, index: usize };
     const TemplateRewrite = struct {
         key: TemplateGroup,
         previous: ?struct { entries: usize, modules: usize },
@@ -785,7 +785,7 @@ pub const Resolver = struct {
 
     /// Source-template indexes extend with module fragments. Their entries
     /// retain source identities, while the resolver checkpoint owns each tail.
-    fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, arity: usize) ![]const ImplementationTemplate {
+    pub fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, arity: usize) ![]const ImplementationTemplate {
         const key: TemplateGroup = .{ .declaration = declaration, .arity = arity };
         if (self.implementation_templates.get(key)) |group| {
             if (self.modules.len < group.module_count) return error.InvalidContractModulePrefix;
@@ -804,7 +804,7 @@ pub const Resolver = struct {
         errdefer self.implementation_templates.getPtr(key).?.entries.shrinkRetainingCapacity(count);
         for (self.modules[start..], start..) |module, owner| {
             for (module.semantic.parameterized_storage.contract_conformances.items, 0..) |template, index| {
-                if (template.parameters.len == 0 or template.participants.len != arity) continue;
+                if (template.participants.len != arity) continue;
                 if (try self.resolveDeclarationRef(owner, template.contract_ref, .contract_type) != declaration) continue;
                 // Declaration resolution may grow the index. Never keep a map
                 // entry pointer across that semantic operation.
@@ -953,6 +953,8 @@ pub const Resolver = struct {
             const module_index = reference.module;
             const module = &self.modules[module_index];
             const template = module.semantic.parameterized_storage.contract_conformances.items[reference.index];
+            // Concrete conformances are already published and checked above.
+            if (template.parameters.len == 0) continue;
             const patterns = module.semantic.parameterized_storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len];
             var possible = true;
             for (patterns, participants) |pattern, actual| {
@@ -1735,19 +1737,9 @@ pub const Resolver = struct {
         else generic: {
             const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(method_index)) orelse return error.InvalidContractOperation;
             if (!try self.materializeOperationValue(evidence.binding.definition)) return null;
-            var captures: std.ArrayList(global_sg.GenericArgument) = .empty;
-            defer captures.deinit(self.allocator);
-            if (evidence.binding.instantiate_associated) {
-                try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
-                try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
-            } else {
-                const bound = evidence.definitionValue(self.graph).?.captures;
-                try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[bound.start..][0..bound.len]);
-            }
-            const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-            try self.graph.generic_arguments.appendSlice(self.allocator, captures.items);
+            const captures = try self.operationCaptureArguments(evidence);
             const instantiate = self.instantiate_generic_operation orelse return error.MissingOperationInstantiator;
-            const method = instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), .{ .start = start, .len = @intCast(captures.items.len) }, required_type, required_output, evidence.binding.instantiate_associated) catch |err| {
+            const method = instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), captures, required_type, required_output, evidence.binding.instantiate_associated) catch |err| {
                 failure.reason = switch (err) {
                     error.ContextualSignatureMismatch, error.OperationAliasInputMismatch => "implementation operation has an incompatible input signature",
                     error.ContextualOutputSignatureMismatch => "operation returns an incompatible associated result",
@@ -2105,24 +2097,25 @@ pub const Resolver = struct {
 
     /// The selected conformance owns the callable definition. Ordinary function
     /// inference determines its signature, defaults and reached capabilities.
+    fn operationCaptureArguments(self: *Resolver, evidence: contract_evidence.SelectedOperation) !primitives.Range(global_sg.GlobalGenericArgId) {
+        const captures = evidence.capturedArguments(self.graph) orelse return error.DeferredGenericFunction;
+        if (captures.lexical.len == 0) return captures.associated;
+        if (captures.associated.len == 0) return captures.lexical;
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        try self.graph.generic_arguments.ensureUnusedCapacity(self.allocator, captures.len());
+        for (0..captures.len()) |index|
+            self.graph.generic_arguments.appendAssumeCapacity(captures.at(self.graph, index));
+        return .{ .start = start, .len = @intCast(captures.len()) };
+    }
+
     fn makeImplementationOperationCall(self: *Resolver, module_index: usize, conformance_index: usize, operation_index: usize, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const conformance = self.graph.contract_conformances.items[conformance_index];
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(operation_index)) orelse return error.InvalidContractOperation;
         if (!try self.materializeOperationValue(evidence.binding.definition)) return null;
         _ = evidence.definitionValue(self.graph) orelse return null;
-        var captures: std.ArrayList(global_sg.GenericArgument) = .empty;
-        defer captures.deinit(self.allocator);
-        if (evidence.binding.instantiate_associated) {
-            try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
-            try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
-        } else {
-            const bound = evidence.definitionValue(self.graph).?.captures;
-            try captures.appendSlice(self.allocator, self.graph.generic_arguments.items[bound.start..][0..bound.len]);
-        }
-        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        try self.graph.generic_arguments.appendSlice(self.allocator, captures.items);
+        const captures = try self.operationCaptureArguments(evidence);
         const call = self.call_implementation_operation orelse return error.MissingOperationInstantiator;
-        var node = call(self.function_context.?, module_index, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), .{ .start = start, .len = @intCast(captures.items.len) }, arguments, input, context, source) catch |err| switch (err) {
+        var node = call(self.function_context.?, module_index, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), captures, arguments, input, context, source) catch |err| switch (err) {
             error.DeferredGenericFunction, error.ComptimeExecutionPending => return null,
             error.InvalidGenericCallArguments => {
                 self.participant_conformance_failure = .{
@@ -2210,15 +2203,7 @@ pub const Resolver = struct {
             };
         }
         const instantiate = self.instantiate_function orelse return error.MissingOperationInstantiator;
-        if (conformance.implementation_arguments.len == 0)
-            return instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), conformance.associated_arguments, input, output);
-        var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
-        defer arguments.deinit(self.allocator);
-        try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
-        try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
-        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-        return instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), .{ .start = start, .len = @intCast(arguments.items.len) }, input, output);
+        return instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), try self.operationCaptureArguments(evidence), input, output);
     }
 
     /// Pending aliases may complete during resolution. Only diagnose their
@@ -3255,7 +3240,10 @@ fn extendTemplateIndex(allocator: std.mem.Allocator) !void {
         .associated_arguments = .{ .start = 0, .len = 0 },
         .source = .{ .file_index = 0, .offset = 0 },
     };
-    try second.semantic.parameterized_storage.contract_conformances.appendNTimes(a, template, 32);
+    try second.semantic.parameterized_storage.contract_conformances.appendNTimes(a, template, 16);
+    var concrete = template;
+    concrete.parameters.len = 0;
+    try second.semantic.parameterized_storage.contract_conformances.appendNTimes(a, concrete, 16);
     const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
     const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
     var graph: global_sg.GlobalSemanticGraph = .{};

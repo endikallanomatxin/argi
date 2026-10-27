@@ -48,15 +48,15 @@ pub const Resolver = struct {
         const ty = if (family) |declaration_id| blk: {
             if (arguments.len == 0) {
                 const identity = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
-                const selection = try self.inferContractArguments(identity, null, declaration_id, input, reach, source) orelse return null;
+                const selection = try self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = .{ .start = 0, .len = 0 } } }, input, reach, source) orelse return null;
                 _ = try generics.ensureGenericInstance(selection.target);
-                return self.contractInitializer(module_index, selection.target, input, reach, source);
+                return self.selectedInitializer(module_index, identity, selection, input, reach, source);
             }
             if (generics.findTypeParameterized(declaration_id)) |located| {
                 if (arguments.len < located.parameterized.parameters.len) {
                     const identity = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
                     const selection = try self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = arguments } }, input, reach, source);
-                    if (selection) |selected| return self.contractInitializer(module_index, selected.target, input, reach, source);
+                    if (selection) |selected| return self.selectedInitializer(module_index, identity, selected, input, reach, source);
                 }
             }
             const generic_ty = try generics.internType(.{ .generic = .{
@@ -180,11 +180,6 @@ pub const Resolver = struct {
     /// a constructor or distinguish conformances for the same participant tuple.
     const ContractArguments = struct { target: global_sg.GlobalTypeId, args: global_sg.GlobalTypeId };
 
-    fn inferContractArguments(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, target: ?global_sg.GlobalTypeId, family: ?global_sg.GlobalFamilyDefinitionId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
-        const participant: implementation_arguments.Participant = if (target) |known| .{ .known = known } else .{ .partial = .{ .family = family.?, .arguments = .{ .start = 0, .len = 0 } } };
-        return self.inferConstructorArguments(declaration, participant, input, reach, source);
-    }
-
     fn inferConstructorArguments(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participant: implementation_arguments.Participant, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
         if (participant == .partial) {
             const partial = participant.partial;
@@ -236,8 +231,17 @@ pub const Resolver = struct {
         var scope = generic_functions.beginSpeculation();
         defer scope.deinit();
         const declaration = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
-        const contracts = self.contracts orelse return null;
+        if (self.contracts == null) return null;
         const selected = try self.inferConstructorArguments(declaration, .{ .known = ty }, input, reach, source) orelse return null;
+        const call = try self.selectedInitializer(module_index, declaration, selected, input, reach, source);
+        scope.commit();
+        return call;
+    }
+
+    /// Participant inference has already chosen Target and Args. Do not probe
+    /// them again while constructing the ordinary qualified operation call.
+    fn selectedInitializer(self: *Resolver, module_index: usize, declaration: global_sg.GlobalFamilyDefinitionId, selected: ContractArguments, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        const contracts = self.contracts orelse return null;
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         try self.graph.generic_arguments.appendSlice(self.core.allocator, &.{
             .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = selected.target } },
@@ -263,7 +267,6 @@ pub const Resolver = struct {
             }
             return error.DeferredContractInitializer;
         };
-        scope.commit();
         return call;
     }
 
@@ -353,12 +356,12 @@ pub const Resolver = struct {
 
         if (standard_contracts.standardDefinition(self.graph, "Init")) |identity| {
             const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-            if (self.inferContractArguments(identity, null, declaration_id, input, reach, self.graph.node(input).source) catch |err| {
+            if (self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = .{ .start = 0, .len = 0 } } }, input, reach, self.graph.node(input).source) catch |err| {
                 if (err == error.DeferredContractInitializer) return .deferred;
                 return err;
             }) |selection| {
                 _ = try generics.ensureGenericInstance(selection.target);
-                const call = self.contractInitializer(module_index, selection.target, input, reach, self.graph.node(input).source) catch |err| {
+                const call = self.selectedInitializer(module_index, identity, selection, input, reach, self.graph.node(input).source) catch |err| {
                     if (err == error.DeferredContractInitializer) return .deferred;
                     return err;
                 };
@@ -414,7 +417,7 @@ pub const Resolver = struct {
                         return err;
                     };
                     if (selection) |selected| {
-                        if (try self.contractInitializer(module_index, selected.target, input, reach, self.graph.node(input).source)) |call| {
+                        if (try self.selectedInitializer(module_index, identity, selected, input, reach, self.graph.node(input).source)) |call| {
                             try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), call);
                             scope.commit();
                             self.core.stats.calls += 1;

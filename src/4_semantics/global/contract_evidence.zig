@@ -19,6 +19,34 @@ pub const SelectedOperation = struct {
         return if (graph.familyDefinition(definition.origin).kind == .function) definition else null;
     }
 
+    /// Stable ranges describe the same lexical prefix for dispatch and proof
+    /// queries. Reading them never copies arguments or selects a conformance.
+    pub const CapturedArguments = struct {
+        lexical: primitives.Range(graph_mod.GlobalGenericArgId),
+        associated: primitives.Range(graph_mod.GlobalGenericArgId),
+
+        pub fn len(self: CapturedArguments) usize {
+            return @as(usize, self.lexical.len) + self.associated.len;
+        }
+
+        pub fn at(self: CapturedArguments, graph: *const graph_mod.GlobalSemanticGraph, index: usize) graph_mod.GenericArgument {
+            return graph.generic_arguments.items[
+                if (index < self.lexical.len)
+                    self.lexical.start + index
+                else
+                    self.associated.start + index - self.lexical.len
+            ];
+        }
+    };
+
+    pub fn capturedArguments(self: SelectedOperation, graph: *const graph_mod.GlobalSemanticGraph) ?CapturedArguments {
+        const definition = self.definitionValue(graph) orelse return null;
+        return if (self.binding.instantiate_associated)
+            .{ .lexical = self.conformance.implementation_arguments, .associated = self.conformance.associated_arguments }
+        else
+            .{ .lexical = definition.captures, .associated = .{ .start = 0, .len = 0 } };
+    }
+
     pub fn materializedFunction(self: SelectedOperation) ?graph_mod.GlobalFunctionId {
         return self.binding.materialized_function;
     }
@@ -29,14 +57,10 @@ pub const SelectedOperation = struct {
         const family = definition.origin;
         for (graph.generic_function_instances.items) |instance| {
             if (instance.function != function or instance.parameterized_definition != family) continue;
-            const captures = if (self.binding.instantiate_associated) self.conformance.implementation_arguments else definition.captures;
-            const associated = if (self.binding.instantiate_associated) self.conformance.associated_arguments else @as(primitives.Range(graph_mod.GlobalGenericArgId), .{ .start = 0, .len = 0 });
-            if (instance.arguments.len < captures.len + associated.len) return false;
-            for (0..captures.len + associated.len) |index| {
-                const expected = if (index < captures.len)
-                    graph.generic_arguments.items[captures.start + index]
-                else
-                    graph.generic_arguments.items[associated.start + index - captures.len];
+            const captures = self.capturedArguments(graph) orelse return false;
+            if (instance.arguments.len < captures.len()) return false;
+            for (0..captures.len()) |index| {
+                const expected = captures.at(graph, index);
                 const actual = graph.generic_arguments.items[instance.arguments.start + index];
                 if (!@import("types.zig").genericArgumentValuesEqual(graph, expected.value, actual.value)) return false;
             }

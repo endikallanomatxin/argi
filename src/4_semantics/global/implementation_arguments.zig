@@ -191,87 +191,86 @@ pub const Resolver = struct {
                 } else deferred = true;
             }
         }
-        for (self.modules, 0..) |*module, module_index| {
+        templates: for (try self.contracts.implementationTemplates(declaration, prefix.len)) |reference| {
+            const module_index = reference.module;
+            const module = &self.modules[module_index];
             const storage = &module.semantic.parameterized_storage;
-            templates: for (storage.contract_conformances.items) |template| {
-                if (template.participants.len != prefix.len) continue;
-                if (try self.contracts.resolveDeclarationRef(module_index, template.contract_ref, .contract_type) != declaration) continue;
-                const patterns = storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len];
-                for (patterns) |pattern| if (pattern.value != .type) continue :templates;
-                var bindings = try generic_mod.Resolver.Bindings.init(allocator, storage.comptime_parameters.items.len);
-                defer bindings.deinit(allocator);
-                for (prefix, 0..) |participant, index| switch (participant) {
-                    .known => |known| if (!try self.contracts.inferConstraintTypePattern(module_index, patterns[index].value.type, known, &bindings)) {
-                        continue :templates;
-                    },
-                    .family => |family| {
-                        const pattern = storage.ir.types.items[@intFromEnum(patterns[index].value.type)];
-                        if (pattern == .resolved and pattern.resolved == .generic) {
-                            if (try self.generics.resolveParameterizedFamily(module_index, pattern.resolved.generic.base) != family) continue :templates;
-                        } else if (pattern == .concrete) {
-                            const closed = try self.generics.instantiateParameterizedType(module_index, patterns[index].value.type, &bindings);
-                            const identity = switch (self.graph.resolvedSemanticType(closed) orelse continue :templates) {
-                                .definition => |id| id,
-                                .generic => |generic| generic.base,
-                                else => continue :templates,
-                            };
-                            if (identity != family) continue :templates;
-                        } else continue :templates;
-                    },
-                    .partial => |partial| if (!try self.bindPartialTargetExplicit(module_index, patterns[index].value.type, partial.family, partial.arguments, &bindings)) continue :templates,
-                    .inferred => {},
-                };
-                has_prefix = true;
-                const operation_input: graph_mod.GlobalTypeId = blk: {
-                    const operation = for (storage.contract_operations.items[template.operations.start..][0..template.operations.len]) |candidate| {
-                        if (std.mem.eql(u8, module.text(candidate.name), operation_name)) break candidate;
+            const template = storage.contract_conformances.items[reference.index];
+            const patterns = storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len];
+            for (patterns) |pattern| if (pattern.value != .type) continue :templates;
+            var bindings = try generic_mod.Resolver.Bindings.init(allocator, storage.comptime_parameters.items.len);
+            defer bindings.deinit(allocator);
+            for (prefix, 0..) |participant, index| switch (participant) {
+                .known => |known| if (!try self.contracts.inferConstraintTypePattern(module_index, patterns[index].value.type, known, &bindings)) {
+                    continue :templates;
+                },
+                .family => |family| {
+                    const pattern = storage.ir.types.items[@intFromEnum(patterns[index].value.type)];
+                    if (pattern == .resolved and pattern.resolved == .generic) {
+                        if (try self.generics.resolveParameterizedFamily(module_index, pattern.resolved.generic.base) != family) continue :templates;
+                    } else if (pattern == .concrete) {
+                        const closed = try self.generics.instantiateParameterizedType(module_index, patterns[index].value.type, &bindings);
+                        const identity = switch (self.graph.resolvedSemanticType(closed) orelse continue :templates) {
+                            .definition => |id| id,
+                            .generic => |generic| generic.base,
+                            else => continue :templates,
+                        };
+                        if (identity != family) continue :templates;
                     } else continue :templates;
-                    break :blk self.functions.inferImplementationInput(module_index, operation, template.parameters, input, reach, &bindings, arguments, template.associated_arguments) catch |err| switch (err) {
-                        error.ConflictingGenericArgument => null,
-                        else => return err,
-                    } orelse continue :templates;
+                },
+                .partial => |partial| if (!try self.bindPartialTargetExplicit(module_index, patterns[index].value.type, partial.family, partial.arguments, &bindings)) continue :templates,
+                .inferred => {},
+            };
+            has_prefix = true;
+            const operation_input: graph_mod.GlobalTypeId = blk: {
+                const operation = for (storage.contract_operations.items[template.operations.start..][0..template.operations.len]) |candidate| {
+                    if (std.mem.eql(u8, module.text(candidate.name), operation_name)) break candidate;
+                } else continue :templates;
+                break :blk self.functions.inferImplementationInput(module_index, operation, template.parameters, input, reach, &bindings, arguments, template.associated_arguments) catch |err| switch (err) {
+                    error.ConflictingGenericArgument => null,
+                    else => return err,
+                } orelse continue :templates;
+            };
+            for (prefix, 0..) |participant, index| {
+                if (participant == .partial) {
+                    const partial = participant.partial;
+                    if (!try self.completePartialTargetDefaults(module_index, patterns[index].value.type, partial.family, &bindings)) continue :templates;
+                }
+            }
+            if (!try self.contracts.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
+            const participants = try allocator.alloc(graph_mod.GlobalTypeId, patterns.len);
+            var retained = false;
+            defer if (!retained) allocator.free(participants);
+            for (patterns, 0..) |pattern, index| {
+                participants[index] = self.generics.instantiateParameterizedType(module_index, pattern.value.type, &bindings) catch |err| switch (err) {
+                    error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue :templates,
+                    else => return err,
                 };
-                for (prefix, 0..) |participant, index| {
-                    if (participant == .partial) {
-                        const partial = participant.partial;
-                        if (!try self.completePartialTargetDefaults(module_index, patterns[index].value.type, partial.family, &bindings)) continue :templates;
-                    }
-                }
-                if (!try self.contracts.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
-                const participants = try allocator.alloc(graph_mod.GlobalTypeId, patterns.len);
-                var retained = false;
-                defer if (!retained) allocator.free(participants);
-                for (patterns, 0..) |pattern, index| {
-                    participants[index] = self.generics.instantiateParameterizedType(module_index, pattern.value.type, &bindings) catch |err| switch (err) {
-                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue :templates,
-                        else => return err,
-                    };
-                }
-                const fields = types.fields(self.graph, operation_input) orelse continue;
-                switch (try self.core.matchCallInputWithReach(fields, input, reach)) {
-                    .applicable => {},
-                    .deferred => {
-                        deferred = true;
-                        continue;
-                    },
-                    .no_match => {
-                        if (self.core.matchCallInput(fields, input) == .applicable) {
-                            for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
-                                if (self.core.callArgumentNamed(supplied, position, self.graph.text(field.name)) != null) continue;
-                                const fallback = field.default_value orelse continue;
-                                if (self.graph.node(fallback).content != .reach_directive) continue;
-                                if (try self.core.probeReachedDefault(reach, field, fallback) == .unavailable) {
-                                    missing_reach = field;
-                                    break;
-                                }
+            }
+            const fields = types.fields(self.graph, operation_input) orelse continue;
+            switch (try self.core.matchCallInputWithReach(fields, input, reach)) {
+                .applicable => {},
+                .deferred => {
+                    deferred = true;
+                    continue;
+                },
+                .no_match => {
+                    if (self.core.matchCallInput(fields, input) == .applicable) {
+                        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
+                            if (self.core.callArgumentNamed(supplied, position, self.graph.text(field.name)) != null) continue;
+                            const fallback = field.default_value orelse continue;
+                            if (self.graph.node(fallback).content != .reach_directive) continue;
+                            if (try self.core.probeReachedDefault(reach, field, fallback) == .unavailable) {
+                                missing_reach = field;
+                                break;
                             }
                         }
-                        continue;
-                    },
-                }
-                try candidates.append(allocator, .{ .module = module_index, .template = template, .participants = participants });
-                retained = true;
+                    }
+                    continue;
+                },
             }
+            try candidates.append(allocator, .{ .module = module_index, .template = template, .participants = participants });
+            retained = true;
         }
         var selected: ?usize = null;
         for (candidates.items, 0..) |candidate, index| {
