@@ -164,6 +164,7 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         target: union(enum) { type: ModuleTypeId, pointee: ModuleNodeId, element: ModuleNodeId },
         visible_bindings: BindingRange,
+        assumed_arguments: ?ModuleNodeId = null,
         owner_function: ?ModuleFunctionId = null,
     },
     resolve_entry_call: struct { node: ModuleNodeId, callee: ModuleFunctionId },

@@ -8989,7 +8989,7 @@ test "feature_tests/system/57X_clock_missing_capability" {
 }
 
 test "feature_tests/system/58X_clock_missing_ffi" {
-    try buildExpectFail("tests/feature_tests/system/58X_clock_missing_ffi", "Init argument '.ffi' requires a reachable value or an explicit argument");
+    try buildExpectFail("tests/feature_tests/system/58X_clock_missing_ffi", "required reachable capabilities");
 }
 
 test "feature_tests/system/59X_clock_domains" {
@@ -9036,7 +9036,7 @@ test "feature_tests/system/67_posix_process_contract" {
 }
 
 test "feature_tests/system/68X_process_missing_ffi" {
-    try buildExpectFail("tests/feature_tests/system/68X_process_missing_ffi", "Init argument '.ffi' requires a reachable value or an explicit argument");
+    try buildExpectFail("tests/feature_tests/system/68X_process_missing_ffi", "required reachable capabilities");
 }
 
 test "feature_tests/system/69X_process_copy" {

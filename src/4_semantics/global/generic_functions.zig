@@ -2659,9 +2659,11 @@ pub const Resolver = struct {
         }
 
         fn instantiateSignatureBindings(self: *InstanceContext, range: primitives.Range(ir.ParameterizedBindingId), fields: global_sg.FieldRange, mutability: primitives.Mutability) !global_sg.BindingRange {
-            if (range.len != 0 or fields.len == 0) return self.instantiateBindingRange(range);
-            // Named signature types provide their fields after specialization;
-            // they do not need duplicate template-local parameter declarations.
+            if (mutability != .constant and (range.len != 0 or fields.len == 0)) return self.instantiateBindingRange(range);
+            // Input defaults belong to the signature as recipes. Evaluating
+            // their template initializers here would allocate storage in the
+            // callee and lose the caller's reached capabilities. Named input
+            // types use this same path without duplicate local declarations.
             const bindings = try self.resolver.allocator.alloc(global_sg.GlobalBindingId, fields.len);
             defer self.resolver.allocator.free(bindings);
             for (0..fields.len) |offset| {
@@ -2674,6 +2676,7 @@ pub const Resolver = struct {
                     .initialization = field.default_value,
                     .mutability = mutability,
                 });
+                if (offset < range.len) try self.binding_map.put(self.resolver.allocator, range.start + @as(u32, @intCast(offset)), bindings[offset]);
             }
             const start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
             try self.resolver.graph.binding_refs.appendSlice(self.resolver.allocator, bindings);
@@ -3225,7 +3228,8 @@ pub const Resolver = struct {
                 // A default executes in its caller's lexical environment.
                 // Re-instantiating the declaration's assumed bindings creates
                 // body-local slots that do not exist at that call site.
-                if (context == .global) try assumed.appendSlice(self.resolver.allocator, self.resolver.graph.value_fields.items[context.global.assumed_fields.start..][0..context.global.assumed_fields.len]);
+                const inherited = context.assumedFields();
+                try assumed.appendSlice(self.resolver.allocator, self.resolver.graph.value_fields.items[inherited.start..][0..inherited.len]);
             } else {
                 for (storage.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |field| {
                     try assumed.append(self.resolver.allocator, .{
@@ -4054,7 +4058,7 @@ pub const Resolver = struct {
                 const visible = try self.resolver.allocator.alloc(global_sg.GlobalBindingId, inherited.bindingCount());
                 for (visible, 0..) |*binding, index| binding.* = inherited.bindingAt(index);
                 var result = ReachInferenceContext.fromGlobal(visible, inherited.ownerFunction());
-                if (inherited == .global) result.global.assumed_fields = inherited.global.assumed_fields;
+                result.global.assumed_fields = inherited.assumedFields();
                 return result;
             }
             var context = ReachInferenceContext.fromGlobal(&.{}, self.function);

@@ -441,7 +441,9 @@ pub const Resolver = struct {
                 };
                 if (self.graph.isTypeUnresolved(target)) break :blk .deferred;
                 const id = globalizer.globalNode(o, value.node);
-                const context = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+                var context = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+                if (value.assumed_arguments) |arguments|
+                    context = context.withAssumedFields(self.graph.node(globalizer.globalNode(o, arguments)).content.struct_value_literal.assumed_fields);
                 if (types.arrayElement(self.graph, target) != null) {
                     const completed = self.completeAggregateValue(target, id, context, 0) catch |err| switch (err) {
                         error.DeferredContractInitializer, error.DeferredGenericFunction, error.ComptimeExecutionPending => break :blk .deferred,
@@ -1826,7 +1828,7 @@ pub const Resolver = struct {
                         expected.ty,
                     )
                 else if (self.graph.node(fallback).content == .argument_default)
-                    try self.instantiateArgumentDefault(fallback, context)
+                    try self.instantiateArgumentDefault(fallback, if (literal.assumed_fields.len != 0) context.withAssumedFields(literal.assumed_fields) else context)
                 else
                     fallback;
                 if (node == null and self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive)
@@ -1837,7 +1839,10 @@ pub const Resolver = struct {
                     );
             }
             const value = node orelse return false;
-            _ = try self.coerceContextualValue(value, expected.ty);
+            // Defaults follow the same storage context as explicit values.
+            // Retain integer widths even for invalid literals so the ordinary
+            // range checker diagnoses them before either backend emits code.
+            try self.contextualizeStoredValue(value, expected.ty);
             if (self.graph.node(value).content == .struct_value_literal) {
                 if (types.fields(self.graph, expected.ty) != null)
                     if (!try self.completeRecordValue(expected.ty, value, context)) return false;

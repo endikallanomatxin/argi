@@ -1189,7 +1189,7 @@ const Context = struct {
         const result = try self.resolved(node, null, .{ .list_literal = .{
             .elements = try self.writer.appendNodeRefs(nodes.items),
         } });
-        try self.trackAggregateLiteral(result.node, expected);
+        try self.trackAggregateLiteral(node, result.node, expected);
         return result;
     }
 
@@ -1212,20 +1212,30 @@ const Context = struct {
             .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
             .dispatch_prefix_positional_count = literal.positional_prefix_count,
         } });
-        try self.trackAggregateLiteral(result.node, expected);
+        try self.trackAggregateLiteral(node, result.node, expected);
         return result;
     }
 
-    fn trackAggregateLiteral(self: *Context, node: entities.ModuleNodeId, expected: ?entities.ModuleTypeId) !void {
+    fn captureAggregateAssumptions(self: *Context, source: syn.NodeIndex) !?entities.ModuleNodeId {
+        for (self.bindings.items) |binding| if (binding.assumed) {
+            const input = try self.resolved(source, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+            try self.captureAssumedFields(source, input.node);
+            return input.node;
+        };
+        return null;
+    }
+
+    fn trackAggregateLiteral(self: *Context, source: syn.NodeIndex, node: entities.ModuleNodeId, expected: ?entities.ModuleTypeId) !void {
         if (expected) |target| _ = try self.writer.addPendingOperation(.{ .resolve_aggregate_literal = .{
             .node = node,
             .target = .{ .type = target },
             .visible_bindings = try self.captureVisibleBindings(),
+            .assumed_arguments = try self.captureAggregateAssumptions(source),
             .owner_function = self.current_function,
         } });
     }
 
-    fn trackAggregateDestination(self: *Context, node: entities.ModuleNodeId, target: @FieldType(@FieldType(entities.PendingOperation, "resolve_aggregate_literal"), "target")) !void {
+    fn trackAggregateDestination(self: *Context, source: syn.NodeIndex, node: entities.ModuleNodeId, target: @FieldType(@FieldType(entities.PendingOperation, "resolve_aggregate_literal"), "target")) !void {
         const content = self.graph.semantic.nodes.items[@intFromEnum(node)];
         if (content != .resolved) return;
         if (content.resolved.content != .struct_value_literal and content.resolved.content != .list_literal) return;
@@ -1233,6 +1243,7 @@ const Context = struct {
             .node = node,
             .target = target,
             .visible_bindings = try self.captureVisibleBindings(),
+            .assumed_arguments = try self.captureAggregateAssumptions(source),
             .owner_function = self.current_function,
         } });
     }
@@ -1385,7 +1396,7 @@ const Context = struct {
         const collection = try self.lowerNode(target.value, null);
         const index = try self.lowerNode(target.index, null);
         const value = try self.lowerNode(assignment.value, expected);
-        if (expected == null) try self.trackAggregateDestination(value.node, .{ .element = collection.node });
+        if (expected == null) try self.trackAggregateDestination(node, value.node, .{ .element = collection.node });
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),
             .value = collection.node,
@@ -1803,7 +1814,7 @@ const Context = struct {
         }
         const child_ty = if (pointer.ty) |pointer_ty| try self.pointerChild(pointer_ty) else null;
         const value = try self.lowerNode(assignment.value, child_ty orelse expected);
-        if (child_ty == null and expected == null) try self.trackAggregateDestination(value.node, .{ .pointee = pointer.node });
+        if (child_ty == null and expected == null) try self.trackAggregateDestination(node, value.node, .{ .pointee = pointer.node });
         const ty: ?entities.ModuleTypeId = expected orelse value.ty;
         return self.resolved(node, ty, .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } });
     }

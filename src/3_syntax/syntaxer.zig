@@ -1031,7 +1031,7 @@ pub const Syntaxer = struct {
             var default_value: ?syn.NodeIndex = null;
             if (self.tokenIs(.equal)) {
                 self.advanceOne();
-                if (self.tokenIs(.colon) or self.tokenIs(.eof)) {
+                if (self.tokenIs(.open_brace) or self.tokenIs(.colon) or self.tokenIs(.eof)) {
                     try self.diags.add(self.tokenLocation(), .syntax, "expected a default expression after '=' in the fallible output", .{});
                     return SyntaxerError.ExpectedIntLiteral;
                 }

@@ -241,6 +241,11 @@ Utf8Decoder takes byte views; text explicitly projects its bytes. File retains
 its once empty-handle Init, uses file_from_stream for native stream handles, and
 FileOpening/AllocatingFileOpening for fallible path factories.
 
+Input defaults remain signature recipes until a caller omits an argument.
+Contextual aggregate completion captures lexical assumptions alongside visible
+bindings, preserving caller-owned temporary storage and capability inference.
+Literal defaults retain the destination width for ordinary range validation.
+
 Outstanding before completion:
 
 - Finish and validate generic selected-evidence queries: a generic operation can
@@ -249,6 +254,10 @@ Outstanding before completion:
 - Review remaining anonymous aggregate/choice identities, contextual literals,
   associated signature properties and generic operation inference against the
   design above. Remove obsolete representations rather than keep fallbacks.
+- Complete unqualified lookup of implementation-owned signatures through shared
+  input inference. Candidate probes roll back: any inferred participant created
+  by a probe needs a stable representation before it can survive that rollback.
+  Do not retain provisional type IDs or infer from operation results.
 - Check shorthand assume on named signatures whose fields become known late;
   current acquisition functions retain explicit assume bindings.
 - Finish fixture diagnostics, editor navigation and declaration metadata cleanup;
