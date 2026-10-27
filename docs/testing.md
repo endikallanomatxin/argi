@@ -81,6 +81,11 @@ Positive counterparts can establish that the same mechanism accepts valid input.
 Preserve distinct aliasing, control-flow, module and backend interactions even
 when their programs look similar.
 
+Do not retain migration-only rejection tests for retired syntax or APIs once a
+transition is complete. Test the current language rather than cataloguing every
+historical spelling. Keep negative tests for active grammar, type and safety
+rules when they establish a distinct boundary or interaction.
+
 Group small positive cases by the operation or protocol they exercise, using
 named functions or separate scopes and checking each result. For example, range
 iteration covers default bounds, signed steps and integer widths in one fixture;

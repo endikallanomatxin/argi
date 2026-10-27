@@ -88,13 +88,7 @@ test "compact syntaxing specializes values and calls with one hash-list represen
     try std.testing.expect(tree.symbolDeclaration(tree.roots[4]).?.value != null);
 }
 
-test "compact syntaxing requires ordinary parameters on definition values" {
-    for ([_][]const u8{
-        "Box#(.T: Type) := (.value: T)",
-        "Box#(.T: Type): Type = (.value: T)",
-        "identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }",
-    }) |source| try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("declaration_parameters.rg", source));
-
+test "compact syntaxing parses parameters on definition values" {
     var tree = try parseTestSource("definition_parameters.rg", "Box := #(.T: Type) (.value: T)\nForward: Type = #(.T: Type) Box#(T)\nidentity := #(.T: Type) (.value: T) -> (.result: T) { result = value }");
     defer tree.deinit(std.testing.allocator);
     for (tree.roots) |root| try std.testing.expect(tree.parameterizedDefinition(tree.definitionValue(root).?) != null);
@@ -112,15 +106,6 @@ test "compact syntaxing accepts specialized calls as statements" {
         calls += 1;
     }
     try std.testing.expectEqual(@as(usize, 2), calls);
-}
-
-test "compact syntaxing rejects declaration-owned ordinary function bodies" {
-    try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy.rg", "identity(.value: Int32) -> (.result: Int32) := { result = value }"));
-    try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy-test.rg", "test example() -> () := {}"));
-}
-
-test "compact syntaxing rejects parameterized declaration-owned function bodies" {
-    try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy.rg", "identity#(.T: Type)(.value: T) -> (.result: T) := { result = value }"));
 }
 
 test "compact syntaxing separates comparison chains from explicit specialization" {
@@ -255,11 +240,6 @@ test "compact syntaxing represents anonymous compile-time entries independently 
     }
 }
 
-test "compact syntaxing rejects superseded compile-time call prefixes" {
-    try std.testing.expectError(error.ExpectedLeftBrace, parseTestSource("entry.rg", "#run calculate()"));
-    try std.testing.expectError(error.ExpectedLeftBrace, parseTestSource("entry.rg", "#run calculate#(.n = 42)()"));
-}
-
 test "compact syntaxing requires a complete compile-time entry signature" {
     try std.testing.expectError(error.ExpectedArrow, parseTestSource("entry.rg", "#run () {}"));
     try std.testing.expectError(error.ExpectedLeftBrace, parseTestSource("entry.rg", "#run () -> () calculate()"));
@@ -295,13 +275,18 @@ test "compact syntaxing preserves representative structures" {
     try std.testing.expect(std.mem.indexOfScalar(syntax_tree.Node.Tag, control_flow.nodes.items(.tag), .for_mut_borrow) != null);
     try std.testing.expect(std.mem.indexOfScalar(syntax_tree.Node.Tag, control_flow.nodes.items(.tag), .if_statement) != null);
 
-    var choices = try parseTestFile("tests/feature_tests/types/39_inferred_errable_direct_error/main.rg");
+    var choices = try parseTestFile("tests/feature_tests/types/38_inferred_errable_reasons/main.rg");
     defer choices.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOfScalar(syntax_tree.Node.Tag, choices.nodes.items(.tag), .match_statement) != null);
 }
 
 test "compact syntaxing preserves generic parameter indices across extra data growth" {
-    var tree = try parseTestFile("tests/feature_tests/functions/10_pipe_generic_explicit/main.rg");
+    var tree = try parseTestSource("generic_indices.rg",
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
+        \\main := () -> (.status_code: Int32) {
+        \\    status_code = 42 | identity#(.T: Int32)(.value = _)
+        \\}
+    );
     defer tree.deinit(std.testing.allocator);
 
     const declaration = tree.functionDeclaration(tree.roots[0]).?;
@@ -313,43 +298,12 @@ test "compact syntaxing preserves generic parameter indices across extra data gr
     try std.testing.expectEqual(syntax_tree.Node.Tag.type_name, tree.tag(parameter.type_node.?));
 }
 
-test "compact syntaxing accepts positive feature programs" {
-    var root = try std.Io.Dir.cwd().openDir(std.testing.io, ".", .{ .iterate = true });
-    defer root.close(std.testing.io);
-    var feature_root = try root.openDir(std.testing.io, "tests/feature_tests", .{ .iterate = true });
-    defer feature_root.close(std.testing.io);
-
-    var category_iterator = feature_root.iterate();
-    while (try category_iterator.next(std.testing.io)) |category| {
-        if (category.kind != .directory) continue;
-        const category_path = try std.fmt.allocPrint(std.testing.allocator, "tests/feature_tests/{s}", .{category.name});
-        defer std.testing.allocator.free(category_path);
-        var category_dir = try root.openDir(std.testing.io, category_path, .{ .iterate = true });
-        defer category_dir.close(std.testing.io);
-        var case_iterator = category_dir.iterate();
-        while (try case_iterator.next(std.testing.io)) |case_entry| {
-            if (case_entry.kind != .directory or std.mem.indexOfScalar(u8, case_entry.name, 'X') != null) continue;
-            const main_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/{s}/main.rg", .{ category_path, case_entry.name });
-            defer std.testing.allocator.free(main_path);
-            root.access(std.testing.io, main_path, .{}) catch |err| switch (err) {
-                error.FileNotFound => continue,
-                else => return err,
-            };
-            var tree = parseTestFile(main_path) catch |err| {
-                std.debug.print("compact syntaxing failed for {s}: {s}\n", .{ main_path, @errorName(err) });
-                return err;
-            };
-            tree.deinit(std.testing.allocator);
-        }
-    }
-}
-
 test "compact syntaxing preserves adversarial grammar distinctions" {
-    try expectTags("tests/feature_tests/collections/07_array_index_uint_native/main.rg", &.{
+    try expectTags("tests/feature_tests/collections/03_arrays/main.rg", &.{
         .index_access,
         .index_assignment,
     });
-    try expectTags("tests/feature_tests/functions/10_pipe_generic_explicit/main.rg", &.{
+    try expectTags("tests/feature_tests/functions/03_pipe_expressions/main.rg", &.{
         .function_call,
         .pipe_expression,
     });
@@ -377,7 +331,7 @@ test "compact syntaxing preserves adversarial grammar distinctions" {
     try expectTags("tests/feature_tests/types/29_match_borrowed_payload/main.rg", &.{.match_case_borrow});
     try expectTags("tests/feature_tests/types/30_match_mut_borrowed_payload/main.rg", &.{.match_case_mut_borrow});
     try expectTags("tests/feature_tests/types/31_match_move_payload/main.rg", &.{.match_case_move});
-    try expectTags("tests/feature_tests/types/38_inferred_errable_from_propagation/main.rg", &.{
+    try expectTags("tests/feature_tests/types/38_inferred_errable_reasons/main.rg", &.{
         .inferred_errable_type,
         .error_propagation,
     });

@@ -2063,7 +2063,7 @@ test "C interop rejects missing invalid and stale authorization" {
         .{ "tests/feature_tests/c_interop/15X_wrong_foreign_capability", "ForeignFunctionInterface" },
         .{ "tests/feature_tests/c_interop/16X_stale_foreign_capability", "binding 'storage' was moved" },
         .{ "tests/feature_tests/c_interop/17X_export_missing_capability", ".ffi uses reach [ffi]" },
-        .{ "tests/feature_tests/c_interop/18X_legacy_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/18X_extern_missing_capability", ".ffi uses reach [ffi]" },
         .{ "tests/feature_tests/c_interop/19X_stale_wrapper_capability", "binding 'storage' was moved" },
         .{ "tests/feature_tests/c_interop/20X_reserved_capability_parameter", "reserve '.ffi' for the checked capability" },
         .{ "tests/feature_tests/c_interop/21X_counterfeit_foreign_capability", "ForeignFunctionInterface" },
