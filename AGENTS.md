@@ -14,9 +14,8 @@ This repository contains a compiler for a new programming language written in Zi
     - `tests/feature_tests/_support/` contains shared fixture modules; compiler unit tests are registered through `src/internal_tests.zig`.
     - Files in the same test case directory share namespace and are compiled together as one folder-level module.
     - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
-    - Root fixtures are discovered automatically; declare expectations and isolation
-      in each case's `test.json`. Custom Zig tests remain in `tests/test.zig` and
-      declare coverage in `tests/custom_tests.json`. See `docs/testing.md`.
+    - The feature coverage check scans literal case paths in `tests/test.zig`;
+      use complete paths in registration tables rather than concatenated prefixes.
 
 - `more/`: Official library modules that are not part of `core/`.
 
@@ -66,8 +65,7 @@ This repository contains a compiler for a new programming language written in Zi
        tokenizing, syntaxing, semantizing or codegen.
     4. Implement the feature in `src/` until it compiles.
     5. Ensure all tests pass and generated LLVM IR makes sense for the feature.
-    6. Add a fixture `test.json`, or register custom orchestration in
-       `tests/test.zig` and `tests/custom_tests.json`.
+    6. Add the test to `tests/test.zig` where applicable.
     7. Evaluate if the diagnostics need improvement for the new feature and
        enhance them.
 
@@ -96,9 +94,7 @@ feature first.
   capped at 16. `-Dtest-jobs=N` sets the worker count and `-jN` limits concurrent
   build steps. Shared-state tests finish before fixture workers start; fixtures
   stay on one worker. Per-worker totals and optional active-case progress are
-  recorded under `.zig-cache/program-tests/`. Matching `.log.jsonl` files record
-  individual durations, outcomes and isolation. `zig build test-harness` validates
-  discovery and scheduling independently of compiler execution.
+  recorded under `.zig-cache/program-tests/`.
 
 - CLI builds reuse canonical module snapshots under `.argi-cache/frontend/`.
   Use `argi build --no-cache` when comparing against a fresh frontend build;
