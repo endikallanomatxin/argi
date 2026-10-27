@@ -16,14 +16,6 @@ implement Deinit#(Resource) (
     }
 )
 
-_ordinary_copy_0 := (.self: &Resource, .tag: Int32 = 1) -> (.value: Resource) {
-    value = Resource()
-}
-
-_ordinary_copy_1 := (.self: &Resource, .flag: Bool = true) -> (.value: Resource) {
-    value = Resource()
-}
-
 duplicate := (.source: Resource) -> (.value: Resource) {
     return source
 }
