@@ -1,7 +1,11 @@
 Point := (._x: Int32)
 
-implement Init#(Point) (
-    .init = (.x: Int32) -> (.result: Int32) { result = x }
+PointInitArgs: Type = (.x: Int32)
+
+implement Init#(Point, PointInitArgs) (
+    .Result : Type = Int32
+
+    .init = PointInitArgs -> (.result: Result) { result = x }
 )
 
 main := () -> () { Point(.x = 10) }

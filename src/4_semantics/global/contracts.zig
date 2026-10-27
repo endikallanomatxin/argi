@@ -1778,7 +1778,7 @@ pub const Resolver = struct {
         switch (try self.core.matchCallInputWithReach(function.input, input, context)) {
             .deferred => return null,
             .no_match => {
-                failure.reason = "arguments do not match the selected contract operation, including its required reachable capabilities";
+                failure.reason = "arguments do not match the selected contract operation, including completed defaults and required reachable capabilities";
                 self.participant_conformance_failure = failure;
                 return null;
             },
@@ -2221,6 +2221,22 @@ pub const Resolver = struct {
         return instantiate(self.function_context.?, self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin), .{ .start = start, .len = @intCast(arguments.items.len) }, input, output);
     }
 
+    /// Pending aliases may complete during resolution. Only diagnose their
+    /// participant types after the fixed point has stopped producing evidence.
+    pub fn diagnoseUnresolvedParticipants(self: *Resolver) void {
+        for (self.graph.contract_conformances.items) |conformance| {
+            for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+                if (argument.value != .type or !self.graph.isTypeUnresolved(argument.value.type)) continue;
+                self.participant_conformance_failure = .{
+                    .source = conformance.source,
+                    .contract_name = self.graph.familyDefinitionName(conformance.declaration),
+                    .reason = "an implementation participant type is unknown or unresolved",
+                };
+                return;
+            }
+        }
+    }
+
     pub fn validateParticipantConformances(self: *Resolver) !void {
         const measurement = if (self.core.scan_profile) |profile| profile.begin(.conformance_validation) else null;
         defer if (measurement) |m| m.finish(false);
@@ -2246,9 +2262,9 @@ pub const Resolver = struct {
             };
             for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
                 if (self.graph.isTypeUnresolved(argument.value.type)) {
-                    failure.reason = "an implementation participant type is unknown or unresolved";
-                    self.participant_conformance_failure = failure;
-                    return;
+                    // Module aliases and generic applications can complete in
+                    // the pending-resolution loop after declaration discovery.
+                    continue :conformances;
                 }
             }
             if (!self.core.sameDeclarationNamespace(located.module_index, module_index) and
@@ -2333,6 +2349,12 @@ pub const Resolver = struct {
                 if (requirement.parameters.len != 0 or requirement.signature == null) continue;
                 const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
                 const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
+                if (global_types.fields(self.graph, input) == null) {
+                    failure.operation = name;
+                    failure.reason = "contract operation input must be a record type";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
                 const selected: MethodSelection = selected: {
                     const method = self.resolveOperationBinding(conformance, operation_index) catch |err| switch (err) {
                         error.DeferredGenericFunction, error.ComptimeExecutionPending => continue :conformances,
@@ -2586,11 +2608,14 @@ pub const Resolver = struct {
                 .pointer => |pointer| supplied == .pointer and pointer.mutability == supplied.pointer.mutability,
                 .structural => |record| supplied == .structural and record.fields.len == supplied.structural.fields.len,
                 .generic => |nominal| blk: {
-                    if (supplied != .generic) break :blk false;
                     // Full matching owns diagnostics and ordered inference;
                     // this filter must not report a losing candidate's error.
                     const declaration = self.generics.resolveParameterizedFamily(module_index, nominal.base) catch break :blk true;
-                    break :blk declaration == supplied.generic.base;
+                    if (supplied == .generic and declaration == supplied.generic.base) break :blk true;
+                    const located = self.generics.findTypeParameterized(declaration) orelse break :blk false;
+                    const body = self.modules[located.module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
+                    // Alias applications may preserve another producer's identity.
+                    break :blk body != .definition;
                 },
                 else => true,
             },
@@ -2656,13 +2681,22 @@ pub const Resolver = struct {
                     return true;
                 },
                 .generic => |nominal| {
-                    const concrete = switch (self.graph.types.items[@intFromEnum(actual)]) {
-                        .generic => |value| value,
-                        else => return false,
-                    };
                     const declaration = try self.generics.resolveParameterizedFamily(module_index, nominal.base);
-                    if (declaration != concrete.base) return false;
                     const located = self.generics.findTypeParameterized(declaration) orelse return false;
+                    const actual_type = self.graph.types.items[@intFromEnum(actual)];
+                    if (actual_type != .generic or declaration != actual_type.generic.base) {
+                        // Applying an alias family preserves its result's nominal
+                        // identity. A closed alias may therefore have another
+                        // producer; matching fields never establishes equality.
+                        const body = self.modules[located.module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
+                        if (body == .definition) return false;
+                        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+                            error.ComptimeExecutionPending, error.OutOfMemory => return err,
+                            else => return false,
+                        };
+                        return global_types.equal(self.graph, expected, actual);
+                    }
+                    const concrete = actual_type.generic;
                     if (nominal.arguments.len != located.parameterized.parameters.len or concrete.arguments.len != nominal.arguments.len) return false;
                     for (0..located.parameterized.parameters.len) |position| {
                         const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
@@ -3145,7 +3179,7 @@ test "closed symbolic patterns compare without substitutions or graph mutation" 
         .{ .resolved = .{ .builtin = .UInt8 } },
         .{ .concrete = @enumFromInt(0) },
         .{ .concrete = @enumFromInt(1) },
-        .{ .resolved = .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } } },
+        .{ .resolved = .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } },
     });
     try module.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .type });
     var graph: global_sg.GlobalSemanticGraph = .{};
@@ -3161,9 +3195,9 @@ test "closed symbolic patterns compare without substitutions or graph mutation" 
     try std.testing.expect(try resolver.symbolicTypesEqual(int, int));
     try std.testing.expect(!try resolver.symbolicTypesEqual(int, byte));
     try std.testing.expect(try resolver.symbolicTypesEqual(concrete, equivalent));
-    const nominal = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(4) };
-    try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, nominal));
-    try std.testing.expect(!try resolver.symbolicTypesEqual(nominal, concrete));
+    const reference = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(4) };
+    try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, reference));
+    try std.testing.expect(!try resolver.symbolicTypesEqual(reference, concrete));
     try graph.markTypeUnresolved(allocator, @enumFromInt(1));
     try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, equivalent));
     try std.testing.expectEqual(@as(usize, 2), graph.types.items.len);

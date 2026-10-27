@@ -55,8 +55,12 @@ _write_record := #(.WriterType: Type: Writer#(WriterType)) (
 
 FileLogger := #(.t: Type: Writer#(t)) (._writer: $&t, .minimum: LogLevel)
 
-implement#(.t: Type: Writer#(t)) Init#(FileLogger#(.t: t)) (
-    .init = (.writer: $&t, .minimum: LogLevel = ..info) -> (.result: FileLogger#(.t: t)) {
+FileLoggerInitArgs: Type = #(.t: Type: Writer#(t)) (.writer: $&t, .minimum: LogLevel = ..info)
+
+implement#(.t: Type: Writer#(t)) Init#(FileLogger#(.t: t), FileLoggerInitArgs#(t)) (
+    .Result : Type = FileLogger#(.t: t)
+
+    .init = FileLoggerInitArgs#(t) -> (.result: Result) {
         result = (._writer = writer, .minimum = minimum)
     }
 )
@@ -82,12 +86,18 @@ StdLogger := #(.out: Type: Writer#(out), .err: Type: Writer#(err)) (
     .minimum : LogLevel
 )
 
+StdLoggerInitArgs: Type = #(.out: Type: Writer#(out), .err: Type: Writer#(err)) (
+    .writer       : $&out,
+    .error_writer : $&err,
+    .minimum      : LogLevel = ..info
+)
+
 implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Init#(
-    StdLogger#(.out: out, .err: err)
+    StdLogger#(.out: out, .err: err), StdLoggerInitArgs#(out, err)
 ) (
-    .init = (.writer: $&out, .error_writer: $&err, .minimum: LogLevel = ..info) -> (
-        .result : StdLogger#(.out: out, .err: err)
-    ) {
+    .Result : Type = StdLogger#(.out: out, .err: err)
+
+    .init = StdLoggerInitArgs#(out, err) -> (.result: Result) {
         result = (._out = writer, ._err = error_writer, .minimum = minimum)
     }
 )

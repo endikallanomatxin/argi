@@ -1,7 +1,11 @@
 NoopDeallocator: Type = ()
 
-implement Init#(NoopDeallocator) (
-    .init = () -> (.result: NoopDeallocator) {
+NoopDeallocatorInitArgs: Type = ()
+
+implement Init#(NoopDeallocator, NoopDeallocatorInitArgs) (
+    .Result : Type = NoopDeallocator
+
+    .init = NoopDeallocatorInitArgs -> (.result: Result) {
         result = ()
     }
 )

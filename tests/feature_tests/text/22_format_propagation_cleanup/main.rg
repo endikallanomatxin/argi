@@ -4,8 +4,12 @@ FailFirstAllocator := (
     .deallocations : Int32
 )
 
-implement Init#(FailFirstAllocator) (
-    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: FailFirstAllocator) {
+FailFirstAllocatorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+
+implement Init#(FailFirstAllocator, FailFirstAllocatorInitArgs) (
+    .Result : Type = FailFirstAllocator
+
+    .init = FailFirstAllocatorInitArgs -> (.result: Result) {
         assume ffi := ~ffi
 
         result = (.ffi = ffi, .allocations = 0, .deallocations = 0)

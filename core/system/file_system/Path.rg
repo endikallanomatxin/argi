@@ -40,8 +40,12 @@ string_view_slice := (.view: &StringView, .start: UIntNative, .length: UIntNativ
     out = _string_view_subrange(view&, .start = start, .count = length).view
 }
 
-implement Init#(Path) (
-    .init = (.text: String) -> (.result: Path) {
+PathInitArgs: Type = (.text: String)
+
+implement Init#(Path, PathInitArgs) (
+    .Result : Type = Path
+
+    .init = PathInitArgs -> (.result: Result) {
         _init_text ::= ~text
 
         result = (.text = ~_init_text)

@@ -4,8 +4,12 @@ Owner := (.value: Int32)
 
 implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () { drops = drops + 1 })
 
-implement Init#(Owner) (
-    .init = (.value: Int32) -> (.result: Owner) { result = (.value = value) }
+OwnerInitArgs: Type = (.value: Int32)
+
+implement Init#(Owner, OwnerInitArgs) (
+    .Result : Type = Owner
+
+    .init = OwnerInitArgs -> (.result: Result) { result = (.value = value) }
 )
 
 Pair := (.first: Owner, .second: Owner)

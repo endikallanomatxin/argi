@@ -8,8 +8,12 @@ _ArenaBlock := (
 -- reset. Updating only the marker would leave the former generation ended.
 ArenaDomain := (.marker: Bool)
 
-implement Init#(ArenaDomain) (
-    .init = () -> (.result: ArenaDomain) {
+ArenaDomainInitArgs: Type = ()
+
+implement Init#(ArenaDomain, ArenaDomainInitArgs) (
+    .Result : Type = ArenaDomain
+
+    .init = ArenaDomainInitArgs -> (.result: Result) {
         result = (.marker = false)
     }
 )
@@ -30,10 +34,15 @@ ArenaAllocator := (
     ._current_block_offset : UIntNative
 )
 
-implement Init#(ArenaAllocator) (
-    .init = #(.Provider: Type: Allocator) (
-        .allocator : $&Provider = reach allocator, .block_size: UIntNative = 4096
-    ) -> (.result: Errable#(ArenaAllocator, (..out_of_memory))) {
+ArenaAllocatorInitArgs: Type = #(.Provider: Type: Allocator) (
+    .allocator  : $&Provider = reach allocator,
+    .block_size : UIntNative = 4096
+)
+
+implement#(.Provider: Type: Allocator) Init#(ArenaAllocator, ArenaAllocatorInitArgs#(Provider)) (
+    .Result : Type = Errable#(ArenaAllocator, (..out_of_memory))
+
+    .init = ArenaAllocatorInitArgs#(Provider) -> (.result: Result) {
         _init_allocator ::= allocator
         _init_block_size ::= block_size
 

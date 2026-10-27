@@ -1530,13 +1530,13 @@ test "interactive Init wrappers retain assumed capabilities from earlier command
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Init#(.T: Type): Contract = (.init: _)");
+    const loaded = try sources.loadModule(&diagnostics, "Init#(.Target: Type, .Args: Type): Contract = (.Result: Type, .init: Args -> (.result: Result))");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Capability := (.value: Int32)\nBox := (.value: Int32)\nread_capability := (.permission: &Capability = reach permission) -> (.value: Int32) { value = permission&.value }\nimplement Init#(Box) (.init = () -> (.result: Box) { result = (.value = read_capability()) })");
+    try session.submitDefinitions("Capability := (.value: Int32)\nBox := (.value: Int32)\nread_capability := (.permission: &Capability = reach permission) -> (.value: Int32) { value = permission&.value }\nBoxInitArgs: Type = ()\n\nimplement Init#(Box, BoxInitArgs) (\n    .Result: Type = Box\n.init = BoxInitArgs -> (.result: Box) { result = (.value = read_capability()) })");
     try session.submitStatements("token :: Capability = (.value = 42)\nassume permission ::= &token");
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Box().value")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("missing_capability_command"));
@@ -1761,7 +1761,7 @@ test "interactive Init selects target before inferring implementation parameters
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "Init#(.T: Type): Contract = (.init: _)");
+    const loaded = try sources.loadModule(&diagnostics, "Init#(.Target: Type, .Args: Type): Contract = (.Result: Type, .init: Args -> (.result: Result))");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: Interactive = undefined;
@@ -1769,8 +1769,12 @@ test "interactive Init selects target before inferring implementation parameters
     defer session.deinit();
     try session.submitDefinitions(
         \\Pair := #(.Left: Type, .Right: Type) (.left: Left, .right: Right)
-        \\implement#(.Left: Type, .Right: Type) Init#(Pair#(Left, Right)) (
-        \\    .init = (.left: Left, .right: Right) -> (.result: Pair#(Left, Right)) {
+        \\PairInitArgs: Type = #(.Left: Type, .Right: Type) (.left: Left, .right: Right)
+        \\
+        \\implement#(.Left: Type, .Right: Type) Init#(Pair#(Left, Right), PairInitArgs#(Left, Right)) (
+        \\    .Result: Type = Pair#(Left, Right)
+        \\
+        \\    .init = PairInitArgs#(Left, Right) -> (.result: Pair#(Left, Right)) {
         \\        result = (.left = ~left, .right = ~right)
         \\    }
         \\)
@@ -1778,18 +1782,30 @@ test "interactive Init selects target before inferring implementation parameters
         \\Other := (.value: Int32)
         \\Provider := (.flag: Bool)
         \\Container := #(.T: Type) (.value: T)
-        \\implement#(.T: Type) Init#(Container#(T)) (
-        \\    .init = #(.P: Type) (.provider: &P, .value: T) -> (.result: Container#(T)) {
+        \\ContainerInitArgs2: Type = #(.T: Type, .P: Type) (.provider: &P, .value: T)
+        \\
+        \\implement#(.T: Type, .P: Type) Init#(Container#(T), ContainerInitArgs2#(T, P)) (
+        \\    .Result: Type = Container#(T)
+        \\
+        \\    .init = ContainerInitArgs2#(T, P) -> (.result: Container#(T)) {
         \\        result = (.value = ~value)
         \\    }
         \\)
-        \\implement Init#(Point) (
-        \\    .init = #(.P: Type) (.provider: &P, .value: Int32 = 42) -> (.result: Point) {
+        \\PointInitArgs3: Type = #(.P: Type) (.provider: &P, .value: Int32 = 42)
+        \\
+        \\implement#(.P: Type) Init#(Point, PointInitArgs3#(P)) (
+        \\    .Result: Type = Point
+        \\
+        \\    .init = PointInitArgs3#(P) -> (.result: Point) {
         \\        result = (.value = value)
         \\    }
         \\)
-        \\implement Init#(Other) (
-        \\    .init = (.value: Int32 = 7) -> (.result: Other) { result = (.value = value) }
+        \\OtherInitArgs4: Type = (.value: Int32 = 7)
+        \\
+        \\implement Init#(Other, OtherInitArgs4) (
+        \\    .Result: Type = Other
+        \\
+        \\    .init = OtherInitArgs4 -> (.result: Other) { result = (.value = value) }
         \\)
     );
     try session.submitStatements("provider: Provider = (.flag = true)\nfirst ::= Point(.provider = &provider)");

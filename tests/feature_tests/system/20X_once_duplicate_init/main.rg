@@ -1,11 +1,16 @@
 Token: Type = ()
+
 TokenArgs: Type = ()
 
 _acquire_token := once TokenArgs -> (.result: Token) {
     result = ()
 }
 
-implement Init#(Token) (
+TokenInitArgs: Type = TokenArgs
+
+implement Init#(Token, TokenInitArgs) (
+    .Result : Type = Token
+
     .init = _acquire_token
 )
 

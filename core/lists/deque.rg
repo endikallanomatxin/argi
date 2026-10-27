@@ -2,10 +2,17 @@
 -- logical order into new storage and moves every element exactly once.
 Deque := #(.t: Type) (._ring: RingBuffer#(.t: t))
 
-implement#(.t: Type) Init#(Deque#(.t: t)) (
-    .init = #(.Provider: Type: Allocator) (
-        .capacity : UIntNative = 8, .allocator: $&Provider = reach allocator
-    ) -> (.result: Errable#(Deque#(.t: t), (..out_of_memory))) {
+DequeInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
+    .capacity  : UIntNative = 8,
+    .allocator : $&Provider = reach allocator
+)
+
+implement#(.t: Type, .Provider: Type: Allocator) Init#(
+    Deque#(.t: t), DequeInitArgs#(t, Provider)
+) (
+    .Result : Type = Errable#(Deque#(.t: t), (..out_of_memory))
+
+    .init = DequeInitArgs#(t, Provider) -> (.result: Result) {
         _init_capacity ::= capacity
         _init_allocator ::= allocator
 

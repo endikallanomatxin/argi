@@ -9,7 +9,11 @@ _acquire_environment_variables := once _EnvironmentVariablesInitArgs -> (
     result._ffi = ffi
 }
 
-implement Init#(EnvironmentVariables) (
+EnvironmentVariablesInitArgs: Type = _EnvironmentVariablesInitArgs
+
+implement Init#(EnvironmentVariables, EnvironmentVariablesInitArgs) (
+    .Result : Type = EnvironmentVariables
+
     .init = _acquire_environment_variables
 )
 

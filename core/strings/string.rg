@@ -73,10 +73,15 @@ string_with_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok ~out
 }
 
-implement Init#(String) (
-    .init = #(.A: Type: Allocator) (.allocator: $&A = reach allocator, .length: UIntNative = 0) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) {
+StringInitArgs: Type = #(.A: Type: Allocator) (
+    .allocator : $&A        = reach allocator,
+    .length    : UIntNative = 0
+)
+
+implement#(.A: Type: Allocator) Init#(String, StringInitArgs#(A)) (
+    .Result : Type = Errable#(String, (..out_of_memory))
+
+    .init = StringInitArgs#(A) -> (.result: Result) {
         result = string_with_length(.allocator = allocator, .length = length)
     }
 )

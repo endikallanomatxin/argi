@@ -1,7 +1,11 @@
 Box := #(.T: Type) (.value: T, .small: Int8)
 
-implement#(.T: Type) Init#(Box#(T)) (
-    .init = (.value: T, .small: Int8 = 128) -> (.result: Box#(T)) {
+BoxInitArgs: Type = #(.T: Type) (.value: T, .small: Int8 = 128)
+
+implement#(.T: Type) Init#(Box#(T), BoxInitArgs#(T)) (
+    .Result : Type = Box#(T)
+
+    .init = BoxInitArgs#(T) -> (.result: Result) {
         result = (.value = value, .small = small)
     }
 )

@@ -177,8 +177,8 @@ pub const Resolver = struct {
     }
 
     /// Input signatures infer missing target parameters; results never select
-    /// a constructor or distinguish conformances for the same target.
-    const ContractArguments = struct { target: global_sg.GlobalTypeId };
+    /// a constructor or distinguish conformances for the same participant tuple.
+    const ContractArguments = struct { target: global_sg.GlobalTypeId, args: global_sg.GlobalTypeId };
 
     fn inferContractArguments(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, target: ?global_sg.GlobalTypeId, family: ?global_sg.GlobalFamilyDefinitionId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
         const participant: implementation_arguments.Participant = if (target) |known| .{ .known = known } else .{ .partial = .{ .family = family.?, .arguments = .{ .start = 0, .len = 0 } } };
@@ -212,15 +212,15 @@ pub const Resolver = struct {
             .functions = self.generic_functions.?,
             .contracts = self.contracts.?,
         };
-        const selection_result = try resolver.inferOperation(declaration, &.{participant}, "init", input, reach);
+        const selection_result = try resolver.inferOperation(declaration, &.{ participant, .inferred }, "init", input, reach);
         switch (selection_result) {
             .selected => |selection| {
                 defer self.core.allocator.free(selection.participants);
-                return .{ .target = selection.participants[0] };
+                return .{ .target = selection.participants[0], .args = selection.participants[1] };
             },
             .none => return null,
             .deferred => return error.DeferredContractInitializer,
-            .ambiguous => try self.reportConstructorError(source, "ambiguous Init participants; specify more compile-time target arguments"),
+            .ambiguous => try self.reportConstructorError(source, "ambiguous Init participants; specify target parameters or qualify Init with an explicit argument type"),
             .missing_reach => |field| {
                 const message = try std.fmt.allocPrint(self.core.allocator, "Init argument '.{s}' requires a reachable value or an explicit argument", .{self.graph.text(field.name)});
                 defer self.core.allocator.free(message);
@@ -237,15 +237,14 @@ pub const Resolver = struct {
         defer scope.deinit();
         const declaration = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
         const contracts = self.contracts orelse return null;
-        var deferred = false;
-        const selected = try contracts.selectConformance(declaration, &.{ty}, null, 0, &deferred);
-        if (selected == null) {
-            if (deferred) return error.DeferredContractInitializer;
-            return null;
-        }
+        const selected = try self.inferConstructorArguments(declaration, .{ .known = ty }, input, reach, source) orelse return null;
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        try self.graph.generic_arguments.append(self.core.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = ty } });
-        const contract_type = try self.generics.?.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 1 } } });
+        try self.graph.generic_arguments.appendSlice(self.core.allocator, &.{
+            .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = selected.target } },
+            .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = selected.args } },
+        });
+        const contract_type = try self.generics.?.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 2 } } });
+        contracts.participant_conformance_failure = null;
         const call = contracts.makeScopedOperationCall(module_index, contract_type, "init", input, reach, source) catch |err| switch (err) {
             error.InvalidGenericCallArguments => {
                 try self.reportConstructorError(source, "construction arguments do not match the selected Init operation signature");
@@ -257,7 +256,13 @@ pub const Resolver = struct {
                 return err;
             },
             else => return err,
-        } orelse return error.DeferredContractInitializer;
+        } orelse {
+            if (contracts.participant_conformance_failure) |failure| {
+                try self.reportConstructorError(source, failure.reason);
+                return error.InvalidInitializerArguments;
+            }
+            return error.DeferredContractInitializer;
+        };
         scope.commit();
         return call;
     }

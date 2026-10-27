@@ -8,8 +8,12 @@ implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () { drops = drops + 1 }
 )
 
-implement Init#(Witness) (
-    .init = (.pair: (.left: $&Owner, .right: &Owner)) -> (.result: Witness) {
+WitnessInitArgs: Type = (.pair: (.left: $&Owner, .right: &Owner))
+
+implement Init#(Witness, WitnessInitArgs) (
+    .Result : Type = Witness
+
+    .init = WitnessInitArgs -> (.result: Result) {
         Deinit#(Owner).deinit(.self = pair.left)
         result = ()
     }

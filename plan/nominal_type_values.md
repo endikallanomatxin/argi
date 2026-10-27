@@ -136,20 +136,21 @@ participants; unresolved ambiguity requires explicit disambiguation. This does n
 introduce ordinary-function overloading or let associated values distinguish two
 conformances for the same participants.
 
-The intended direction is to remove argument records as incidental conformance
-participants in protocols such as `Init` and arithmetic. A concrete `.Args: Type`
-is sufficient only for a non-generic argument type. A generic operation requires
-a signature/type family, not several conflicting `Init#(String)` conformances
-distinguished by a free allocator parameter. Do not impose a provider participant
-on every protocol or implicitly erase allocators to virtual values.
+Canonical construction uses `Init#(Target, Args)`. Both parameters are concrete
+nominal types identifying a conformance. `Result` is associated and must be Target
+or one Errable containing Target. The required operation is
+`.init: Args -> (.result: Result)`; construction has no open-signature exception.
 
-A written constructor target fixes the `T` participant of `Init#(T)`; identical
-argument shapes on other targets introduce no ambiguity. Arithmetic operands fix
-`Left` and `Right` in the same way. Auxiliary arguments and allocator types belong
-to the operation signature and associated `Args`, not additional conformance
-participants. Infer remaining operation parameters from inputs and require explicit
-arguments when that inference is ambiguous. A partially specified target can still
-require input inference, but must preserve every explicitly supplied parameter.
+`T(...)` fixes Target and infers Args against applicable input signatures, without
+inventing structural identities for call literals. Generic implementation parameters,
+including allocator types, must be determined by the participants. They specialize
+the selected implementation through Args; no virtual allocator is required.
+
+Several conformances may target the same type. Different inferred argument types
+are ambiguous unless the call is explicitly disambiguated. Specificity compares
+only conformances for the same complete tuple. Different target types may share
+argument types or shapes. Return types never select a conformance. Partially
+specified targets preserve every explicitly supplied parameter.
 
 Operation implementation compatibility is separate from type equality. Required
 inputs match by position, name and ordinary type equality; additional implementation
@@ -207,106 +208,39 @@ before adding implementation exceptions.
 
 ## Current state and remaining work
 
-The branch uses `#(...)` throughout. Definition expressions own generic
-parameters; type/function families and aliases retain stable originating IDs and
-captures. Struct and payload-choice identity is separate from representation.
-ModuleSema uses shared canonical pools instead of discovery/body overlays and a
-final canonicalization copy. Definition completion remains transactional.
+Implemented:
 
-Named, imported and deferred function signatures retain their input/output type
-identities, defaults and dependencies. Contextual construction, generic aliases,
-associated families and compile-time entries use the common resolution pipeline.
-Existing focused coverage includes native, VM, REPL and `#run`; that coverage is
-not proof that the complete migration passes.
+- Definition expressions own compile-time parameters. Aliases preserve type,
+  family, function and once identities, including lexical captures.
+- Nominal record/choice identity is separate from representation. Named,
+  imported and deferred signatures retain their types, defaults and dependencies.
+- ModuleSema uses shared pools without discovery/body overlays or a final
+  canonicalization copy. Definition completion remains transactional.
+- Operation bindings retain ordinary expressions and captured prefixes. Associated
+  members share the implementation scope; input inference never uses outputs.
+- Core, more and constructor fixtures use Init#(Target, Args), with Result
+  associated. Generic allocators specialize through Args. Standard hash collection
+  construction supplies its policy internally; explicit-policy routes require it.
+- Named inputs take lexical precedence over captured parameters. Deferred defaults
+  reuse caller assumptions and roll back provisional effects before retrying.
 
-The `.operation: _` spelling is transitional. The final contract model must
-retain an explicit relationship between associated inputs/outputs and the
-operation signature. A concrete `Args: Type` works for concrete operations;
-operation-local parameters require associated families with the same scope.
-Do not treat an unconstrained open operation as the completed signature model.
+Validation is not complete. The consolidated ReleaseSafe program run passes
+2,442 cases, skips 11 optional cases and leaves two diagnostic failures for
+unknown constructor/destructor participants. The compiler now diagnoses those
+only after resolution reaches its fixed point, preserving delayed alias completion.
+Focused validation passes all four affected cases, including delayed alias
+specialization and invalid defaults. The complete Debug internal suite passes,
+including LSP navigation and closed-pattern coverage. Official formatting passes
+for core and more. Repeat the final suites after any further semantic changes.
 
-Implementation-owned operation signatures currently use `.operation: _`. Their definitions
-or aliases use ordinary function inference, defaults, reached capabilities and
-Safety. Qualified static calls work; erased virtual interfaces require fixed
-signatures. Unqualified static calls infer participants from input signatures,
-resolve operation identity before conformance specificity, and preserve inferred
-types through probe rollback using the existing type recipes. Projected signature
-properties remain to be reviewed where required by the final contract design.
+Before completion:
 
-Init now has only T as participant. The constructor resolver selects its evidence
-before inferring operation-local parameters and passes ordinary inputs directly.
-There is no two-participant Init or wrapping of construction inputs in Args.
-Arithmetic now also selects by two operand participants and calls an
-implementation-owned signature directly. Auxiliary providers specialize the
-callable. The legacy argument-record inference and wrapping path has been
-removed; named records remain ordinary signature types, including MatrixProductArgs.
-Partial-target inference maps the operation's captured parameter IDs back to the
-implementation by capture position. Different inferred targets are ambiguous;
-conformance specificity only compares candidates for one concrete tuple.
-
-Core, more and 104 former fixture implementations have been migrated. Auxiliary
-providers belong to the init function unless they are part of the target type.
-Named once acquisition functions retain their identity and named input types.
-Utf8Decoder takes byte views; text explicitly projects its bytes. File retains
-its once empty-handle Init, uses file_from_stream for native stream handles, and
-FileOpening/AllocatingFileOpening for fallible path factories.
-
-Input defaults remain signature recipes until a caller omits an argument.
-Contextual aggregate completion captures lexical assumptions alongside visible
-bindings, preserving caller-owned temporary storage and capability inference.
-Literal defaults retain the destination width for ordinary range validation.
-
-Operation bindings retain ordinary definition expressions, including deferred
-aliases and bound compile-time prefixes. Evidence checks both producer and
-captures, preserving `once` identity. Static aliases retained by the REPL are
-available to later implementations without exposing runtime storage to module
-definitions. Focused validation passes 357 program tests and 43 internal tests,
-covering fixed/open signatures, partial specialization, native/VM/comptime calls,
-REPL persistence and invalid aliases.
-
-Implementation members accept specialized function expressions directly. Type
-and callable applications share input inference; `Init#(Box#(T))` can reuse
-`make_box#(T)` while `Box(value)` infers `T`. Defaults and operation values share
-captured-expression recipes, including deferred aliases and journaled completion.
-Dormant templates no longer publish unused operation-binding records.
-
-Operation-value expressions now share the implementation's associated scope.
-Type and integer members can specialize ordinary functions, and input-derived
-facts can bind declared associated patterns without inferring from outputs.
-The public Init contract has not been changed while its signature model is reviewed.
-
-Outstanding before completion:
-
-- Settle the explicit Args/Result signature model before changing public standard
-  contracts. One Init conformance per target is retained. Rust-style generic
-  associated inputs would fix the operation's generic binder in the contract;
-  implementation-owned binders are a distinct design and remain under review.
-- Review remaining anonymous aggregate/choice identities, contextual literals,
-  associated signature properties and generic operation inference against the
-  design above. Remove obsolete representations rather than keep fallbacks.
-- Check shorthand assume on named signatures whose fields become known late;
-  current acquisition functions retain explicit assume bindings.
-- Finish fixture diagnostics, editor navigation and declaration metadata cleanup;
-  synchronize examples and documentation with the final APIs.
-- Run complete internal/program suites, official formatting and differential
-  native/VM/REPL/comptime coverage, including ownership, defaults, rejected
-  transactions, imports, caches and generic cleanup.
-
-The full internal suite passes after the function identity changes. Focused
-program coverage passes for definition-value once syntax, alias reuse rejection,
-generic and inline Init once consumption, C callback rejection and concrete
-C-ABI definition values. Function aliases execute in native, VM and compile-time
-contexts. Parameterized functions preserve the once property when materialized.
-The focused equality program suite passes, including missing-capability and
-duplicate-conformance diagnostics. The word-count use case also passes after
-restoring standard hash-policy resolution through borrowed Equal evidence.
-The complete contract program suite passes after the arithmetic migration,
-including static provider inference in native, VM and #run execution. Required
-operation results are checked against Result; auxiliary inputs cannot create
-another conformance for one operand tuple. Former structural argument fixtures
-now use explicit nominal argument families. Full program validation passed on
-a464d1b1: 2,427 passed and 11 optional skips. Payloadless choice equality
-selects ordinary Equal evidence through a private representation fact; distinct
-nominal choices remain incompatible. The subsequent unqualified-operation changes
-pass the internal and contract suites, plus native/VM/compile-time inference and
-REPL rollback coverage. Repeat full validation after closing the remaining work.
+- Pass the complete program and internal suites on the consolidated changes,
+  including native/VM/REPL/comptime, rejected transactions, imports, caches,
+  partial targets, defaults, ambiguity, ownership and cleanup.
+- Audit remaining aggregate/choice identity and contextual construction paths;
+  remove identity fallbacks or declaration metadata that the new model supersedes.
+- Check generic operation inference and signature compatibility against this
+  reference; preserve static providers and explicit operation identities.
+- Synchronize examples and descriptions, check official formatting, and commit
+  the coherent migration without the local architecture audit or for-later note.

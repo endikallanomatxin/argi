@@ -17,12 +17,20 @@ _init_hash_set := #(
     result = ..ok(._map = ~map)
 }
 
-implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) Init#(
-    HashSet#(.key: key, .policy: policy)
+HashSetInitArgs: Type = #(
+    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator
 ) (
-    .init = #(.Provider: Type: Allocator) (
-        .policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8
-    ) -> (.result: Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))) {
+    .policy    : policy,
+    .allocator : $&Provider,
+    .capacity  : UIntNative  = 8
+)
+
+implement#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator) Init#(
+    HashSet#(.key: key, .policy: policy), HashSetInitArgs#(key, policy, Provider)
+) (
+    .Result : Type = Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
+
+    .init = HashSetInitArgs#(key, policy, Provider) -> (.result: Result) {
         constructed ::= _init_hash_set#(.key: key)(
             .policy = ~policy, .allocator = allocator, .capacity = capacity
         )!
@@ -30,18 +38,23 @@ implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) Init#(
     }
 )
 
-implement#(.key: Type: _StandardHashKey#(key)) Init#(
-    HashSet#(.key: key, .policy: StandardHashPolicy)
+StandardHashSetInitArgs: Type = #(
+    .key: Type: _StandardHashKey#(key), .Provider: Type: Allocator
 ) (
-    .init = #(.Provider: Type: Allocator) (
-        .policy    : StandardHashPolicy = StandardHashPolicy(),
-        .allocator : $&Provider,
-        .capacity  : UIntNative         = 8
-    ) -> (
-        .result : Errable#(HashSet#(.key: key, .policy: StandardHashPolicy), (..out_of_memory))
-    ) {
+    .allocator : $&Provider,
+    .capacity  : UIntNative  = 8
+)
+
+implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#(
+    HashSet#(.key: key, .policy: StandardHashPolicy), StandardHashSetInitArgs#(key, Provider)
+) (
+    .Result : Type = Errable#(
+        HashSet#(.key: key, .policy: StandardHashPolicy), (..out_of_memory)
+    )
+
+    .init = StandardHashSetInitArgs#(key, Provider) -> (.result: Result) {
         constructed ::= _init_hash_set#(.key: key)(
-            .policy = ~policy, .allocator = allocator, .capacity = capacity
+            .policy = StandardHashPolicy(), .allocator = allocator, .capacity = capacity
         )!
         result = ..ok ~constructed
     }

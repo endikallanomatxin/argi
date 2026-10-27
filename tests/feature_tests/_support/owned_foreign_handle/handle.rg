@@ -30,10 +30,16 @@ violations() -> (.count: CInt): CFunction(.symbol = "argi_c_owned_violations")
 -- The C binding transfers one handle on success; a null result acquires
 -- nothing. The wrapper keeps it private, provides no copy operation, and
 -- retains the caller's capability for every access and release.
-implement Init#(OwnedHandle) (
-    .init = (.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi) -> (
-        .result : Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))
-    ) {
+OwnedHandleInitArgs: Type = (
+    .value : CInt,
+    .fail  : Bool                       = false,
+    .ffi   : $&ForeignFunctionInterface = reach ffi
+)
+
+implement Init#(OwnedHandle, OwnedHandleInitArgs) (
+    .Result : Type = Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))
+
+    .init = OwnedHandleInitArgs -> (.result: Result) {
         _init_value ::= ~value
         _init_fail ::= ~fail
         assume ffi := ~ffi
@@ -66,10 +72,15 @@ GenericHandle := #(.t: Type) (
     .tag     : t
 )
 
-implement#(.t: Type) Init#(GenericHandle#(.t: t)) (
-    .init = (.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi) -> (
-        .result : Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))
-    ) {
+GenericHandleInitArgs2: Type = #(.t: Type) (
+    .tag : t,
+    .ffi : $&ForeignFunctionInterface = reach ffi
+)
+
+implement#(.t: Type) Init#(GenericHandle#(.t: t), GenericHandleInitArgs2#(t)) (
+    .Result : Type = Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))
+
+    .init = GenericHandleInitArgs2#(t) -> (.result: Result) {
         _init_tag ::= ~tag
         assume ffi := ~ffi
 

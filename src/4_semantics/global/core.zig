@@ -1746,9 +1746,12 @@ pub const Resolver = struct {
         );
     }
 
-    fn instantiateCapturedExpression(self: *Resolver, fallback: global_sg.GlobalNodeId, context: reach_context.Context) !global_sg.GlobalNodeId {
-        const defaults = self.captured_expressions orelse return error.DeferredGenericFunction;
-        return defaults.instantiate(defaults.context, self.graph.node(fallback).content.captured_expression, context);
+    fn instantiateCapturedExpression(self: *Resolver, fallback: global_sg.GlobalNodeId, context: reach_context.Context) anyerror!?global_sg.GlobalNodeId {
+        const defaults = self.captured_expressions orelse return null;
+        return defaults.instantiate(defaults.context, self.graph.node(fallback).content.captured_expression, context) catch |err| switch (err) {
+            error.DeferredGenericFunction => null,
+            else => return err,
+        };
     }
 
     fn completeAggregateValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context, depth: usize) anyerror!bool {
@@ -1807,7 +1810,7 @@ pub const Resolver = struct {
         expected_fields: global_sg.FieldRange,
         input_node: global_sg.GlobalNodeId,
         context: reach_context.Context,
-    ) !bool {
+    ) anyerror!bool {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
             .struct_value_literal => |value| value,
             else => return false,
@@ -1838,16 +1841,13 @@ pub const Resolver = struct {
             var node = self.callArgument(literal, offset, expected.name);
             if (node == null) {
                 const fallback = expected.default_value orelse return false;
-                node = if (self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive)
-                    try self.resolveReachedDefault(
-                        context,
-                        fallback,
-                        expected.ty,
-                    )
-                else if (self.graph.node(fallback).content == .captured_expression)
-                    try self.instantiateCapturedExpression(fallback, if (literal.assumed_fields.len != 0) context.withAssumedFields(literal.assumed_fields) else context)
-                else
-                    fallback;
+                if (self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive) {
+                    node = try self.resolveReachedDefault(context, fallback, expected.ty);
+                } else if (self.graph.node(fallback).content == .captured_expression) {
+                    node = try self.instantiateCapturedExpression(fallback, if (literal.assumed_fields.len != 0) context.withAssumedFields(literal.assumed_fields) else context);
+                } else {
+                    node = fallback;
+                }
                 if (node == null and self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive)
                     node = try self.propagateReachedDefault(
                         context.ownerFunction(),

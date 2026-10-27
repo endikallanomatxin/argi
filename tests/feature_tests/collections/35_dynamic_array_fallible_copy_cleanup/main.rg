@@ -20,8 +20,12 @@ FailFourthAllocator := (
     .backing_freed_after_elements : Bool
 )
 
-implement Init#(FailFourthAllocator) (
-    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: FailFourthAllocator) {
+FailFourthAllocatorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+
+implement Init#(FailFourthAllocator, FailFourthAllocatorInitArgs) (
+    .Result : Type = FailFourthAllocator
+
+    .init = FailFourthAllocatorInitArgs -> (.result: Result) {
         assume ffi := ~ffi
 
         result.ffi = ffi

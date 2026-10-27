@@ -3,8 +3,12 @@ Point := (
     .y : Int32,
 )
 
-implement Init#(Point) (
-    .init = (.x: Int32, .y: Int32) -> (.result: Point) {
+PointInitArgs: Type = (.x: Int32, .y: Int32)
+
+implement Init#(Point, PointInitArgs) (
+    .Result : Type = Point
+
+    .init = PointInitArgs -> (.result: Result) {
         _init_x ::= ~x
         _init_y ::= ~y
 

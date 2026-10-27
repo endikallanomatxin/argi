@@ -8,6 +8,10 @@ _acquire_foreign_function_interface := once _ForeignFunctionInterfaceInitArgs ->
     result = ()
 }
 
-implement Init#(ForeignFunctionInterface) (
+ForeignFunctionInterfaceInitArgs: Type = _ForeignFunctionInterfaceInitArgs
+
+implement Init#(ForeignFunctionInterface, ForeignFunctionInterfaceInitArgs) (
+    .Result : Type = ForeignFunctionInterface
+
     .init = _acquire_foreign_function_interface
 )

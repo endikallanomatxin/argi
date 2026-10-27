@@ -32,10 +32,16 @@ GeneralPurposeAllocator := (
     ._large_head        : UIntNative
 )
 
-implement Init#(GeneralPurposeAllocator) (
-    .init = #(.Provider: Type: Allocator) (.allocator: $&Provider = reach allocator) -> (
-        .result : GeneralPurposeAllocator
-    ) {
+GeneralPurposeAllocatorInitArgs: Type = #(.Provider: Type: Allocator) (
+    .allocator : $&Provider = reach allocator
+)
+
+implement#(.Provider: Type: Allocator) Init#(
+    GeneralPurposeAllocator, GeneralPurposeAllocatorInitArgs#(Provider)
+) (
+    .Result : Type = GeneralPurposeAllocator
+
+    .init = GeneralPurposeAllocatorInitArgs#(Provider) -> (.result: Result) {
         _init_allocator ::= allocator
 
         result = (

@@ -94,7 +94,11 @@ _acquire_network := once _NetworkInitArgs -> (.result: Network) {
     result = (._ffi = ffi, ._ready = _network_init().status == 0)
 }
 
-implement Init#(Network) (
+NetworkInitArgs: Type = _NetworkInitArgs
+
+implement Init#(Network, NetworkInitArgs) (
+    .Result : Type = Network
+
     .init = _acquire_network
 )
 
@@ -215,12 +219,14 @@ port := (.self: &NetworkAddress, .network: &Network = reach network) -> (.value:
 
 TcpConnection := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(TcpConnection) (
-    .init = (.address: NetworkAddress, .network: &Network = reach network) -> (
-        .result : Errable#(
-            TcpConnection, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-        )
-    ) {
+TcpConnectionInitArgs: Type = (.address: NetworkAddress, .network: &Network = reach network)
+
+implement Init#(TcpConnection, TcpConnectionInitArgs) (
+    .Result : Type = Errable#(
+        TcpConnection, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
+    )
+
+    .init = TcpConnectionInitArgs -> (.result: Result) {
         _init_address ::= address
         _init_network ::= network
 
@@ -294,12 +300,14 @@ _local_address_TcpConnection := (.self: &TcpConnection) -> (
 
 TcpListener := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(TcpListener) (
-    .init = (.address: NetworkAddress, .network: &Network = reach network) -> (
-        .result : Errable#(
-            TcpListener, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-        )
-    ) {
+TcpListenerInitArgs: Type = (.address: NetworkAddress, .network: &Network = reach network)
+
+implement Init#(TcpListener, TcpListenerInitArgs) (
+    .Result : Type = Errable#(
+        TcpListener, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
+    )
+
+    .init = TcpListenerInitArgs -> (.result: Result) {
         _init_address ::= address
         _init_network ::= network
 
@@ -373,12 +381,14 @@ _local_address_TcpListener := (.self: &TcpListener) -> (
 
 UdpSocket := (._network: &Network, ._handle: UIntNative)
 
-implement Init#(UdpSocket) (
-    .init = (.address: NetworkAddress, .network: &Network = reach network) -> (
-        .result : Errable#(
-            UdpSocket, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
-        )
-    ) {
+UdpSocketInitArgs: Type = (.address: NetworkAddress, .network: &Network = reach network)
+
+implement Init#(UdpSocket, UdpSocketInitArgs) (
+    .Result : Type = Errable#(
+        UdpSocket, (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
+    )
+
+    .init = UdpSocketInitArgs -> (.result: Result) {
         _init_address ::= address
         _init_network ::= network
 

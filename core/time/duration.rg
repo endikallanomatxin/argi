@@ -3,8 +3,12 @@ Duration := (._nanoseconds: UInt64)
 
 implement ImplicitlyCopyable#(Duration) ()
 
-implement Init#(Duration) (
-    .init = (.nanoseconds: UInt64) -> (.result: Duration) {
+DurationInitArgs: Type = (.nanoseconds: UInt64)
+
+implement Init#(Duration, DurationInitArgs) (
+    .Result : Type = Duration
+
+    .init = DurationInitArgs -> (.result: Result) {
         _init_nanoseconds ::= nanoseconds
 
         result = (._nanoseconds = _init_nanoseconds)

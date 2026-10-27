@@ -85,12 +85,16 @@ _tuple_set(
     .object  : RawPointer#(.t: _PyObject)
 ) -> (.status: Int32): CFunction(.symbol = "_argi_python_tuple_set")
 
-implement Init#(Python) (
-    .init = (
-        .ffi          : $&ForeignFunctionInterface,
-        .program_name : StringView                  = "python3",
-        .home         : StringView                  = "",
-    ) -> (.result: Errable#(Python, (..python_initialization_failed))) {
+PythonInitArgs: Type = (
+    .ffi          : $&ForeignFunctionInterface,
+    .program_name : StringView                  = "python3",
+    .home         : StringView                  = "",
+)
+
+implement Init#(Python, PythonInitArgs) (
+    .Result : Type = Errable#(Python, (..python_initialization_failed))
+
+    .init = PythonInitArgs -> (.result: Result) {
         _init_ffi ::= ffi
         _init_program_name ::= program_name
         _init_home ::= home

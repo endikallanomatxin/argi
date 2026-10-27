@@ -2,8 +2,12 @@ Counter := (
     .value : Int32
 )
 
-implement Init#(Counter) (
-    .init = () -> (.result: Counter) {
+CounterInitArgs: Type = ()
+
+implement Init#(Counter, CounterInitArgs) (
+    .Result : Type = Counter
+
+    .init = CounterInitArgs -> (.result: Result) {
         result = (.value = 7)
     }
 )

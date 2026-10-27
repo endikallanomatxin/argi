@@ -27,7 +27,7 @@ pub const ParameterBinding = struct {
 
 const BindingName = struct {
     name: []const u8,
-    id: ir.ParameterizedBindingId,
+    id: ?ir.ParameterizedBindingId,
     assumed: bool = false,
 };
 
@@ -176,6 +176,7 @@ pub fn lowerConcreteArguments(graph: *graph_mod.ModuleSemanticGraph, writer: *wr
 const PipeOperandOverride = struct { syntax: syn.NodeIndex, value: ir.ParameterizedNodeId };
 
 pub const Context = struct {
+    deferred_signature_names: bool = false,
     in_defer: bool = false,
     defer_loop_depth: u32 = 0,
     diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics = null,
@@ -215,6 +216,8 @@ pub const Context = struct {
                     const payload = self.genericTypePayload(declaration_node) orelse continue;
                     if (!hasGenericParameters(payload.params, payload.params_struct)) continue;
                     self.parameters.clearRetainingCapacity();
+                    self.bindings.clearRetainingCapacity();
+                    self.deferred_signature_names = false;
                     const params = try self.lowerParameters(payload.params, payload.params_struct);
                     for (self.parameters.items, 0..) |current, position| {
                         for (self.parameters.items[0..position]) |previous|
@@ -237,6 +240,7 @@ pub const Context = struct {
                     const function = if (declaration.kind == .test_function) self.tree.testDeclaration(declaration_node).?.function else self.tree.functionDeclaration(declaration_node) orelse continue;
                     self.parameters.clearRetainingCapacity();
                     self.bindings.clearRetainingCapacity();
+                    self.deferred_signature_names = false;
                     const explicit = hasGenericParameters(function.generic_params, function.generic_params_struct);
                     var params: primitives.Range(ir.ComptimeParameterId) = .{ .start = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len), .len = 0 };
                     if (explicit) {
@@ -1535,7 +1539,10 @@ pub const Context = struct {
     }
 
     fn seedFunctionBindings(self: *Context, struct_node: syn.NodeIndex, mutability: primitives.Mutability) !primitives.Range(ir.ParameterizedBindingId) {
-        const literal = self.tree.structTypeLiteral(struct_node) orelse return .{ .start = 0, .len = 0 };
+        const literal = self.tree.structTypeLiteral(struct_node) orelse {
+            self.deferred_signature_names = true;
+            return .{ .start = 0, .len = 0 };
+        };
         var count: u32 = 0;
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse continue;
@@ -1595,7 +1602,13 @@ pub const Context = struct {
                     ret_val = lowered;
                 }
                 const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(statement));
-                const binding = self.parameterizedBinding(name) orelse return error.UnknownAssumedVariable;
+                const binding = self.parameterizedBinding(name);
+                if (binding == null) {
+                    if (!self.deferred_signature_names) return error.UnknownAssumedVariable;
+                    const validation = try self.addPending(statement, .assume_name, &.{}, try self.writer.addString(name), null, .none);
+                    try statements.append(self.allocator, validation);
+                    ret_val = validation;
+                }
                 try self.bindings.append(.{ .name = name, .id = binding, .assumed = true });
                 continue;
             }
@@ -1637,8 +1650,10 @@ pub const Context = struct {
                 }
             }
             if (shadowed) continue;
-            const ty = self.graph.semantic.parameterized_storage.ir.bindingType(binding.id);
-            const use = try self.addResolvedNode(source, ty, .{ .binding_use = binding.id });
+            const use = if (binding.id) |id|
+                try self.addResolvedNode(source, self.graph.semantic.parameterized_storage.ir.bindingType(id), .{ .binding_use = id })
+            else
+                try self.addPending(source, .unknown_identifier, &.{}, try self.writer.addString(binding.name), null, .none);
             try fields.append(self.allocator, .{ .name = try self.writer.addString(binding.name), .value = use });
         }
         const storage = &self.graph.semantic.parameterized_storage.ir;
@@ -1886,6 +1901,12 @@ pub const Context = struct {
             }
             if (try self.captureEntryValue(node, name)) |value| return value;
             if (self.parameter(name)) |parameter_binding| {
+                // Named signature fields become available during instantiation.
+                // Preserve their ordinary precedence over captured parameters.
+                if (self.deferred_signature_names) {
+                    const parameter_record = self.graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter_binding.id)];
+                    return self.addPending(node, .comptime_parameter, &.{}, try self.writer.addString(name), parameter_record.value_type, .{ .comptime_parameter = parameter_binding.id });
+                }
                 switch (parameter_binding.kind) {
                     .definition => return error.DefinitionParameterValueNotLowered,
                     .type => {

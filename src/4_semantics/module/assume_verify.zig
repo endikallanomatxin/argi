@@ -16,6 +16,7 @@ pub fn validate(allocator: std.mem.Allocator, files: []const syn.FileSyntaxTree,
             }
             const function = if (file.testDeclaration(root)) |test_decl| test_decl.function else file.functionDeclaration(root) orelse continue;
             context.names.clearRetainingCapacity();
+            context.deferred_signature_names = file.structTypeLiteral(function.input) == null or file.structTypeLiteral(function.output) == null;
             for ([_]syn.NodeIndex{ function.input, function.output }) |interface| {
                 const literal = file.structTypeLiteral(interface) orelse continue;
                 for (literal.fields) |field_node| {
@@ -34,6 +35,7 @@ const Context = struct {
     db: *const source_db.SourceDb,
     diagnostics: *diagnostics_mod.Diagnostics,
     names: std.ArrayList([]const u8) = .empty,
+    deferred_signature_names: bool = false,
 
     fn walk(self: *Context, node: syn.NodeIndex) anyerror!void {
         if (self.file.codeBlock(node)) |block| {
@@ -46,6 +48,7 @@ const Context = struct {
             if (self.file.assumedDeclaration(node)) |declaration| try self.walk(declaration);
             const name = self.file.tokenText(self.db, self.file.mainToken(node));
             for (self.names.items) |visible| if (std.mem.eql(u8, name, visible)) return;
+            if (self.deferred_signature_names) return;
             try self.diagnostics.add(self.file.location(node), .semantic, "assume requires an existing variable; '{s}' is not declared in this scope", .{name});
         } else if (self.file.ifStatement(node)) |statement| {
             try self.walk(statement.then_block);

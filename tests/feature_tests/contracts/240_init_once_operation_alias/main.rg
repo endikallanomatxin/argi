@@ -6,7 +6,11 @@ acquire := once TokenArgs -> (.result: Token) {
     result = (.value = value)
 }
 
-implement Init#(Token) (
+TokenInitArgs: Type = TokenArgs
+
+implement Init#(Token, TokenInitArgs) (
+    .Result : Type = Token
+
     .init = acquire
 )
 

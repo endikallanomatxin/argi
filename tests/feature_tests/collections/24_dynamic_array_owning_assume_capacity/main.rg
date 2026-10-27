@@ -38,8 +38,12 @@ BackingAllocator := (
 backing_deallocations :: Int32 = 0
 backing_freed_after_elements :: Bool = false
 
-implement Init#(BackingAllocator) (
-    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: BackingAllocator) {
+BackingAllocatorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+
+implement Init#(BackingAllocator, BackingAllocatorInitArgs) (
+    .Result : Type = BackingAllocator
+
+    .init = BackingAllocatorInitArgs -> (.result: Result) {
         assume ffi := ~ffi
 
         result.ffi = ffi

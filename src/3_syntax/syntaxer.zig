@@ -2179,9 +2179,6 @@ pub const Syntaxer = struct {
         return self.addNode(.test_declaration, test_token, .{ .token_and_node = .{ .token = name.token, .node = value } });
     }
 
-    // (old parseStatement removed; unified version with generics is below)
-
-    // Override parseStatement to support generics on function declarations
     fn parseStatement(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         const start_index = self.index;
         const start_nodes = self.file.nodes.len;

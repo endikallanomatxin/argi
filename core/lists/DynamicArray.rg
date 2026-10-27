@@ -46,10 +46,15 @@ _trusted_dynamic_array_mark_empty := #(.t: Type) (.self: $&DynamicArray#(.t: t))
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
 }
 
-implement#(.t: Type) Init#(DynamicArray#(t)) (
-    .init = #(.A: Type: Allocator) (
-        .allocator : $&A = reach allocator, .capacity: UIntNative = 0
-    ) -> (.result: Errable#(DynamicArray#(t), (..out_of_memory))) {
+DynamicArrayInitArgs: Type = #(.t: Type, .A: Type: Allocator) (
+    .allocator : $&A        = reach allocator,
+    .capacity  : UIntNative = 0
+)
+
+implement#(.t: Type, .A: Type: Allocator) Init#(DynamicArray#(t), DynamicArrayInitArgs#(t, A)) (
+    .Result : Type = Errable#(DynamicArray#(t), (..out_of_memory))
+
+    .init = DynamicArrayInitArgs#(t, A) -> (.result: Result) {
         _init_allocator ::= allocator
         _init_capacity ::= capacity
 

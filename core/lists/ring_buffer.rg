@@ -16,10 +16,17 @@ RingBuffer := #(.t: Type) (
     ._shape      : _RingBufferShape
 )
 
-implement#(.t: Type) Init#(RingBuffer#(.t: t)) (
-    .init = #(.Provider: Type: Allocator) (
-        .capacity: UIntNative, .allocator: $&Provider = reach allocator
-    ) -> (.result: Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))) {
+RingBufferInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
+    .capacity  : UIntNative,
+    .allocator : $&Provider  = reach allocator
+)
+
+implement#(.t: Type, .Provider: Type: Allocator) Init#(
+    RingBuffer#(.t: t), RingBufferInitArgs#(t, Provider)
+) (
+    .Result : Type = Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
+
+    .init = RingBufferInitArgs#(t, Provider) -> (.result: Result) {
         _init_capacity ::= capacity
         _init_allocator ::= allocator
 

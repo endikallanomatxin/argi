@@ -5,12 +5,20 @@ PriorityQueue := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
     ._order : &order
 )
 
-implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) Init#(
-    PriorityQueue#(.t: t, .order: order)
+PriorityQueueInitArgs: Type = #(
+    .t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator
 ) (
-    .init = #(.Provider: Type: Allocator) (
-        .order: &order, .allocator: $&Provider, .capacity: UIntNative = 8
-    ) -> (.result: Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))) {
+    .order     : &order,
+    .allocator : $&Provider,
+    .capacity  : UIntNative  = 8
+)
+
+implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) Init#(
+    PriorityQueue#(.t: t, .order: order), PriorityQueueInitArgs#(t, order, Provider)
+) (
+    .Result : Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
+
+    .init = PriorityQueueInitArgs#(t, order, Provider) -> (.result: Result) {
         _init_order ::= order
         _init_allocator ::= allocator
         _init_capacity ::= capacity

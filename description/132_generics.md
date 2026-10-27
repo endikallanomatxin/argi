@@ -200,8 +200,8 @@ most specific implementation. See [Contract dispatch](131_multiple_dispatch.md).
 
 ## Constructor parameters
 
-`implement#(.t: Type) Init#(Box#(.t: t), (.value: t))` declares t in the
-implementation scope. The target pattern and Args record select its bindings;
+`implement#(.t: Type) Init#(Box#(.t: t), BoxArgs#(t))` declares t in the
+implementation scope, where BoxArgs is a nominal argument family. The target pattern and Args record select its bindings;
 the requested target supplies known parameters and inputs infer remaining ones.
 Implementation constraints validate those bindings. A bare `Box(.value = value)`
 can infer its target parameters from Args, while Result never supplies missing

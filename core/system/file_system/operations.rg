@@ -166,10 +166,12 @@ Directory := (._filesystem: &FileSystem, ._handle: UIntNative, ._ended: Bool)
 
 DirectoryEntry := (.name: String)
 
-implement Init#(Directory) (
-    .init = (.self: &FileSystem = reach file_system, .path: StringView) -> (
-        .result : Errable#(Directory, _FilesystemReasons)
-    ) {
+DirectoryInitArgs: Type = (.self: &FileSystem = reach file_system, .path: StringView)
+
+implement Init#(Directory, DirectoryInitArgs) (
+    .Result : Type = Errable#(Directory, _FilesystemReasons)
+
+    .init = DirectoryInitArgs -> (.result: Result) {
         _init_self ::= self
         _init_path ::= path
 
@@ -314,13 +316,19 @@ _fs_temp_cleanup(.handle: UIntNative) -> (): CFunction(.symbol = "_argi_fs_temp_
 
 TemporaryDirectory := (._filesystem: &FileSystem, ._handle: UIntNative, ._path: String)
 
-implement Init#(TemporaryDirectory) (
-    .init = #(.Provider: Type: Allocator) (
-        .self      : &FileSystem = reach file_system,
-        .parent    : StringView,
-        .prefix    : StringView  = "argi-",
-        .allocator : $&Provider  = reach allocator,
-    ) -> (.result: Errable#(TemporaryDirectory, _FilesystemReasons)) {
+TemporaryDirectoryInitArgs: Type = #(.Provider: Type: Allocator) (
+    .self      : &FileSystem = reach file_system,
+    .parent    : StringView,
+    .prefix    : StringView  = "argi-",
+    .allocator : $&Provider  = reach allocator,
+)
+
+implement#(.Provider: Type: Allocator) Init#(
+    TemporaryDirectory, TemporaryDirectoryInitArgs#(Provider)
+) (
+    .Result : Type = Errable#(TemporaryDirectory, _FilesystemReasons)
+
+    .init = TemporaryDirectoryInitArgs#(Provider) -> (.result: Result) {
         _init_self ::= self
         _init_parent ::= parent
         _init_prefix ::= prefix

@@ -194,13 +194,14 @@ feature first.
   MatrixProduct shares the inner-dimension binding and can specialize Result.
   Nominal Multiply adapters delegate to that protocol. Dynamic multiplication
   stores its static provider in Args; no ordinary multiply overload is retained.
-  Canonical construction uses `implement Init#(T)` with an implementation-owned
-  init signature. Select evidence for the target first, then infer the operation's
-  own compile-time parameters and complete ordinary defaults/reached capabilities.
-  The result is T or one Errable containing T; it never selects a conformance.
-  Generic type calls infer missing target parameters from implementation input
-  signatures, preserving explicit target bindings. Different inferred targets
-  require disambiguation; specificity only compares conformances for one tuple.
+  Canonical construction uses `implement Init#(Target, Args)` with nominal input
+  records and associated Result. The fixed init signature is Args -> (.result: Result).
+  Type calls fix Target and infer Args, including allocator types, from candidate
+  signatures and explicit/reached values. Never synthesize structural identities
+  for argument literals. Result is Target or one Errable containing Target;
+  it never selects a conformance. Different inferred targets or argument types
+  require disambiguation; specificity only compares one complete participant tuple.
+  Preserve every explicitly supplied target parameter during inference.
   Captured implementation parameters and callable parameters have separate IDs;
   transfer bindings by capture position, never by names. Preserve selected safety
   evidence and output dependencies without a second constructor registry.

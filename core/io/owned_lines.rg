@@ -59,8 +59,12 @@ OwnedLineReader := #(.t: Type: Reader#(t)) (
     ._ended   : Bool
 )
 
-implement#(.t: Type: Reader#(t)) Init#(OwnedLineReader#(.t: t)) (
-    .init = (.source: $&t, .maximum: UIntNative) -> (.result: OwnedLineReader#(.t: t)) {
+OwnedLineReaderInitArgs: Type = #(.t: Type: Reader#(t)) (.source: $&t, .maximum: UIntNative)
+
+implement#(.t: Type: Reader#(t)) Init#(OwnedLineReader#(.t: t), OwnedLineReaderInitArgs#(t)) (
+    .Result : Type = OwnedLineReader#(.t: t)
+
+    .init = OwnedLineReaderInitArgs#(t) -> (.result: Result) {
         _init_source ::= source
         _init_maximum ::= maximum
 

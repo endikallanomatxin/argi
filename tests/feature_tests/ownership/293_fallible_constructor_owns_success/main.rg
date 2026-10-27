@@ -1,9 +1,14 @@
 Owned := (.allocation: Allocation)
 
-implement Init#(Owned) (
-    .init = #(.AllocatorProvider: Type: Allocator) (
-        .allocator: $&AllocatorProvider, .fail: Bool
-    ) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) {
+OwnedInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
+    .allocator : $&AllocatorProvider,
+    .fail      : Bool
+)
+
+implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, OwnedInitArgs#(AllocatorProvider)) (
+    .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
+
+    .init = OwnedInitArgs#(AllocatorProvider) -> (.result: Result) {
         _init_allocator ::= ~allocator
         _init_fail ::= ~fail
 

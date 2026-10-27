@@ -25,7 +25,11 @@ _acquire_arguments := once _ArgumentsInitArgs -> (.result: Arguments) {
     )
 }
 
-implement Init#(Arguments) (
+ArgumentsInitArgs: Type = _ArgumentsInitArgs
+
+implement Init#(Arguments, ArgumentsInitArgs) (
+    .Result : Type = Arguments
+
     .init = _acquire_arguments
 )
 

@@ -5,11 +5,11 @@ contains a value, and raw allocated bytes do not yet contain a `T`. A value
 becomes live only after it has been fully initialized. Reading it beforehand
 is an error.
 
-Canonical construction uses `Init#(T)`. The target identifies the conformance;
-its implementation supplies the ordinary signature of `init`, including any
-operation-local compile-time parameters. `T(...)` calls that signature with the
-written arguments and completes its defaults and reached capabilities. The result
-must be `T` or `Errable#(T, R)`.
+Canonical construction uses `Init#(Target, Args)`. The complete participant tuple
+selects a conformance; Args is its nominal input record. The associated Result
+is Target or `Errable#(Target, R)`, and the required operation is
+`Args -> (.result: Result)`. `T(...)` fixes Target, infers Args against candidate
+signatures, and completes ordinary defaults and reached capabilities.
 
 No uninitialized destination is passed into it: the successful value is returned
 directly or transferred into `..ok`. Ordinary ownership and automatic cleanup
@@ -17,8 +17,10 @@ apply to intermediate values on every exit.
 
 ```rg
 Point := (.x: Int32, .y: Int32)
-implement Init#(Point) (
-    .init = (.x: Int32, .y: Int32 = 0) -> (.result: Point) {
+PointArgs := (.x: Int32, .y: Int32 = 0)
+implement Init#(Point, PointArgs) (
+    .Result: Type = Point
+    .init = PointArgs -> (.result: Result) {
         result = (.x = x, .y = y)
     }
 )
@@ -30,18 +32,21 @@ Generic implementations declare their compile-time parameters after `implement`:
 
 ```rg
 Box := #(.T: Type) (.value: T)
-implement#(.T: Type) Init#(Box#(T)) (
-    .init = (.value: T) -> (.result: Box#(T)) { result = (.value = ~value) }
+BoxArgs := #(.T: Type) (.value: T)
+implement#(.T: Type) Init#(Box#(T), BoxArgs#(T)) (
+    .Result: Type = Box#(T)
+    .init = BoxArgs#(T) -> (.result: Result) { result = (.value = ~value) }
 )
 ```
 
-The requested type, such as `Box#(Int32)`, fixes the target participant. Allocator
-types can be parameters of the init definition itself, inferred from its inputs
-without becoming part of every constructor or its target type. A different
-argument signature does not permit a second conformance for the same target.
-Conformance specialization depends on target patterns, not argument shapes.
-The result never selects a conformance, and an incompatible selected result
-cannot bypass custom construction.
+The requested type, such as `Box#(Int32)`, fixes the target participant. An
+allocator type can be a parameter of Args and the implementation, without becoming
+part of the constructed type. Several conformances may construct the same target.
+Different inferred argument types require explicit qualification, such as
+`Init#(Target, ChosenArgs).init(...)`; specificity ranks candidates only for the
+same complete tuple. Expected outputs never select a conformance. The selected
+Result must construct the target and cannot bypass custom construction.
+
 Record defaults retain scalar literals, payload-free choice variants and lexical
 reach directives without executing runtime expressions during type materialization.
 The selected operation preserves argument loans and projected output dependencies.

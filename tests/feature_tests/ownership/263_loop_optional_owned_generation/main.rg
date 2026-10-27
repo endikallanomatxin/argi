@@ -2,10 +2,14 @@ Holder := (
     .buffer : String
 )
 
-implement Init#(Holder) (
-    .init = #(.AllocatorProvider: Type: Allocator) (.allocator: $&AllocatorProvider) -> (
-        .result : Holder
-    ) {
+HolderInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (.allocator: $&AllocatorProvider)
+
+implement#(.AllocatorProvider: Type: Allocator) Init#(
+    Holder, HolderInitArgs#(AllocatorProvider)
+) (
+    .Result : Type = Holder
+
+    .init = HolderInitArgs#(AllocatorProvider) -> (.result: Result) {
         _init_allocator ::= ~allocator
 
         assume allocator := _init_allocator

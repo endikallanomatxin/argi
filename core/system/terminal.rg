@@ -16,7 +16,11 @@ _acquire_terminal := once _TerminalInitArgs -> (.result: Terminal) {
     init_stderr(.p = $&result.stderr)
 }
 
-implement Init#(Terminal) (
+TerminalInitArgs: Type = _TerminalInitArgs
+
+implement Init#(Terminal, TerminalInitArgs) (
+    .Result : Type = Terminal
+
     .init = _acquire_terminal
 )
 

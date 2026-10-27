@@ -1,14 +1,18 @@
 Widget := (.value: Int32)
 
-implement Init#(Widget) (
-    .init = () -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) {
+WidgetInitArgs: Type = ()
+
+implement Init#(Widget, WidgetInitArgs) (
+    .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
+
+    .init = WidgetInitArgs -> (.result: Result) {
         constructed :: Widget
 
         result = ..error(.reason = ..rejected)
     }
 )
 
-main := () -> (.status_code: Int32)  {
+main := () -> (.status_code: Int32) {
     widget :: Widget
     outcome ::= Widget()
     match outcome {

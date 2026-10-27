@@ -4,7 +4,11 @@ acquire := once (.value: Int32) -> (.result: Token) {
     result = (.value = value)
 }
 
-implement Init#(Token) (
+TokenInitArgs: Type = (.value: Int32)
+
+implement Init#(Token, TokenInitArgs) (
+    .Result : Type = Token
+
     .init = acquire
 )
 

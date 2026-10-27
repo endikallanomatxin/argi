@@ -21,7 +21,11 @@ _acquire_file := once _FileInitArgs -> (.result: File) {
     result = (._ffi = ffi, .stream_address = 0, .should_close = false)
 }
 
-implement Init#(File) (
+FileInitArgs: Type = _FileInitArgs
+
+implement Init#(File, FileInitArgs) (
+    .Result : Type = File
+
     .init = _acquire_file
 )
 

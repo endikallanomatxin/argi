@@ -20,13 +20,19 @@ DirectoryWalker := (
     ._ended         : Bool
 )
 
-implement Init#(DirectoryWalker) (
-    .init = #(.Provider: Type: Allocator) (
-        .self          : &FileSystem = reach file_system,
-        .path          : StringView,
-        .maximum_depth : UIntNative  = 64,
-        .allocator     : $&Provider  = reach allocator,
-    ) -> (.result: Errable#(DirectoryWalker, _FilesystemReasons)) {
+DirectoryWalkerInitArgs: Type = #(.Provider: Type: Allocator) (
+    .self          : &FileSystem = reach file_system,
+    .path          : StringView,
+    .maximum_depth : UIntNative  = 64,
+    .allocator     : $&Provider  = reach allocator,
+)
+
+implement#(.Provider: Type: Allocator) Init#(
+    DirectoryWalker, DirectoryWalkerInitArgs#(Provider)
+) (
+    .Result : Type = Errable#(DirectoryWalker, _FilesystemReasons)
+
+    .init = DirectoryWalkerInitArgs#(Provider) -> (.result: Result) {
         _init_self ::= self
         _init_path ::= path
         _init_maximum_depth ::= maximum_depth

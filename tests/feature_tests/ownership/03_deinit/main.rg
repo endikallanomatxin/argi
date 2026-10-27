@@ -6,8 +6,12 @@ dummy_status :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 global_status_ptr :: $&Int32 = $&dummy_status
 
-implement Init#(Resource) (
-    .init = (.counter: $&Int32, .status: $&Int32) -> (.result: Resource) {
+ResourceInitArgs: Type = (.counter: $&Int32, .status: $&Int32)
+
+implement Init#(Resource, ResourceInitArgs) (
+    .Result : Type = Resource
+
+    .init = ResourceInitArgs -> (.result: Result) {
         _init_counter ::= ~counter
         _init_status ::= ~status
 

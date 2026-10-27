@@ -7,8 +7,12 @@ bump := (.counter: $&Counter = reach counter) -> (.result: UIntNative) {
 
 Value := #(.Tag: Type) (.number: UIntNative)
 
-implement#(.Tag: Type) Init#(Value#(Tag)) (
-    .init = (.number: UIntNative = bump()) -> (.result: Value#(Tag)) {
+ValueInitArgs: Type = #(.Tag: Type) (.number: UIntNative = bump())
+
+implement#(.Tag: Type) Init#(Value#(Tag), ValueInitArgs#(Tag)) (
+    .Result : Type = Value#(Tag)
+
+    .init = ValueInitArgs#(Tag) -> (.result: Result) {
         result = (.number = number)
     }
 )

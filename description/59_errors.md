@@ -63,9 +63,9 @@ the lifetime of the error or change its reason.
 `Errable` is defined over a set of reasons:
 
 ```rg
-Errable#(.t: Type, .reasons: Choice) : Type = (
+Errable := #(.t: Type, .reasons: Choice) (
     ..ok t
-    ..error Error#(.reasons = reasons)
+    ..error Error#(.reasons: reasons)
 )
 ```
 

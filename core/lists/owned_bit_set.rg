@@ -2,10 +2,15 @@
 -- dynamic array's storage and shape, and therefore cannot outlive cleanup.
 BitSet := (._storage: DynamicArray#(.t: UInt8), ._count: UIntNative)
 
-implement Init#(BitSet) (
-    .init = #(.Provider: Type: Allocator) (
-        .count: UIntNative, .allocator: $&Provider = reach allocator
-    ) -> (.result: Errable#(BitSet, (..out_of_memory))) {
+BitSetInitArgs: Type = #(.Provider: Type: Allocator) (
+    .count     : UIntNative,
+    .allocator : $&Provider  = reach allocator
+)
+
+implement#(.Provider: Type: Allocator) Init#(BitSet, BitSetInitArgs#(Provider)) (
+    .Result : Type = Errable#(BitSet, (..out_of_memory))
+
+    .init = BitSetInitArgs#(Provider) -> (.result: Result) {
         _init_count ::= count
         _init_allocator ::= allocator
 

@@ -1111,6 +1111,8 @@ pub const Session = struct {
             if (options.diagnostics) |diagnostics|
                 if (try diagnoseUnresolvedBindingTypes(&relocation.graph, reachable, diagnostics, true))
                     return error.Reported;
+            contracts.diagnoseUnresolvedParticipants();
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
             dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
             return error.UnsupportedGlobalSemantic;
         }

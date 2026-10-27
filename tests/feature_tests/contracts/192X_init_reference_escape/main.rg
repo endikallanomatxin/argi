@@ -1,7 +1,11 @@
 Borrow := (.value: &Int32)
 
-implement Init#(Borrow) (
-    .init = (.value: &Int32) -> (.result: Borrow) { result.value = value }
+BorrowInitArgs: Type = (.value: &Int32)
+
+implement Init#(Borrow, BorrowInitArgs) (
+    .Result : Type = Borrow
+
+    .init = BorrowInitArgs -> (.result: Result) { result.value = value }
 )
 
 escape := () -> (.result: Borrow) {

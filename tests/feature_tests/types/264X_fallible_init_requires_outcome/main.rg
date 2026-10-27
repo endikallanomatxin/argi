@@ -1,7 +1,11 @@
 Widget := (.value: Int32)
 
-implement Init#(Widget) (
-    .init = (.fail: Bool) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) {
+WidgetInitArgs: Type = (.fail: Bool)
+
+implement Init#(Widget, WidgetInitArgs) (
+    .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
+
+    .init = WidgetInitArgs -> (.result: Result) {
         _init_fail ::= ~fail
 
         constructed :: Widget
@@ -15,7 +19,7 @@ implement Init#(Widget) (
     }
 )
 
-main := () -> (.status_code: Int32)  {
+main := () -> (.status_code: Int32) {
     widget :: Widget
     outcome ::= Widget(.fail = false)
     status_code = widget.value

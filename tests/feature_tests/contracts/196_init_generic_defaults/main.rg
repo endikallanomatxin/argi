@@ -1,7 +1,11 @@
 Box := #(.T: Type: Int) (._value: T)
 
-implement#(.T: Type: Int) Init#(Box#(T)) (
-    .init = (.value: T = 7) -> (.result: Box#(T)) { result = (._value = value) }
+BoxInitArgs: Type = #(.T: Type: Int) (.value: T = 7)
+
+implement#(.T: Type: Int) Init#(Box#(T), BoxInitArgs#(T)) (
+    .Result : Type = Box#(T)
+
+    .init = BoxInitArgs#(T) -> (.result: Result) { result = (._value = value) }
 )
 
 main := () -> (.status_code: Int32 = 0) {

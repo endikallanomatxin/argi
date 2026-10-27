@@ -4,10 +4,12 @@
 -- the language's transfer rules, independently of this native atomic storage.
 CancellationSource := (._state: AtomicUInt32)
 
-implement Init#(CancellationSource) (
-    .init = (.ffi: $&ForeignFunctionInterface = reach ffi) -> (
-        .result : Errable#(CancellationSource, (..out_of_memory))
-    ) {
+CancellationSourceInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+
+implement Init#(CancellationSource, CancellationSourceInitArgs) (
+    .Result : Type = Errable#(CancellationSource, (..out_of_memory))
+
+    .init = CancellationSourceInitArgs -> (.result: Result) {
         _init_ffi ::= ffi
 
         state ::= AtomicUInt32(.ffi = _init_ffi)!

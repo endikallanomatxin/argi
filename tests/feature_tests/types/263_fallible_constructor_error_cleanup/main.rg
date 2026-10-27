@@ -6,8 +6,12 @@ implement Deinit#(Widget) (
     }
 )
 
-implement Init#(Widget) (
-    .init = (.cleanups: $&Int32) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) {
+WidgetInitArgs: Type = (.cleanups: $&Int32)
+
+implement Init#(Widget, WidgetInitArgs) (
+    .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
+
+    .init = WidgetInitArgs -> (.result: Result) {
         _init_cleanups ::= ~cleanups
 
         constructed :: Widget = (.cleanups = _init_cleanups)

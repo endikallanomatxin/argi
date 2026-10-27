@@ -2,8 +2,12 @@ Box := (.counter: $&Int32, .created: $&Int32)
 
 NumberBox := (.value: Int32)
 
-implement Init#(Box) (
-    .init = (.counter: $&Int32, .created: $&Int32) -> (.result: Box) {
+BoxInitArgs: Type = (.counter: $&Int32, .created: $&Int32)
+
+implement Init#(Box, BoxInitArgs) (
+    .Result : Type = Box
+
+    .init = BoxInitArgs -> (.result: Result) {
         _init_counter ::= ~counter
         _init_created ::= ~created
 

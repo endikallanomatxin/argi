@@ -23,7 +23,11 @@ _acquire_memory := once _MemoryInitArgs -> (.result: Memory) {
     if result._page_size == 0 { result._page_size = 4096 }
 }
 
-implement Init#(Memory) (
+MemoryInitArgs: Type = _MemoryInitArgs
+
+implement Init#(Memory, MemoryInitArgs) (
+    .Result : Type = Memory
+
     .init = _acquire_memory
 )
 

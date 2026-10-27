@@ -1,7 +1,11 @@
 Token: Type = ()
 
-implement Init#(Token) (
-    .init = once () -> (.result: Token) { result = () }
+TokenInitArgs: Type = ()
+
+implement Init#(Token, TokenInitArgs) (
+    .Result : Type = Token
+
+    .init = once TokenInitArgs -> (.result: Result) { result = () }
 )
 
 main := () -> () {

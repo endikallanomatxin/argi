@@ -35,8 +35,12 @@ FailSecondAllocator := (
     .deallocations : Int32
 )
 
-implement Init#(FailSecondAllocator) (
-    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: FailSecondAllocator) {
+FailSecondAllocatorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+
+implement Init#(FailSecondAllocator, FailSecondAllocatorInitArgs) (
+    .Result : Type = FailSecondAllocator
+
+    .init = FailSecondAllocatorInitArgs -> (.result: Result) {
         assume ffi := ~ffi
 
         result.ffi = ffi

@@ -6,8 +6,12 @@ discard := (.value: Int32) -> () {
     _ ::= value
 }
 
-implement#(.t: Type) Init#(Token#(.t: t)) (
-    .init = (.sample: t) -> (.result: Token#(.t: t)) {
+TokenInitArgs: Type = #(.t: Type) (.sample: t)
+
+implement#(.t: Type) Init#(Token#(.t: t), TokenInitArgs#(t)) (
+    .Result : Type = Token#(.t: t)
+
+    .init = TokenInitArgs#(t) -> (.result: Result) {
         _init_sample ::= ~sample
 
         defer discard(.value = 0)

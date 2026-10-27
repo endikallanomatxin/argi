@@ -14,7 +14,12 @@ Box := #(.T: Type) (.value: T)
 
 make_box := #(.T: Type) (.value: T) -> (.result: Box#(T)) { result = (.value = value) }
 
-implement#(.T: Type) Init#(Box#(T)) (.init = make_box#(T))
+BoxInitArgs: Type = #(.T: Type) (.value: T)
+
+implement#(.T: Type) Init#(Box#(T), BoxInitArgs#(T)) (
+    .Result : Type = Box#(T)
+    .init   = make_box#(T)
+)
 
 Wrapped#(.T: Type): Contract = (.wrapped_value: _)
 

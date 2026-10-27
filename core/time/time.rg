@@ -8,8 +8,12 @@ UnixTimestamp := (._seconds: Int64, ._nanoseconds: UInt32)
 
 implement ImplicitlyCopyable#(UnixTimestamp) ()
 
-implement Init#(UnixTimestamp) (
-    .init = (.seconds: Int64) -> (.result: UnixTimestamp) {
+UnixTimestampInitArgs: Type = (.seconds: Int64)
+
+implement Init#(UnixTimestamp, UnixTimestampInitArgs) (
+    .Result : Type = UnixTimestamp
+
+    .init = UnixTimestampInitArgs -> (.result: Result) {
         _init_seconds ::= seconds
 
         result = (._seconds = _init_seconds, ._nanoseconds = 0)
@@ -98,7 +102,11 @@ _acquire_clock := once _ClockInitArgs -> (.result: Clock) {
     result = (._ffi = ffi)
 }
 
-implement Init#(Clock) (
+ClockInitArgs: Type = _ClockInitArgs
+
+implement Init#(Clock, ClockInitArgs) (
+    .Result : Type = Clock
+
     .init = _acquire_clock
 )
 

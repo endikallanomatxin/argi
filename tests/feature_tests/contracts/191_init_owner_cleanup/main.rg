@@ -8,8 +8,12 @@ implement Deinit#(Owner) (
     }
 )
 
-implement Init#(Owner) (
-    .init = (.value: Int32) -> (.result: Owner) { result = (.value = value) }
+OwnerInitArgs: Type = (.value: Int32)
+
+implement Init#(Owner, OwnerInitArgs) (
+    .Result : Type = Owner
+
+    .init = OwnerInitArgs -> (.result: Result) { result = (.value = value) }
 )
 
 create := () -> () { value ::= Owner(.value = 42) }

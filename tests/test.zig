@@ -1899,7 +1899,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
-        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:17:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:21:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      second := first
         \\                ^
         \\
@@ -1908,7 +1908,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:21:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:25:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1917,7 +1917,7 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:21:32: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:25:32: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      wrapped: Wrapper = (.res = handle)
         \\                                 ^
         \\
@@ -1926,7 +1926,7 @@ test "feature_tests/ownership/07X_noncopyable_struct_field" {
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:16:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:20:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      out = res
         \\            ^
         \\
@@ -1959,7 +1959,7 @@ test "feature_tests/ownership/13_move_operator" {
 
 test "feature_tests/ownership/14X_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/14X_use_after_move",
-        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:22:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:21:34)
+        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:26:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:25:34)
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1968,7 +1968,7 @@ test "feature_tests/ownership/14X_use_after_move" {
 
 test "feature_tests/ownership/15X_reassign_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/15X_reassign_after_move",
-        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:22:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:21:34)
+        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:26:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:25:34)
         \\      handle = Resource()
         \\      ^
         \\
@@ -2324,7 +2324,7 @@ test "feature_tests/types/20_struct_initializer_without_init" {
 }
 
 test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "arguments do not match this specialized function definition");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "construction arguments cannot infer a matching Init target");
 }
 
 test "feature_tests/collections/16_dynamic_array_iterator_manual" {
@@ -3087,7 +3087,7 @@ test "feature_tests/ownership/35_system_move_by_value" {
 
 test "feature_tests/ownership/36X_double_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/36X_double_move",
-        \\tests/feature_tests/ownership/36X_double_move/main.rg:22:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:21:34)
+        \\tests/feature_tests/ownership/36X_double_move/main.rg:26:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:25:34)
         \\      status_code = consume(.res = ~handle)
         \\                                    ^
         \\
@@ -4480,7 +4480,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
-        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:17:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:21:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := resources
         \\                ^
         \\
@@ -6467,7 +6467,7 @@ test "feature_tests/system/48X_general_purpose_backing_ended" {
 }
 
 test "feature_tests/system/49X_initializer_temporary_ends_backing" {
-    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:30:30: error: reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:34:30: error: reference depends on a root that has ended");
 }
 
 test "feature_tests/system/49_general_purpose_allocator_on_arena" {
@@ -6717,7 +6717,7 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     const constructor_calls = try std.mem.replaceOwned(u8, allocator, opaque_calls, "Owned(.allocator =", "parity_owned(.allocator =");
     defer allocator.free(constructor_calls);
     const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned :=") != null)
-        if (std.mem.indexOf(u8, relocated, ".fail: Bool") != null)
+        if (std.mem.indexOf(u8, relocated, ".fail =") != null)
             "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) { result = Owned(.allocator = allocator, .fail = fail) }\n"
         else
             "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) { result = Owned(.allocator = allocator) }\n"
@@ -8989,7 +8989,7 @@ test "feature_tests/system/57X_clock_missing_capability" {
 }
 
 test "feature_tests/system/58X_clock_missing_ffi" {
-    try buildExpectFail("tests/feature_tests/system/58X_clock_missing_ffi", "required reachable capabilities");
+    try buildExpectFail("tests/feature_tests/system/58X_clock_missing_ffi", "Init argument '.ffi' requires a reachable value or an explicit argument");
 }
 
 test "feature_tests/system/59X_clock_domains" {
@@ -9036,7 +9036,7 @@ test "feature_tests/system/67_posix_process_contract" {
 }
 
 test "feature_tests/system/68X_process_missing_ffi" {
-    try buildExpectFail("tests/feature_tests/system/68X_process_missing_ffi", "required reachable capabilities");
+    try buildExpectFail("tests/feature_tests/system/68X_process_missing_ffi", "Init argument '.ffi' requires a reachable value or an explicit argument");
 }
 
 test "feature_tests/system/69X_process_copy" {
@@ -12514,11 +12514,11 @@ test "feature_tests/contracts/193X_init_legacy_collision" {
 }
 
 test "feature_tests/contracts/194X_init_scalar_arguments" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "arguments do not match this specialized function definition");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "contract operation input must be a record type");
 }
 
 test "feature_tests/contracts/195X_init_generic_default_type" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "distinct nominal types require explicit conversion");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "arguments do not match the selected contract operation, including completed defaults", "no function named");
 }
 
 test "feature_tests/contracts/196_init_generic_defaults" {
@@ -12728,7 +12728,7 @@ test "feature_tests/contracts/233_init_argument_specialization" {
 }
 
 test "feature_tests/contracts/234X_init_literal_shapes_ambiguous" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous conformances for the same participant tuple");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous Init participants");
 }
 
 test "feature_tests/contracts/235_init_target_inferred_from_args" {
@@ -13411,7 +13411,7 @@ test "feature_tests/collections/164_standard_hasher_vectors" {
 }
 
 test "feature_tests/collections/163X_custom_hash_policy_required" {
-    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "arguments do not match this specialized function definition");
+    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "construction arguments cannot infer a matching Init target");
 }
 
 test "feature_tests/contracts/338X_partial_constructor_unknown_parameter" {
@@ -16063,7 +16063,11 @@ test "argi repl resolves operation value expressions" {
         \\direct_value(42)
         \\Box := #(.T: Type) (.value: T)
         \\make_box := #(.T: Type) (.value: T) -> (.result: Box#(T)) { result = (.value = value) }
-        \\implement#(.T: Type) Init#(Box#(T)) (.init = make_box#(T))
+        \\BoxInitArgs: Type = #(.T: Type) (.value: T)
+        \\
+        \\implement#(.T: Type) Init#(Box#(T), BoxInitArgs#(T)) (
+        \\    .Result: Type = Box#(T)
+        \\.init = make_box#(T))
         \\value ::= Box(7)
         \\value.value
         \\
@@ -16073,6 +16077,24 @@ test "argi repl resolves operation value expressions" {
 
 test "feature_tests/contracts/352_associated_operation_expressions" {
     const path = "tests/feature_tests/contracts/352_associated_operation_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/353_init_argument_participants" {
+    const path = "tests/feature_tests/contracts/353_init_argument_participants";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/354X_init_argument_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/354X_init_argument_ambiguity", "ambiguous Init participants", "without a diagnostic");
+}
+
+test "feature_tests/polymorphism/350_named_signature_assume" {
+    const path = "tests/feature_tests/polymorphism/350_named_signature_assume";
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
     try vmExpect(path, 0, null);

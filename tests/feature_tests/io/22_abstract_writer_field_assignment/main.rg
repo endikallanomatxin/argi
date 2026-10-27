@@ -6,8 +6,14 @@ Holder := #(.WriterType: Type: Writer#(WriterType)) (
     .writer : $&WriterType
 )
 
-implement#(.WriterType: Type: Writer#(WriterType)) Init#(Holder#(WriterType)) (
-    .init = (.writer: $&WriterType) -> (.result: Holder#(WriterType)) {
+HolderInitArgs: Type = #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType)
+
+implement#(.WriterType: Type: Writer#(WriterType)) Init#(
+    Holder#(WriterType), HolderInitArgs#(WriterType)
+) (
+    .Result : Type = Holder#(WriterType)
+
+    .init = HolderInitArgs#(WriterType) -> (.result: Result) {
         _init_writer ::= ~writer
 
         result.writer = _init_writer

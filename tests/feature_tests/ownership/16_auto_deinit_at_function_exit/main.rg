@@ -3,8 +3,12 @@ Resource: Type = ()
 dummy_counter :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 
-implement Init#(Resource) (
-    .init = (.counter: $&Int32) -> (.result: Resource) {
+ResourceInitArgs: Type = (.counter: $&Int32)
+
+implement Init#(Resource, ResourceInitArgs) (
+    .Result : Type = Resource
+
+    .init = ResourceInitArgs -> (.result: Result) {
         _init_counter ::= ~counter
 
         result = ()

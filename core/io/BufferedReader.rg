@@ -7,11 +7,17 @@ BufferedReader := #(.base_type: Type: Reader#(base_type)) (
     .end    : UIntNative
 )
 
-implement#(.base_type: Type: Reader#(base_type)) Init#(BufferedReader#(.base_type: base_type)) (
-    .init = (
-        .base   : $&base_type,
-        .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
-    ) -> (.result: BufferedReader#(.base_type: base_type)) {
+BufferedReaderInitArgs: Type = #(.base_type: Type: Reader#(base_type)) (
+    .base   : $&base_type,
+    .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
+)
+
+implement#(.base_type: Type: Reader#(base_type)) Init#(
+    BufferedReader#(.base_type: base_type), BufferedReaderInitArgs#(base_type)
+) (
+    .Result : Type = BufferedReader#(.base_type: base_type)
+
+    .init = BufferedReaderInitArgs#(base_type) -> (.result: Result) {
         result = (.base = base, .buffer = buffer, .start = 0, .end = 0)
     }
 )

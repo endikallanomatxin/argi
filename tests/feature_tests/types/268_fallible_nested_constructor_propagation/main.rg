@@ -2,8 +2,12 @@ Widget := (.value: Int32)
 
 Wrapper := (.widget: Widget)
 
-implement Init#(Widget) (
-    .init = (.fail: Bool) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) {
+WidgetInitArgs: Type = (.fail: Bool)
+
+implement Init#(Widget, WidgetInitArgs) (
+    .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
+
+    .init = WidgetInitArgs -> (.result: Result) {
         _init_fail ::= ~fail
 
         constructed :: Widget
@@ -17,8 +21,12 @@ implement Init#(Widget) (
     }
 )
 
-implement Init#(Wrapper) (
-    .init = (.fail: Bool) -> (.result: Errable#(.t: Wrapper, .reasons: (..rejected))) {
+WrapperInitArgs2: Type = (.fail: Bool)
+
+implement Init#(Wrapper, WrapperInitArgs2) (
+    .Result : Type = Errable#(.t: Wrapper, .reasons: (..rejected))
+
+    .init = WrapperInitArgs2 -> (.result: Result) {
         _init_fail ::= ~fail
 
         constructed :: Wrapper

@@ -2,10 +2,16 @@ DummyWriter := (
     .bytes : String
 )
 
-implement Init#(DummyWriter) (
-    .init = #(.AllocatorProvider: Type: Allocator) (.allocator: $&AllocatorProvider) -> (
-        .result : DummyWriter
-    ) {
+DummyWriterInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
+    .allocator : $&AllocatorProvider
+)
+
+implement#(.AllocatorProvider: Type: Allocator) Init#(
+    DummyWriter, DummyWriterInitArgs#(AllocatorProvider)
+) (
+    .Result : Type = DummyWriter
+
+    .init = DummyWriterInitArgs#(AllocatorProvider) -> (.result: Result) {
         _init_allocator ::= ~allocator
 
         assume allocator := _init_allocator

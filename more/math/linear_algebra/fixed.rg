@@ -11,20 +11,30 @@ implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) ImplicitlyCop
     Matrix#(.rows = rows, .cols = cols, .t: t)
 ) ()
 
-implement#(.n: UIntNative, .t: Type: Scalar) Init#(Vector#(.n = n, .t: t)) (
-    .init = (.values: Array#(.n = n, .t: t)) -> (.result: Vector#(.n = n, .t: t)) {
+VectorInitArgs: Type = #(.n: UIntNative, .t: Type: Scalar) (.values: Array#(.n = n, .t: t))
+
+implement#(.n: UIntNative, .t: Type: Scalar) Init#(
+    Vector#(.n = n, .t: t), VectorInitArgs#(n, t)
+) (
+    .Result : Type = Vector#(.n = n, .t: t)
+
+    .init = VectorInitArgs#(n, t) -> (.result: Result) {
         _init_values ::= values
 
         result = (.values = _init_values)
     }
 )
 
+MatrixInitArgs: Type = #(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) (
+    .values : Array#(.n = rows, .t: Array#(.n = cols, .t: t))
+)
+
 implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) Init#(
-    Matrix#(.rows = rows, .cols = cols, .t: t)
+    Matrix#(.rows = rows, .cols = cols, .t: t), MatrixInitArgs#(rows, cols, t)
 ) (
-    .init = (.values: Array#(.n = rows, .t: Array#(.n = cols, .t: t))) -> (
-        .result : Matrix#(.rows = rows, .cols = cols, .t: t)
-    ) {
+    .Result : Type = Matrix#(.rows = rows, .cols = cols, .t: t)
+
+    .init = MatrixInitArgs#(rows, cols, t) -> (.result: Result) {
         _init_values ::= values
 
         result = (.values = _init_values)

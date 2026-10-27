@@ -1,7 +1,11 @@
 Box := #(.T: Type) (._value: T)
 
-implement#(.T: Type) Init#(Box#(T)) (
-    .init = (.value: T) -> (.result: Box#(T)) { result = (._value = value) }
+BoxInitArgs: Type = #(.T: Type) (.value: T)
+
+implement#(.T: Type) Init#(Box#(T), BoxInitArgs#(T)) (
+    .Result : Type = Box#(T)
+
+    .init = BoxInitArgs#(T) -> (.result: Result) { result = (._value = value) }
 )
 
 make_box := #(.T: Type) (.value: T) -> (.box: Box#(T)) {

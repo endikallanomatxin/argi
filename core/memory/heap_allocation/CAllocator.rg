@@ -2,8 +2,12 @@ CAllocator := (
     .ffi : $&ForeignFunctionInterface
 )
 
-implement Init#(CAllocator) (
-    .init = (.ffi: $&ForeignFunctionInterface) -> (.result: CAllocator) {
+CAllocatorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+
+implement Init#(CAllocator, CAllocatorInitArgs) (
+    .Result : Type = CAllocator
+
+    .init = CAllocatorInitArgs -> (.result: Result) {
         _init_ffi ::= ffi
         result.ffi = _init_ffi
     }

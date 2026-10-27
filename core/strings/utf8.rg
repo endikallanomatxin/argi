@@ -3,8 +3,12 @@ UnicodeScalar := (._value: UInt32)
 
 implement ImplicitlyCopyable#(UnicodeScalar) ()
 
-implement Init#(UnicodeScalar) (
-    .init = (.value: UInt32) -> (.result: Errable#(UnicodeScalar, (..invalid_codepoint))) {
+UnicodeScalarInitArgs: Type = (.value: UInt32)
+
+implement Init#(UnicodeScalar, UnicodeScalarInitArgs) (
+    .Result : Type = Errable#(UnicodeScalar, (..invalid_codepoint))
+
+    .init = UnicodeScalarInitArgs -> (.result: Result) {
         _init_value ::= value
 
         if _init_value > 1114111 or [_init_value >= 55296 and _init_value <= 57343] {
@@ -220,8 +224,12 @@ next_codepoint := (.self: $&Utf8Decoder) -> (
     }
 }
 
-implement Init#(Utf8Decoder) (
-    .init = (.bytes: ArrayView#(UInt8)) -> (.result: Utf8Decoder) {
+Utf8DecoderInitArgs: Type = (.bytes: ArrayView#(UInt8))
+
+implement Init#(Utf8Decoder, Utf8DecoderInitArgs) (
+    .Result : Type = Utf8Decoder
+
+    .init = Utf8DecoderInitArgs -> (.result: Result) {
         result = (._bytes = bytes, ._offset = 0)
     }
 )
@@ -232,8 +240,12 @@ CodepointView := (._text: StringView)
 
 implement ImplicitlyCopyable#(CodepointView) ()
 
-implement Init#(CodepointView) (
-    .init = (.text: StringView) -> (.result: CodepointView) {
+CodepointViewInitArgs: Type = (.text: StringView)
+
+implement Init#(CodepointView, CodepointViewInitArgs) (
+    .Result : Type = CodepointView
+
+    .init = CodepointViewInitArgs -> (.result: Result) {
         result = (._text = text)
     }
 )

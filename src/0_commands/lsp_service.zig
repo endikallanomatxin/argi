@@ -1295,11 +1295,19 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     const code =
         \\Point := (.x: Int32)
         \\PointArgs := (.x: Int32)
-        \\implement Init#(Point) (.init = PointArgs -> (.result: Point) { result = (.x = x) })
+        \\PointInitArgs: Type = PointArgs
+        \\
+        \\implement Init#(Point, PointInitArgs) (
+        \\    .Result: Type = Point
+        \\.init = PointInitArgs -> (.result: Point) { result = (.x = x) })
         \\implement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})
         \\Box := #(.t: Type) (.value: t)
         \\BoxArgs := #(.t: Type) (.value: t)
-        \\implement#(.t: Type) Init#(Box#(.t: t)) (.init = BoxArgs#(t) -> (.result: Box#(.t: t)) { result = (.value = value) })
+        \\BoxInitArgs2: Type = #(.t: Type) BoxArgs#(t)
+        \\
+        \\implement#(.t: Type) Init#(Box#(.t: t), BoxInitArgs2#(t)) (
+        \\    .Result: Type = Box#(.t: t)
+        \\.init = BoxInitArgs2#(t) -> (.result: Box#(.t: t)) { result = (.value = value) })
         \\implement#(.t: Type) Deinit#(Box#(.t: t)) (.deinit = (.self: $&Box#(.t: t)) -> () {})
         \\identity := (.value: Int32) -> (.result: Int32)  { result = value }
         \\main := (.system: System) -> (.status_code: Int32 = 0)  {
@@ -1324,9 +1332,9 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     try expectSemanticToken(data.items, code, "Point :", TOKEN_INDEX.type_, 1);
     try expectSemanticToken(data.items, code, "implement", TOKEN_INDEX.keyword, 0);
     try expectSemanticToken(data.items, code, "defer", TOKEN_INDEX.keyword, 0);
-    try expectSemanticToken(data.items, code, "Point) (.init", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Point, PointInitArgs", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "Point) (.deinit", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "Box#(.t: t)) (.init", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box#(.t: t), BoxInitArgs2", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "Box#(.t: t)) (.deinit", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "init =", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "deinit =", TOKEN_INDEX.function, 1);
@@ -1403,10 +1411,18 @@ test "LSP constructor navigation finds selected init bodies and default record d
         \\EmptyArgs: Type = ()
         \\ValueArgs := (.value: Int32)
         \\
-        \\implement Init#(MyType) (.init = (.value: Int32 = 0) -> (.result: MyType) { result = (.value = value) })
+        \\MyTypeInitArgs: Type = (.value: Int32 = 0)
+        \\
+        \\implement Init#(MyType, MyTypeInitArgs) (
+        \\    .Result: Type = MyType
+        \\.init = MyTypeInitArgs -> (.result: MyType) { result = (.value = value) })
         \\Box := #(.t: Type) (.value: t)
         \\BoxArgs := #(.t: Type) (.value: t)
-        \\implement#(.t: Type) Init#(Box#(.t: t)) (.init = BoxArgs#(t) -> (.result: Box#(.t: t)) { result = (.value = value) })
+        \\BoxInitArgs2: Type = #(.t: Type) BoxArgs#(t)
+        \\
+        \\implement#(.t: Type) Init#(Box#(.t: t), BoxInitArgs2#(t)) (
+        \\    .Result: Type = Box#(.t: t)
+        \\.init = BoxInitArgs2#(t) -> (.result: Box#(.t: t)) { result = (.value = value) })
         \\main := () -> (.status_code: Int32 = 0)  {
         \\    first ::= MyType()
         \\    second ::= MyType(2)
@@ -1421,7 +1437,7 @@ test "LSP constructor navigation finds selected init bodies and default record d
     try tmp.dir.createDir(std.testing.io, "library", .default_dir);
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "library/thing.rg",
-        .data = "Thing := (.value: Int32)\nThingArgs := (.value: Int32)\nimplement Init#(Thing) (.init = ThingArgs -> (.result: Thing) { result = (.value = value) })\n",
+        .data = "Thing := (.value: Int32)\nThingArgs := (.value: Int32)\nThingInitArgs: Type = ThingArgs\n\nimplement Init#(Thing, ThingInitArgs) (\n    .Result: Type = Thing\n.init = ThingInitArgs -> (.result: Thing) { result = (.value = value) })\n",
     });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
     const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
@@ -1432,19 +1448,20 @@ test "LSP constructor navigation finds selected init bodies and default record d
     const diagnostics = try service.openDocument(uri, path, 1, code);
     defer diagnostics.deinit();
     try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
-    for ([_]struct { line: u32, character: u32, declaration_line: u32 }{
-        .{ .line = 9, .character = 17, .declaration_line = 4 },
-        .{ .line = 10, .character = 18, .declaration_line = 4 },
-        .{ .line = 11, .character = 15, .declaration_line = 7 },
+    for ([_]struct { call: []const u8, declaration: []const u8 }{
+        .{ .call = "MyType()", .declaration = ".init = MyTypeInitArgs" },
+        .{ .call = "MyType(2)", .declaration = ".init = MyTypeInitArgs" },
+        .{ .call = "Box#(.t: Int32)(3)", .declaration = ".init = BoxInitArgs2" },
     }) |case| {
-        const position = Position{ .line = case.line, .character = case.character };
+        const position = outlinePosition(code, std.mem.indexOf(u8, code, case.call).?);
+        const declaration_line = outlinePosition(code, std.mem.indexOf(u8, code, case.declaration).?).line;
         const definition = (try service.definition(uri, position)) orelse {
-            std.debug.print("missing constructor definition at line {d}\n", .{case.line});
+            std.debug.print("missing constructor definition at line {d}\n", .{position.line});
             return error.TestExpectedEqual;
         };
         defer definition.deinit(std.testing.allocator);
         try std.testing.expectEqualStrings(path, definition.path);
-        try std.testing.expectEqual(case.declaration_line, definition.range.start.line);
+        try std.testing.expectEqual(declaration_line, definition.range.start.line);
         const hover = (try service.hover(uri, position)).?;
         defer std.testing.allocator.free(hover.contents);
         try std.testing.expect(std.mem.indexOf(u8, hover.contents, "init(") != null);
@@ -1453,15 +1470,15 @@ test "LSP constructor navigation finds selected init bodies and default record d
         defer edits.deinit();
         try std.testing.expectEqual(@as(usize, 0), edits.items.len);
     }
-    const spec = (try service.definition(uri, .{ .line = 12, .character = 16 })).?;
+    const spec = (try service.definition(uri, outlinePosition(code, std.mem.indexOf(u8, code, "CliSpec(").?))).?;
     defer spec.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, spec.path, if (@import("builtin").os.tag == .windows) "\\system\\command.rg" else "/system/command.rg"));
     try std.testing.expectEqual(@as(u32, 6), spec.range.start.line);
     try std.testing.expectEqual(@as(u32, 7), spec.range.end.character);
-    const imported = (try service.definition(uri, .{ .line = 13, .character = 26 })).?;
+    const imported = (try service.definition(uri, outlinePosition(code, std.mem.indexOf(u8, code, "library.Thing(").? + "library.".len))).?;
     defer imported.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, imported.path, if (@import("builtin").os.tag == .windows) "\\library\\thing.rg" else "/library/thing.rg"));
-    try std.testing.expectEqual(@as(u32, 2), imported.range.start.line);
+    try std.testing.expectEqual(@as(u32, 6), imported.range.start.line);
 }
 
 test "LSP semantic tokens retain syntax roles with unresolved calls and multiline text" {

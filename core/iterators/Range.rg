@@ -10,8 +10,12 @@ RangeIterator := #(.t: Type) (
     .step    : t
 )
 
-implement#(.t: Type) Init#(Range#(.t: t)) (
-    .init = (.end: t, .start: t = 0, .step: t = 1) -> (.result: Range#(.t: t)) {
+RangeInitArgs: Type = #(.t: Type) (.end: t, .start: t = 0, .step: t = 1)
+
+implement#(.t: Type) Init#(Range#(.t: t), RangeInitArgs#(t)) (
+    .Result : Type = Range#(.t: t)
+
+    .init = RangeInitArgs#(t) -> (.result: Result) {
         result = (.start = start, .end = end, .step = step)
     }
 )

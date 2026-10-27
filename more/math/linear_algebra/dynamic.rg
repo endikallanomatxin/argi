@@ -28,13 +28,19 @@ _extent := (.rows: UIntNative, .cols: UIntNative) -> (
     result = ..ok rows * cols
 }
 
-implement#(.t: Type: Scalar) Init#(DynamicMatrix#(.t: t)) (
-    .init = #(.Provider: Type: Allocator) (
-        .rows      : UIntNative,
-        .cols      : UIntNative,
-        .values    : ArrayView#(.t: t),
-        .allocator : $&Provider         = reach allocator,
-    ) -> (.result: Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))) {
+DynamicMatrixInitArgs: Type = #(.t: Type: Scalar, .Provider: Type: Allocator) (
+    .rows      : UIntNative,
+    .cols      : UIntNative,
+    .values    : ArrayView#(.t: t),
+    .allocator : $&Provider         = reach allocator,
+)
+
+implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
+    DynamicMatrix#(.t: t), DynamicMatrixInitArgs#(t, Provider)
+) (
+    .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
+
+    .init = DynamicMatrixInitArgs#(t, Provider) -> (.result: Result) {
         _init_rows ::= rows
         _init_cols ::= cols
         _init_values ::= values
@@ -198,10 +204,17 @@ _math_transpose_dynamic_matrix := #(.t: Type: Scalar, .Provider: Type: Allocator
 
 DynamicVector := #(.t: Type: Scalar) (._values: DynamicArray#(.t: t))
 
-implement#(.t: Type: Scalar) Init#(DynamicVector#(.t: t)) (
-    .init = #(.Provider: Type: Allocator) (
-        .values: ArrayView#(.t: t), .allocator: $&Provider = reach allocator
-    ) -> (.result: Errable#(DynamicVector#(.t: t), (..out_of_memory))) {
+DynamicVectorInitArgs: Type = #(.t: Type: Scalar, .Provider: Type: Allocator) (
+    .values    : ArrayView#(.t: t),
+    .allocator : $&Provider         = reach allocator
+)
+
+implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
+    DynamicVector#(.t: t), DynamicVectorInitArgs#(t, Provider)
+) (
+    .Result : Type = Errable#(DynamicVector#(.t: t), (..out_of_memory))
+
+    .init = DynamicVectorInitArgs#(t, Provider) -> (.result: Result) {
         _init_values ::= values
         _init_allocator ::= allocator
 

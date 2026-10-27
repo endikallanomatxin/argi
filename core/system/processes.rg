@@ -52,7 +52,11 @@ _acquire_process_manager := once _ProcessManagerInitArgs -> (.result: ProcessMan
     result = (._ffi = ffi)
 }
 
-implement Init#(ProcessManager) (
+ProcessManagerInitArgs: Type = _ProcessManagerInitArgs
+
+implement Init#(ProcessManager, ProcessManagerInitArgs) (
+    .Result : Type = ProcessManager
+
     .init = _acquire_process_manager
 )
 

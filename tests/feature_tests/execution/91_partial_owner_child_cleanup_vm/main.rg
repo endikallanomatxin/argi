@@ -17,8 +17,12 @@ implement Deinit#(Parent) (
     }
 )
 
-implement Init#(Child) (
-    .init = (.counter: $&Counter) -> (.result: Child) {
+ChildInitArgs: Type = (.counter: $&Counter)
+
+implement Init#(Child, ChildInitArgs) (
+    .Result : Type = Child
+
+    .init = ChildInitArgs -> (.result: Result) {
         result = (.counter = counter)
     }
 )

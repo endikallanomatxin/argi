@@ -2,10 +2,12 @@
 -- byte zero. Construction clears only the bytes needed for the requested bits.
 BitSetView := (._bytes: MutableArrayView#(.t: UInt8), ._count: UIntNative)
 
-implement Init#(BitSetView) (
-    .init = (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative) -> (
-        .result : Errable#(BitSetView, (..out_of_bounds))
-    ) {
+BitSetViewInitArgs: Type = (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative)
+
+implement Init#(BitSetView, BitSetViewInitArgs) (
+    .Result : Type = Errable#(BitSetView, (..out_of_bounds))
+
+    .init = BitSetViewInitArgs -> (.result: Result) {
         _init_bytes ::= bytes
         _init_count ::= count
 

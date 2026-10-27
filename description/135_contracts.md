@@ -117,15 +117,22 @@ associated value does not infer an otherwise unknown participant.
 
 ## Standard operations
 
-Construction uses `Init#(T)`. Its `.init: _` requirement reserves the operation
-identity while the selected implementation supplies the signature, including
-operation-local compile-time parameters. `T(...)` supplies its ordinary inputs
-and defaults. The result must be `T` or an `Errable` containing `T`; it does not
-participate in selection. Eligible types without a custom Init retain structural
-construction. Alternative factories use explicitly named functions or contracts,
-rather than multiple Init conformances distinguished only by argument signatures.
-Implementation-owned signatures require static selection; virtual interfaces need
-a fixed declared signature.
+Construction uses `Init#(Target, Args)`. Both participants are concrete types;
+Args is the nominal input record and retains its defaults. The associated Result
+must be Target or an Errable containing Target. The fixed requirement is
+`.init: Args -> (.result: Result)`.
+
+`T(...)` fixes the target and infers the remaining participants from applicable
+input signatures and reachable capabilities. Implementation parameters, including
+static allocator types, must be determined by those participants. Several Init
+conformances may share a target. Different inferred argument types require
+qualification; specificity only compares conformances for the same complete tuple.
+Return types never select construction. Untyped call literals receive their
+nominal context from candidate signatures, not structural type identity.
+
+Eligible types without a custom Init retain structural construction. Alternative
+factories may still use explicitly named functions. Initializer behavior and
+compiler-managed storage initialization/cleanup remain separate responsibilities.
 
 Unqualified calls can infer participants from implementation-owned inputs,
 including ordinary generic aliases and operation-local compile-time parameters.
@@ -408,7 +415,7 @@ Ownership queries these conformances rather than functions named copy.
 
 The standard Init contract now owns canonical construction for migrated types.
 Type calls select Init evidence, complete its Args record and invoke its init
-operation; Result must be the participant itself or one bundled Errable containing
+operation; Result must be the target participant or one bundled Errable containing
 it. Concrete and explicit generic calls, including parameterized bodies, share
 this route. Closed anonymous Args records retain ordinary field defaults; generic
 argument shapes retain scalar and lexical reach defaults. Failed construction

@@ -11,7 +11,11 @@ _acquire_file_system := once _FileSystemInitArgs -> (.result: FileSystem) {
     result._ffi = ffi
 }
 
-implement Init#(FileSystem) (
+FileSystemInitArgs: Type = _FileSystemInitArgs
+
+implement Init#(FileSystem, FileSystemInitArgs) (
+    .Result : Type = FileSystem
+
     .init = _acquire_file_system
 )
 

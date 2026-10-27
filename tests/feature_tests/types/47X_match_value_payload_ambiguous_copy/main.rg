@@ -2,8 +2,12 @@ Payload := (
     .value : Int32,
 )
 
-implement Init#(Payload) (
-    .init = (.value: Int32) -> (.result: Payload) {
+PayloadInitArgs: Type = (.value: Int32)
+
+implement Init#(Payload, PayloadInitArgs) (
+    .Result : Type = Payload
+
+    .init = PayloadInitArgs -> (.result: Result) {
         _init_value ::= ~value
 
         result = (.value = _init_value)

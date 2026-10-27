@@ -20,8 +20,12 @@ CliParser := #(.t: Type: ArgumentSource#(t)) (
     ._positionals  : Bool
 )
 
-implement#(.t: Type: ArgumentSource#(t)) Init#(CliParser#(.t: t)) (
-    .init = (.source: &t, .start: UIntNative = 0) -> (.result: CliParser#(.t: t)) {
+CliParserInitArgs: Type = #(.t: Type: ArgumentSource#(t)) (.source: &t, .start: UIntNative = 0)
+
+implement#(.t: Type: ArgumentSource#(t)) Init#(CliParser#(.t: t), CliParserInitArgs#(t)) (
+    .Result : Type = CliParser#(.t: t)
+
+    .init = CliParserInitArgs#(t) -> (.result: Result) {
         _init_source ::= source
         _init_start ::= start
 

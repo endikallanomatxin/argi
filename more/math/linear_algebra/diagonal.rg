@@ -3,8 +3,14 @@ Diagonal := #(.n: UIntNative, .t: Type: Scalar) (.values: Array#(.n = n, .t: t))
 
 implement#(.n: UIntNative, .t: Type: Scalar) ImplicitlyCopyable#(Diagonal#(.n = n, .t: t)) ()
 
-implement#(.n: UIntNative, .t: Type: Scalar) Init#(Diagonal#(.n = n, .t: t)) (
-    .init = (.values: Array#(.n = n, .t: t)) -> (.result: Diagonal#(.n = n, .t: t)) {
+DiagonalInitArgs: Type = #(.n: UIntNative, .t: Type: Scalar) (.values: Array#(.n = n, .t: t))
+
+implement#(.n: UIntNative, .t: Type: Scalar) Init#(
+    Diagonal#(.n = n, .t: t), DiagonalInitArgs#(n, t)
+) (
+    .Result : Type = Diagonal#(.n = n, .t: t)
+
+    .init = DiagonalInitArgs#(n, t) -> (.result: Result) {
         result = (.values = values)
     }
 )

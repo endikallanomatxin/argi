@@ -6,14 +6,22 @@ implement ImplicitlyCopyable#(Alpha) ()
 
 implement ImplicitlyCopyable#(Beta) ()
 
-implement Init#(Alpha) (
-    .init = () -> (.result: Alpha) {
+AlphaInitArgs: Type = ()
+
+implement Init#(Alpha, AlphaInitArgs) (
+    .Result : Type = Alpha
+
+    .init = AlphaInitArgs -> (.result: Result) {
         result = ()
     }
 )
 
-implement Init#(Beta) (
-    .init = () -> (.result: Beta) {
+BetaInitArgs2: Type = ()
+
+implement Init#(Beta, BetaInitArgs2) (
+    .Result : Type = Beta
+
+    .init = BetaInitArgs2 -> (.result: Result) {
         result = ()
     }
 )

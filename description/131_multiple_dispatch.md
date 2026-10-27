@@ -33,11 +33,12 @@ supplied participants establish selection before associated results are resolved
 
 ## Constructors and destruction
 
-A call to `T(...)` selects the most specific `Init#(T)` implementation for its
-target, then infers operation-local parameters from the selected init signature.
-Inputs can infer missing target parameters; different inferred targets require
-explicit disambiguation. The result is checked after selection and never supplies
-missing participant bindings. Structural construction remains available without Init.
+A call to `T(...)` fixes the target participant of `Init#(Target, Args)` and
+infers Args from applicable input signatures, including static providers. Inputs
+can also infer missing target parameters. Different inferred participant tuples
+require disambiguation; specificity only compares conformances for one tuple.
+The associated Result is checked after selection and never supplies missing
+participant bindings. Structural construction remains available without Init.
 
 Explicit destruction and automatic cleanup use the same selected `Deinit#(T)`
 evidence. Ordinary functions named `deinit` retain ordinary call effects and do

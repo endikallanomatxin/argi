@@ -166,6 +166,7 @@ pub const ResolvedNode = primitives.Node(Ids);
 pub const PendingExpressionKind = enum(u8) {
     entry_capture,
     unknown_identifier,
+    assume_name,
     comptime_parameter,
     pipe,
     unwrap_or,

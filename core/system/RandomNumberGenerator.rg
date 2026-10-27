@@ -10,7 +10,11 @@ _acquire_random_number_generator := once _RandomNumberGeneratorInitArgs -> (
     result = (._ffi = ffi)
 }
 
-implement Init#(RandomNumberGenerator) (
+RandomNumberGeneratorInitArgs: Type = _RandomNumberGeneratorInitArgs
+
+implement Init#(RandomNumberGenerator, RandomNumberGeneratorInitArgs) (
+    .Result : Type = RandomNumberGenerator
+
     .init = _acquire_random_number_generator
 )
 

@@ -72,8 +72,8 @@ PointArgs := (.x: Int32, .y: Int32)
 
 implement Init#(Point, PointArgs) (
     .Result: Type = Point
-    .init = (.args: PointArgs) -> (.result: Result) {
-        result = (.x = args.x, .y = args.y)
+    .init = PointArgs -> (.result: Result) {
+        result = (.x = x, .y = y)
     }
 )
 

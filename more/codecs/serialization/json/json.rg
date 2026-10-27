@@ -349,10 +349,12 @@ implement ImplicitlyCopyable#(JsonToken) ()
 -- Callers must preserve those bytes for the cursor's entire lifetime.
 JsonCursor := (._text: StringView, ._position: UIntNative)
 
-implement Init#(JsonCursor) (
-    .init = (.text: StringView, .maximum_depth: UIntNative = 64) -> (
-        .result : Errable#(JsonCursor, JsonReasons)
-    ) {
+JsonCursorInitArgs: Type = (.text: StringView, .maximum_depth: UIntNative = 64)
+
+implement Init#(JsonCursor, JsonCursorInitArgs) (
+    .Result : Type = Errable#(JsonCursor, JsonReasons)
+
+    .init = JsonCursorInitArgs -> (.result: Result) {
         _init_text ::= text
         _init_maximum_depth ::= maximum_depth
 

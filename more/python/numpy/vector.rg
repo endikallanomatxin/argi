@@ -10,10 +10,12 @@ _NumpyReasons := (python ..python_error, ..numpy_shape_mismatch)
 -- represents a one-dimensional native-endian Float64 array of this length.
 Vector64 := (._object: python.Object, ._length: UIntNative)
 
-implement Init#(Vector64) (
-    .init = (.interpreter: &python.Python, .values: ArrayView#(.t: Float64)) -> (
-        .result : Errable#(Vector64, _PythonReasons)
-    ) {
+Vector64InitArgs: Type = (.interpreter: &python.Python, .values: ArrayView#(.t: Float64))
+
+implement Init#(Vector64, Vector64InitArgs) (
+    .Result : Type = Errable#(Vector64, _PythonReasons)
+
+    .init = Vector64InitArgs -> (.result: Result) {
         _init_interpreter ::= interpreter
         _init_values ::= values
 

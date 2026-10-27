@@ -2,8 +2,12 @@ First := (.value: Int32)
 
 Second := (.value: Int32)
 
-implement Init#(First) (
-    .init = () -> (.result: Second) {
+FirstInitArgs: Type = ()
+
+implement Init#(First, FirstInitArgs) (
+    .Result : Type = Second
+
+    .init = FirstInitArgs -> (.result: Result) {
         result = (.value = 1)
     }
 )

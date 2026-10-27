@@ -1,12 +1,16 @@
 Widget := (.value: Int32)
 
-implement Init#(Widget) (
-    .init = () -> (.value: Int32) {
-        value = 1
+WidgetInitArgs: Type = ()
+
+implement Init#(Widget, WidgetInitArgs) (
+    .Result : Type = Int32
+
+    .init = WidgetInitArgs -> (.result: Result) {
+        result = 1
     }
 )
 
-main := () -> (.status_code: Int32 = 0)  {
+main := () -> (.status_code: Int32 = 0) {
     widget ::= Widget()
     status_code = widget.value
 }

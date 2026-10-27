@@ -2,8 +2,12 @@ Box := #(.t: Type) (.tag: Int32)
 
 Arguments := #(.sample: Type) (.value: sample)
 
-implement#(.t: Type) Init#(Box#(.t: t)) (
-    .init = #(.sample: Type) Arguments#(sample) -> (.result: Box#(.t: Int32)) {
+BoxInitArgs: Type = #(.t: Type, .sample: Type) Arguments#(sample)
+
+implement#(.t: Type, .sample: Type) Init#(Box#(.t: t), BoxInitArgs#(t, sample)) (
+    .Result : Type = Box#(.t: Int32)
+
+    .init = BoxInitArgs#(t, sample) -> (.result: Result) {
         value ::= ~value
 
         _ ::= value
@@ -11,8 +15,10 @@ implement#(.t: Type) Init#(Box#(.t: t)) (
     }
 )
 
-implement#(.t: Type) Init#(Box#(.t: t)) (
-    .init = #(.sample: Type) Arguments#(sample) -> (.result: Box#(.t: UnicodeScalar)) {
+implement#(.t: Type, .sample: Type) Init#(Box#(.t: t), BoxInitArgs#(t, sample)) (
+    .Result : Type = Box#(.t: UnicodeScalar)
+
+    .init = BoxInitArgs#(t, sample) -> (.result: Result) {
         value ::= ~value
 
         _ ::= value

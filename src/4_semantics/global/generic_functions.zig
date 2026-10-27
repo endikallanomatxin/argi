@@ -1125,6 +1125,17 @@ pub const Resolver = struct {
         associated: primitives.Range(ir.ParameterizedGenericArgId),
     ) !?global_sg.GlobalTypeId {
         const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
+        // Reject already-disproved candidates before materializing associated
+        // types or named signatures that rely on those same constraints.
+        const capture_storage = &self.modules[module_index].semantic.parameterized_storage;
+        for (captures.start..captures.start + captures.len) |raw| {
+            const parameter = capture_storage.comptime_parameters.items[raw];
+            const constraint = parameter.constraint orelse continue;
+            const actual = bindings.types[raw] orelse continue;
+            if (try contracts.constraintArgumentsKnown(module_index, constraint, bindings)) {
+                if (!try contracts.inferConstraintBindings(module_index, constraint, actual, bindings)) return null;
+            }
+        }
         if (!try self.bindKnownOperationAssociations(module_index, operation.associated_parameters, associated, bindings)) return null;
         if (operation.function == .expression) {
             const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
@@ -3597,6 +3608,11 @@ pub const Resolver = struct {
 
             return switch (value.kind) {
                 .entry_capture => error.InvalidParameterizedEntryCapture,
+                .assume_name => {
+                    const resolved = try self.resolveName(.{ .name = value.name orelse return error.UnknownAssumedVariable, .source = value.source });
+                    if (resolved.content != .binding_use) return error.UnknownAssumedVariable;
+                    return self.emptyValue(try self.resolver.core.builtin(.Void), value.source);
+                },
                 .unknown_identifier => if (value.name) |name| self.resolveName(.{ .name = name, .source = value.source }) else error.UnknownParameterizedName,
                 .comptime_parameter => self.resolveComptimeParameter(value),
                 .entity_application => blk: {
@@ -3780,7 +3796,19 @@ pub const Resolver = struct {
             };
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage;
             const definition = storage.comptime_parameters.items[@intFromEnum(parameter)];
-            if (definition.kind != .comptime_int) return error.InvalidParameterizedComptimeParameter;
+            if (value.name) |name| {
+                if (self.findGlobalBinding(self.resolver.modules[self.module_index].text(name))) |binding| {
+                    return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = self.resolver.graph.bindings.items[@intFromEnum(binding)].ty, .content = .{ .binding_use = binding } };
+                }
+            }
+            if (definition.kind == .type) {
+                const ty = self.substitutions.types[@intFromEnum(parameter)] orelse return error.UnboundComptimeParameter;
+                return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = try self.resolver.core.builtin(.Type), .content = .{ .type_literal = ty } };
+            }
+            if (definition.kind == .definition) {
+                const entity = self.substitutions.definitions[@intFromEnum(parameter)] orelse return error.UnboundComptimeParameter;
+                return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = try global_types.definitionClass(self.resolver.allocator, self.resolver.graph, entity.origin), .content = .{ .definition_literal = entity } };
+            }
             const number = self.substitutions.ints[@intFromEnum(parameter)] orelse return error.UnboundComptimeParameter;
             const ty = if (definition.value_type) |parameterized_type|
                 try self.resolver.generics.instantiateParameterizedType(self.module_index, parameterized_type, self.substitutions)
@@ -4058,6 +4086,9 @@ pub const Resolver = struct {
                     else
                         try self.resolver.core.matchFunctionByName(self.module_index, reference, input);
                     if (ordinary == .function) break :ordinary_lookup ordinary.function;
+                    // A pending ordinary call must not become a failed generic
+                    // lookup while its caller's argument values are unresolved.
+                    if (ordinary == .deferred) return error.DeferredGenericFunction;
                     break :ordinary_lookup self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
                         if (self.resolver.nested_constructor_context) |context| {
                             if (self.resolver.nested_constructor_resolver) |resolve| {
