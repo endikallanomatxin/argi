@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "cannot resolve import './missing_dep' from 'tests/feature_tests/modules/03X_import_missing_module/main.rg'\nBuild error: FileNotFound\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

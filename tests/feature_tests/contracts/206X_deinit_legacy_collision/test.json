@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "legacy destructor declarations are unsupported; use implement Deinit",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

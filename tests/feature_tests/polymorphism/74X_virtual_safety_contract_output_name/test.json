@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "the first depends_on argument must name a method output"
+        }
+      ]
+    }
+  ]
+}

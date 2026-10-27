@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/pointers/07X_pointer_arithmetic_requires_cast/main.rg:4:14: error: pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back\n      _addr := ptr + 1\n               ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

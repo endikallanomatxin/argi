@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:35:21: error: root ownership must be acyclic\n                      slot_b&= ~a\n                      ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

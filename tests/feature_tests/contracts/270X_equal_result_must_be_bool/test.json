@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "Equal.equal must return exactly (.ok: Bool)"
+        }
+      ]
+    }
+  ]
+}

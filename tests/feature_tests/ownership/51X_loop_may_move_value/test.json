@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:8:32: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:8:26)\n          consume(.value = ~pair.left)\n                                 ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

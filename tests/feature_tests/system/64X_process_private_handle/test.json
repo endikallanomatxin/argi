@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "field '_handle' is private to its module"
+        }
+      ]
+    }
+  ]
+}

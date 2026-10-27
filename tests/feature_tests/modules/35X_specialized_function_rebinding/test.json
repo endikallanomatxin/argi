@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "too many compile-time arguments",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

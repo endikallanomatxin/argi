@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "root that has ended",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ],
+      "name": "tests/feature_tests/polymorphism/315X_abstract_joint_output_partial_proof"
+    }
+  ]
+}

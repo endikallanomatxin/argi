@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "submodule '_detail' is private",
+          "forbidden_stderr": [
+            "panic"
+          ]
+        }
+      ]
+    }
+  ]
+}

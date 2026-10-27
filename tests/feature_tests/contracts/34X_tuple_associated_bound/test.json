@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "does not satisfy its declared bound",
+          "forbidden_stderr": [
+            "panic"
+          ]
+        }
+      ]
+    }
+  ]
+}

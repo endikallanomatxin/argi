@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        },
+        {
+          "kind": "run",
+          "status": 0
+        },
+        {
+          "kind": "vm",
+          "status": 0
+        }
+      ]
+    }
+  ]
+}

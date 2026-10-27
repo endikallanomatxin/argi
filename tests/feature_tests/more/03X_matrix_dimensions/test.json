@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "operator '*' is not defined",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "conditional opaque storage clauses require correlated hidden storage post-states",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

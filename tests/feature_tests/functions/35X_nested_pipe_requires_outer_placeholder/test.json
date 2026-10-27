@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "pipe right-hand side must use at least one argument placeholder"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "comparison operator declarations are unsupported; use implement Equal"
+        }
+      ]
+    }
+  ]
+}

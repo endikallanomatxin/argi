@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        },
+        {
+          "kind": "run_failure"
+        }
+      ]
+    }
+  ]
+}

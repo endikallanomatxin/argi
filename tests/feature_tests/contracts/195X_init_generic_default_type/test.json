@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "arguments do not match the selected contract operation, including completed defaults",
+          "forbidden_stderr": [
+            "no function named"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/basics/21X_c_enum_payload/main.rg:3:7: error: CEnum variant '..exists' cannot carry a payload\n      ..exists(.code: Int32),\n        ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

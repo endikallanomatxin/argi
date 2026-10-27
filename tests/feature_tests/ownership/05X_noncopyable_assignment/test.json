@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:21:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership\n      second := first\n                ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

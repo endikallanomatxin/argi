@@ -106,16 +106,21 @@ pub fn build(b: *std.Build) void {
     const program_options = b.addOptions();
     program_options.addOption(u32, "workers", test_jobs);
     program_options.addOption(bool, "progress", test_progress);
+    program_options.addOption([]const []const u8, "filters", test_filters);
     tests_mod.addOptions("program_test_options", program_options);
-    tests_mod.addImport("program_test_sharding", b.createModule(.{ .root_source_file = b.path("tests/sharding.zig"), .target = target, .optimize = optimize }));
+    tests_mod.addImport("test_harness", b.createModule(.{ .root_source_file = b.path("tests/harness.zig"), .target = target, .optimize = optimize }));
     const exe_tests = b.addTest(.{
         .root_module = tests_mod,
         .filters = test_filters,
-        .test_runner = if (test_jobs > 1) .{ .path = b.path("tests/parallel_runner.zig"), .mode = .simple } else null,
+        .test_runner = .{ .path = b.path("tests/parallel_runner.zig"), .mode = .simple },
     });
     const program_test_step = b.step("test-programs", "Run Argi program tests");
     if (test_jobs == 1) {
-        const run_exe_tests = addTestRun(b, exe_tests, test_progress);
+        const run_exe_tests = b.addRunArtifact(exe_tests);
+        run_exe_tests.addArgs(&.{ "all", ".zig-cache/program-tests/serial.log" });
+        run_exe_tests.expectExitCode(0);
+        run_exe_tests.expectStdOutMatch("[programs all]");
+        run_exe_tests.has_side_effects = true;
         run_exe_tests.step.dependOn(b.getInstallStep());
         program_test_step.dependOn(&run_exe_tests.step);
     } else {
@@ -190,7 +195,16 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| execution_run.addArgs(args);
     b.step("benchmark-execution", "Measure retained session phases and memory").dependOn(&execution_run.step);
 
+    const harness_tests = b.addTest(.{
+        .root_module = b.createModule(.{ .root_source_file = b.path("tests/harness_tests.zig"), .target = target, .optimize = optimize }),
+    });
+    const run_harness_tests = b.addRunArtifact(harness_tests);
+    const harness_test_step = b.step("test-harness", "Run fixture discovery and scheduling unit tests");
+    harness_test_step.dependOn(&run_harness_tests.step);
+    program_test_step.dependOn(harness_test_step);
+
     const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(harness_test_step);
     test_step.dependOn(internal_test_step);
     test_step.dependOn(program_test_step);
 }

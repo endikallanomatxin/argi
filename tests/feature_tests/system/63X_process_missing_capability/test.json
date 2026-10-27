@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": ".self uses reach [proc_man] expected as '&ProcessManager'"
+        }
+      ]
+    }
+  ]
+}

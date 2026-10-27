@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "associated element is not an integer constant",
+          "forbidden_stderr": [
+            "panic"
+          ]
+        }
+      ]
+    }
+  ]
+}

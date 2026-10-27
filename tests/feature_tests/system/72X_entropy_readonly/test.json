@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "no function named 'fill_random_bytes' accepts arguments"
+        }
+      ]
+    }
+  ]
+}

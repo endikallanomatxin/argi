@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "ambiguous maximal patterns",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

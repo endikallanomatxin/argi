@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        },
+        {
+          "kind": "run",
+          "status": 0,
+          "stderr": "error: project build failed\nerror trace (most recent first):\n  at tests/feature_tests/types/46_report_error_helper/main.rg:13:22: loading project config\n        value := middle()!! \"loading project config\"\n                         ^\n  at tests/feature_tests/types/46_report_error_helper/main.rg:8:20\n        value := fail()!\n                       ^\n  at tests/feature_tests/types/46_report_error_helper/main.rg:4:14\n        result = ..error(.reason = ..test_error)\n                 ^\n"
+        }
+      ]
+    }
+  ]
+}

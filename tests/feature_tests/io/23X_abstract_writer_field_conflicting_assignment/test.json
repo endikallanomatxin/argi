@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "cannot assign reference of type"
+        }
+      ]
+    }
+  ]
+}

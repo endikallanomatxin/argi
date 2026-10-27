@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        }
+      ]
+    }
+  ]
+}

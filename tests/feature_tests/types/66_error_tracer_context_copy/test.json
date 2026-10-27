@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        },
+        {
+          "kind": "run",
+          "status": 0,
+          "stderr": "error trace (most recent first):\n  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:14:11: AB\n        fail()!! view\n              ^\n  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:3:32\n    fail := () -> !Void { result = ..error(.reason = ..copy_test_failure) }\n                                   ^\n"
+        }
+      ]
+    }
+  ]
+}

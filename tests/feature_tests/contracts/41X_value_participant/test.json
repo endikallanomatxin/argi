@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "participants must be named Type parameters",
+          "forbidden_stderr": [
+            "panic"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "function output signature must be a record type",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

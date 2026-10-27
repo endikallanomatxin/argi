@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "no visible concrete CFunction body matches",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ],
+      "name": "C interop rejects 68X_callback_argi_body"
+    }
+  ]
+}

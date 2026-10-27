@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "cannot assign numeric value of type"
+        }
+      ],
+      "name": "tests/feature_tests/basics/28X_numeric_signedness_assignment"
+    }
+  ]
+}

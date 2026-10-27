@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "contract constraint 'ExampleAbstract' required by generic function parameter '.Value' of 'use_value'"
+        }
+      ]
+    }
+  ]
+}

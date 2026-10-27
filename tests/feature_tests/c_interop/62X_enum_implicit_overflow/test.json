@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "CEnum value is outside",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ],
+      "name": "C interop rejects 62X_enum_implicit_overflow"
+    }
+  ]
+}

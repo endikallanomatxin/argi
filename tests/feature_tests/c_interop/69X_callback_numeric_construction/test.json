@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "construction requires '.function = name'",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ],
+      "name": "C interop rejects 69X_callback_numeric_construction"
+    }
+  ]
+}

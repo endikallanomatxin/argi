@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/functions/14X_positional_after_named_call/main.rg:6:40: error: positional collection items must appear before named items\n      status_code = subtract(.left = 44, 2).diff\n                                         ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    },
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "positional collection items must appear before named items",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ],
+      "name": "parser errors do not print parse error noise"
+    }
+  ]
+}

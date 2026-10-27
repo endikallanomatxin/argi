@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:4:23: error: no function named 'cast' exists\n      reference ::= cast#(.to: $&Int32)(.value = address)\n                        ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

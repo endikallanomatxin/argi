@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "caller storage cannot depend on a local storage generation"
+        },
+        {
+          "kind": "vm",
+          "status": 1,
+          "diagnostic": "caller storage cannot depend on a local storage generation"
+        }
+      ]
+    }
+  ]
+}

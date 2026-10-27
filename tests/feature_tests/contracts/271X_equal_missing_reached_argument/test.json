@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "required reachable capabilities",
+          "forbidden_stderr": [
+            "without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

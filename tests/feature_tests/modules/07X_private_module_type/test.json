@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/modules/07X_private_module_type/main.rg:3:13: error: type '_HiddenStatus' is private to its module\n      hidden: dep._HiddenStatus = (.code = 0)\n              ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "arithmetic operation must return exactly (.result: Result)",
+          "forbidden_stderr": [
+            "without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

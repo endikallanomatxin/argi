@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "type 'Resource' cannot be copied implicitly"
+        }
+      ]
+    }
+  ]
+}

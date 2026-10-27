@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "no function named 'missing_value' exists",
+          "forbidden_stderr": [
+            "cannot infer the array type"
+          ]
+        }
+      ]
+    }
+  ]
+}

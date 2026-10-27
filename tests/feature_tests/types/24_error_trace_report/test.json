@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        },
+        {
+          "kind": "run",
+          "status": 0,
+          "stderr": "error trace (most recent first):\n  at tests/feature_tests/types/24_error_trace_report/main.rg:13:23: reading config\n        value := middle() !! \"reading config\"\n                          ^\n  at tests/feature_tests/types/24_error_trace_report/main.rg:8:20\n        value := fail()!\n                       ^\n  at tests/feature_tests/types/24_error_trace_report/main.rg:4:14\n        result = ..error(.reason = ..test_error)\n                 ^\n"
+        }
+      ]
+    }
+  ]
+}

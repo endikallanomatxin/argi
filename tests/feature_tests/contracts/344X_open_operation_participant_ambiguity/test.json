@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "operation inputs do not determine a unique participant tuple",
+          "forbidden_stderr": [
+            "without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

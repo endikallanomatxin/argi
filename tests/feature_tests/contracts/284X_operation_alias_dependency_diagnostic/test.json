@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "invalid conformance for contract 'Required'",
+          "forbidden_stderr": [
+            "the generic operation alias body could not be specialized"
+          ]
+        }
+      ]
+    }
+  ]
+}

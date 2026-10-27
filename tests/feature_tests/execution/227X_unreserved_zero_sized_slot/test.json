@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        },
+        {
+          "kind": "run_failure"
+        },
+        {
+          "kind": "vm",
+          "status": 1,
+          "diagnostic": "ExecutionAborted"
+        }
+      ],
+      "name": "tests/feature_tests/execution/227X_unreserved_zero_sized_slot"
+    }
+  ]
+}

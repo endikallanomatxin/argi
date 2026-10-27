@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "opaque ownership storage requires no live external aliases to the consumed root"
+        }
+      ]
+    }
+  ]
+}

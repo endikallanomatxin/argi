@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "cannot end a root while opaque storage hides a dependency on it"
+        }
+      ]
+    }
+  ]
+}

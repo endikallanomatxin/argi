@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": ".ffi uses reach [ffi]",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ],
+      "name": "C interop rejects 74X_callback_body_missing_capability"
+    }
+  ]
+}

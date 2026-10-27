@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "parameters require RawPointer",
+          "forbidden_stderr": [
+            "failed without a diagnostic"
+          ]
+        }
+      ],
+      "name": "C interop rejects 70X_callback_safe_reference"
+    }
+  ]
+}

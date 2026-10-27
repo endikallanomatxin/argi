@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "Init argument '.ffi' requires a reachable value or an explicit argument"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow/main.rg:2:21: error: integer literal magnitude exceeds the supported 64-bit range\n      value: UInt64 = 18446744073709551616\n                      ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ],
+      "name": "tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow"
+    }
+  ]
+}

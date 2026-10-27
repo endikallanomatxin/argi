@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "implementation operation must be a compile-time function definition value",
+          "forbidden_stderr": [
+            "without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

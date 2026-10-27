@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "module 'dep' has no type named 'Missing'",
+          "forbidden_stderr": [
+            "no matching function"
+          ]
+        }
+      ]
+    }
+  ]
+}

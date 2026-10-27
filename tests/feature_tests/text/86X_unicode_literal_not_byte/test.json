@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "Unicode scalars and bytes require explicit conversion"
+        }
+      ]
+    }
+  ]
+}

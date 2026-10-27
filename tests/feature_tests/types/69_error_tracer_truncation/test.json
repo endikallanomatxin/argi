@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        },
+        {
+          "kind": "run",
+          "status": 0,
+          "stderr": "error trace (most recent first):\n  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:11:5: latest\n        add_context_text(.context = \"latest\")\n        ^\n  <context truncated>\n  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:3:32\n    fail := () -> !Void { result = ..error(.reason = ..truncated_test_failure) }\n                                   ^\n"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "root that has ended"
+        },
+        {
+          "kind": "vm",
+          "status": 1,
+          "diagnostic": "root that has ended"
+        }
+      ]
+    }
+  ]
+}

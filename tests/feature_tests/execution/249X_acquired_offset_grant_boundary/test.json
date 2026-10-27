@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "vm",
+          "status": 1,
+          "diagnostic": "ExecutionIndexOutOfBounds"
+        }
+      ]
+    }
+  ]
+}

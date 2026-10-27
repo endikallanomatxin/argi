@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "a storage transition is not permitted by this preservation contract",
+          "forbidden_stderr": [
+            "_implement$"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "reference depends on a root that has ended"
+        }
+      ],
+      "name": "tests/feature_tests/polymorphism/122X_virtual_safety_contract_outcome_domain_invalidation"
+    }
+  ]
+}

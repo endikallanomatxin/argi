@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'"
+        }
+      ],
+      "name": "tests/feature_tests/polymorphism/59X_generic_constraint_implicit"
+    }
+  ]
+}

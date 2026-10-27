@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "unknown name 'foreign_value' in this scope"
+        }
+      ]
+    }
+  ]
+}

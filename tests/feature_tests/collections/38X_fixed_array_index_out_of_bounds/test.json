@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "build"
+        },
+        {
+          "kind": "run_failure"
+        }
+      ]
+    }
+  ]
+}

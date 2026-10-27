@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "stderr": "tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:4:12: error: no function named 'putchar' accepts arguments (.character: UInt16). Available signatures:\n  - putchar (.character: UInt8, .ffi: $&ForeignFunctionInterface) -> ()\n      putchar(.character = value)\n             ^\n",
+          "forbidden_stdout": [
+            "Parse error:"
+          ],
+          "forbidden_stderr": [
+            "Parse error:"
+          ]
+        }
+      ]
+    }
+  ]
+}

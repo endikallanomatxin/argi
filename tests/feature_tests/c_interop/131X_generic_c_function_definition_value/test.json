@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "CFunction requires a concrete non-generic definition",
+          "forbidden_stderr": [
+            "without a diagnostic"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "no generic function named 'single_mutable_array_view' accepts arguments"
+        }
+      ]
+    }
+  ]
+}

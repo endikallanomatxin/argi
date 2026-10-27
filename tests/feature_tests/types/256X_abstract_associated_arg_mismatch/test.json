@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "fixture",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "contract constraint 'Capability' required by generic function parameter '.t' of 'require_uint'"
+        }
+      ]
+    }
+  ]
+}

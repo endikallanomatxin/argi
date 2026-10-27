@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "isolation": "exclusive",
+  "cases": [
+    {
+      "steps": [
+        {
+          "kind": "reject",
+          "diagnostic": "main.rg:34:30: error: reference depends on a root that has ended"
+        }
+      ]
+    }
+  ]
+}
