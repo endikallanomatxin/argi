@@ -1,16 +1,16 @@
-Pair : Type = (
-    .left: Int32
-    .right: Int32
+Pair := (
+    .left  : Int32
+    .right : Int32
 )
 
-mix(.target: $&Int32, .snapshot: Int32) -> () := {
-    target& = snapshot
+mix := (.target: $&Int32, .snapshot: Int32) -> () {
+    target&= snapshot
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     pair :: Pair = (
-        .left = 1,
-        .right = 7,
+        .left  = 1
+        .right = 7
     )
     mix(.target = $&pair.left, .snapshot = pair.right)
     status_code = pair.left

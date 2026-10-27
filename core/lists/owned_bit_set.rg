@@ -1,6 +1,6 @@
 -- A fixed-size owning bit set. Mutable borrowed views retain the backing
 -- dynamic array's storage and shape, and therefore cannot outlive cleanup.
-BitSet: Type = (._storage: DynamicArray#(.t: UInt8), ._count: UIntNative)
+BitSet := (._storage: DynamicArray#(.t: UInt8), ._count: UIntNative)
 
 implement#(.Provider: Type: Allocator) Init#(
     BitSet, (.count: UIntNative, .allocator: $&Provider = reach allocator)
@@ -34,7 +34,7 @@ implement Deinit#(BitSet) (
     }
 )
 
-_collection_length_owned_bit_set(.self: &BitSet) -> (.count: UIntNative) := {
+_collection_length_owned_bit_set := (.self: &BitSet) -> (.count: UIntNative) {
     count = self&._count
 }
 
@@ -49,9 +49,9 @@ implement Viewable#($&BitSet) (
     }
 )
 
-_bit_query_BitSet(.self: &BitSet, .index: UIntNative) -> (
+_bit_query_BitSet := (.self: &BitSet, .index: UIntNative) -> (
     .result : Errable#(Bool, (..out_of_bounds))
-) := {
+) {
     if index >= self&._count {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -63,15 +63,15 @@ _bit_query_BitSet(.self: &BitSet, .index: UIntNative) -> (
     result = ..ok byte&/ mask % 2 != 0
 }
 
-_bit_write_BitSet(.self: $&BitSet, .index: UIntNative, .value: Bool = true) -> (
+_bit_write_BitSet := (.self: $&BitSet, .index: UIntNative, .value: Bool = true) -> (
     .result : Errable#(Void, (..out_of_bounds))
-) := {
+) {
     borrowed_view ::= view(self).view
 
     result = set_bit($&borrowed_view, .index = index, .value = value)
 }
 
-_bit_count_BitSet(.self: &BitSet) -> (.count: UIntNative) := {
+_bit_count_BitSet := (.self: &BitSet) -> (.count: UIntNative) {
     count = _bit_set_count(.bytes = view(.self = &self&._storage), .extent = self&._count).count
 }
 

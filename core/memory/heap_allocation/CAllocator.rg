@@ -1,4 +1,4 @@
-CAllocator: Type = (
+CAllocator := (
     .ffi : $&ForeignFunctionInterface
 )
 

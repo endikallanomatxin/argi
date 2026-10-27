@@ -1,4 +1,4 @@
-_WalkFrame: Type = (.directory: Directory, .path: Path, .depth: UIntNative)
+_WalkFrame := (.directory: Directory, .path: Path, .depth: UIntNative)
 
 implement Deinit#(_WalkFrame) (
     .deinit = (.self: $&_WalkFrame) -> () {
@@ -7,13 +7,13 @@ implement Deinit#(_WalkFrame) (
     }
 )
 
-WalkEntry: Type = (.path: Path, .info: FileMetadata, .depth: UIntNative)
+WalkEntry := (.path: Path, .info: FileMetadata, .depth: UIntNative)
 
 -- Depth-first traversal owns one open directory per active level. Entries
 -- own their paths. Native enumeration order is unspecified. Links/reparse
 -- points are reported as other and never deliberately descended into; path
 -- lookup races mean this is not a security boundary. Depth zero visits nothing.
-DirectoryWalker: Type = (
+DirectoryWalker := (
     ._frames        : DynamicArray#(.t: _WalkFrame),
     ._filesystem    : &FileSystem,
     ._maximum_depth : UIntNative,
@@ -72,7 +72,7 @@ implement Deinit#(DirectoryWalker) (
 )
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
-_next_directory_walker#(.Provider: Type: Allocator#(Provider)) := (
+_next_directory_walker := #(.Provider: Type: Allocator#(Provider)) (
     .self: $&DirectoryWalker, .allocator: $&Provider = reach allocator
 ) -> (.result: Errable#(?WalkEntry, _FilesystemReasons)) {
     assume allocator

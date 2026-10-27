@@ -1,16 +1,16 @@
 -- Iterators retain the initialized extent and lifetime of a borrowed view.
 -- Cursor updates preserve that loan; collection shape changes invalidate it.
-DynamicArrayIterator#(.t: Type): Type = (
+DynamicArrayIterator := #(.t: Type) (
     ._view  : ArrayView#(.t: t)
     ._index : UIntNative
 )
 
-DynamicArrayReferenceIterator#(.t: Type): Type = (
+DynamicArrayReferenceIterator := #(.t: Type) (
     ._view  : ArrayView#(.t: t)
     ._index : UIntNative
 )
 
-DynamicArrayMutableReferenceIterator#(.t: Type): Type = (
+DynamicArrayMutableReferenceIterator := #(.t: Type) (
     ._view  : MutableArrayView#(.t: t)
     ._index : UIntNative
 )

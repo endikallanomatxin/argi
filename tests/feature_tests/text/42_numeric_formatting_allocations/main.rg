@@ -1,14 +1,14 @@
-RecordingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .allocations   : UIntNative = 0
-    .deallocations : UIntNative = 0
-    .last_size     : UIntNative = 0
-    .fail : Bool = false
+RecordingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .allocations   : UIntNative                 = 0
+    .deallocations : UIntNative                 = 0
+    .last_size     : UIntNative                 = 0
+    .fail          : Bool                       = false
 )
 
-expect_formatted#(.t: Type: Int)(
+expect_formatted := #(.t: Type: Int) (
     .allocator: $&RecordingAllocator, .value: t, .expected: StringView
-) -> () := {
+) -> () {
     before ::= allocator&.allocations
     freed ::= allocator&.deallocations
     output ::= unwrap_or_abort(.value = format(.value = value, .allocator = allocator))
@@ -23,7 +23,7 @@ expect_formatted#(.t: Type: Int)(
     if allocator&.deallocations != freed + 1 { abort }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     int80: Int8 = -128
     expect_formatted(.allocator = $&allocator, .value = int80, .expected = "-128")
@@ -107,7 +107,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Allocator#(RecordingAllocator) (
     .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.allocations = self&.allocations + 1
         self&.last_size = size

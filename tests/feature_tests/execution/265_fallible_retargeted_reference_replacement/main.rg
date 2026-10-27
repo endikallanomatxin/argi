@@ -1,10 +1,10 @@
 ..stop
 
-Counter: Type = (.drops: Int32 = 0, .selections: Int32 = 0)
+Counter := (.drops: Int32 = 0, .selections: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
-Holder: Type = (.reference: $&Resource)
+Holder := (.reference: $&Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -12,14 +12,14 @@ implement Deinit#(Resource) (
     }
 )
 
-select_holder(.holder: $&Holder, .counter: $&Counter) -> (.result: $&Holder) := {
+select_holder := (.holder: $&Holder, .counter: $&Counter) -> (.result: $&Holder) {
     if counter&.selections >= 0 { counter&.selections = counter&.selections + 1 }
     result = holder
 }
 
-maybe_retarget(.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail: Bool) -> (
-    .result : Errable#(Resource, (..stop))
-) := {
+maybe_retarget := (.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail: Bool) -> (
+    .result: Errable#(Resource, (..stop))
+) {
     holder&.reference = other
     if fail {
         result = ..error(.reason = ..stop)
@@ -28,16 +28,16 @@ maybe_retarget(.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail
     }
 }
 
-replace(.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail: Bool) -> (
-    .result : Errable#(Int32, (..stop))
-) := {
+replace := (.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail: Bool) -> (
+    .result: Errable#(Int32, (..stop))
+) {
     [select_holder(.holder = holder, .counter = counter)&.reference]&= maybe_retarget(
         .holder = holder, .other = other, .counter = counter, .fail = fail
     )!
     result = ..ok 42
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume error_tracer ::= $&noop_error_tracer
     counter :: Counter = Counter()
     {

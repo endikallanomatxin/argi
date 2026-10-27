@@ -1,4 +1,4 @@
-Widget : Type = (.cleanups: $&Int32)
+Widget := (.cleanups: $&Int32)
 implement Deinit#(Widget) (
     .deinit = (.self: $&Widget) -> () {
         self&.cleanups& = self&.cleanups& + 1
@@ -15,7 +15,7 @@ implement Init#(Widget, (.cleanups: $&Int32)) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     cleanups :: Int32 = 0
     outcome ::= Widget(.cleanups = $&cleanups)
     match outcome {

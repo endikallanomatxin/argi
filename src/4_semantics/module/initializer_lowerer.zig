@@ -28,10 +28,9 @@ pub fn lower(
         .writer = writer_mod.Writer.init(allocator, graph),
     };
     var stats: Stats = .{};
-    try ctx.lowerUnderlyingTypes();
-    try ctx.lowerDeferredStructDefinitions();
-    try ctx.lowerDeferredChoiceDefinitions();
-    try ctx.lowerDeferredFunctionInterfaces();
+    try ctx.lowerStructDefinitions();
+    try ctx.lowerChoiceDefinitions();
+    try ctx.lowerFunctionInterfaces();
     try ctx.predeclareGlobals(&stats);
     try ctx.lowerGlobalInitializers();
     try ctx.lowerFieldDefaults(&stats);
@@ -45,10 +44,14 @@ pub fn lowerAnonymousFieldDefaults(allocator: std.mem.Allocator, graph: *graph_m
     context.selectFile(file_index);
     if (context.tree.structTypeLiteral(syntax) == null) return;
     const semantic = try views.typeView(graph, ty);
-    if (semantic != .resolved or semantic.resolved != .structural) return;
-    const fields = semantic.resolved.structural.fields;
+    if (semantic != .resolved) return;
+    const fields = switch (semantic.resolved) {
+        .structural => |shape| shape.fields,
+        .nominal => |definition| graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields orelse return,
+        else => return,
+    };
     var stats: Stats = .{};
-    try context.lowerDeferredDefaults(fields.start, fields.len, syntax, &stats);
+    try context.lowerDefaults(fields.start, fields.len, syntax, &stats);
 }
 
 const Context = struct {
@@ -67,111 +70,42 @@ const Context = struct {
         self.source = self.files[@intCast(index)].source;
     }
 
-    fn lowerUnderlyingTypes(self: *Context) !void {
+    /// One constructor handles local, imported and generic field types. Buffer
+    /// siblings because lowering nested types can append to the same pools.
+    fn lowerStructDefinitions(self: *Context) !void {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
             if (declaration.kind != .type) continue;
-            self.selectFile(declaration.module_file_index);
-            const node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
-            if (self.tree.tag(node) != .type_declaration) continue;
-            const value = self.tree.typeDeclaration(node).?;
-            if (value.generic_params.len != 0 or value.generic_params_struct != null) continue;
-            switch (self.tree.tag(value.value)) {
-                .struct_type_literal, .choice_type_literal => continue,
-                else => {},
-            }
-            const underlying = try self.lowerType(value.value);
-            self.graph.declarations.items[raw].underlying_type = underlying;
-        }
-    }
-
-    /// The compact graph's early interface pass can only materialize fields
-    /// whose types are entirely module-local. Finish declarations containing
-    /// imported or generic types here, where unresolved names have a durable
-    /// ExternalRef representation. Immediate fields are buffered because
-    /// lowering a field type may itself append fields for a structural type.
-    fn lowerDeferredStructDefinitions(self: *Context) !void {
-        for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .type or declaration.struct_fields != null) continue;
+            const definition = self.graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+            if (self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields != null) continue;
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
-            const type_declaration = switch (self.tree.tag(declaration_node)) {
-                .type_declaration, .c_struct_declaration => self.tree.typeDeclaration(declaration_node).?,
-                .c_union_declaration => blk: {
-                    const value = self.tree.cUnionDeclaration(declaration_node).?;
-                    break :blk syn.TypeDeclaration{
-                        .name_token = value.name_token,
-                        .generic_params = value.generic_params,
-                        .generic_params_struct = value.generic_params_struct,
-                        .value = value.value,
-                    };
-                },
-                else => continue,
-            };
+            const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
             if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null) continue;
             const literal = self.tree.structTypeLiteral(type_declaration.value) orelse continue;
 
-            var fields: std.ArrayList(entities.Field) = .empty;
-            defer fields.deinit(self.allocator);
-            for (literal.fields) |field_node| {
-                const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
-                const type_node = field.type_node orelse return error.StructFieldTypeRequired;
-                try fields.append(self.allocator, .{
-                    .name = try self.writer.addString(if (field.inferred_result)
-                        "result"
-                    else
-                        self.tree.tokenTextFromSource(self.source, field.name_token)),
-                    .ty = try self.lowerType(type_node),
-                    .source = self.sourceRef(field_node),
-                });
-            }
-
-            const start: u32 = @intCast(views.fieldCount(self.graph));
-            for (fields.items) |field| _ = try self.writer.addField(field);
-            self.graph.declarations.items[raw].struct_fields = .{
-                .start = start,
-                .len = @intCast(fields.items.len),
-            };
+            var lowerer = self.typeContext();
+            const fields = try lowerer.lowerFields(literal);
+            self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields = .{ .start = fields.start, .len = fields.len };
         }
     }
 
-    /// Finish non-generic choice declarations whose payload types could not
-    /// be represented by the compatibility builder because they cross a
-    /// module boundary. Canonical ModuleSema can retain those types as
-    /// ExternalRef-backed slots, so the declared choice shape stays complete.
-    fn lowerDeferredChoiceDefinitions(self: *Context) !void {
+    fn lowerChoiceDefinitions(self: *Context) !void {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .type or declaration.choice_variants != null) continue;
+            if (declaration.kind != .type) continue;
+            const definition = self.graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+            if (self.graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants != null) continue;
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
             if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null) continue;
             const literal = self.tree.choiceTypeLiteral(type_declaration.value) orelse continue;
-            const start: u32 = @intCast(views.variantCount(self.graph));
-            for (literal.variants, 0..) |variant_node, index| {
-                const variant = self.tree.choiceTypeVariant(variant_node) orelse return error.InvalidChoiceVariant;
-                const name_text = self.tree.tokenTextFromSource(self.source, variant.name_token);
-                var option_decl: ?entities.ModuleDeclId = null;
-                if (variant.module_qualifier == null) {
-                    for (self.graph.declarationsNamed(name_text)) |candidate| {
-                        if (self.graph.declarations.items[@intFromEnum(candidate)].kind != .choice_option) continue;
-                        option_decl = candidate;
-                        break;
-                    }
-                }
-                _ = try self.writer.addVariant(.{
-                    .name = try self.writer.addString(name_text),
-                    .qualifier = if (variant.module_qualifier) |qualifier| try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier)) else null,
-                    .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload) else null,
-                    .option_decl = option_decl,
-                    .source = self.sourceRef(variant_node),
-                    .value = variant.value orelse @intCast(index),
-                });
-            }
-            self.graph.declarations.items[raw].choice_variants = .{ .start = start, .len = @intCast(literal.variants.len) };
+            var lowerer = self.typeContext();
+            const variants = try lowerer.lowerVariants(literal);
+            self.graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants = .{ .start = variants.start, .len = variants.len };
         }
     }
 
-    fn lowerDeferredFunctionInterfaces(self: *Context) !void {
+    fn lowerFunctionInterfaces(self: *Context) !void {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
             if (declaration.function_id != null) continue;
             self.selectFile(declaration.module_file_index);
@@ -181,39 +115,37 @@ const Context = struct {
                 self.tree.testDeclaration(declaration_node).?.function
             else
                 self.tree.functionDeclaration(declaration_node).?;
-            if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
+            if (function.contract_member or function.generic_params.len != 0 or function.generic_params_struct != null) continue;
 
-            const input = try self.lowerInterfaceFields(function.input);
-            const output = try self.lowerInterfaceFields(function.output);
+            const input = try self.lowerSignature(function.input);
+            const output = try self.lowerSignature(function.output);
             const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(self.graph.functions.items.len)));
             try self.graph.functions.append(self.allocator, .{
                 .declaration = @enumFromInt(@as(u32, @intCast(raw))),
-                .input = .{ .start = input.start, .len = input.len },
-                .output = .{ .start = output.start, .len = output.len },
+                .input = input.fields orelse .{ .start = 0, .len = 0 },
+                .output = output.fields orelse .{ .start = 0, .len = 0 },
+                .input_type = input.ty,
+                .output_type = output.ty,
             });
             self.graph.declarations.items[raw].function_id = function_id;
         }
     }
 
-    fn lowerInterfaceFields(self: *Context, struct_node: syn.NodeIndex) !entities.FieldRange {
-        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
-        var fields: std.ArrayList(entities.Field) = .empty;
-        defer fields.deinit(self.allocator);
-        for (literal.fields) |field_node| {
-            const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
-            const type_node = field.type_node orelse return error.StructFieldTypeRequired;
-            try fields.append(self.allocator, .{
-                .name = try self.writer.addString(if (field.inferred_result)
-                    "result"
-                else
-                    self.tree.tokenTextFromSource(self.source, field.name_token)),
-                .ty = try self.lowerType(type_node),
-                .source = self.sourceRef(field_node),
-            });
-        }
-        const start: u32 = @intCast(views.fieldCount(self.graph));
-        for (fields.items) |field| _ = try self.writer.addField(field);
-        return .{ .start = start, .len = @intCast(fields.items.len) };
+    const Signature = struct { ty: entities.ModuleTypeId, fields: ?entities.FieldRange };
+
+    fn lowerSignature(self: *Context, node: syn.NodeIndex) !Signature {
+        var lowerer = self.typeContext();
+        const ty = if (self.tree.structTypeLiteral(node)) |literal|
+            try lowerer.lowerRecordFields(node, literal)
+        else
+            try lowerer.lower(node);
+        if (views.recordFields(self.graph, ty)) |fields| return .{ .ty = ty, .fields = fields };
+        const semantic = try views.typeView(self.graph, ty);
+        if (semantic == .resolved) switch (semantic.resolved) {
+            .builtin, .pointer, .array, .nullable, .inferred_errable, .structural_choice, .inferred_choice, .virtual, .definition => return error.ExpectedRecordSignature,
+            else => {},
+        };
+        return .{ .ty = ty, .fields = null };
     }
 
     fn predeclareGlobals(self: *Context, stats: *Stats) !void {
@@ -289,9 +221,10 @@ const Context = struct {
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             switch (declaration.kind) {
-                .type => if (declaration.struct_fields) |range| {
+                .type => if (self.graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(index))))) |definition| {
+                    const range = self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields orelse continue;
                     const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
-                    try self.lowerDeferredDefaults(range.start, range.len, type_declaration.value, stats);
+                    try self.lowerDefaults(range.start, range.len, type_declaration.value, stats);
                 },
                 .function, .test_function => if (declaration.function_id) |function_id| {
                     const syntax_function = if (declaration.kind == .test_function)
@@ -299,20 +232,11 @@ const Context = struct {
                     else
                         self.tree.functionDeclaration(declaration_node).?;
                     const function = self.graph.functions.items[@intFromEnum(function_id)];
-                    try self.lowerDeferredDefaults(function.input.start, function.input.len, syntax_function.input, stats);
+                    if (views.functionSignatureDeferred(self.graph, function_id)) continue;
+                    try self.lowerDefaults(function.input.start, function.input.len, syntax_function.input, stats);
                     // Executable output defaults belong to the function entry scope.
                     if (syntax_function.body == null) {
-                        try self.lowerDeferredDefaults(function.output.start, function.output.len, syntax_function.output, stats);
-                    } else {
-                        const fields = (self.tree.structTypeLiteral(syntax_function.output) orelse return error.ExpectedStructType).fields;
-                        for (fields, 0..) |field_node, offset| {
-                            const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
-                            if (field.default_value == null) continue;
-                            try self.graph.semantic.field_semantics.append(self.allocator, .{
-                                .field = @enumFromInt(function.output.start + @as(u32, @intCast(offset))),
-                                .default_at_entry = true,
-                            });
-                        }
+                        try self.lowerDefaults(function.output.start, function.output.len, syntax_function.output, stats);
                     }
                 },
                 else => {},
@@ -320,21 +244,15 @@ const Context = struct {
         }
     }
 
-    fn lowerDeferredDefaults(self: *Context, range_start: u32, range_len: u32, struct_node: syn.NodeIndex, stats: *Stats) !void {
-        const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
-        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
+    fn lowerDefaults(self: *Context, range_start: u32, range_len: u32, struct_node: syn.NodeIndex, stats: *Stats) !void {
+        // Named signatures reuse defaults owned by their original definition.
+        const literal = self.tree.structTypeLiteral(struct_node) orelse return;
         if (literal.fields.len != range_len) return error.InterfaceFieldCountMismatch;
         for (literal.fields, 0..) |field_node, offset| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
             const default_node = field.default_value orelse continue;
             const raw_field: usize = @intCast(range_start + @as(u32, @intCast(offset)));
-            const field_id: entities.ModuleFieldId = @enumFromInt(@as(u32, @intCast(raw_field)));
-            const field_ty = if (raw_field < self.graph.fields.items.len)
-                self.graph.fields.items[raw_field].ty
-            else if (raw_field < semantic_field_base)
-                self.graph.structural_fields.items[raw_field - self.graph.fields.items.len].ty
-            else
-                self.graph.semantic.fields.items[raw_field - semantic_field_base].ty;
+            const field_ty = self.graph.semantic.fields.items[raw_field].ty;
             const value = try body_lowerer.lowerInitializerExpression(
                 self.allocator,
                 self.graph,
@@ -344,27 +262,24 @@ const Context = struct {
                 field_ty,
                 self.diagnostics,
             );
-            if (raw_field < semantic_field_base) {
-                try self.graph.semantic.field_semantics.append(self.allocator, .{
-                    .field = field_id,
-                    .default_value = value.node,
-                });
-            } else {
-                self.graph.semantic.fields.items[raw_field - semantic_field_base].default_value = value.node;
-            }
+            self.graph.semantic.fields.items[raw_field].default_value = value.node;
             stats.field_defaults += 1;
         }
     }
 
     fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
-        var lowerer = type_lowerer.Context{
+        var lowerer = self.typeContext();
+        return lowerer.lower(node);
+    }
+
+    fn typeContext(self: *Context) type_lowerer.Context {
+        return .{
             .graph = self.graph,
             .writer = &self.writer,
             .file_index = self.file_index,
             .tree = self.tree,
             .source = self.source,
         };
-        return lowerer.lower(node);
     }
 
     fn builtin(self: *Context, value: primitives.BuiltinType) !entities.ModuleTypeId {

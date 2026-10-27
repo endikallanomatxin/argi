@@ -1,29 +1,32 @@
-types := import("./dep")
+types := import ("./dep")
 
-_lookup() -> (.result: types.Comparator) : CFunction(.symbol = "argi_callback_lookup")
+_lookup() -> (.result: types.Comparator): CFunction(.symbol = "argi_callback_lookup")
+
 _apply(.callback: types.Comparator, .left: CInt, .right: CInt) -> (.result: CInt)
-    : CFunction(.symbol = "argi_callback_apply")
+: CFunction(.symbol = "argi_callback_apply")
+
 _entry(.callback: types.Comparator) -> (.result: types.Entry)
-    : CFunction(.symbol = "argi_callback_entry")
+: CFunction(.symbol = "argi_callback_entry")
+
 _apply_entry(.entry: types.Entry) -> (.result: CInt)
-    : CFunction(.symbol = "argi_callback_apply_entry")
+: CFunction(.symbol = "argi_callback_apply_entry")
 
 argi_callback_echo(.callback: types.Comparator) -> (.result: types.Comparator)
-    : CFunction(.export = true) := { result = callback }
+: CFunction(.export = true) := { result = callback }
 
-_difference(.left: CInt, .right: CInt) -> (.result: CInt) : CFunction := {
+_difference(.left: CInt, .right: CInt) -> (.result: CInt): CFunction := {
     result = left - right
 }
 
-_float_sum(.left: CFloat, .right: CFloat) -> (.result: CFloat) : CFunction := {
+_float_sum(.left: CFloat, .right: CFloat) -> (.result: CFloat): CFunction := {
     result = left + right
 }
 
-_invoke(.callback: types.Comparator) -> (.result: CInt) := {
+_invoke := (.callback: types.Comparator) -> (.result: CInt) {
     result = callback(.left = 21, .right = 4)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     selected := types.Comparator(.function = _difference)
     if _apply(.callback = selected, .left = 20, .right = 3) != 17 {

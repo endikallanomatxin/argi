@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     parts: [1]StringView = ("a")
     text ::= unwrap_or_abort(
         .value = join(

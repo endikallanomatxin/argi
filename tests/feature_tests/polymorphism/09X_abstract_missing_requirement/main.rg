@@ -1,4 +1,4 @@
-Dog: Type = (
+Dog := (
     .name : Int32 = 0
 )
 
@@ -8,6 +8,6 @@ Animal#(.Participant: Type): Contract = (
 
 implement Animal#(Dog) ()
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     status_code = 0
 }

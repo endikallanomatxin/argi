@@ -1,6 +1,6 @@
 -- Exercise variables as well as constant expressions through syntaxing,
 -- semantizing, and codegen. Array extents cover compile-time evaluation.
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     a :: Int32 = 2
     b :: Int32 = 3
     c :: Int32 = 4

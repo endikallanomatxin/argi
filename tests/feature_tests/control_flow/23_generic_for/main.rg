@@ -1,18 +1,18 @@
-sum#(.t: Type: Iterable#(t))(.input: &t) -> (.total: Int32 = 0) := {
+sum := #(.t: Type: Iterable#(t)) (.input: &t) -> (.total: Int32 = 0) {
     for item in input { total = total + item }
 }
 
-borrow_sum#(.t: Type: ReferenceIterable#(t))(.input: &t) -> (.total: Int32 = 0) := {
+borrow_sum := #(.t: Type: ReferenceIterable#(t)) (.input: &t) -> (.total: Int32 = 0) {
     for &item in input&{ total = total + item&}
 }
 
-mutate#(.t: Type: MutableReferenceIterable#(t))(.input: $&t) -> () := {
+mutate := #(.t: Type: MutableReferenceIterable#(t)) (.input: $&t) -> () {
     for $&item in input&{ item&= item&+ 1 }
 }
 
 drops :: Int32 = 0
 
-Tracked: Type = (.id: Int32)
+Tracked := (.id: Int32)
 
 implement Deinit#(Tracked) (
     .deinit = (.self: $&Tracked) -> () {
@@ -20,31 +20,26 @@ implement Deinit#(Tracked) (
     }
 )
 
-consume#(.t: Type)(.input: DynamicArray#(.t: t), .allocator: $&PageAllocator) -> () := {
+consume := #(.t: Type) (.input: DynamicArray#(.t: t), .allocator: $&PageAllocator) -> () {
     assume allocator
     for ~item in input { break }
 }
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
-    values ::= DynamicArray#(.t: Int32)(.allocator = allocator, .capacity = 3)!
-    push(.self = $&values, .value = 1, .allocator = allocator)!
-    push(.self = $&values, .value = 2, .allocator = allocator)!
-    push(.self = $&values, .value = 3, .allocator = allocator)!
+    values ::= DynamicArray#(.t: Int32)(.allocator = allocator, .capacity = 3)!!!
+    push(.self = $&values, .value = 1, .allocator = allocator)!!!
+    push(.self = $&values, .value = 2, .allocator = allocator)!!!
+    push(.self = $&values, .value = 3, .allocator = allocator)!!!
     if sum(.input = &values).total != 6 { abort }
     if borrow_sum(.input = &values).total != 6 { abort }
     mutate(.input = $&values)
     if sum(.input = &values).total != 9 { abort }
-    owners ::= DynamicArray#(.t: Tracked)(.allocator = allocator, .capacity = 2)!
-    push(.self = $&owners, .value = Tracked(.id = 1), .allocator = allocator)!
-    push(.self = $&owners, .value = Tracked(.id = 2), .allocator = allocator)!
+    owners ::= DynamicArray#(.t: Tracked)(.allocator = allocator, .capacity = 2)!!!
+    push(.self = $&owners, .value = Tracked(.id = 1), .allocator = allocator)!!!
+    push(.self = $&owners, .value = Tracked(.id = 2), .allocator = allocator)!!!
     consume(.input = ~owners, .allocator = allocator)
     if drops != 2 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

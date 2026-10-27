@@ -3,7 +3,7 @@
 -- allocation; an owning collection records occupancy in its own invariant.
 -- Keep the logical index as well as the address: zero-sized elements share
 -- bytes but remain distinct selected positions. Neither field proves occupancy.
-MaybeUninit#(.t: Type): Type = (
+MaybeUninit := #(.t: Type) (
     ._raw   : RawPointer#(.t: t)
     ._index : UIntNative
 )
@@ -11,9 +11,9 @@ MaybeUninit#(.t: Type): Type = (
 -- Checked selection publishes a storage handle, never an initialized T.
 -- Private address state prevents callers from enlarging or redirecting it;
 -- the existing dependency primitive retains the allocation's generation.
-allocation_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) -> (
+allocation_slot := #(.t: Type) (.allocation: &Allocation, .index: UIntNative) -> (
     .slot : MaybeUninit#(.t: t)
-) := {
+) {
     _require_allocation_slot_index#(.t: t)(.allocation = allocation, .index = index)
     address ::= _reference_offset_address(
         .address      = allocation&.data.address
@@ -39,15 +39,15 @@ allocation_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) -> (
 }
 
 -- Address inspection is not a reference conversion or an occupancy proof.
-uninit_slot_address#(.t: Type)(.slot: MaybeUninit#(.t: t)) -> (.address: UIntNative) := {
+uninit_slot_address := #(.t: Type) (.slot: MaybeUninit#(.t: t)) -> (.address: UIntNative) {
     address = slot._raw.address
 }
 
 -- Low-level slot construction. The caller owns a suitably aligned allocation
 -- with room for index and must keep its occupancy invariant separately.
-_trusted_uninit_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) -> (
+_trusted_uninit_slot := #(.t: Type) (.allocation: &Allocation, .index: UIntNative) -> (
     .slot : MaybeUninit#(.t: t)
-) := {
+) {
     address ::= _reference_offset_address(
         .address      = allocation&.data.address
         .elements     = index
@@ -60,9 +60,9 @@ _trusted_uninit_slot#(.t: Type)(.allocation: &Allocation, .index: UIntNative) ->
 -- a normal reference. The handle itself never claims an initialized T. Borrow
 -- provenance follows the Allocation's owned root and region anchor, so
 -- replacing or ending the storage invalidates aliases to its former slots.
-_trusted_uninit_borrow_ro#(.t: Type)(.allocation: &Allocation, .slot: MaybeUninit#(.t: t)) -> (
+_trusted_uninit_borrow_ro := #(.t: Type) (.allocation: &Allocation, .slot: MaybeUninit#(.t: t)) -> (
     .reference : &t
-) := {
+) {
     index: ?UIntNative = ..some(.value = slot._index)
     mutable ::= trusted_establish_allocation_slot#(.t: t)(
         .allocation = allocation
@@ -73,9 +73,9 @@ _trusted_uninit_borrow_ro#(.t: Type)(.allocation: &Allocation, .slot: MaybeUnini
     reference = read_reference#(.t: t)(.base = mutable).reference
 }
 
-_trusted_uninit_borrow_rw#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUninit#(.t: t)) -> (
+_trusted_uninit_borrow_rw := #(.t: Type) (.allocation: $&Allocation, .slot: MaybeUninit#(.t: t)) -> (
     .reference : $&t
-) := {
+) {
     index: ?UIntNative = ..some(.value = slot._index)
     reference = trusted_establish_allocation_slot#(.t: t)(
         .allocation = allocation
@@ -87,9 +87,9 @@ _trusted_uninit_borrow_rw#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUnin
 
 -- Initializes an empty slot and transfers ownership into the allocation's
 -- opaque domain. It must be called exactly once before reading that slot.
-_trusted_uninit_write#(.t: Type)(
+_trusted_uninit_write := #(.t: Type) (
     .allocation: $&Allocation, .slot: MaybeUninit#(.t: t), .value: t
-) -> () := {
+) -> () {
     index: ?UIntNative = ..some(.value = slot._index)
     destination ::= trusted_establish_allocation_slot#(.t: t)(
         .allocation = allocation
@@ -104,9 +104,9 @@ _trusted_uninit_write#(.t: Type)(
 
 -- Extracts a value known to occupy the slot. The caller must mark it empty
 -- in its own invariant before another read or destruction is possible.
-_trusted_uninit_take#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUninit#(.t: t)) -> (
+_trusted_uninit_take := #(.t: Type) (.allocation: $&Allocation, .slot: MaybeUninit#(.t: t)) -> (
     .value : t
-) := {
+) {
     index: ?UIntNative = ..some(.value = slot._index)
     source ::= trusted_establish_allocation_slot#(.t: t)(
         .allocation = allocation
@@ -122,12 +122,12 @@ _trusted_uninit_take#(.t: Type)(.allocation: $&Allocation, .slot: MaybeUninit#(.
 -- Relocates a live opaque value into a distinct empty slot. Neither slot is
 -- exposed as a T to the collection; the transient references exist only at
 -- this trusted ownership transition.
-_trusted_uninit_relocate#(.t: Type)(
+_trusted_uninit_relocate := #(.t: Type) (
     .source_allocation      : &Allocation,
     .source                 : MaybeUninit#(.t: t),
     .destination_allocation : &Allocation,
     .destination            : MaybeUninit#(.t: t),
-) -> () := {
+) -> () {
     source_index: ?UIntNative = ..some(.value = source._index)
     destination_index: ?UIntNative = ..some(.value = destination._index)
     source_ref ::= trusted_establish_allocation_slot#(.t: t)(

@@ -84,7 +84,7 @@ retains the acquisition's original extent and alignment.
 `AcquiredStorage` certifies a successful physical acquisition, independently
 of any temporal owner or initialized `T`. Its address, size, and alignment are
 private to bundled core. `acquire_heap_storage(size, alignment, ffi)` and
-`acquire_page_storage(memory, size, alignment)` return `Errable<AcquiredStorage>`.
+`acquire_page_storage(memory, size, alignment)` return `Errable#(AcquiredStorage)`.
 Neither publishes a receipt on failure. A zero-size request is valid and grants
 no readable bytes, even when acquisition reserves heap or page padding.
 
@@ -119,34 +119,34 @@ an allocation through `Allocator`; supplying an integer to the trusted boundary
 does not discharge the acquisition obligation. The analogous integer-address
 operation for an existing domain is `trusted_establish_inherited_storage`.
 
-Higher-level values such as `String` and `DynamicArray<T>` keep their own
-occupancy and length invariants. `MaybeUninit<T>` identifies a typed slot
+Higher-level values such as `String` and `DynamicArray#(T)` keep their own
+occupancy and length invariants. `MaybeUninit#(T)` identifies a typed slot
 without claiming whether it is occupied. It has no occupancy flag and does
 not expose a `T`; only initialization establishes a live value. A container
 must track which slots contain live values. Its private helpers initialize a
 vacant slot through the trusted opaque move-in operation or extract an
-occupied slot through opaque move-out. `DynamicArray<T>` keeps `[0, length)`
+occupied slot through opaque move-out. `DynamicArray#(T)` keeps `[0, length)`
 occupied and `[length, capacity)` vacant. Its movement operations pass slot
 handles to trusted relocation; normal references are formed only after
 checking `index < length`. Empty slots cannot be exposed as `&T` or `$&T`.
 
-`allocation_slot<T>(allocation, index)` selects a complete, aligned slot inside
+`allocation_slot#(T)(allocation, index)` selects a complete, aligned slot inside
 both the declared extent and the allocation's private certified extent. It
 rejects arithmetic wrap and invalid bounds with a runtime trap. If a typed
 request retained the same element size, selection also checks its logical count.
 Zero-sized selection requires that retained extent: byte bounds alone cannot
 authorize any logical zero-sized position. Nonzero reinterpretations continue
-to check physical byte bounds. The result is `MaybeUninit<T>`, not `&T` or
+to check physical byte bounds. The result is `MaybeUninit#(T)`, not `&T` or
 `$&T`: selection cannot read, write, or destroy a `T`. The handle's address is private, and its validity depends on the allocation
 and backing anchor. Copies and forwarding retain those dependencies. Ending
 the allocation or resetting its backing region invalidates the handle.
-`uninit_slot_address<T>(slot)` exposes an integer address without certifying
+`uninit_slot_address#(T)(slot)` exposes an integer address without certifying
 initialized contents or granting a reference conversion.
 
 ### Slot authority and occupancy
 
 Slot selection is repeatable: selecting the same index twice or copying a
-`MaybeUninit<T>` produces handles to the same bytes. These handles carry range
+`MaybeUninit#(T)` produces handles to the same bytes. These handles carry range
 and lifetime validity, not exclusive ownership or permission to initialize.
 Consuming one handle does not revoke the others. Making the handle move-only
 would therefore not, by itself, establish exclusive slot authority.
@@ -177,7 +177,7 @@ publish an occupied slot unless it leaves a valid live value there. Cleanup
 visits occupied slots only.
 
 Occupation can be represented by a collection invariant rather than a flag for
-each element. `DynamicArray<T>` uses its initialized prefix: append publishes
+each element. `DynamicArray#(T)` uses its initialized prefix: append publishes
 the new length after moving in a value; pop removes an element from the prefix
 and moves it out. Other owners may use different private representations.
 Their trusted implementation must keep occupancy and stored values consistent.
@@ -187,14 +187,14 @@ replacement, or relocation ends the referenced value's storage generation.
 The owner may conservatively invalidate all element references for a structural
 mutation. Copied storage handles do not override that invalidation or authorize
 a second extraction. Range validity alone never proves that a live `T` remains.
-`DynamicArray<T>` conservatively invalidates element references, views, and
+`DynamicArray#(T)` conservatively invalidates element references, views, and
 iterators on successful `set`, as well as on structural mutations: replacing
 contents ends the old value's lifetime even if length and address stay equal.
 A new borrow after replacement refers to the new live value.
 
 > [!IMPLEMENTATION]
-> `DynamicArray<T>` implements owner-controlled transitions using private
-> length and trusted opaque operations. `allocation_slot<T>` only selects
+> `DynamicArray#(T)` implements owner-controlled transitions using private
+> length and trusted opaque operations. `allocation_slot#(T)` only selects
 > storage; there is no general ordinary initialization or extraction API for
 > arbitrary allocation slots. Such an API must establish owner-controlled
 > occupancy and content-reference invalidation before exposing reads.

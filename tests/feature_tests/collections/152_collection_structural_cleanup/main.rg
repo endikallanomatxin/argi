@@ -1,6 +1,6 @@
 drops :: UIntNative = 0
 
-Tracked: Type = (.id: Int32)
+Tracked := (.id: Int32)
 
 implement Deinit#(Tracked) (
     .deinit = (.self: $&Tracked) -> () {
@@ -8,19 +8,20 @@ implement Deinit#(Tracked) (
     }
 )
 
-Pair: Type = (.first: Tracked, .second: Tracked)
+Pair := (.first: Tracked, .second: Tracked)
 
-_pair(.id: Int32) -> (.value: Pair) := {
+_pair := (.id: Int32) -> (.value: Pair) {
     value = (.first = Tracked(.id = id), .second = Tracked(.id = id))
 }
 
 RefusingAllocator: Type = ()
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     refusal ::= RefusingAllocator()
-    array ::= DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 1)!
-    push(.self = $&array, .value = _pair(.id = 1).value, .allocator = allocator)!
+    array ::= DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 1)!!!
+    push(.self = $&array, .value = _pair(.id = 1).value, .allocator = allocator)!!!
     match push(.self = $&array, .value = _pair(.id = 2).value, .allocator = $&refusal) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
@@ -43,27 +44,27 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_bounds { abort } }
     }
     if drops != 8 { abort }
-    replace(.self = $&array, .index = 0, .value = _pair(.id = 6).value, .allocator = allocator)!
+    replace(.self = $&array, .index = 0, .value = _pair(.id = 6).value, .allocator = allocator)!!!
     if drops != 10 { abort }
     if unwrap_or_abort(.value = get_reference(.self = &array, .index = 0))&.first.id != 6 {
         abort
     }
     deinit(.self = $&array)
     if drops != 12 { abort }
-    ring ::= RingBuffer#(.t: Pair)(.capacity = 2, .allocator = allocator)!
-    push(.self = $&ring, .value = _pair(.id = 7).value, .allocator = allocator)!
-    push(.self = $&ring, .value = _pair(.id = 8).value, .allocator = allocator)!
+    ring ::= RingBuffer#(.t: Pair)(.capacity = 2, .allocator = allocator)!!!
+    push(.self = $&ring, .value = _pair(.id = 7).value, .allocator = allocator)!!!
+    push(.self = $&ring, .value = _pair(.id = 8).value, .allocator = allocator)!!!
     match push(.self = $&ring, .value = _pair(.id = 9).value, .allocator = allocator) {
         ..ok _ { abort } ..error error { if error.reason != ..full { abort } }
     }
     if drops != 14 { abort }
     { extracted ::= ~unwrap_or_abort(.value = pop(.self = $&ring)) }
     if drops != 16 { abort }
-    push(.self = $&ring, .value = _pair(.id = 10).value, .allocator = allocator)!
+    push(.self = $&ring, .value = _pair(.id = 10).value, .allocator = allocator)!!!
     deinit(.self = $&ring)
     if drops != 20 { abort }
-    deque ::= Deque#(.t: Pair)(.capacity = 1, .allocator = allocator)!
-    push_back(.self = $&deque, .value = _pair(.id = 11).value, .allocator = allocator)!
+    deque ::= Deque#(.t: Pair)(.capacity = 1, .allocator = allocator)!!!
+    push_back(.self = $&deque, .value = _pair(.id = 11).value, .allocator = allocator)!!!
     match push_front(.self = $&deque, .value = _pair(.id = 12).value, .allocator = $&refusal) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
@@ -74,17 +75,11 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if drops != 24 { abort }
     deinit(.self = $&deque)
     if drops != 26 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }
 
 implement Allocator#(RefusingAllocator) (
     .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) { result = ..error(.reason = ..out_of_memory) }
 )

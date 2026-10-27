@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     small :: UInt8 = 0
     signed :: Int64 = 0
     wide :: UInt64 = 0
@@ -16,7 +16,9 @@ main() -> (.status_code: Int32 = 0) := {
     }
     match round_down#(.t: UInt8)(.value = 0, .multiple = 0) { ..ok _ { abort } ..error _ {} }
     match round_up#(.t: UInt8)(.value = 0, .multiple = 0) { ..ok _ { abort } ..error _ {} }
-    if unwrap_or_abort(.value = round_up#(.t: UInt8)(.value = 253, .multiple = 3)) != 255 { abort }
+    if unwrap_or_abort(.value = round_up#(.t: UInt8)(.value = 253, .multiple = 3)) != 255 {
+        abort
+    }
     if unwrap_or_abort(.value = round_down#(.t: UInt16)(.value = 100, .multiple = 7)) != 98 {
         abort
     }

@@ -1,9 +1,9 @@
 -- Iterators retain both the owner and the shape generation at creation.
-DequeIterator#(.t: Type): Type = (._owner: &Deque#(.t: t), ._index: UIntNative)
+DequeIterator := #(.t: Type) (._owner: &Deque#(.t: t), ._index: UIntNative)
 
-DequeReferenceIterator#(.t: Type): Type = (._owner: &Deque#(.t: t), ._index: UIntNative)
+DequeReferenceIterator := #(.t: Type) (._owner: &Deque#(.t: t), ._index: UIntNative)
 
-DequeMutableReferenceIterator#(.t: Type): Type = (
+DequeMutableReferenceIterator := #(.t: Type) (
     ._owner : $&Deque#(.t: t),
     ._index : UIntNative
 )

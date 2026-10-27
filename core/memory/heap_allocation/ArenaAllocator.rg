@@ -1,4 +1,4 @@
-_ArenaBlock: Type = (
+_ArenaBlock := (
     .storage : Allocation
     .next    : UIntNative
     .size    : UIntNative
@@ -6,7 +6,7 @@ _ArenaBlock: Type = (
 
 -- Replacing the complete domain establishes a new storage generation after
 -- reset. Updating only the marker would leave the former generation ended.
-ArenaDomain: Type = (.marker: Bool)
+ArenaDomain := (.marker: Bool)
 
 implement Init#(ArenaDomain, ()) (
     .Result : Type = ArenaDomain
@@ -22,7 +22,7 @@ implement Deinit#(ArenaDomain) (
 
 -- Backing receipts live in block headers. No metadata or storage is acquired
 -- until the first allocation; all blocks come from the chosen backing policy.
-ArenaAllocator: Type = (
+ArenaAllocator := (
     ._backing_allocator    : Virtual#(.contract: Allocator)
     .domain                : ArenaDomain
     ._block_head           : UIntNative
@@ -59,7 +59,9 @@ implement#(.Provider: Type: Allocator) Init#(
     }
 )
 
-_trusted_arena_block(.address: UIntNative, .owner: $&ArenaAllocator) -> (.block: $&_ArenaBlock) := {
+_trusted_arena_block := (.address: UIntNative, .owner: $&ArenaAllocator) -> (
+    .block : $&_ArenaBlock
+) {
     raw ::= raw_pointer#(.t: _ArenaBlock)(.address = address).raw
     block = trusted_establish_inherited_reference#(.t: _ArenaBlock)(
         .raw  = raw
@@ -67,7 +69,7 @@ _trusted_arena_block(.address: UIntNative, .owner: $&ArenaAllocator) -> (.block:
     ).reference
 }
 
-arena_free_blocks(.self: $&ArenaAllocator) -> () := {
+arena_free_blocks := (.self: $&ArenaAllocator) -> () {
     while self&._block_head != 0 {
         block ::= _trusted_arena_block(.address = self&._block_head, .owner = self).block
         next ::= block&.next
@@ -82,7 +84,7 @@ arena_free_blocks(.self: $&ArenaAllocator) -> () := {
     self&._current_block_offset = 0
 }
 
-reset(.self: $&ArenaAllocator) -> () := {
+reset := (.self: $&ArenaAllocator) -> () {
     arena_free_blocks(self)
     deinit(.self = $&self&.domain)
     self&.domain = ArenaDomain()

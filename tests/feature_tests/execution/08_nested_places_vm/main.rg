@@ -1,8 +1,8 @@
-Pair: Type = (.left: Int32, .right: Int32)
+Pair := (.left: Int32, .right: Int32)
 
-Box: Type = (.pairs: [2]Pair)
+Box := (.pairs: [2]Pair)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     box :: Box = (.pairs = ((.left = 1, .right = 2), (.left = 3, .right = 4)))
     saved ::= box
     box.pairs[1].left = 40

@@ -1,4 +1,4 @@
-BackingAllocator: Type = (
+BackingAllocator := (
     .page : $&PageAllocator
 )
 
@@ -8,13 +8,13 @@ implement Deinit#(BackingAllocator) (
     }
 )
 
-EndBacking: Type = (
+EndBacking := (
     .marker : Bool
 )
 
 implement Init#(EndBacking, (.backing: $&BackingAllocator)) (
-    .Result: Type = EndBacking
-    .init = (.args: (.backing: $&BackingAllocator)) -> (.result: Result) {
+    .Result : Type = EndBacking
+    .init   = (.args: (.backing: $&BackingAllocator)) -> (.result: Result) {
         backing ::= ~args.backing
 
         result = (.marker = false)
@@ -22,9 +22,9 @@ implement Init#(EndBacking, (.backing: $&BackingAllocator)) (
     }
 )
 
-consume(.value: EndBacking) -> () := {}
+consume := (.value: EndBacking) -> () {}
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     backing ::= BackingAllocator(.page = system.page_allocator)
     allocator ::= GeneralPurposeAllocator(.allocator = $&backing)
     consume(.value = EndBacking(.backing = $&backing))
@@ -32,14 +32,10 @@ main(.system: System) -> (.status_code: Int32) := {
     status_code = 0
 }
 
-implement Allocator#(BackingAllocator)(
-    .allocate = (
-            .self      : $&BackingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(BackingAllocator) (
+    .allocate = (.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
         result = allocate_bytes(.self = self&.page, .size = size, .alignment = alignment)
     }
 )

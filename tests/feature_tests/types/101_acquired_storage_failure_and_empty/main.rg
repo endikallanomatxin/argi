@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
     zero :: UIntNative = 0

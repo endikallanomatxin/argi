@@ -1,8 +1,10 @@
-Box#(.t: Type): Type = (.tag: Int32)
+Box := #(.t: Type) (.tag: Int32)
 
-implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), (.value: sample)) (
+Arguments := #(.sample: Type) (.value: sample)
+
+implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), Arguments#(sample)) (
     .Result : Type = Box#(.t: Int32)
-    .init   = (.args: (.value: sample)) -> (.result: Result) {
+    .init   = (.args: Arguments#(sample)) -> (.result: Result) {
         value ::= ~args.value
 
         _ ::= value
@@ -10,9 +12,9 @@ implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), (.value: sample)) (
     }
 )
 
-implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), (.value: sample)) (
+implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), Arguments#(sample)) (
     .Result : Type = Box#(.t: UnicodeScalar)
-    .init   = (.args: (.value: sample)) -> (.result: Result) {
+    .init   = (.args: Arguments#(sample)) -> (.result: Result) {
         value ::= ~args.value
 
         _ ::= value
@@ -20,7 +22,7 @@ implement#(.sample: Type, .t: Type) Init#(Box#(.t: t), (.value: sample)) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     value ::= Box#(.t: Int32)(.value = 5)
     status_code = value.tag
 }

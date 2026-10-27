@@ -14,7 +14,7 @@ exercise := (.counter: $&Int32) -> (.result: Int32) {
     result = counter&
 }
 
-calculate() -> (.result: Int32) := {
+calculate := () -> (.result: Int32) {
     local_counter :: Int32 = base + 1
     result = exercise(.counter = $&local_counter)
 }

@@ -13,13 +13,13 @@ Allocator#(.Provider: Type): Contract = (
 )
 
 -- Byte requests and typed element requests share selected allocator evidence.
-allocate_bytes#(.SelfType: Type: Allocator#(SelfType)) := (
+allocate_bytes := #(.SelfType: Type: Allocator#(SelfType)) (
     .self: $&SelfType, .size: UIntNative, .alignment: UIntNative = 1
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
     result = Allocator#().allocate(self, .size = size, .alignment = alignment)
 }
 
-allocate#(.t: Type, .SelfType: Type: Allocator#(SelfType)) := (
+allocate := #(.t: Type, .SelfType: Type: Allocator#(SelfType)) (
     .self: $&SelfType, .count: UIntNative = 1
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
     element_size ::= size_of(.type = t)

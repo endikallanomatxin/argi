@@ -1,12 +1,24 @@
 math := import ("math/linear_algebra")
 
-sum#(.T: Type) := (.left: &T, .right: &T) -> (.result: Add#(T, T, (.left: &T, .right: &T)).Result) {
+sum := #(.T: Type) (.left: &T, .right: &T) -> (
+    .result: Add#(T, T, (.left: &T, .right: &T)).Result
+) {
     result = left + right
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    left :: math.Matrix#(.rows = 2, .cols = 2, .t: Int32) = (.values = ((1, 2), (3, 4)))
-    right :: math.Matrix#(.rows = 2, .cols = 2, .t: Int32) = (.values = ((5, 6), (7, 8)))
+    left :: math.Matrix#(.rows = 2, .cols = 2, .t: Int32) = (
+        .values = (
+            (1, 2),
+            (3, 4)
+        )
+    )
+    right :: math.Matrix#(.rows = 2, .cols = 2, .t: Int32) = (
+        .values = (
+            (5, 6),
+            (7, 8)
+        )
+    )
     direct ::= &left + &right
     generic ::= sum(&left, &right)
     qualified ::= Add#(

@@ -1,7 +1,9 @@
 ..some_reason
 ..other_reason
 
-some_fallible_call() -> (.result: Errable#(.t: Int32, .reasons: (..some_reason, ..other_reason))) := {
+some_fallible_call := () -> (
+    .result: Errable#(.t: Int32, .reasons: (..some_reason, ..other_reason))
+) {
     result = ..error(.reason = ..other_reason)
 }
 

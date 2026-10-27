@@ -32,13 +32,12 @@ pub const Layout = struct {
         const semantic = graph.resolvedSemanticType(ty) orelse return error.InvalidReferenceLayout;
         return switch (semantic) {
             .pointer => .reference,
-            .builtin => .leaf,
+            .builtin, .definition => .leaf,
             .array => |a| .{ .array = .{ .element = a.element, .length = a.length } },
             .structural => |s| .{ .fields = s.fields },
             inline .structural_choice, .inferred_choice => |s| .{ .variants = s.variants },
-            .declared => |id| blk: {
-                const declaration = graph.declaration(id);
-                if (declaration.underlying_type) |target| break :blk .{ .alias = target };
+            .nominal => |id| blk: {
+                const declaration = graph.typeDefinition(id);
                 if (declaration.struct_layout == .c_function_pointer) break :blk .leaf;
                 if (declaration.struct_fields) |fields| break :blk .{ .fields = fields };
                 if (declaration.choice_variants) |variants| break :blk .{ .variants = variants };
@@ -196,13 +195,14 @@ test "reference evidence follows materialized nominal and generic shapes" {
     try graph.types.appendSlice(a, &.{
         .{ .builtin = .UInt8 },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
-        .{ .declared = @enumFromInt(0) },
+        .{ .nominal = @enumFromInt(0) },
         .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } },
         .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } },
         .{ .virtual = @enumFromInt(2) },
     });
     try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(1), .source = source });
-    try graph.declarations.append(a, .{ .name = name, .source = source, .kind = .type, .struct_fields = .{ .start = 0, .len = 1 } });
+    try graph.declarations.append(a, .{ .name = name, .source = source, .kind = .type });
+    try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
     try graph.generic_instances.appendSlice(a, &.{
         .{ .type_id = @enumFromInt(3), .shape = .{ .array = .{ .element = @enumFromInt(2), .length = 7 } } },
         .{ .type_id = @enumFromInt(4), .shape = .{ .alias = @enumFromInt(3) } },

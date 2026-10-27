@@ -1,8 +1,10 @@
-Owned : Type = (.allocation: Allocation)
+Owned := (.allocation: Allocation)
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, (.allocator: $&AllocatorProvider, .fail: Bool)) (
-    .Result: Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
-    .init = (.args: (.allocator: $&AllocatorProvider, .fail: Bool)) -> (.result: Result) {
+implement#(.AllocatorProvider: Type: Allocator) Init#(
+    Owned, (.allocator: $&AllocatorProvider, .fail: Bool)
+) (
+    .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
+    .init   = (.args: (.allocator: $&AllocatorProvider, .fail: Bool)) -> (.result: Result) {
         allocator ::= ~args.allocator
         fail ::= ~args.fail
 
@@ -13,7 +15,7 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, (.allocator: $&Allo
             ..error _ {
                 result = ..error(.reason = ..out_of_memory)
             }
-            ..ok ~ payload {
+            ..ok ~payload {
                 if fail {
                     deinit(.self = $&payload)
                     result = ..error(.reason = ..out_of_memory)
@@ -32,19 +34,19 @@ implement Deinit#(Owned) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     success ::= Owned(.allocator = $&allocator_storage, .fail = false)
     match success {
         ..error _ { status_code = 1 }
-        ..ok ~ value {
+        ..ok ~value {
             owned ::= ~value
             deinit(.self = $&owned)
         }
     }
     failure ::= Owned(.allocator = $&allocator_storage, .fail = true)
     match failure {
-        ..ok ~ value {
+        ..ok ~value {
             owned ::= ~value
             deinit(.self = $&owned)
             status_code = 2

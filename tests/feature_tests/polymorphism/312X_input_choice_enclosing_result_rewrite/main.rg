@@ -1,6 +1,6 @@
 Selection: Type = (..left, ..right)
 
-select_reference(.mode: Selection, .left: &Int32, .right: &Int32) -> (.result: &Int32) := {
+select_reference := (.mode: Selection, .left: &Int32, .right: &Int32) -> (.result: &Int32) {
     {
         match mode {
             ..left { result = left }
@@ -10,7 +10,7 @@ select_reference(.mode: Selection, .left: &Int32, .right: &Int32) -> (.result: &
     result = right
 }
 
-main() -> () := {
+main := () -> () {
     live: Int32 = 42
     expired: &Int32
 

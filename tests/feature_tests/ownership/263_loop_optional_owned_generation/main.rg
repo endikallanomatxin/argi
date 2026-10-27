@@ -1,4 +1,4 @@
-Holder: Type = (
+Holder := (
     .buffer : String
 )
 
@@ -21,15 +21,15 @@ implement Deinit#(Holder) (
     }
 )
 
-append#(.AllocatorType: Type: Allocator#(AllocatorType))(
+append := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&Holder, .allocator: $&AllocatorType
-) -> () := {
+) -> () {
     assume allocator
 
     _ ::= push_ascii(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

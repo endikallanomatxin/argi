@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     value :: Float64 = 9.0
     if sqrt(.value = value).result != 3.0 { abort }
     if pow(.base = value, .exponent = 2.0).result != 81.0 { abort }

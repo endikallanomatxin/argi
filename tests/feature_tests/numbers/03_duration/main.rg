@@ -1,15 +1,22 @@
-expect_range_error(.value: Errable#(.t: Duration, .reasons: (..out_of_range))) -> () := {
+expect_range_error := (.value: Errable#(.t: Duration, .reasons: (..out_of_range))) -> () {
     if is(.value = value, .variant = ..error) {
         if value ..error.reason != ..out_of_range { abort }
-    } else { abort }
+    } else {
+        abort
+    }
 }
-main() -> (.status_code: Int32 = 0) := {
+
+main := () -> (.status_code: Int32 = 0) {
     zero ::= Duration(.nanoseconds = 0)
     maximum ::= Duration(.nanoseconds = 18446744073709551615)
     one ::= Duration(.nanoseconds = 1)
     if nanoseconds(.self = &maximum).value != 18446744073709551615 { abort }
-    micros ::= unwrap_or_abort(.value = duration_from_microseconds(.microseconds = 18446744073709551)).result
-    millis ::= unwrap_or_abort(.value = duration_from_milliseconds(.milliseconds = 18446744073709)).result
+    micros ::= unwrap_or_abort(
+        .value = duration_from_microseconds(.microseconds = 18446744073709551)
+    ).result
+    millis ::= unwrap_or_abort(
+        .value = duration_from_milliseconds(.milliseconds = 18446744073709)
+    ).result
     whole ::= unwrap_or_abort(.value = duration_from_seconds(.seconds = 18446744073)).result
     if nanoseconds(.self = &micros).value != 18446744073709551000 { abort }
     if nanoseconds(.self = &millis).value != 18446744073709000000 { abort }
@@ -34,10 +41,15 @@ main() -> (.status_code: Int32 = 0) := {
     copied ::= copy(.self = &fraction).value
     if copied != fraction { abort }
     since_epoch ::= UnixTimestamp(.seconds = 0)
-    before_epoch ::= unwrap_or_abort(.value = unix_timestamp_precise(.seconds = -1, .nanoseconds = 999999999)).result
+    before_epoch ::= unwrap_or_abort(
+        .value = unix_timestamp_precise(.seconds = -1, .nanoseconds = 999999999)
+    ).result
     oldest ::= UnixTimestamp(.seconds = -9223372036854775808)
-    newest ::= unwrap_or_abort(.value = unix_timestamp_precise(.seconds = 9223372036854775807,
-            .nanoseconds = 999999999)).result
+    newest ::= unwrap_or_abort(
+        .value = unix_timestamp_precise(
+            .seconds = 9223372036854775807, .nanoseconds = 999999999
+        )
+    ).result
     if unix_seconds(.self = &oldest).value != -9223372036854775808 { abort }
     if unix_seconds(.self = &newest).value != 9223372036854775807 { abort }
     if nanoseconds(.self = &newest).value != 999999999 { abort }
@@ -49,5 +61,7 @@ main() -> (.status_code: Int32 = 0) := {
     invalid ::= unix_timestamp_precise(.seconds = 0, .nanoseconds = 1000000000)
     if is(.value = invalid, .variant = ..error) {
         if invalid ..error.reason != ..out_of_range { abort }
-    } else { abort }
+    } else {
+        abort
+    }
 }

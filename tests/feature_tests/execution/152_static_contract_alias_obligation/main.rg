@@ -4,9 +4,9 @@ Observer#(.Participant: Type): Contract = (
     )
 )
 
-Manager: Type = (.unused: Int32 = 0)
+Manager := (.unused: Int32 = 0)
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {}
@@ -19,7 +19,7 @@ implement Observer#(Manager) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     manager ::= Manager()
     first :: Resource = Resource(17)
     second :: Resource = Resource(42)

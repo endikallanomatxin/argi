@@ -1,6 +1,6 @@
 comparisons :: Int32 = 0
 
-Rank: Type = (.value: Int32)
+Rank := (.value: Int32)
 
 implement Compare#(&Rank, &Rank) (
     .compare = (.left: &Rank, .right: &Rank) -> (.order: Ordering) {
@@ -16,7 +16,7 @@ implement Compare#(&Rank, Int32) (
     }
 )
 
-ordered#(.T: Type)(.a: &T, .b: &T) -> (.ok: Bool) := {
+ordered := #(.T: Type) (.a: &T, .b: &T) -> (.ok: Bool) {
     ok = a < b and a <= b and b > a and b >= a
 }
 

@@ -60,6 +60,20 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.optionalIdFits(parameter.default_integer, storage.ir.int_expressions.items.len));
         try require(parameter.default_type == null or parameter.kind == .type);
         try require(parameter.default_integer == null or parameter.kind == .comptime_int);
+        try require(parameter.default_definition == null or parameter.kind == .definition);
+        if (parameter.default_definition) |definition| switch (definition) {
+            .parameter => |id| {
+                try require(verify.idFits(id, storage.comptime_parameters.items.len));
+                try require(storage.comptime_parameters.items[@intFromEnum(id)].kind == .definition);
+            },
+            .literal => |literal| {
+                try require(verify.idFits(literal.origin, storage.ir.declarations.items.len));
+                try require(verify.rangeFits(literal.captures, storage.ir.generic_arguments.items.len));
+            },
+        };
+        try require((parameter.family_parameters != null) == (parameter.kind == .definition));
+        if (parameter.family_parameters) |parameters|
+            try require(verify.rangeFits(parameters, storage.comptime_parameters.items.len));
         try require(verify.optionalIdFits(parameter.constraint, storage.contract_constraints.items.len));
     }
 
@@ -70,6 +84,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
     }
 
     for (storage.parameterized_functions.items) |parameterized| {
+        try require(parameterized.captured_parameter_count <= parameterized.parameters.len);
         try require(verify.idFits(parameterized.declaration, graph.declarations.items.len));
         if (parameterized.concrete_function) |function| {
             try require(verify.idFits(function, graph.functions.items.len));
@@ -91,41 +106,40 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
     }
 
     for (storage.contract_requirements.items) |requirement| {
+        try require(verify.rangeFits(requirement.parameters, storage.comptime_parameters.items.len));
         try require(verify.stringFits(requirement.name, graph.strings.items));
         try require(verify.idFits(requirement.input, storage.ir.types.items.len));
         try require(verify.idFits(requirement.output, storage.ir.types.items.len));
         try require(verify.sourceFits(requirement.source, graph.file_offsets.items.len));
         if (requirement.safety_contract) |contract| {
             try require(verify.sourceFits(contract.source, graph.file_offsets.items.len));
-            const input = storage.ir.types.items[@intFromEnum(requirement.input)];
-            const output = storage.ir.types.items[@intFromEnum(requirement.output)];
-            try require(input == .resolved and input.resolved == .structural);
-            try require(output == .resolved and output.resolved == .structural);
-            try require(contract.output_count == output.resolved.structural.fields.len);
+            const input = views.signatureFields(graph, requirement.input) orelse return error.InvalidModuleSemanticGraph;
+            const output = views.signatureFields(graph, requirement.output) orelse return error.InvalidModuleSemanticGraph;
+            try require(contract.output_count == output.count());
             for (contract.owned_outputs) |index| try require(index < contract.output_count);
-            for (contract.outcomes) |outcome| try verifyOutcome(graph, outcome, contract.output_count, input.resolved.structural.fields.len);
+            for (contract.outcomes) |outcome| try verifyOutcome(graph, outcome, contract.output_count, input.count());
             for (contract.transfers) |transfer| {
                 try require(transfer.output_index < contract.output_count);
-                try require(transfer.input_index < input.resolved.structural.fields.len);
+                try require(transfer.input_index < input.count());
             }
-            for (contract.invalidates) |index| try require(index < input.resolved.structural.fields.len);
-            for (contract.retained_inputs) |retained| try require(retained.storage.input_index < input.resolved.structural.fields.len and retained.input < input.resolved.structural.fields.len);
-            for (contract.emptied_inputs) |empty| try require(empty.input_index < input.resolved.structural.fields.len);
-            for (contract.storage_sources) |source| try require(source.output_index < contract.output_count and source.storage.input_index < input.resolved.structural.fields.len);
-            for (contract.relocations) |relocation| try require(relocation.destination < input.resolved.structural.fields.len and relocation.source < input.resolved.structural.fields.len);
-            for (contract.consumed_inputs) |index| try require(index < input.resolved.structural.fields.len);
+            for (contract.invalidates) |index| try require(index < input.count());
+            for (contract.retained_inputs) |retained| try require(retained.storage.input_index < input.count() and retained.input < input.count());
+            for (contract.emptied_inputs) |empty| try require(empty.input_index < input.count());
+            for (contract.storage_sources) |source| try require(source.output_index < contract.output_count and source.storage.input_index < input.count());
+            for (contract.relocations) |relocation| try require(relocation.destination < input.count() and relocation.source < input.count());
+            for (contract.consumed_inputs) |index| try require(index < input.count());
             for (contract.domain_dependencies) |dependency| {
                 try require(dependency.output_index < contract.output_count);
-                try require(dependency.input.input_index < input.resolved.structural.fields.len);
+                try require(dependency.input.input_index < input.count());
             }
-            for (contract.invalidated_domains) |domain| try require(domain.input_index < input.resolved.structural.fields.len);
+            for (contract.invalidated_domains) |domain| try require(domain.input_index < input.count());
             for (contract.dependencies) |dependency| {
                 try require(dependency.output_index < contract.output_count);
-                try require(dependency.input_index <= input.resolved.structural.fields.len);
+                try require(dependency.input_index <= input.count());
             }
             for (contract.referents, 0..) |referent, index| {
                 try require(referent.output_index < contract.output_count);
-                try require(referent.input_index < input.resolved.structural.fields.len);
+                try require(referent.input_index < input.count());
                 for (contract.referents[0..index]) |previous| try require(previous.output_index != referent.output_index);
                 var permitted = false;
                 for (contract.dependencies) |dependency| if (dependency.output_index == referent.output_index and dependency.input_index == referent.input_index) {

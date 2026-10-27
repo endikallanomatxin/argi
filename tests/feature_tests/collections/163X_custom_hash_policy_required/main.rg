@@ -10,7 +10,7 @@ implement HashPolicy#(Policy, Int32) (
     }
 )
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume allocator := system.page_allocator
     map ::= unwrap_or_abort(.value = HashMap#(.key: Int32, .value: Int32, .policy: Policy)())
 }

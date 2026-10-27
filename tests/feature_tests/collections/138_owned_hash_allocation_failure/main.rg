@@ -1,12 +1,12 @@
-RecordingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .fail_at       : UIntNative = 0
-    .attempts      : UIntNative = 0
-    .allocations   : UIntNative = 0
-    .deallocations : UIntNative = 0
+RecordingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .fail_at       : UIntNative                 = 0
+    .attempts      : UIntNative                 = 0
+    .allocations   : UIntNative                 = 0
+    .deallocations : UIntNative                 = 0
 )
 
-Tracked: Type = (.id: Int32)
+Tracked := (.id: Int32)
 
 drops :: Int32 = 0
 
@@ -37,16 +37,17 @@ implement HashPolicy#(Policy, Int32) (
     }
 )
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     map ::= HashMap#(.key: Int32, .value: Tracked, .policy: StandardHashPolicy)(
         .policy = StandardHashPolicy(), .allocator = $&allocator
-    )!
+    )!!!
     index :: Int32 = 0
     while index < 4 {
         put(
             .self = $&map, .key = index, .value = Tracked(.id = index), .allocator = $&allocator
-        )!
+        )!!!
         index = index + 1
     }
     query :: Int32 = 0
@@ -68,7 +69,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         abort
     }
     allocator.fail_at = 0
-    put(.self = $&map, .key = 4, .value = Tracked(.id = 6), .allocator = $&allocator)!
+    put(.self = $&map, .key = 4, .value = Tracked(.id = 6), .allocator = $&allocator)!!!
     if drops != 2 or length(.self = &map).count != 5 { abort }
     deinit(.self = $&map)
     if drops != 7 or allocator.allocations != allocator.deallocations { abort }
@@ -96,19 +97,12 @@ run_main(.system: System) -> !Void = ..ok Void() := {
             abort
         } ..error _ {} }
     if policy_drops != 2 or allocator.allocations != allocator.deallocations { abort }
-
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(
-    .system: System, .writer: $&WriterType = reach writer
-) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }
 
 implement Allocator#(RecordingAllocator) (
     .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.attempts = self&.attempts + 1
         if self&.attempts == self&.fail_at {

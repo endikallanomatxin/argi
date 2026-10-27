@@ -1,14 +1,14 @@
-Source: Type = (
-    .bytes : ArrayView#(.t: UInt8)
-    .position        : UIntNative = 0
-    .largest_request : UIntNative = 0
-    .fail : Bool = false
-    .fail_after      : UIntNative = 999
+Source := (
+    .bytes           : ArrayView#(.t: UInt8)
+    .position        : UIntNative           = 0
+    .largest_request : UIntNative           = 0
+    .fail            : Bool                 = false
+    .fail_after      : UIntNative           = 999
 )
 
 implement BlockReader#(Source) (
     .read_block = (.self: $&Source, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result : Errable#(UIntNative, (..stream_read_failed))
+        .result: Errable#(UIntNative, (..stream_read_failed))
     ) {
         size ::= length(&buffer).count
         if size > self&.largest_request { self&.largest_request = size }
@@ -33,9 +33,10 @@ implement BlockReader#(Source) (
     }
 )
 
-FailingSink: Type = (.received: UIntNative = 0)
+FailingSink := (.received: UIntNative = 0)
 
-run_main() -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
     input: [5]UInt8 = (0, 255, 65, 66, 10)
     output ::= zeroed#([8]UInt8)()
     base ::= ByteWriter(.bytes = view($&output))
@@ -43,29 +44,29 @@ run_main() -> !Void = ..ok Void() := {
     writer ::= BufferedWriter(.base = $&base, .buffer = view($&storage))
     source ::= Source(.bytes = view(&input))
 
-    Writer#().write_byte($&writer, 80)!
-    if transfer_stream(.writer = $&writer, .reader = $&source)! != 5 { abort }
+    Writer#().write_byte($&writer, 80)!!!
+    if transfer_stream(.writer = $&writer, .reader = $&source)!!! != 5 { abort }
     if source.largest_request != 3 { abort }
-    Writer#().flush($&writer)!
+    Writer#().flush($&writer)!!!
     if position(&base).count != 6 { abort }
     if output[0] != 80 or output[1] != 0 or output[2] != 255 { abort }
     if output[3] != 65 or output[4] != 66 or output[5] != 10 { abort }
-    if transfer_stream(.writer = $&writer, .reader = $&source)! != 0 { abort }
+    if transfer_stream(.writer = $&writer, .reader = $&source)!!! != 0 { abort }
 
     source.position = 0
     source.fail = true
-    Writer#().write_byte($&writer, 81)!
+    Writer#().write_byte($&writer, 81)!!!
     match transfer_stream(.writer = $&writer, .reader = $&source) {
         ..ok _ { abort }
         ..error error { if error.reason != ..stream_read_failed { abort } }
     }
-    Writer#().flush($&writer)!
+    Writer#().flush($&writer)!!!
     if position(&base).count != 7 or output[6] != 81 { abort }
 
     source.fail = false
     fallback_output ::= zeroed#([5]UInt8)()
     fallback ::= ByteWriter(.bytes = view($&fallback_output))
-    if transfer_stream(.writer = $&fallback, .reader = $&source)! != 5 { abort }
+    if transfer_stream(.writer = $&fallback, .reader = $&source)!!! != 5 { abort }
     if fallback_output[0] != 0 or fallback_output[1] != 255 or fallback_output[4] != 10 {
         abort
     }
@@ -76,7 +77,7 @@ run_main() -> !Void = ..ok Void() := {
     unbuffered_output ::= zeroed#([5]UInt8)()
     unbuffered_base ::= ByteWriter(.bytes = view($&unbuffered_output))
     unbuffered ::= BufferedWriter(.base = $&unbuffered_base, .buffer = empty)
-    if transfer_stream(.writer = $&unbuffered, .reader = $&source)! != 5 { abort }
+    if transfer_stream(.writer = $&unbuffered, .reader = $&source)!!! != 5 { abort }
     if unbuffered_output[0] != 0 or unbuffered_output[1] != 255 or unbuffered_output[4] != 10 {
         abort
     }
@@ -87,8 +88,8 @@ run_main() -> !Void = ..ok Void() := {
     virtual_base ::= ByteWriter(.bytes = view($&virtual_output))
     virtual_storage ::= zeroed#([2]UInt8)()
     virtual_writer ::= BufferedWriter(.base = $&virtual_base, .buffer = view($&virtual_storage))
-    if transfer_stream(.reader = $&virtual, .writer = $&virtual_writer)! != 5 { abort }
-    Writer#().flush($&virtual_writer)!
+    if transfer_stream(.reader = $&virtual, .writer = $&virtual_writer)!!! != 5 { abort }
+    Writer#().flush($&virtual_writer)!!!
     if virtual_output[0] != 0 or virtual_output[1] != 255 or virtual_output[4] != 10 { abort }
 
     partial_source ::= Source(.bytes = view(&input), .fail_after = 2)
@@ -101,7 +102,7 @@ run_main() -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..stream_read_failed { abort } }
     }
     if position(&partial_base).count != 0 { abort }
-    Writer#().flush($&partial_writer)!
+    Writer#().flush($&partial_writer)!!!
     if position(&partial_base).count != 2 or partial_output[0] != 0 or partial_output[1] != 255 {
         abort
     }
@@ -114,7 +115,7 @@ run_main() -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..stream_write_failed { abort } }
     }
     if source.position != 3 { abort }
-    Writer#().flush($&blocked)!
+    Writer#().flush($&blocked)!!!
 
     flush_source ::= Source(.bytes = view(&input))
     flush_sink ::= FailingSink()
@@ -127,26 +128,19 @@ run_main() -> !Void = ..ok Void() := {
     if flush_source.position != 2 or flush_sink.received != 2 { abort }
     deinit($&flush_writer)
     if flush_sink.received != 2 { abort }
-
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (
-    .status_code : Int32 = 1
-) := {
-    run_main()!!!
     status_code = 0
 }
 
 implement Writer#(FailingSink) (
     .write_byte = (.self: $&FailingSink, .byte: UInt8) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
         self&.received = self&.received + 1
         result = ..ok Void()
     }
 
     .flush = (.self: $&FailingSink) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
         result = ..error(.reason = ..stream_flush_failed)
     }

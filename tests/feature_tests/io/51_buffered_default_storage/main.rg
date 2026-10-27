@@ -1,6 +1,6 @@
-Source: Type = (.byte: UInt8)
+Source := (.byte: UInt8)
 
-Sink: Type = (.byte: UInt8 = 0)
+Sink := (.byte: UInt8 = 0)
 
 implement Reader#(Source) (
     .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
@@ -10,19 +10,19 @@ implement Reader#(Source) (
 
 implement Writer#(Sink) (
     .write_byte = (.self: $&Sink, .byte: UInt8) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
         self&.byte = byte
         result = ..ok Void()
     }
     .flush = (.self: $&Sink) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
         result = ..ok Void()
     }
 )
 
-read_default#(.Stream: Type: Reader#(Stream))(.source: $&Stream) -> (.result: UInt8) := {
+read_default := #(.Stream: Type: Reader#(Stream)) (.source: $&Stream) -> (.result: UInt8) {
     reader ::= BufferedReader(.base = source)
     match unwrap_or_abort(.value = Reader#().read_byte($&reader)) {
         ..end { abort }
@@ -30,7 +30,7 @@ read_default#(.Stream: Type: Reader#(Stream))(.source: $&Stream) -> (.result: UI
     }
 }
 
-main() -> () := {
+main := () -> () {
     first_source :: Source = (.byte = 65)
     second_source :: Source = (.byte = 66)
     first ::= BufferedReader(.base = $&first_source)

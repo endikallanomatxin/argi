@@ -1,23 +1,32 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    trusted_opaque_move#(.t: t)(.destination = slot, .source = ~value)
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+store_wrapper := #(.t: Type) (.slot: $&t, .value: t) -> () {
+    trusted_opaque_move#(.t: t) (.destination = slot, .source = ~value)
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     source_result ::= allocate_bytes(.self = system.page_allocator, .size = 1)
-    slot_result ::= allocate_bytes(.self = system.page_allocator, .size = size_of(.type = Allocation))
+    slot_result ::= allocate_bytes(
+        .self = system.page_allocator, .size = size_of(.type = Allocation)
+    )
 
     match source_result {
         ..error _ { status_code = 1 }
-        ..ok ~ payload {
+        ..ok ~payload {
             allocation ::= ~payload
             match slot_result {
                 ..error _ { status_code = 2 }
-                ..ok ~ slot_payload {
+                ..ok ~slot_payload {
                     slot_allocation ::= ~slot_payload
-                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slot_allocation, .offset = 0).reference).reference
-                    store_wrapper#(.t: Allocation)(.slot = slot, .value = ~allocation)
-                    trusted_opaque_drop#(.t: Allocation)(.slot = slot)
+                    slot ::= trusted_mutable_reinterpret_reference#(
+                        .from: UInt8, .to: Allocation
+                    )(
+                        .base = unsafe_allocation.trusted_allocation_byte_rw(
+                            .allocation = $&slot_allocation, .offset = 0
+                        ).reference
+                    ).reference
+                    store_wrapper#(.t: Allocation) (.slot = slot, .value = ~allocation)
+                    trusted_opaque_drop#(.t: Allocation) (.slot = slot)
                     deinit(.self = $&slot_allocation)
                     status_code = 0
                 }

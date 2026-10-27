@@ -5,7 +5,7 @@ signature has an explicit type. The input fields form one logical input
 structure; the output fields form one logical output structure.
 
 ```rg
-add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
+add := (.left: Int32, .right: Int32) -> (.sum: Int32)  {
     sum = left + right
 }
 ```

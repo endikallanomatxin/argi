@@ -1,4 +1,4 @@
-Token#(.t: Type) : Type = (
+Token := #(.t: Type) (
     .tag: Int32
 )
 
@@ -14,7 +14,7 @@ implement#(.t: Type) Init#(Token#(.t: t), (.sample: t)) (
     }
 )
 
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     int_token ::= Token(.sample = 5)
     char_token ::= Token(.sample = 'a')
 

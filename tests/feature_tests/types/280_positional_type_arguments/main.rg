@@ -2,9 +2,9 @@ library ::= import ("./library")
 
 Reasons: Type = (..unavailable)
 
-Pair#(.left: Type, .right: Type): Type = (.left: left, .right: right)
+Pair := #(.left: Type, .right: Type) (.left: left, .right: right)
 
-checked(.value: Int32) -> (.result: Errable#(Int32, Reasons)) := {
+checked := (.value: Int32) -> (.result: Errable#(Int32, Reasons)) {
     if value < 0 {
         result = ..error(.reason = ..unavailable)
         return
@@ -13,31 +13,31 @@ checked(.value: Int32) -> (.result: Errable#(Int32, Reasons)) := {
     result = ..ok value
 }
 
-echo#(.t: Type)(.value: t) -> (.result: Errable#(t, Reasons)) := {
+echo := #(.t: Type) (.value: t) -> (.result: Errable#(t, Reasons)) {
     result = ..ok value
 }
 
-open_echo#(.t: Type)(.value: t) -> (.result: Errable#(t)) := {
+open_echo := #(.t: Type) (.value: t) -> (.result: Errable#(t)) {
     result = ..ok value
 }
 
 ReadValue#(.Participant: Type): Contract = (
-    .t: Type
+    .t : Type
 
-    .read: (.self: &Participant) -> (.value: t)
+    .read : (.self: &Participant) -> (.value: t)
 )
 
-IntegerValue: Type = (.value: Int32)
+IntegerValue := (.value: Int32)
 
 implement ReadValue#(IntegerValue) (.t: Type = Int32, .read = _impl_read_IntegerValue)
 
-_impl_read_IntegerValue := (.self: &IntegerValue) -> (.value: Int32)  { value = self&.value }
+_impl_read_IntegerValue := (.self: &IntegerValue) -> (.value: Int32) { value = self&.value }
 
-read_value#(.t: Type, .source: Type: ReadValue#(.t: t))(.self: &source) -> (.value: t) := {
+read_value := #(.t: Type, .source: Type: ReadValue#(.t: t)) (.self: &source) -> (.value: t) {
     value = read(.self = self).value
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     value ::= unwrap_or_abort(.value = checked(42)).result
     if value != 42 { abort }
 

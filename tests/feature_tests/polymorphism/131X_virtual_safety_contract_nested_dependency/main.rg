@@ -1,7 +1,7 @@
 ..failed
 
 Source#(.Participant: Type): Contract = (
-    .get: (.self: &Participant) -> (.result: Errable#(?&Int32, (..failed))) where {
+    .get : (.self: &Participant) -> (.result: Errable#(?&Int32, (..failed))) where {
         on result ..ok {
             on result ..some {}
             on result ..none {}
@@ -10,19 +10,19 @@ Source#(.Participant: Type): Contract = (
     }
 )
 
-Cell: Type = (.value: Int32)
+Cell := (.value: Int32)
 
 implement Source#(Cell) (.get = _impl_get_Cell)
 
-_impl_get_Cell := (.self: &Cell) -> (.result: Errable#(?&Int32, (..failed)))  {
+_impl_get_Cell := (.self: &Cell) -> (.result: Errable#(?&Int32, (..failed))) {
     result = ..ok ..some(.value = &self&.value)
 }
 
-read_source(.source: &Virtual#(Source)) -> (.result: Errable#(?&Int32, (..failed))) := {
+read_source := (.source: &Virtual#(Source)) -> (.result: Errable#(?&Int32, (..failed))) {
     result = get(source)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(42)
     source ::= to_virtual#(Source)(&cell)
 

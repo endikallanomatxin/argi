@@ -1,4 +1,4 @@
-Tracked: Type = (
+Tracked := (
     .id         : Int32
     .allocation : Allocation
 )
@@ -16,12 +16,9 @@ implement Deinit#(Tracked) (
     }
 )
 
-make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(
-        .allocator : $&AllocatorType,
-        .id        : Int32
-    ) -> (
-        .result : Errable#(.t: Tracked, .reasons: (..out_of_memory))
-    ) := {
+make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+    .allocator: $&AllocatorType, .id: Int32
+) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) {
     assume allocator
 
     allocation_result ::= allocate_bytes(.self = allocator, .size = 1)
@@ -34,7 +31,7 @@ make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 }
 
-BackingAllocator: Type = (
+BackingAllocator := (
     .ffi : $&ForeignFunctionInterface
 )
 
@@ -42,15 +39,15 @@ backing_deallocations :: Int32 = 0
 backing_freed_after_elements :: Bool = false
 
 implement Init#(BackingAllocator, (.ffi: $&ForeignFunctionInterface)) (
-    .Result: Type = BackingAllocator
-    .init = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
+    .Result : Type = BackingAllocator
+    .init   = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
         assume ffi := ~args.ffi
 
         result.ffi = ffi
     }
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -74,21 +71,26 @@ main(.system: System) -> (.status_code: Int32) := {
                         ..error _ { status_code = 12 }
                         ..ok ~third_payload {
                             third ::= ~third_payload
-                            push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~first)
-                            push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~second)
-                            push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~third)
+                            push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~first)
+                            push_assume_capacity#(.t: Tracked) (
+                                .self = $&array, .value = ~second
+                            )
+                            push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~third)
 
                             if first_drops != 0 or second_drops != 0 or third_drops != 0 {
                                 status_code = 20
                                 return
                             }
 
-                            deinit( .self = $&array)
+                            deinit(.self = $&array)
                             if first_drops != 1 or second_drops != 1 or third_drops != 1 {
                                 status_code = 21
                                 return
                             }
-                            if backing_deallocations != 1 or backing_freed_after_elements == false {
+                            if [
+                                backing_deallocations != 1
+                                or backing_freed_after_elements == false
+                            ] {
                                 status_code = 22
                                 return
                             }
@@ -101,37 +103,34 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 }
 
-implement Allocator#(BackingAllocator)(
-    .allocate = (
-            .self      : $&BackingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative          = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(BackingAllocator) (
+    .allocate = (.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         address :: UIntNative = storage | convert#(.to: UIntNative)(_)
         deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(
-            .storage     = storage
-            .size        = size
-            .alignment   = alignment
-            .deallocator = deallocator
+            .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
         )
         result = ..ok ~allocation
     }
 )
 
-implement Deallocator#(BackingAllocator)(
+implement Deallocator#(BackingAllocator) (
     .deallocate = (
-            .self      : $&BackingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () {
-        backing_freed_after_elements = first_drops == 1 and second_drops == 1 and third_drops == 1
+        .self      : $&BackingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {
+        backing_freed_after_elements = [
+            first_drops == 1
+            and second_drops == 1
+            and third_drops == 1
+        ]
         backing_deallocations = backing_deallocations + 1
         address :: UIntNative = data.address
         free(.address = address, .ffi = self&.ffi)

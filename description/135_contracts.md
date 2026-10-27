@@ -4,14 +4,14 @@
 
 An ordinary function has one identity in its module namespace. It can be generic,
 but its name cannot be overloaded, including by changing compile-time parameter
-count or types. Ordinary declarations use the existing `#(...)` parameter syntax:
+count or types. Ordinary definitions place their `#(...)` parameters on the value after `:=`:
 
 ```argi
 square := (.value: Int32) -> (.result: Int32) {
     result = value * value
 }
 
-identity#(.T: Type) := (.value: T) -> (.result: T) {
+identity := #(.T: Type) (.value: T) -> (.result: T) {
     result = value
 }
 ```
@@ -104,6 +104,11 @@ Generic code retains symbolic associated projections, such as
 provide compile-time guarantees; specialization and monomorphization produce
 ordinary concrete calls. Constraints are checks on known or inferred parameters,
 not a general constraint-solving mechanism.
+
+An associated family is also a compile-time value. For example, passing
+`Factory#(Owner).Args` to a family parameter preserves the selected definition
+and its captures. The known participants select the conformance first; the
+associated value does not infer an otherwise unknown participant.
 
 ## Standard operations
 

@@ -1,6 +1,6 @@
 CsvReasons: Type = (..invalid_csv, ..invalid_utf8, ..out_of_memory, ..size_limit_exceeded)
 
-CsvRecord: Type = (.fields: DynamicArray#(.t: String))
+CsvRecord := (.fields: DynamicArray#(.t: String))
 
 implement Deinit#(CsvRecord) (
     .deinit = (.self: $&CsvRecord) -> () {
@@ -16,7 +16,7 @@ implement Deinit#(CsvRecord) (
 -- embedded line breaks and doubled quotes. Accept CRLF and LF record endings;
 -- bare CR is invalid outside quotes. Empty input has no records; a blank line
 -- contains one empty field. Encoding and width validation belong to the consumer.
-CsvReader: Type = (
+CsvReader := (
     ._text               : StringView,
     ._position           : UIntNative,
     ._ended              : Bool,
@@ -55,9 +55,9 @@ implement Init#(
 )
 
 -- Errors are terminal, and no partially decoded record escapes.
-next#(.AllocatorType: Type: Allocator#(AllocatorType))(
+next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&CsvReader, .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(?CsvRecord, CsvReasons)) := {
+) -> (.result: Errable#(?CsvRecord, CsvReasons)) {
     assume allocator
 
     if self&._ended or self&._position == byte_length(&self&._text).count {
@@ -160,9 +160,9 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
 }
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
-write_record#(.WriterType: Type: Writer#(WriterType))(
+write_record := #(.WriterType: Type: Writer#(WriterType)) (
     .writer: $&WriterType, .fields: ArrayView#(.t: StringView)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
     index :: UIntNative = 0
 
     while index < length(&fields).count {

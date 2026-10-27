@@ -1,6 +1,6 @@
-Pair: Type = (.links: [2]&Int32, .tag: UInt8)
+Pair := (.links: [2]&Int32, .tag: UInt8)
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     left :: Int32 = 11

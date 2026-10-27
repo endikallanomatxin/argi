@@ -1,7 +1,7 @@
 first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 
-Resource: Type = (.id: Int32)
+Resource := (.id: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -23,9 +23,9 @@ implement Deinit#(EmptyResource) (
     }
 )
 
-Box: Type = (.resource: $&Resource)
+Box := (.resource: $&Resource)
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         values :: [2]Resource = (Resource(.id = 1), Resource(.id = 2))
         second ::= trusted_mutable_reference_offset(

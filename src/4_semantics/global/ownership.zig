@@ -387,7 +387,7 @@ pub const Resolver = struct {
         const declarations = self.graph.declarationsNamed(self.allocator, name) catch return false;
         for (declarations) |contract_decl| {
             if (self.graph.declaration(contract_decl).kind != .contract_type) continue;
-            if (dispatch.contracts.implements(concrete, contract_decl) catch false) return true;
+            if (dispatch.contracts.implements(concrete, self.graph.familyForDeclaration(contract_decl) orelse continue) catch false) return true;
         }
         return false;
     }
@@ -1390,7 +1390,7 @@ pub const Resolver = struct {
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
         const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
 
-        if (standard_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
+        if (standard_contracts.standardDefinition(self.graph, "Deinit")) |declaration| {
             if (try dispatch.contracts.implements(target_ty, declaration)) {
                 const input = try self.singleNamedInput("self", address, source);
                 if (context == .global) {
@@ -1442,7 +1442,7 @@ pub const Resolver = struct {
     fn triviallyCopyable(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
         if (global_types.deinitFunction(self.graph, ty) != null) return false;
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
-            .builtin, .pointer, .virtual => true,
+            .builtin, .definition, .pointer, .virtual => true,
             .array => |array| self.triviallyCopyable(array.element),
             .structural => blk: {
                 const fields = global_types.fields(self.graph, ty) orelse break :blk false;
@@ -1450,9 +1450,8 @@ pub const Resolver = struct {
                     if (!self.triviallyCopyable(field.ty)) break :blk false;
                 break :blk true;
             },
-            .declared => |id| blk: {
-                if (self.graph.declaration(id).underlying_type) |underlying| break :blk self.triviallyCopyable(underlying);
-                if (self.graph.declaration(id).struct_layout == .c_function_pointer) break :blk true;
+            .nominal => |id| blk: {
+                if (self.graph.typeDefinition(id).struct_layout == .c_function_pointer) break :blk true;
                 if (global_types.fields(self.graph, ty)) |fields|
                     break :blk self.fieldsTriviallyCopyable(fields);
                 if (global_types.variants(self.graph, ty)) |variants|

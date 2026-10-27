@@ -1,13 +1,13 @@
-Point#(.Scalar: Type): Type = (.x: Scalar, .y: Scalar)
+Point := #(.Scalar: Type) (.x: Scalar, .y: Scalar)
 
-Span#(.Scalar: Type): Type = (
+Span := #(.Scalar: Type) (
     .start  : Point#(Scalar),
     .end    : Point#(Scalar),
     .center : Point#(Scalar)  = (.x = 0.0, .y = 0.0),
-    .sweep  : Scalar          = 0.0
+    .sweep  : Scalar         = 0.0
 )
 
-make#(.Scalar: Type) := (.radius: Scalar) -> (.span: Span#(Scalar)) {
+make := #(.Scalar: Type) (.radius: Scalar) -> (.span: Span#(Scalar)) {
     span = (.start = (.x = radius, .y = 0.0), .end = (.x = radius, .y = 0.0), .sweep = 6.0)
 }
 

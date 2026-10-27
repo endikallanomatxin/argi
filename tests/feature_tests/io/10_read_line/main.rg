@@ -1,10 +1,10 @@
-DummyInput: Type = (
+DummyInput := (
     .index : UIntNative = 0
 )
 
 implement Reader#(DummyInput) (
     .read_byte = (.self: $&DummyInput) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        .result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
     ) {
         if self&.index == 0 {
             self&.index = 1
@@ -28,7 +28,7 @@ implement Reader#(DummyInput) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

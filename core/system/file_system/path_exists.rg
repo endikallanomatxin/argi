@@ -22,7 +22,7 @@ _path_exists_string := (.self: &FileSystem, .path: &String) -> (.ok: Bool) {
     ok = exists(self, .path = c_path).ok
 }
 
-_path_exists_view#(.Provider: Type: Allocator#(Provider)) := (
+_path_exists_view := #(.Provider: Type: Allocator#(Provider)) (
     .self: &FileSystem, .path: StringView, .allocator: $&Provider
 ) -> (.result: Errable#(Bool, (..out_of_memory))) {
     assume ffi := self&._ffi

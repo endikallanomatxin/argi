@@ -28,7 +28,7 @@ _atomic_compare(.handle: UIntNative, .expected: UInt32, .desired: UInt32) -> (.p
 -- stable across owner moves. The owner retains FFI permission and releases
 -- the cell exactly once. This does not authorize transferring Argi references
 -- across threads; that requires the language's separate transfer contracts.
-AtomicUInt32: Type = (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
+AtomicUInt32 := (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
 
 implement Init#(
     AtomicUInt32, (.initial: UInt32 = 0, .ffi: $&ForeignFunctionInterface = reach ffi)
@@ -59,30 +59,30 @@ implement Deinit#(AtomicUInt32) (
     }
 )
 
-load(.self: &AtomicUInt32) -> (.value: UInt32) := {
+load := (.self: &AtomicUInt32) -> (.value: UInt32) {
     assume ffi := self&._ffi
     value = _atomic_load(.handle = self&._handle).value
 }
 
-store(.self: $&AtomicUInt32, .value: UInt32) -> () := {
+store := (.self: $&AtomicUInt32, .value: UInt32) -> () {
     assume ffi := self&._ffi
     _atomic_store(.handle = self&._handle, .value = value)
 }
 
-exchange(.self: $&AtomicUInt32, .value: UInt32) -> (.previous: UInt32) := {
+exchange := (.self: $&AtomicUInt32, .value: UInt32) -> (.previous: UInt32) {
     assume ffi := self&._ffi
     previous = _atomic_exchange(.handle = self&._handle, .value = value).previous
 }
 
 -- Return the previous value; unsigned addition wraps modulo 2^32.
-fetch_add(.self: $&AtomicUInt32, .value: UInt32) -> (.previous: UInt32) := {
+fetch_add := (.self: $&AtomicUInt32, .value: UInt32) -> (.previous: UInt32) {
     assume ffi := self&._ffi
     previous = _atomic_add(.handle = self&._handle, .value = value).previous
 }
 
-compare_exchange(.self: $&AtomicUInt32, .expected: UInt32, .desired: UInt32) -> (
+compare_exchange := (.self: $&AtomicUInt32, .expected: UInt32, .desired: UInt32) -> (
     .observed: UInt32, .swapped: Bool
-) := {
+) {
     assume ffi := self&._ffi
     packed ::= _atomic_compare(
         .handle = self&._handle, .expected = expected, .desired = desired

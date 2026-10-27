@@ -147,7 +147,7 @@ Functions declare named input and output fields. The body assigns the output
 bindings; `return` exits without a separate result expression:
 
 ```rg
-add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
+add := (.left: Int32, .right: Int32) -> (.sum: Int32)  {
     sum = left + right
 }
 

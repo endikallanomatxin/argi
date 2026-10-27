@@ -1,4 +1,4 @@
-Key: Type = (.id: Int32)
+Key := (.id: Int32)
 
 implement ImplicitlyCopyable#(Key) ()
 
@@ -14,7 +14,7 @@ implement#(.State: Type: Hasher#(State)) Hashable#(Key, State) (
     }
 )
 
-CountingHasher: Type = (.bytes: UIntNative = 0)
+CountingHasher := (.bytes: UIntNative = 0)
 
 implement Hasher#(CountingHasher) (
     .write_bytes = (.self: $&CountingHasher, .bytes: ArrayView#(UInt8)) -> () {
@@ -35,7 +35,7 @@ implement HashPolicy#(CollisionPolicy, Key) (
     }
 )
 
-check_custom#(.Provider: Type: Allocator)(.allocator: $&Provider) -> () := {
+check_custom := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> () {
     assume allocator
     map ::= unwrap_or_abort(
         .value = HashMap#(.key: Key, .value: Int32)(.policy = CollisionPolicy())
@@ -48,7 +48,7 @@ check_custom#(.Provider: Type: Allocator)(.allocator: $&Provider) -> () := {
     }
 }
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume allocator := system.page_allocator
     check_custom(.allocator = allocator)
     key: Key = (.id = 7)

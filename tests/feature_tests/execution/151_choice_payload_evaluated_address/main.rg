@@ -1,11 +1,11 @@
 Result: Type = (..ok(.value: Int32), ..empty)
 
-select(.value: $&Result, .calls: $&Int32) -> (.result: $&Result) := {
+select := (.value: $&Result, .calls: $&Int32) -> (.result: $&Result) {
     calls&= calls&+ 1
     result = value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value :: Result = ..ok(.value = 41)
     calls :: Int32 = 0
     selected ::= select(.value = $&value, .calls = $&calls)

@@ -1,6 +1,6 @@
-record_width#(.T: Type) := () -> (.count: UIntNative) { count = size_of(.type = T) }
+record_width := #(.T: Type) () -> (.count: UIntNative) { count = size_of(.type = T) }
 
-read_default#(.T: Type) := (.value: T) -> (.result: Int32) {
+read_default := #(.T: Type) (.value: T) -> (.result: Int32) {
     #if record_width#(.T: T)() > 0 {
         result = value.extra[0] + value.extra[1]
     } #else {
@@ -8,11 +8,11 @@ read_default#(.T: Type) := (.value: T) -> (.result: Int32) {
     }
 }
 
-with_default#(.T: Type, .n: Int32) := (.value: T) -> (.result: Int32) {
+with_default := #(.T: Type, .n: Int32) (.value: T) -> (.result: Int32) {
     result = read_default#(.T: (.item: T, .extra: [2]Int32 = (n, 25)))(.value = (.item = value))
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     if with_default#(.T: Int32, .n = 17)(.value = 7) != 42 { abort }
     if with_default#(.T: Bool, .n = 16)(.value = true) != 41 { abort }
     if [

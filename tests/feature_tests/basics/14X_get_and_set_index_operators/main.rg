@@ -1,10 +1,10 @@
 -- Minimal index operator demo using a named type and a function
-Pair : Type = (
-    .x: Int32,
-    .y: Int32,
+Pair := (
+    .x : Int32,
+    .y : Int32,
 )
 
-implement ImplicitlyCopyable#(Pair) ()
+implement ImplicitlyCopyable #( Pair ) ()
 
 -- Define the index get operator as a normal function
 -- Convention: op_index_get(.self: T, .i: Int32) -> (.v: T)
@@ -21,16 +21,16 @@ operator set[](.self: $&Pair, .i: Int32, .value: Int32) -> () := {
     temp :: Pair = self&
 
     if i == 1 {
-        temp = (.x=value, .y=temp.y)
+        temp = (.x = value, .y = temp.y)
     } else {
-        temp = (.x=temp.x, .y=value)
+        temp = (.x = temp.x, .y = value)
     }
 
-    self& = temp
+    self&= temp
 }
 
-main () -> (.status_code: Int32) := {
-    p :: Pair = (.x=10, .y=20)
+main := () -> (.status_code: Int32) {
+    p :: Pair = (.x = 10, .y = 20)
     initial :: Int32 = p[2]
 
     if initial != 20 {

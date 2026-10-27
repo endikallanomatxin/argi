@@ -1,11 +1,11 @@
 -- An owned buffer can cross a return boundary without borrowing its creator.
 -- Twenty bytes cover every decimal UInt64 and Int64, including the sign.
-_DecimalText: Type = (
+_DecimalText := (
     .bytes : [20]UInt8  = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     .start : UIntNative = 20
 )
 
-_decimal_digit#(.t: Type: Int)(.digit: t) -> (.byte: UInt8) := {
+_decimal_digit := #(.t: Type: Int) (.digit: t) -> (.byte: UInt8) {
     if digit == 0 {
         byte = 48
         return
@@ -54,7 +54,7 @@ _decimal_digit#(.t: Type: Int)(.digit: t) -> (.byte: UInt8) := {
     byte = 57
 }
 
-_decimal_encode#(.t: Type: Int)(.value: t) -> (.text: _DecimalText) := {
+_decimal_encode := #(.t: Type: Int) (.value: t) -> (.text: _DecimalText) {
     text = _DecimalText()
     current :: t = value
     negative ::= current < 0
@@ -76,6 +76,6 @@ _decimal_encode#(.t: Type: Int)(.value: t) -> (.text: _DecimalText) := {
     }
 }
 
-_decimal_view(.self: &_DecimalText) -> (.view: StringView) := {
+_decimal_view := (.self: &_DecimalText) -> (.view: StringView) {
     view = (._data = &self&.bytes[self&.start], ._length = 20 - self&.start)
 }

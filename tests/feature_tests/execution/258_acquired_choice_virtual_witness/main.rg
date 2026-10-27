@@ -1,4 +1,4 @@
-Counter: Type = (.value: Int32)
+Counter := (.value: Int32)
 
 Counting#(.State: Type): Contract = (
     .bump : (.self: $&State, .amount: Int32) -> () where {}
@@ -16,7 +16,7 @@ implement Counting#(Counter) (
 
 Holder: Type = (..counter(.counter: Virtual#(.contract: Counting), .tag: UInt8), ..empty)
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     counter :: Counter = (.value = 7)
@@ -26,7 +26,10 @@ main() -> (.status_code: Int32) := {
     slot ::= trusted_establish_allocation_slot#(.t: Holder)(
         .allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)
     ).reference
-    slot&= ..counter(.counter = to_virtual#(.contract: Counting)(.value = $&counter), .tag = 1)
+    slot&= ..counter(
+        .counter = to_virtual#(.contract: Counting)(.value = $&counter)
+        .tag     = 1
+    )
     match slot&{
         ..counter $&payload {
             payload&.tag = 2

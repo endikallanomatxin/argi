@@ -1,25 +1,43 @@
-ForeignHandle : CIncomplete
+ForeignHandle: CIncomplete
+
 ..handle_creation_failed
 
-OwnedHandle : Type = (
-    ._handle: RawPointer#(.t: ForeignHandle)
-    ._ffi: $&ForeignFunctionInterface
+OwnedHandle := (
+    ._handle : RawPointer#(.t: ForeignHandle)
+    ._ffi    : $&ForeignFunctionInterface
 )
 
-_create(.value: CInt, .fail: CBool) -> (.handle: RawPointer#(.t: ForeignHandle)) : CFunction(.symbol = "argi_c_owned_create")
-_destroy(.handle: RawPointer#(.t: ForeignHandle)) -> () : CFunction(.symbol = "argi_c_owned_destroy")
-_read(.handle: RawPointer#(.t: ForeignHandle)) -> (.value: CInt) : CFunction(.symbol = "argi_c_owned_read")
-live() -> (.count: CInt) : CFunction(.symbol = "argi_c_owned_live")
-created() -> (.count: CInt) : CFunction(.symbol = "argi_c_owned_created")
-destroyed() -> (.count: CInt) : CFunction(.symbol = "argi_c_owned_destroyed")
-violations() -> (.count: CInt) : CFunction(.symbol = "argi_c_owned_violations")
+_create(.value: CInt, .fail: CBool) -> (.handle: RawPointer#(.t: ForeignHandle)): CFunction(
+    .symbol = "argi_c_owned_create"
+)
+
+_destroy(.handle: RawPointer#(.t: ForeignHandle)) -> (): CFunction(
+    .symbol = "argi_c_owned_destroy"
+)
+
+_read(.handle: RawPointer#(.t: ForeignHandle)) -> (.value: CInt): CFunction(
+    .symbol = "argi_c_owned_read"
+)
+
+live() -> (.count: CInt): CFunction(.symbol = "argi_c_owned_live")
+
+created() -> (.count: CInt): CFunction(.symbol = "argi_c_owned_created")
+
+destroyed() -> (.count: CInt): CFunction(.symbol = "argi_c_owned_destroyed")
+
+violations() -> (.count: CInt): CFunction(.symbol = "argi_c_owned_violations")
 
 -- The C binding transfers one handle on success; a null result acquires
 -- nothing. The wrapper keeps it private, provides no copy operation, and
 -- retains the caller's capability for every access and release.
-implement Init#(OwnedHandle, (.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))
-    .init = (.args: (.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Result) {
+implement Init#(
+    OwnedHandle,
+    (.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi)
+) (
+    .Result : Type = Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))
+    .init   = (
+        .args : (.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (.result: Result) {
         value ::= ~args.value
         fail ::= ~args.fail
         assume ffi := ~args.ffi
@@ -36,7 +54,7 @@ implement Init#(OwnedHandle, (.value: CInt, .fail: Bool = false, .ffi: $&Foreign
     }
 )
 
-read(.self: &OwnedHandle) -> (.value: CInt) := {
+read := (.self: &OwnedHandle) -> (.value: CInt) {
     value = _read(.handle = self&._handle, .ffi = self&._ffi)
 }
 
@@ -46,15 +64,19 @@ implement Deinit#(OwnedHandle) (
     }
 )
 
-GenericHandle#(.t: Type) : Type = (
-    ._handle: RawPointer#(.t: ForeignHandle)
-    ._ffi: $&ForeignFunctionInterface
-    .tag: t
+GenericHandle := #(.t: Type) (
+    ._handle : RawPointer#(.t: ForeignHandle)
+    ._ffi    : $&ForeignFunctionInterface
+    .tag     : t
 )
 
-implement#(.t: Type) Init#(GenericHandle#(.t: t), (.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))
-    .init = (.args: (.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Result) {
+implement#(.t: Type) Init#(
+    GenericHandle#(.t: t), (.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi)
+) (
+    .Result : Type = Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))
+    .init   = (.args: (.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+        .result : Result
+    ) {
         tag ::= ~args.tag
         assume ffi := ~args.ffi
 

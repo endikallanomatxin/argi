@@ -3,9 +3,9 @@ Result : Type = (
     ..error Int32
 )
 
-Wrapper : Type = (.result: Result)
+Wrapper := (.result: Result)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     wrapper :: Wrapper = (.result = ..ok 42)
     wrapper.result = ..error 7
     status_code = wrapper.result..ok

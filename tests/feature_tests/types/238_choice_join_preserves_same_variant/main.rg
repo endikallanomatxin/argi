@@ -3,7 +3,7 @@ Result : Type = (
     ..error Int32
 )
 
-main(.condition: Bool = true) -> (.status_code: Int32 = 0) := {
+main := (.condition: Bool = true) -> (.status_code: Int32 = 0)  {
     value :: Result = ..error 0
     if condition {
         value = ..ok 40

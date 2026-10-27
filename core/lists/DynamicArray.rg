@@ -1,14 +1,14 @@
 -- A shape generation gives borrowed views an invalidation
 -- boundary independent of allocation roots. Structural changes renew it;
 -- replacing an element's value without changing shape does not.
-_DynamicArrayShape: Type = (.marker: UInt8)
+_DynamicArrayShape := (.marker: UInt8)
 
 implement Deinit#(_DynamicArrayShape) (
     .deinit = (.self: $&_DynamicArrayShape) -> () {
     }
 )
 
-DynamicArray#(.t: Type): Type = (
+DynamicArray := #(.t: Type) (
     --
     -- Canonical contiguous owning dynamic list.
     --
@@ -29,9 +29,9 @@ DynamicArray#(.t: Type): Type = (
     ._shape    : _DynamicArrayShape
 )
 
-_collection_capacity_DynamicArray#(.t: Type)(.self: &DynamicArray#(.t: t)) -> (
+_collection_capacity_DynamicArray := #(.t: Type) (.self: &DynamicArray#(.t: t)) -> (
     .count : UIntNative
-) := {
+) {
     count = self&._capacity
 }
 
@@ -41,7 +41,7 @@ implement#(.t: Type) CollectionCapacity#(DynamicArray#(.t: t)) (
 
 -- An owner that has consumed every element may need to expose the empty
 -- opaque storage state to the safety checker before ending a temporal root.
-_trusted_dynamic_array_mark_empty#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
+_trusted_dynamic_array_mark_empty := #(.t: Type) (.self: $&DynamicArray#(.t: t)) -> () {
     if self&._length != 0 { abort }
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
 }
@@ -137,9 +137,9 @@ implement#(
 )
 
 -- Only the occupied prefix may cross from a slot handle to a normal reference.
-_trusted_dynamic_array_element_reference#(.t: Type)(
+_trusted_dynamic_array_element_reference := #(.t: Type) (
     .array: &DynamicArray#(.t: t), .offset: UIntNative
-) -> (.pointer: &t) := {
+) -> (.pointer: &t) {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
     slot_index: ?UIntNative = ..some(.value = slot._index)
@@ -152,9 +152,9 @@ _trusted_dynamic_array_element_reference#(.t: Type)(
     pointer = read_reference#(.t: t)(.base = mutable).reference
 }
 
-_trusted_dynamic_array_element_mutable_reference#(.t: Type)(
+_trusted_dynamic_array_element_mutable_reference := #(.t: Type) (
     .array: $&DynamicArray#(.t: t), .offset: UIntNative
-) -> (.pointer: $&t) := {
+) -> (.pointer: $&t) {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
     slot_index: ?UIntNative = ..some(.value = slot._index)
@@ -169,9 +169,9 @@ _trusted_dynamic_array_element_mutable_reference#(.t: Type)(
 -- Ensures space for at least `capacity` elements without changing length.
 -- Callers that must commit an external resource after a successful capacity
 -- check can follow this with `push_assume_capacity` without another OOM point.
-ensure_capacity#(.t: Type, .Provider: Type: Allocator)(
+ensure_capacity := #(.t: Type, .Provider: Type: Allocator) (
     .allocator: $&Provider, .self: $&DynamicArray#(.t: t), .capacity: UIntNative
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
 
     if self&._capacity >= capacity {
@@ -184,9 +184,9 @@ ensure_capacity#(.t: Type, .Provider: Type: Allocator)(
     )
 }
 
-_grow_dynamic_array#(.t: Type, .Provider: Type: Allocator)(
+_grow_dynamic_array := #(.t: Type, .Provider: Type: Allocator) (
     .allocator: $&Provider, .array: $&DynamicArray#(.t: t), .min_capacity: UIntNative
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
 
     element_size :: UIntNative = size_of(.type = t)
@@ -260,7 +260,7 @@ _grow_dynamic_array#(.t: Type, .Provider: Type: Allocator)(
 
 -- Appends without allocation. The caller must first ensure `length < capacity`,
 -- normally through `ensure_capacity`.
-push_assume_capacity#(.t: Type)(.self: $&DynamicArray#(.t: t), .value: t) -> () := {
+push_assume_capacity := #(.t: Type) (.self: $&DynamicArray#(.t: t), .value: t) -> () {
     if self&._length >= self&._capacity { abort }
     offset ::= self&._length
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = offset)
@@ -271,9 +271,9 @@ push_assume_capacity#(.t: Type)(.self: $&DynamicArray#(.t: t), .value: t) -> () 
     self&._length = offset + 1
 }
 
-insert_growing#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+insert_growing := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .allocator: $&AllocatorType, .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t
-) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds))) := {
+) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds))) {
     assume allocator
     owned ::= ~value
 
@@ -336,16 +336,16 @@ insert_growing#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
 
 -- A lexical owner recursively destroys fields, including structural values
 -- with no nominal destructor of their own.
-_destroy_array_element#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+_destroy_array_element := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .value: t, .allocator: $&AllocatorType
-) -> () := {
+) -> () {
     assume allocator
     discarded ::= ~value
 }
 
-replace#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+replace := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&AllocatorType
-) -> (.result: Errable#(Void, (..out_of_bounds))) := {
+) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume allocator
     owned ::= ~value
 
@@ -375,25 +375,25 @@ replace#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
 -- Internal collection operations may rely on their own index invariants.
 -- These entrypoints still check length at runtime, but do not add Errable to
 -- every internal lookup in an already validated data structure.
-_trusted_dynamic_array_get#(.t: Type: ImplicitlyCopyable)(
+_trusted_dynamic_array_get := #(.t: Type: ImplicitlyCopyable) (
     .array: &DynamicArray#(.t: t), .index: UIntNative
-) -> (.value: t) := {
+) -> (.value: t) {
     value = _trusted_dynamic_array_element_reference#(.t: t)(
         .array = array, .offset = index
     ).pointer&
 }
 
-_trusted_dynamic_array_get_reference#(.t: Type)(
+_trusted_dynamic_array_get_reference := #(.t: Type) (
     .array: &DynamicArray#(.t: t), .index: UIntNative
-) -> (.reference: &t) := {
+) -> (.reference: &t) {
     reference = _trusted_dynamic_array_element_reference#(.t: t)(
         .array = array, .offset = index
     ).pointer
 }
 
-_trusted_dynamic_array_get_mutable_reference#(.t: Type)(
+_trusted_dynamic_array_get_mutable_reference := #(.t: Type) (
     .array: $&DynamicArray#(.t: t), .index: UIntNative
-) -> (.reference: $&t) := {
+) -> (.reference: $&t) {
     reference = _trusted_dynamic_array_element_mutable_reference#(.t: t)(
         .array = array, .offset = index
     ).pointer
@@ -401,9 +401,9 @@ _trusted_dynamic_array_get_mutable_reference#(.t: Type)(
 
 -- This helper replaces copyable slot metadata. Owning values must use set,
 -- which extracts the old value into a lexical owner for recursive cleanup.
-_trusted_dynamic_array_set#(.t: Type: ImplicitlyCopyable)(
+_trusted_dynamic_array_set := #(.t: Type: ImplicitlyCopyable) (
     .array: $&DynamicArray#(.t: t), .index: UIntNative, .value: t
-) -> () := {
+) -> () {
     ptr ::= _trusted_dynamic_array_element_mutable_reference#(.t: t)(
         .array = array, .offset = index
     ).pointer

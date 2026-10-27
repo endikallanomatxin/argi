@@ -1,8 +1,8 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
-Pair: Type = (.first: Resource, .second: Resource)
+Pair := (.first: Resource, .second: Resource)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -10,27 +10,27 @@ implement Deinit#(Resource) (
     }
 )
 
-initialize(.target: $&Resource, .counter: $&Counter) -> () := {
+initialize := (.target: $&Resource, .counter: $&Counter) -> () {
     target&= Resource(.counter = counter)
 }
 
-initialize_pair(.target: $&Pair, .counter: $&Counter) -> () := {
+initialize_pair := (.target: $&Pair, .counter: $&Counter) -> () {
     target&.first = Resource(.counter = counter)
 }
 
-initialize_forwarded(.target: $&Resource, .counter: $&Counter) -> () := {
+initialize_forwarded := (.target: $&Resource, .counter: $&Counter) -> () {
     initialize(.target = target, .counter = counter)
 }
 
-initialize_args(.args: (.target: $&Resource, .counter: $&Counter)) -> () := {
+initialize_args := (.args: (.target: $&Resource, .counter: $&Counter)) -> () {
     args.target&= Resource(.counter = args.counter)
 }
 
 Outcome: Type = (..initialized, ..unchanged)
 
-initialize_conditionally(.target: $&Resource, .counter: $&Counter, .enabled: Bool) -> (
+initialize_conditionally := (.target: $&Resource, .counter: $&Counter, .enabled: Bool) -> (
     .result : Outcome
-) := {
+) {
     if enabled {
         initialize_forwarded(.target = target, .counter = counter)
         result = ..initialized
@@ -39,7 +39,7 @@ initialize_conditionally(.target: $&Resource, .counter: $&Counter, .enabled: Boo
     result = ..unchanged
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter)

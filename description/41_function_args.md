@@ -30,11 +30,11 @@ foo (.v:   Type)
 Examples:
 
 ```
-print_twice (.s: String) -> () := {
+print_twice := (.s: String) -> ()  {
     ...
 }
 
-write_to_file (.f: $&File, .content: String) -> () := {
+write_to_file := (.f: $&File, .content: String) -> ()  {
     ...
 }
 ```
@@ -62,7 +62,7 @@ copyable.
 Some named arguments may be declared as *reached arguments*:
 
 ```argi
-allocate#(.Provider: Type: Allocator#(Provider))(.allocator: $&Provider = reach allocator, .size: UIntNative) -> (.out: Allocation) := {
+allocate := #(.Provider: Type: Allocator#(Provider)) (.allocator: $&Provider = reach allocator, .size: UIntNative) -> (.out: Allocation)  {
     ...
 }
 ```
@@ -136,10 +136,10 @@ compatible type”.
 Reached arguments may refer to nested capability paths:
 
 ```argi
-print_line#(.Provider: Type: Writer#(Provider))(
+print_line := #(.Provider: Type: Writer#(Provider)) (
     .writer: $&Provider = reach writer, terminal.stdout, system.terminal.stdout,
     .text: String,
-) -> () := {
+) -> ()  {
     ...
 }
 ```

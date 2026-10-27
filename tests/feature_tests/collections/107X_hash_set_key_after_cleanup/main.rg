@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= system.page_allocator
     map ::= unwrap_or_abort(
         .value = HashSet#(.key: StringView, .policy: StandardHashPolicy)(

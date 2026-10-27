@@ -1,10 +1,10 @@
-identity#(.t: Type)(.value: t) -> (.result: t) := {
+identity := #(.t: Type) (.value: t) -> (.result: t) {
     result = [value]
 }
 
-Point: Type = (.x: Int32)
+Point := (.x: Int32)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     a :: Int32 = 2
     b :: Int32 = 3
     c :: Int32 = 4

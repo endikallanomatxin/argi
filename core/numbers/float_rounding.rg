@@ -1,4 +1,4 @@
-_float_replace_bits#(.Value: Type: _FloatRepresentation#(Value)) := (
+_float_replace_bits := #(.Value: Type: _FloatRepresentation#(Value)) (
     .value: Value, .bits: UInt64
 ) -> (.result: Value) {
     result = _FloatRepresentation#(Value).replace_bits(.value = value, .bits = bits)
@@ -6,7 +6,7 @@ _float_replace_bits#(.Value: Type: _FloatRepresentation#(Value)) := (
 
 -- Clear fractional mantissa bits without integer conversion of the value.
 -- Integral large values and nonfinite values retain their exact encoding.
-truncate_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
+truncate_float := #(.t: Type: Float) (.value: t) -> (.result: t) {
     encoding ::= _float_encoding(.value = value).encoding
     sign_unit ::= encoding.fraction_unit * encoding.exponent_limit
     sign ::= encoding.bits / sign_unit * sign_unit
@@ -38,7 +38,7 @@ truncate_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
     ).result
 }
 
-floor_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
+floor_float := #(.t: Type: Float) (.value: t) -> (.result: t) {
     one :: t = 1.0
 
     result = truncate_float#(.t: t)(.value = value).result
@@ -48,7 +48,7 @@ floor_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
     }
 }
 
-ceil_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
+ceil_float := #(.t: Type: Float) (.value: t) -> (.result: t) {
     one :: t = 1.0
 
     result = truncate_float#(.t: t)(.value = value).result

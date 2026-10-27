@@ -114,10 +114,10 @@ fn freezable(graph: *const g.GlobalSemanticGraph, owners: []const bool, ty: g.Gl
     const semantic = graph.semanticType(ty);
     // Source IDs name one executor's metadata table, even though core exposes
     // an integer representation. They cannot become native executable constants.
-    if (semantic == .declared) {
+    if (semantic == .nominal) {
         if (types.nominalTypeOwner(graph, ty)) |owner| {
             if (graph.modules.items[@intFromEnum(owner)].is_bundled_core and
-                std.mem.eql(u8, graph.text(graph.declaration(semantic.declared).name), "SourceLocationId")) return false;
+                std.mem.eql(u8, graph.typeDefinitionName(semantic.nominal), "SourceLocationId")) return false;
         }
     }
     if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void;

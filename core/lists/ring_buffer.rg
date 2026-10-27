@@ -1,4 +1,4 @@
-_RingBufferShape: Type = (.marker: UInt8)
+_RingBufferShape := (.marker: UInt8)
 
 implement Deinit#(_RingBufferShape) (
     .deinit = (.self: $&_RingBufferShape) -> () {
@@ -8,7 +8,7 @@ implement Deinit#(_RingBufferShape) (
 -- The live interval has _length slots starting at _head, modulo _capacity.
 -- All other slots are vacant. Only this owner changes occupancy; raw slot
 -- handles and physical indices never escape through the public API.
-RingBuffer#(.t: Type): Type = (
+RingBuffer := #(.t: Type) (
     ._allocation : Allocation
     ._capacity   : UIntNative
     ._head       : UIntNative
@@ -54,7 +54,9 @@ implement#(.t: Type, .Provider: Type: Allocator) Init#(
     }
 )
 
-_collection_capacity_ring_buffer#(.t: Type)(.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) := {
+_collection_capacity_ring_buffer := #(.t: Type) (.self: &RingBuffer#(.t: t)) -> (
+    .count : UIntNative
+) {
     count = self&._capacity
 }
 
@@ -62,9 +64,9 @@ implement#(.t: Type) CollectionCapacity#(RingBuffer#(.t: t)) (
     .measure_capacity = _collection_capacity_ring_buffer
 )
 
-_ring_buffer_physical_index#(.t: Type)(.self: &RingBuffer#(.t: t), .index: UIntNative) -> (
+_ring_buffer_physical_index := #(.t: Type) (.self: &RingBuffer#(.t: t), .index: UIntNative) -> (
     .physical : UIntNative
-) := {
+) {
     if index >= self&._capacity { abort }
     -- Subtract before adding: head + index could overflow even when the
     -- wrapped physical index belongs to the allocation.
@@ -77,15 +79,15 @@ _ring_buffer_physical_index#(.t: Type)(.self: &RingBuffer#(.t: t), .index: UIntN
     }
 }
 
-_invalidate_ring_buffer_shape#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> () := {
+_invalidate_ring_buffer_shape := #(.t: Type) (.self: $&RingBuffer#(.t: t)) -> () {
     shape ::= $&self&._shape
     deinit(.self = shape)
     shape&= (.marker = 0)
 }
 
-_ring_buffer_occupied_pointer#(.t: Type)(.self: &RingBuffer#(.t: t), .index: UIntNative) -> (
+_ring_buffer_occupied_pointer := #(.t: Type) (.self: &RingBuffer#(.t: t), .index: UIntNative) -> (
     .pointer : $&t
-) := {
+) {
     if index >= self&._length { abort }
     physical ::= _ring_buffer_physical_index(self, .index = index).physical
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = physical)
@@ -98,9 +100,9 @@ _ring_buffer_occupied_pointer#(.t: Type)(.self: &RingBuffer#(.t: t), .index: UIn
     ).reference
 }
 
-_queue_push_ring_buffer#(.t: Type, .Provider: Type: Allocator)(
+_queue_push_ring_buffer := #(.t: Type, .Provider: Type: Allocator) (
     .self: $&RingBuffer#(.t: t), .value: t, .allocator: $&Provider
-) -> (.result: Errable#(Void, (..full))) := {
+) -> (.result: Errable#(Void, (..full))) {
     assume allocator
     owned ::= ~value
 
@@ -120,9 +122,9 @@ _queue_push_ring_buffer#(.t: Type, .Provider: Type: Allocator)(
     result = ..ok Void()
 }
 
-_queue_pop_ring_buffer#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (
+_queue_pop_ring_buffer := #(.t: Type) (.self: $&RingBuffer#(.t: t)) -> (
     .result : Errable#(t, (..empty))
-) := {
+) {
     if self&._length == 0 {
         result = ..error(.reason = ..empty)
         return

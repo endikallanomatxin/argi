@@ -1,5 +1,5 @@
-Tracked : Type = (
-    .allocation: Allocation
+Tracked := (
+    .allocation : Allocation
 )
 
 drops :: Int32 = 0
@@ -11,23 +11,23 @@ implement Deinit#(Tracked) (
     }
 )
 
-take_last(.array: $&DynamicArray#(.t: Tracked)) -> () := {
+take_last := (.array: $&DynamicArray#(.t: Tracked)) -> () {
     popped_result ::= pop(.self = array).result
     if is(.value = popped_result, .variant = ..error) { return }
-    popped ::= ~popped_result..ok
+    popped ::= ~popped_result ..ok
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     allocated ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match allocated {
         ..error _ { status_code = 1 }
-        ..ok ~ payload {
+        ..ok ~payload {
             item ::= Tracked(.allocation = ~payload)
             array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 1))
-            push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~item)
+            push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~item)
             take_last(.array = $&array)
             if drops != 1 or length(.self = &array).count != 0 {
                 status_code = 2

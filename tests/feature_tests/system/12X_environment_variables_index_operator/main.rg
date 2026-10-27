@@ -1,6 +1,5 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
-
 
     home_key ::= "HOME"
     missing_key ::= "ARGI_ENV_SHOULD_NOT_EXIST_476"
@@ -10,8 +9,8 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 4
         return
     }
-    home ::= home_result..ok
-    if home? {
+    home ::= home_result ..ok
+    if home ?{
         if home.length < 1 {
             status_code = 2
             return
@@ -26,8 +25,8 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 5
         return
     }
-    missing ::= missing_result..ok
-    if missing? {
+    missing ::= missing_result ..ok
+    if missing ?{
         status_code = 3
         return
     }

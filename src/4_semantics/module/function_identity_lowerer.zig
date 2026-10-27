@@ -13,8 +13,8 @@ pub fn lower(
 ) !void {
     try validateBundledPrimitives(graph, files, diagnostics);
 
-    for (graph.semantic.function_semantics.items) |*semantic| {
-        const function = graph.functions.items[@intFromEnum(semantic.function)];
+    for (graph.functions.items) |*semantic| {
+        const function = semantic.*;
         const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
         const file = files[declaration.module_file_index];
         if (file.is_bundled_core) if (registry.findBundled(graph.text(declaration.name), file.path)) |spec| {
@@ -114,10 +114,10 @@ fn validatePrimitiveDeclaration(
 
 test "source metadata identities require canonical trusted declarations" {
     const source =
-        "SourceLocationId: Type = (.value: UInt32)\n" ++
-        "SourceLocation: Type = (.line: UIntNative)\n" ++
-        "error_location_id() -> (.location: SourceLocationId) := { location = (.value = 0) }\n" ++
-        "source_location(.id: SourceLocationId) -> (.location: SourceLocation) := { location = (.line = 42) }\n";
+        "SourceLocationId := (.value: UInt32)\n" ++
+        "SourceLocation := (.line: UIntNative)\n" ++
+        "error_location_id := () -> (.location: SourceLocationId)  { location = (.value = 0) }\n" ++
+        "source_location := (.id: SourceLocationId) -> (.location: SourceLocation)  { location = (.line = 42) }\n";
     const cases = [_]struct { path: []const u8, trusted: bool, selected: bool }{
         .{ .path = "core/errors/source_location.rg", .trusted = true, .selected = true },
         .{ .path = "core/errors/other.rg", .trusted = true, .selected = false },
@@ -141,7 +141,7 @@ test "source metadata identities require canonical trusted declarations" {
         defer built.graph.deinit(a);
         var location_id = false;
         var resolver = false;
-        for (built.graph.semantic.function_semantics.items) |semantic| {
+        for (built.graph.functions.items) |semantic| {
             location_id = location_id or semantic.flags.is_source_location_id;
             resolver = resolver or semantic.flags.is_source_location_resolver;
             try std.testing.expectEqual(.none, semantic.safety_primitive);
@@ -154,10 +154,10 @@ test "source metadata identities require canonical trusted declarations" {
 test "trace helper metadata requires the registered core path and keeps ordinary safety" {
     const source =
         "ErrorTracer#(.T: Type): Contract = ()\n" ++
-        "SourceLocationId: Type = (.value: UInt32)\n" ++
-        "StringView: Type = (.length: UIntNative)\n" ++
-        "_add_error_context(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: StringView) -> () := {}\n" ++
-        "_add_error_context_text(.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar) -> () := {}\n";
+        "SourceLocationId := (.value: UInt32)\n" ++
+        "StringView := (.length: UIntNative)\n" ++
+        "_add_error_context := (.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: StringView) -> ()  {}\n" ++
+        "_add_error_context_text := (.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar) -> ()  {}\n";
     const cases = [_]struct { path: []const u8, trusted: bool, selected: bool }{
         .{ .path = "core/errors/error_tracer.rg", .trusted = true, .selected = true },
         .{ .path = "core/errors/unrelated.rg", .trusted = true, .selected = false },
@@ -181,7 +181,7 @@ test "trace helper metadata requires the registered core path and keeps ordinary
         defer built.graph.deinit(a);
         var view = false;
         var text = false;
-        for (built.graph.semantic.function_semantics.items) |semantic| {
+        for (built.graph.functions.items) |semantic| {
             view = view or semantic.flags.is_error_context_view;
             text = text or semantic.flags.is_error_context_text;
             try std.testing.expectEqual(.none, semantic.safety_primitive);

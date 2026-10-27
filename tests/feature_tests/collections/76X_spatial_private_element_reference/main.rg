@@ -1,10 +1,8 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     array ::= unwrap_or_abort(
-        .value = DynamicArray#(.t: UIntNative)(
-            .allocator = system.page_allocator, .capacity = 4
-        )
+        .value = DynamicArray#(.t: UIntNative)(.allocator = system.page_allocator, .capacity = 4)
     )
-    push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
+    push_assume_capacity#(.t: UIntNative) (.self = $&array, .value = 7)
     element ::= _trusted_dynamic_array_element_reference#(.t: UIntNative)(
         .array = &array, .offset = 0
     ).pointer

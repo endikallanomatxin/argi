@@ -1,1 +1,1 @@
-main() -> () := { defer { return } }
+main := () -> () { defer { return } }

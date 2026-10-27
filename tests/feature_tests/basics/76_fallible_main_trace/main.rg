@@ -1,12 +1,12 @@
 ..startup_failed
-fail() -> !Void := {
+
+fail := () -> !Void {
     result = ..error(.reason = ..startup_failed)
-}
-run_main() -> !Void = ..ok Void() := {
-    fail() !! "starting application"
+    add_context(.context = "starting application")
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main()!!!
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
+    fail()!!!
     status_code = 0
 }

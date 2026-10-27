@@ -2,7 +2,7 @@
 order :: Int32 = 0
 drops :: Int32 = 0
 
-Owner: Type = (.value: Int32)
+Owner := (.value: Int32)
 
 implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () {
@@ -10,17 +10,13 @@ implement Deinit#(Owner) (
     }
 )
 
-fail() -> (.result: Errable#(Void, (..failure))) := {
+fail := () -> (.result: Errable#(Void, (..failure))) {
     result = ..error(.reason = ..failure)
 }
 
-finish#(.WriterType: Type: Writer#(WriterType))(
-        .body_fails : Bool,
-        .state      : $&Int32,
-        .writer     : $&WriterType = reach writer
-    ) -> (
-        .result : Int32 = 1
-    ) := {
+finish := #(.WriterType: Type: Writer#(WriterType)) (
+    .body_fails: Bool, .state: $&Int32, .writer: $&WriterType = reach writer
+) -> (.result: Int32 = 1) {
     owner ::= Owner(1)
     defer { state&= state&* 10 + 3 }
     defer {
@@ -41,7 +37,7 @@ finish#(.WriterType: Type: Writer#(WriterType))(
     result = 0
 }
 
-finish_generic#(.t: Type)(.value: t, .state: $&Int32) -> (.result: Int32 = 0) := {
+finish_generic := #(.t: Type) (.value: t, .state: $&Int32) -> (.result: Int32 = 0) {
     owner ::= Owner(2)
     defer { state&= state&* 10 + 3 }
     defer {
@@ -61,7 +57,7 @@ finish_generic#(.t: Type)(.value: t, .state: $&Int32) -> (.result: Int32 = 0) :=
 
 BrokenWriter: Type = ()
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume writer ::= $&system.terminal&.stderr
     if finish(false, $&order, .writer = writer) != 1 or order != 123 or drops != 2 { abort }
     order = 0
@@ -73,21 +69,16 @@ main(.system: System) -> () := {
     if finish(false, $&order, .writer = $&broken) != 1 or order != 123 or drops != 8 { abort }
 }
 
-implement Writer#(BrokenWriter)(
-    .write_byte = (
-            .self : $&BrokenWriter,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
+implement Writer#(BrokenWriter) (
+    .write_byte = (.self: $&BrokenWriter, .byte: UInt8) -> (
+        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         result = ..error(.reason = ..stream_write_failed)
     }
 
-    .flush = (
-            .self : $&BrokenWriter
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .flush = (.self: $&BrokenWriter) -> (
+        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         result = ..error(.reason = ..stream_flush_failed)
     }
 )

@@ -1,4 +1,4 @@
-HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)): Type = (
+HashSetIterator := #(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)) (
     ._keys : HashMapKeyIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
@@ -29,7 +29,7 @@ implement#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, ke
     }
 )
 
-HashSetReferenceIterator#(.key: Type, .policy: Type: HashPolicy#(policy, key)): Type = (
+HashSetReferenceIterator := #(.key: Type, .policy: Type: HashPolicy#(policy, key)) (
     ._entries : HashMapBorrowIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 

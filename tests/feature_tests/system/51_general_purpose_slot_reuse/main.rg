@@ -1,10 +1,10 @@
-TrackingAllocator: Type = (
+TrackingAllocator := (
     .backing       : $&PageAllocator
     .allocations   : UIntNative
     .deallocations : UIntNative
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     tracker :: TrackingAllocator = (
         .backing       = system.page_allocator
         .allocations   = 0
@@ -34,7 +34,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 if i == 0 { first_address = receipt.data.address }
                 if i == 64 { middle_address = receipt.data.address }
                 if i == 511 { last_address = receipt.data.address }
-                push_assume_capacity#(.t: Allocation)(.self = $&receipts, .value = ~receipt)
+                push_assume_capacity#(.t: Allocation) (.self = $&receipts, .value = ~receipt)
             }
         }
         i = i + 1
@@ -82,7 +82,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     status_code = 4
                     return
                 }
-                push_assume_capacity#(.t: Allocation)(.self = $&receipts, .value = ~receipt)
+                push_assume_capacity#(.t: Allocation) (.self = $&receipts, .value = ~receipt)
             }
         }
         i = i + 1
@@ -109,7 +109,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     status_code = 6
                     return
                 }
-                push_assume_capacity#(.t: Allocation)(.self = $&receipts, .value = ~receipt)
+                push_assume_capacity#(.t: Allocation) (.self = $&receipts, .value = ~receipt)
             }
         }
         i = i + 1
@@ -126,7 +126,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Allocator#(TrackingAllocator) (
     .allocate = (.self: $&TrackingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         allocated ::= allocate_bytes(
             .self = self&.backing, .size = size, .alignment = alignment
@@ -152,8 +152,7 @@ implement Deallocator#(TrackingAllocator) (
         .alignment : UIntNative
     ) -> () {
         self&.deallocations = self&.deallocations + 1
-        Deallocator#(
-        ).deallocate(
+        Deallocator#().deallocate(
             .self = self&.backing&.memory, .data = data, .size = size, .alignment = alignment
         )
     }

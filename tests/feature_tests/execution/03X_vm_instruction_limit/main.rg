@@ -1,1 +1,1 @@
-main() -> () := { while true {} }
+main := () -> () { while true {} }

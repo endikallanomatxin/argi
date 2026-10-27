@@ -1,3 +1,3 @@
-number() -> (.value: Int32 = 1) := {}
+number := () -> (.value: Int32 = 1) {}
 
-main() -> () := { #if number() {} }
+main := () -> () { #if number() {} }

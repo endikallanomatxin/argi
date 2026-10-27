@@ -10,27 +10,34 @@
 
 ### Declaration
 
-Use `#( … )` to **declare** generic parameters. The binder can appear in:
-
-* declarations of **types**, **contracts**, and **functions**,
-* **implement** declarations, with the binder immediately after `implement`.
+Type and function parameters belong to their definition expression, after `:=`.
+Specializing a definition binds compile-time arguments; it does not execute an
+ordinary function. An alias retains the same definition identity.
 
 ```argi
--- Generic type
-Vec#(.t: Type, .n: UIntNative) : Type = ( ... )
+Vec := #(.Element: Type, .count: UIntNative) (.values: [count]Element)
 
--- Generic function
-max#(.t: Type) (.a: t, .b: t) -> (.result: t) := {
+max := #(.t: Type) (.a: t, .b: t) -> (.result: t) {
     if a > b { result = a } else { result = b }
 }
+
+Vector := Vec
+```
+
+Contract participants remain on the contract declaration. An implementation's
+parameters appear immediately after `implement`:
+
+```argi
+Copyable#(.Value: Type): Contract = (.copy: (.value: &Value) -> (.result: Value))
+implement#(.T: Type) Copyable#(Box#(T)) (.copy = copy_box)
 ```
 
 ### Usage
 
 ```argi
-let v : Vec#(.t: Float32, .n = 3) = (1.0, 2.0, 3.0)
+v: Vec#(.Element: Float32, .count = 3) = (.values = (1.0, 2.0, 3.0))
 
-let r := max#(.t: Int)(.a = x, .b = y)
+r := max#(.t: Int32)(.a = x, .b = y)
 ```
 
 Type applications accept positional arguments in declaration order. Positional
@@ -46,6 +53,11 @@ pair: Pair#(Int32, .right: Bool) = (.left = 1, .right = true)
 bytes: Array#(4, UInt8) = (0, 0, 0, 0)
 ```
 
+Array dimensions can use an integer specialization parameter or a named
+compile-time constant: `[count]Element` and `Array#(.n = count, .t: Element)`
+resolve through the same compile-time rules. Mutable runtime values cannot
+determine a type's layout.
+
 A positional type argument is written directly; a named type argument uses
 `.name: Type`. In type applications, positional integer expressions begin with a literal or
 a sign; use the
@@ -57,7 +69,7 @@ has an inferred error set. Supplying a reasons type retains an explicit set.
 ### Bounds
 
 ```argi
-sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
+sum := #(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
 -- t must satisfy the Number contract
 ```
 
@@ -76,8 +88,8 @@ The intended order is:
 This is the compact system:
 
 ```argi
-sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
-BufferedReader#(.base_type: Type: Reader#(base_type)) : Type = ...
+sum := #(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
+BufferedReader := #(.base_type: Type: Reader#(base_type)) (...)
 ```
 
 Meaning:
@@ -103,7 +115,7 @@ constraint syntax at all. They can already be expressed by reusing the same
 comptime parameters directly in the signature:
 
 ```argi
-multiply#(
+multiply := #(
     .t: Type,
     .left_rows: UIntNative,
     .shared: UIntNative,

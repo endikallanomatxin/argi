@@ -357,7 +357,7 @@ fn regularChoice(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bo
     return switch (types.representation(graph, ty) orelse return false) {
         .structural_choice => |shape| shape.layout == .regular,
         .inferred_choice => true,
-        .declared => |id| graph.declaration(id).choice_layout == .regular,
+        .nominal => |id| graph.typeDefinition(id).choice_layout == .regular,
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .choice => |shape| shape.layout == .regular,
             .alias => |child| regularChoice(graph, child, depth + 1),

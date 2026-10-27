@@ -1,13 +1,13 @@
-change(.values: [2]Int32) -> (.result: [2]Int32) := {
+change := (.values: [2]Int32) -> (.result: [2]Int32) {
     result = values
     result[0] = 20
 }
 
-forward_references(.values: [2]&Int32) -> (.result: [2]&Int32) := {
+forward_references := (.values: [2]&Int32) -> (.result: [2]&Int32) {
     result = values
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     original :: [2]Int32 = (1, 22)
     changed ::= change(.values = original)
     original[1] = 99

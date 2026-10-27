@@ -1,10 +1,10 @@
 ..failure
 
-fail(.error_tracer: $&Virtual#(ErrorTracer) = reach error_tracer) -> !Void := {
+fail := (.error_tracer: $&Virtual#(ErrorTracer) = reach error_tracer) -> !Void {
     result = ..error(.reason = ..failure)
 }
 
-escape() -> !Void = ..ok Void() := {
+escape := () -> !Void = ..ok Void() {
     tracer ::= NoopErrorTracer()
     virtual_tracer ::= to_virtual#(ErrorTracer)($&tracer)
     assume error_tracer ::= $&virtual_tracer
@@ -12,6 +12,6 @@ escape() -> !Void = ..ok Void() := {
     fail()!! "context"
 }
 
-main() -> () := {
+main := () -> () {
     error ::= escape()
 }

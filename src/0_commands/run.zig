@@ -83,7 +83,7 @@ test "run command builds and runs a module" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\}
         \\
         ,
@@ -103,7 +103,7 @@ test "run command returns executable status code" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "main.rg",
         .data =
-        \\main() -> (.status_code: Int32 = 7) := {
+        \\main := () -> (.status_code: Int32 = 7)  {
         \\}
         \\
         ,

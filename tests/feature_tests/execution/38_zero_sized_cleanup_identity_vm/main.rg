@@ -1,8 +1,8 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
 Empty: Type = ()
 
-Pair: Type = (.first: Empty, .second: Empty)
+Pair := (.first: Empty, .second: Empty)
 
 Choice: Type = (..none, ..some(.pair: Pair))
 
@@ -12,7 +12,7 @@ implement Deinit#(Empty) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Counter = Counter()
     assume cleanup_counter ::= $&counter
     {

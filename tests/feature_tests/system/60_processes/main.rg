@@ -1,13 +1,13 @@
-check_exit(.status: ProcessExitStatus, .expected: UInt32) -> () := {
+check_exit := (.status: ProcessExitStatus, .expected: UInt32) -> () {
     match status {
         ..exited payload { if payload.code != expected { abort } }
         ..signaled _ { abort }
     }
 }
 
-check_bytes#(.ReaderType: Type: Reader#(ReaderType))(
+check_bytes := #(.ReaderType: Type: Reader#(ReaderType)) (
     .reader: $&ReaderType, .expected: StringView
-) -> () := {
+) -> () {
     i :: UIntNative = 0
     while i < byte_length(&expected).count {
         next ::= unwrap_or_abort(.value = Reader#().read_byte(.self = reader)).result
@@ -27,7 +27,7 @@ check_bytes#(.ReaderType: Type: Reader#(ReaderType))(
     }
 }
 
-child_main(.system: System) -> (.status: Int32 = 7) := {
+child_main := (.system: System) -> (.status: Int32 = 7) {
     if length(.self = system.args).count != 7 { abort }
     expected: Array#(.n = 4, .t: StringView) = ("a b", "a\"b", "trail\\", "á;$(no)")
     empty ::= unwrap_or_abort(.value = get(.self = system.args, .index = 2)).result
@@ -45,7 +45,7 @@ child_main(.system: System) -> (.status: Int32 = 7) := {
     unwrap_or_abort(.value = Writer#().flush(.self = $&system.terminal&.stderr))
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     if length(.self = system.args).count == 2 {
         status_code = 23
         return

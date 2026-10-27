@@ -1,9 +1,9 @@
 -- Restore a max heap whose children below root are already heaps.
-_sift_down#(
+_sift_down := #(
     .t          : Type: ImplicitlyCopyable,
     .policy     : Type: OrderPolicy#(policy, t),
     .Collection : Type: MutableIndexable#(.Item: t)
-) := (.self: $&Collection, .order: &policy, .start: UIntNative, .count: UIntNative) -> () {
+) (.self: $&Collection, .order: &policy, .start: UIntNative, .count: UIntNative) -> () {
     root ::= start
     -- This guard proves that 2 * root + 1 is an existing child and that
     -- child arithmetic cannot overflow, even at the maximum native length.
@@ -28,11 +28,11 @@ _sift_down#(
 
 -- Iterative heapsort uses constant auxiliary space and never resizes storage.
 -- Policy-equivalent elements can change relative order.
-sort#(
+sort := #(
     .t          : Type: ImplicitlyCopyable,
     .policy     : Type: OrderPolicy#(policy, t),
     .Collection : Type: MutableIndexable#(.Item: t)
-) := (.self: $&Collection, .order: &policy) -> () {
+) (.self: $&Collection, .order: &policy) -> () {
     count ::= Indexable#(Collection).length(self).count
 
     if count < 2 { return }

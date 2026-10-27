@@ -3,7 +3,7 @@ p := import ("python")
 ..invalid_arguments
 ..invalid_duration
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([4096]UInt8)()))
@@ -115,8 +115,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     print(view(&median_result), .writer = output)!!! { status_code = 1 }
 }
 
-print_python_error(.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
-) := {
+print_python_error := (.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
+) {
     assume allocator
     assume writer
 
@@ -125,10 +125,10 @@ print_python_error(.interpreter: &p.Python, .writer: $&File, .allocator: $&PageA
     if message_view != "" { print(message_view)! }
 }
 
-invalid_arguments() -> (.result: Errable#(Void, (..invalid_arguments))) := {
+invalid_arguments := () -> (.result: Errable#(Void, (..invalid_arguments)))  {
     result = ..error(.reason = ..invalid_arguments)
 }
 
-invalid_duration() -> (.result: Errable#(Void, (..invalid_duration))) := {
+invalid_duration := () -> (.result: Errable#(Void, (..invalid_duration)))  {
     result = ..error(.reason = ..invalid_duration)
 }

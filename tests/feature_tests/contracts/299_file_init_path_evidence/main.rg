@@ -1,7 +1,8 @@
 RefusingAllocator: Type = ()
-implement Allocator#(RefusingAllocator)(
+
+implement Allocator#(RefusingAllocator) (
     .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
+        .result: Errable#(Allocation, (..out_of_memory))
     ) {
         result = ..error(.reason = ..out_of_memory)
     }
@@ -12,7 +13,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     #if target_os("windows") {
         path: StringView = "NUL"
         c_path ::= from_literal(.data = "NUL")
-    }#else {
+    } #else {
         path: StringView = "/dev/null"
         c_path ::= from_literal(.data = "/dev/null")
     }
@@ -24,8 +25,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     unwrap_or_abort(.value = close(.self = $&borrowed))
     text ::= unwrap_or_abort(
         .value = string_with_capacity(
-            .allocator = allocator,
-            .capacity  = byte_length(&path).count
+            .allocator = allocator, .capacity = byte_length(&path).count
         )
     )
     unwrap_or_abort(.value = push_view(.self = $&text, .view = path, .allocator = allocator))

@@ -2,13 +2,13 @@ RefusingAllocator: Type = ()
 
 implement Allocator#(RefusingAllocator) (
     .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
+        .result: Errable#(Allocation, (..out_of_memory))
     ) {
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-borrowed_exists#(.P: Type: PathExistence#(P)) := (.self: &FileSystem, .path: P) -> (
+borrowed_exists := #(.P: Type: PathExistence#(P)) (.self: &FileSystem, .path: P) -> (
     .ok : PathExistence#(P).Result
 ) {
     ok = PathExistence#(P).exists(.self = self, .path = path)

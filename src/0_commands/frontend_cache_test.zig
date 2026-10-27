@@ -85,8 +85,8 @@ fn expectCleanEquivalent(files: []const sf.SourceFile, session: *ModuleCache) !R
     return cached;
 }
 
-const main_source = "dep := import(\"../dep\")\nmain() -> (.status_code: Int32) := { status_code = dep.answer().result }\n";
-const dep_source = "answer() -> (.result: Int32) := { result = 7 }\n";
+const main_source = "dep := import(\"../dep\")\nmain := () -> (.status_code: Int32) { status_code = dep.answer().result }\n";
+const dep_source = "answer := () -> (.result: Int32) { result = 7 }\n";
 
 test "frontend module cache reuses modules after source arenas are destroyed" {
     var session = ModuleCache.init(std.testing.allocator, .{});
@@ -105,7 +105,7 @@ test "frontend module cache reuses modules after source arenas are destroyed" {
     try std.testing.expectEqualStrings(cold.ir, warm.ir);
 
     var edited = files;
-    edited[1].code = "answer() -> (.result: Int32) := { result = 9 }\n";
+    edited[1].code = "answer := () -> (.result: Int32)  { result = 9 }\n";
     const rebuilt = try expectCleanEquivalent(&edited, &session);
     defer rebuilt.deinit();
     try std.testing.expectEqual(@as(usize, 1), rebuilt.hits);
@@ -123,7 +123,7 @@ test "frontend module cache regenerates imported diagnostics and remaps source I
     const valid = try expectCleanEquivalent(&files, &session);
     valid.deinit();
     var changed = files;
-    changed[1].code = "answer() -> (.result: Bool) := { result = true }\n";
+    changed[1].code = "answer := () -> (.result: Bool)  { result = true }\n";
     const bad = try expectCleanEquivalent(&changed, &session);
     defer bad.deinit();
     try std.testing.expect(bad.failure != null);
@@ -142,16 +142,16 @@ test "frontend module cache invalidates file sets, origins, options, and core in
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
     var files = [_]sf.SourceFile{
-        .{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" },
-        .{ .path = "core/config.rg", .code = "Config : Type = (.value: Int32)\n", .origin = .bundled_core },
+        .{ .path = "app/main.rg", .code = "main := () -> (.status_code: Int32 = 0)  {}\n" },
+        .{ .path = "core/config.rg", .code = "Config := (.value: Int32)\n", .origin = .bundled_core },
     };
     const initial = try expectCleanEquivalent(&files, &session);
     initial.deinit();
-    files[1].code = "Config : Type = (.value: Int32)\n-- changed configuration\n";
+    files[1].code = "Config := (.value: Int32)\n-- changed configuration\n";
     const core_changed = try expectCleanEquivalent(&files, &session);
     defer core_changed.deinit();
     try std.testing.expectEqual(@as(usize, 2), core_changed.misses);
-    const extra = [_]sf.SourceFile{ files[0], files[1], .{ .path = "app/helper.rg", .code = "helper() -> () := {}\n" } };
+    const extra = [_]sf.SourceFile{ files[0], files[1], .{ .path = "app/helper.rg", .code = "helper := () -> ()  {}\n" } };
     const added = try expectCleanEquivalent(&extra, &session);
     defer added.deinit();
     try std.testing.expectEqual(@as(usize, 1), added.misses);
@@ -175,12 +175,12 @@ test "frontend module cache invalidates file sets, origins, options, and core in
 test "frontend module cache does not store invalid syntax" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
-    var files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "broken(.input) -> () := {}\n" }};
+    var files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "broken := (.input) -> ()  {}\n" }};
     const bad = try expectCleanEquivalent(&files, &session);
     defer bad.deinit();
     try std.testing.expect(bad.failure != null);
     try std.testing.expectEqual(@as(usize, 0), session.entries.items.len);
-    files[0].code = "main() -> (.status_code: Int32 = 0) := {}\n";
+    files[0].code = "main := () -> (.status_code: Int32 = 0)  {}\n";
     const recovered = try expectCleanEquivalent(&files, &session);
     defer recovered.deinit();
     try std.testing.expect(recovered.failure == null);
@@ -192,8 +192,8 @@ test "frontend module cache reuses explicit qualified contract bounds without de
     defer session.deinit();
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code = "dep := import(\"../dep\")\n" ++
-            "use#(.Value: Type: dep.Contract)(.value: Value) -> (.result: Int32) := { result = 3 }\n" ++
-            "main() -> (.status_code: Int32) := { status_code = use(.value = 1).result }\n" },
+            "use := #(.Value: Type: dep.Contract) (.value: Value) -> (.result: Int32)  { result = 3 }\n" ++
+            "main := () -> (.status_code: Int32)  { status_code = use(.value = 1).result }\n" },
         .{ .path = "dep/contract.rg", .code = "Contract#(.Participant: Type): Contract = ()\nimplement Contract#(Int32) ()\n" },
     };
     const cold = try expectCleanEquivalent(&files, &session);
@@ -221,7 +221,7 @@ test "frontend module cache bounds memory and preserves leased snapshots" {
     defer leased.release();
     const original_dir = try std.testing.allocator.dupe(u8, leased.graph.module_dir);
     defer std.testing.allocator.free(original_dir);
-    const other = [_]sf.SourceFile{.{ .path = "other/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" }};
+    const other = [_]sf.SourceFile{.{ .path = "other/main.rg", .code = "main := () -> (.status_code: Int32 = 0)  {}\n" }};
     const replacement = try expectCleanEquivalent(&other, &session);
     replacement.deinit();
     try std.testing.expectEqualStrings(original_dir, leased.graph.module_dir);
@@ -240,8 +240,8 @@ test "frontend module cache reruns safety on cached ownership effects" {
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code = "Resource : Type = ()\n" ++
             "implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\n" ++
-            "consume(.res: Resource) -> (.result: Int32 = 0) := {}\n" ++
-            "main() -> (.status_code: Int32) := {\n" ++
+            "consume := (.res: Resource) -> (.result: Int32 = 0)  {}\n" ++
+            "main := () -> (.status_code: Int32)  {\n" ++
             "handle := Resource()\n" ++
             "status_code = consume(.res = ~handle).result\n" ++
             "status_code = consume(.res = handle).result\n}\n" },
@@ -260,7 +260,7 @@ test "frontend module cache reruns safety on cached ownership effects" {
 test "frontend module cache does not retain partially lowered modules" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32) := { status_code = 99999999999999999999999999999 }\n" }};
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main := () -> (.status_code: Int32)  { status_code = 99999999999999999999999999999 }\n" }};
     const bad = try expectCleanEquivalent(&files, &session);
     defer bad.deinit();
     try std.testing.expect(bad.failure != null);
@@ -299,7 +299,7 @@ test "frontend module cache persists canonical graphs across sessions" {
         defer third.deinit();
         try third.enablePersistence(std.testing.io, root);
         var edited = files;
-        edited[1].code = "answer() -> (.result: Int32) := { result = 11 }\n";
+        edited[1].code = "answer := () -> (.result: Int32)  { result = 11 }\n";
         const changed = try expectCleanEquivalent(&edited, &third);
         defer changed.deinit();
         try std.testing.expectEqual(@as(usize, 1), changed.hits);
@@ -313,7 +313,7 @@ test "frontend module cache rebuilds truncated corrupt and incompatible snapshot
     defer tmp.cleanup();
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" }};
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main := () -> (.status_code: Int32 = 0)  {}\n" }};
     for (0..4) |damage| {
         {
             var first = ModuleCache.init(std.testing.allocator, .{});
@@ -365,7 +365,7 @@ test "frontend module cache treats unwritable cache paths as optional" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
     try session.enablePersistence(std.testing.io, path);
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" }};
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main := () -> (.status_code: Int32 = 0)  {}\n" }};
     const result = try expectCleanEquivalent(&files, &session);
     defer result.deinit();
     try std.testing.expect(result.failure == null);
@@ -377,7 +377,7 @@ test "frontend module cache preserves target selection and discarded source edit
     defer session.deinit();
     var files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
         "bad := import(\"./missing\")\n" ++
-        "} #else {\nmain() -> (.status_code: Int32 = 0) := {}\n}\n" }};
+        "} #else {\nmain := () -> (.status_code: Int32 = 0)  {}\n}\n" }};
     const first = try expectCleanEquivalent(&files, &session);
     defer first.deinit();
     try std.testing.expect(first.failure == null);
@@ -386,7 +386,7 @@ test "frontend module cache preserves target selection and discarded source edit
     try std.testing.expectEqual(@as(usize, 1), reused.hits);
     files[0].code = "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
         "bad := import(\"./another_missing\")\n" ++
-        "} #else {\nmain() -> (.status_code: Int32 = 0) := {}\n}\n";
+        "} #else {\nmain := () -> (.status_code: Int32 = 0)  {}\n}\n";
     const changed = try expectCleanEquivalent(&files, &session);
     defer changed.deinit();
     try std.testing.expect(changed.failure == null);
@@ -397,8 +397,8 @@ test "frontend module cache separates platform branches by compilation target" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "#if target_os(\"windows\") {\n" ++
-        "main() -> (.status_code: Int32 = 11) := {}\n" ++
-        "} #else {\nmain() -> (.status_code: Int32 = 22) := {}\n}\n" }};
+        "main := () -> (.status_code: Int32 = 11)  {}\n" ++
+        "} #else {\nmain := () -> (.status_code: Int32 = 22)  {}\n}\n" }};
     const linux = try compileForTarget(&files, &session, .{}, .{ .arch = .x86_64, .os = .linux, .abi = .gnu });
     defer linux.deinit();
     const windows = try compileForTarget(&files, &session, .{}, .{ .arch = .x86_64, .os = .windows, .abi = .gnu });
@@ -426,12 +426,12 @@ test "frontend module cache preserves associated projections and participant tup
         \\    .Count: Int
         \\)
         \\implement Product#(Int32, Int64) (.Count: Int = 2, .Result: Type = Int32, .multiply = _multiply)
-        \\_multiply(.left: Int32, .right: Int64) -> (.value: Int32) := { value = 0 }
-        \\projected() -> (.value: Product#(Int32, Int64).Result) := { value = 0 }
-        \\Box#(.T: Type): Type = (.value: Product#(T, Int64).Result)
-        \\read_box(.box: &Box#(Int32)) -> (.value: Int32) := { value = box&.value }
-        \\forward#(.A: Type, .B: Type)(.left: A, .right: B) -> (.value: Product#(A, B).Result) := { value = multiply(left, right).value }
-        \\main() -> (.status_code: Int32) := {
+        \\_multiply := (.left: Int32, .right: Int64) -> (.value: Int32)  { value = 0 }
+        \\projected := () -> (.value: Product#(Int32, Int64).Result)  { value = 0 }
+        \\Box := #(.T: Type) (.value: Product#(T, Int64).Result)
+        \\read_box := (.box: &Box#(Int32)) -> (.value: Int32)  { value = box&.value }
+        \\forward := #(.A: Type, .B: Type) (.left: A, .right: B) -> (.value: Product#(A, B).Result)  { value = multiply(left, right).value }
+        \\main := () -> (.status_code: Int32)  {
         \\    box ::= Box#(Int32)(0)
         \\    status_code = forward#(Int32, Int64)(read_box(&box).value, 7).value
         \\}
@@ -476,13 +476,13 @@ test "frontend module cache preserves associated constant dimensions" {
         \\    .Count: Int
         \\)
         \\Cell: Type = ()
-        \\Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))
+        \\Buffer := #(.n: Int) (.values: Array#(.n = n, .t: Int32))
         \\implement Shape#(Cell) (.Count: Int = 2)
-        \\Box#(.T: Type): Type = (.values: Array#(.n = Shape#(T).Count, .t: Int32))
-        \\read(.values: &Array#(.n = Shape#(Cell).Count, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
-        \\take#(.n: Int)(.values: &Array#(.n = n, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
-        \\forward#(.T: Type)(.tag: T, .values: &Array#(.n = Shape#(T).Count, .t: Int32)) -> (.value: Int32) := { value = take#(.n = Shape#(T).Count)(values).value }
-        \\main() -> (.status_code: Int32) := {
+        \\Box := #(.T: Type) (.values: Array#(.n = Shape#(T).Count, .t: Int32))
+        \\read := (.values: &Array#(.n = Shape#(Cell).Count, .t: Int32)) -> (.value: Int32)  { value = values&[0] + values&[1] }
+        \\take := #(.n: Int) (.values: &Array#(.n = n, .t: Int32)) -> (.value: Int32)  { value = values&[0] + values&[1] }
+        \\forward := #(.T: Type) (.tag: T, .values: &Array#(.n = Shape#(T).Count, .t: Int32)) -> (.value: Int32)  { value = take#(.n = Shape#(T).Count)(values).value }
+        \\main := () -> (.status_code: Int32)  {
         \\    buffer ::= Buffer#(.n = Shape#(Cell).Count)((20, 22))
         \\    box ::= Box#(Cell)(buffer.values)
         \\    status_code = forward(Cell(), &box.values).value + take#(.n = Shape#(Cell).Count)(&box.values).value - 84
@@ -531,11 +531,11 @@ test "frontend module cache preserves explicit unary contract participants" {
         \\    .read: (.other: &Other, .source: &Participant) -> (.value: &Int32)
         \\        where depends_on(value, source)
         \\)
-        \\Cell: Type = (.value: Int32)
+        \\Cell := (.value: Int32)
         \\implement Readable#(Cell) (.Other: Type = Cell, .read = _read)
-        \\_read(.other: &Cell, .source: &Cell) -> (.value: &Int32) := { value = &source&.value }
-        \\consume#(.T: Type: Readable#(.Other: Cell))(.other: &Cell, .source: &T) -> (.value: &Int32) := { value = read(other, source).value }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\_read := (.other: &Cell, .source: &Cell) -> (.value: &Int32)  { value = &source&.value }
+        \\consume := #(.T: Type: Readable#(.Other: Cell)) (.other: &Cell, .source: &T) -> (.value: &Int32)  { value = read(other, source).value }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    other ::= Cell(7)
         \\    source ::= Cell(42)
         \\    if consume(&other, &source)& != 42 { abort }
@@ -684,7 +684,7 @@ test "frontend module cache preserves scoped implementation bodies" {
     try std.testing.expectEqual(@as(usize, 0), result.misses);
     try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
     var invalid = files;
-    const changed = try std.mem.replaceOwned(u8, std.testing.allocator, source, ".multiply =\n        (.left: &Row, .right: &Column) -> (.result: Result) {\n        result = left&.value * right&.value * Scale\n    }", ".multiply = wrong_result");
+    const changed = try std.mem.replaceOwned(u8, std.testing.allocator, source, ".multiply = (.left: &Row, .right: &Column) -> (.result: Result) {\n        result = left&.value * right&.value * Scale\n    }", ".multiply = wrong_result");
     defer std.testing.allocator.free(changed);
     try std.testing.expect(!std.mem.eql(u8, source, changed));
     invalid[0].code = try std.fmt.allocPrint(std.testing.allocator, "{s}\nwrong_result := (.left: &Row, .right: &Column) -> (.result: UInt8) {{ result = 1 }}\n", .{changed});
@@ -704,7 +704,7 @@ test "parallel module semantics preserves IR across cache lifetimes and edits" {
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code = main_source },
         .{ .path = "dep/answer.rg", .code = dep_source },
-        .{ .path = "other/extra.rg", .code = "extra() -> (.result: Int32) := { result = 11 }" },
+        .{ .path = "other/extra.rg", .code = "extra := () -> (.result: Int32)  { result = 11 }" },
     };
     const serial = try compileWithExecution(&files, null, .{}, .{}, io, 1);
     defer serial.deinit();
@@ -719,7 +719,7 @@ test "parallel module semantics preserves IR across cache lifetimes and edits" {
     try std.testing.expectEqual(@as(usize, 3), warm.hits);
     try std.testing.expectEqualStrings(serial.ir, warm.ir);
     var edited = files;
-    edited[1].code = "answer() -> (.result: Int32) := { result = 9 }";
+    edited[1].code = "answer := () -> (.result: Int32)  { result = 9 }";
     const changed = try compileWithExecution(&edited, &session, .{}, .{}, io, 4);
     defer changed.deinit();
     const changed_serial = try compileWithExecution(&edited, null, .{}, .{}, io, 1);
@@ -735,9 +735,9 @@ test "parallel module semantics retains deterministic local failure diagnostics"
     defer threaded.deinit();
     const io = threaded.io();
     const files = [_]sf.SourceFile{
-        .{ .path = "app/main.rg", .code = "main() -> () := {}" },
-        .{ .path = "first/bad.rg", .code = "same() -> () := {}\nsame() -> () := {}" },
-        .{ .path = "second/bad.rg", .code = "duplicate() -> () := {}\nduplicate() -> () := {}" },
+        .{ .path = "app/main.rg", .code = "main := () -> ()  {}" },
+        .{ .path = "first/bad.rg", .code = "same := () -> ()  {}\nsame := () -> ()  {}" },
+        .{ .path = "second/bad.rg", .code = "duplicate := () -> ()  {}\nduplicate := () -> ()  {}" },
     };
     const serial = try compileWithExecution(&files, null, .{}, .{}, io, 1);
     defer serial.deinit();
@@ -885,7 +885,7 @@ test "computed test discovery excludes main and dormant test bodies" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { missing_main() }\n#if choose() { test selected() -> () := { missing_test() } } #else { test discarded() -> () := {} }";
+    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { missing_main() }\n#if choose() { test selected := () -> () { missing_test() } } #else { test discarded := () -> () {} }";
     const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
     var diagnostics = diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();

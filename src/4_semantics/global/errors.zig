@@ -609,7 +609,7 @@ pub const Resolver = struct {
         const semantic = self.graph.resolvedSemanticType(ty) orelse return false;
         return switch (semantic) {
             .pointer => |pointer| pointer.mutability == .read_only and global_types.isBuiltin(self.graph, pointer.child, primitives.builtinTypeNamedForTarget("CChar", self.graph.target.stdTarget()).?),
-            .declared => |declaration| std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), "StringView"),
+            .nominal => |declaration| std.mem.eql(u8, self.graph.typeDefinitionName(declaration), "StringView"),
             else => false,
         };
     }

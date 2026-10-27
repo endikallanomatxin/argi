@@ -1,9 +1,9 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
     file ::= File(.stream_address = 0, .should_close = 0 == 1)
     #if target_os("windows") {
         path ::= from_literal(.data = "NUL")
-    }#else {
+    } #else {
         path ::= from_literal(.data = "/dev/null")
     }
     open_result ::= open(.p = $&file, .path = path, .mode = ..write)

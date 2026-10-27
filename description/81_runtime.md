@@ -666,7 +666,7 @@ Channel operations are side-effects and may suspend the current task.
 Examples / Old code:
 
 ```
-funcion_enviadora (c:Channel) -> () := {
+funcion_enviadora := (c:Channel) -> ()  {
 	time | sleep (&_, 1000)
 	c | send (_, 42)
 }
@@ -779,7 +779,7 @@ estado := runtime | mutex($&_, .value = 0)
 
 > [!IDEA] Automutex
 > ```
-> estado : AutoMutex<Int>
+> estado : AutoMutex#(Int)
 > 
 > incrementar($&estado) := {
 > 	estado++

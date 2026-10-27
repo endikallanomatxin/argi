@@ -1,4 +1,4 @@
-Counter: Type = (.external: $&Int32, .alive: Bool)
+Counter := (.external: $&Int32, .alive: Bool)
 
 implement Deinit#(Counter) (
     .deinit = (.self: $&Counter) -> () {
@@ -7,7 +7,7 @@ implement Deinit#(Counter) (
     }
 )
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -16,23 +16,23 @@ implement Deinit#(Resource) (
     }
 )
 
-make(.counter: $&Counter) -> (.result: &Resource) := {
+make := (.counter: $&Counter) -> (.result: &Resource) {
     resource :: Resource = (.counter = counter)
     result = &resource
 }
 
-relay(.external: $&Int32) -> (.result: &Resource) := {
+relay := (.external: $&Int32) -> (.result: &Resource) {
     counter :: Counter = (.external = external, .alive = true)
     reference ::= make(.counter = $&counter)
     result = reference
 }
 
-direct(.external: $&Int32) -> (.result: &Resource) := {
+direct := (.external: $&Int32) -> (.result: &Resource) {
     counter :: Counter = (.external = external, .alive = true)
     result = make(.counter = $&counter)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     external :: Int32 = 0
     {
         first ::= relay(.external = $&external)

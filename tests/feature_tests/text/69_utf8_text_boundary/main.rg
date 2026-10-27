@@ -1,4 +1,4 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
+check_utf8_boundary := (.system: System) -> !Void = ..ok Void() {
     assume allocator ::= system.page_allocator
     assume error_tracer ::= $&noop_error_tracer
     bytes: [4]UInt8 = (240, 159, 152, 128)
@@ -23,6 +23,6 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main(.system: System) -> () := {
-    match run_main(system) { ..ok _ {} ..error _ { abort } }
+main := (.system: System) -> () {
+    match check_utf8_boundary(system) { ..ok _ {} ..error _ { abort } }
 }

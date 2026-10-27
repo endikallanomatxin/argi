@@ -3,7 +3,7 @@
 
 Fake: Type = (..ok Int32, ..error Int32)
 
-main() -> () := {
+main := () -> () {
     input: Fake = ..ok 7
     result ::= input handle error, value { value = 0 }
 }

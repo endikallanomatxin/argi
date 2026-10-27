@@ -18,7 +18,7 @@ implement Init#(Beta, ()) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     alpha ::= Alpha()
     beta ::= Beta()
     _ ::= alpha

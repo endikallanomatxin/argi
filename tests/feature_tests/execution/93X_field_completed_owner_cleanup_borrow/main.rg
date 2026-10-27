@@ -1,6 +1,6 @@
-Counter: Type = (.count: Int32)
+Counter := (.count: Int32)
 
-Child: Type = (.counter: $&Counter)
+Child := (.counter: $&Counter)
 
 implement Deinit#(Counter) (
     .deinit = (.self: $&Counter) -> () {}

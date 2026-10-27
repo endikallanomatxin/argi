@@ -37,7 +37,7 @@ _path_rename_string := (.self: &FileSystem, .from: &String, .to: &String) -> (
     result = rename(.self = self, .from = c_from, .to = c_to)
 }
 
-_path_rename_view#(.Provider: Type: Allocator#(Provider)) := (
+_path_rename_view := #(.Provider: Type: Allocator#(Provider)) (
     .self: &FileSystem, .from: StringView, .to: StringView, .allocator: $&Provider
 ) -> (.result: Errable#(Bool, (..path_rename_failed, ..out_of_memory))) {
     assume ffi := self&._ffi

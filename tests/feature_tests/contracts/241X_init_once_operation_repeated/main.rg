@@ -1,12 +1,12 @@
-Token: Type = (.value: Int32)
+Token := (.value: Int32)
 
 once acquire := (.args: (.value: Int32)) -> (.result: Token) {
     result = (.value = args.value)
 }
 
 implement Init#(Token, (.value: Int32)) (
-    .Result: Type = Token
-    .init = acquire
+    .Result : Type = Token
+    .init   = acquire
 )
 
 main := () -> () {

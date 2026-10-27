@@ -125,6 +125,7 @@ const State = struct {
             .continue_statement,
             .abort_statement,
             .type_literal,
+            .definition_literal,
             => {},
             .binding_declaration => |binding_id| {
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];

@@ -1,16 +1,16 @@
-Inner : Type = (
-    .item: &Int32
+Inner := (
+    .item : &Int32
 )
 
-Outer : Type = (
-    .inner: Inner
+Outer := (
+    .inner : Inner
 )
 
-read(.inner: Inner) -> (.value: Int32) := {
+read := (.inner: Inner) -> (.value: Int32) {
     value = inner.item&
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     original :: Int32 = 1
     outer :: Outer = (.inner = Inner(.item = &original))
     if true {

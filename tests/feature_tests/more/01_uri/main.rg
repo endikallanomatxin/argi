@@ -1,8 +1,8 @@
 uri := import ("network/uri")
 
-roundtrip#(.AllocatorType: Type: Allocator#(AllocatorType))(
+roundtrip := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .text: StringView, .allocator: $&AllocatorType
-) -> () := {
+) -> () {
     parsed ::= unwrap_or_abort(.value = uri.parse(.text = text)).result
     rendered ::= unwrap_or_abort(
         .value = uri.build(.value = parsed, .allocator = allocator)
@@ -10,7 +10,7 @@ roundtrip#(.AllocatorType: Type: Allocator#(AllocatorType))(
     if view(.self = &rendered).view != text { abort }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     roundtrip(
         .text      = "https://user@example.com:443/a%2Fb?x=1#frag"
         .allocator = system.page_allocator

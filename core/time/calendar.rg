@@ -1,6 +1,6 @@
 -- Proleptic Gregorian UTC dates use years 1..9999 and seconds 0..59.
 -- Leap seconds and local timezone rules are outside this representation.
-UtcDateTime: Type = (
+UtcDateTime := (
     .year        : Int32,
     .month       : UInt32,
     .day         : UInt32,
@@ -12,11 +12,11 @@ UtcDateTime: Type = (
 
 implement ImplicitlyCopyable#(UtcDateTime) ()
 
-is_leap_year(.year: Int32) -> (.ok: Bool) := {
+is_leap_year := (.year: Int32) -> (.ok: Bool) {
     ok = [year % 4 == 0 and [year % 100 != 0 or year % 400 == 0]]
 }
 
-days_in_month(.year: Int32, .month: UInt32) -> (.count: UInt32 = 0) := {
+days_in_month := (.year: Int32, .month: UInt32) -> (.count: UInt32 = 0) {
     if month < 1 or month > 12 { return }
     count = 31
 
@@ -27,7 +27,7 @@ days_in_month(.year: Int32, .month: UInt32) -> (.count: UInt32 = 0) := {
     }
 }
 
-valid_utc_date(.date: UtcDateTime) -> (.ok: Bool) := {
+valid_utc_date := (.date: UtcDateTime) -> (.ok: Bool) {
     ok = [
         date.year >= 1
         and date.year <= 9999
@@ -42,7 +42,7 @@ valid_utc_date(.date: UtcDateTime) -> (.ok: Bool) := {
     ]
 }
 
-unix_timestamp(.date: UtcDateTime) -> (.result: Errable#(UnixTimestamp, (..out_of_range))) := {
+unix_timestamp := (.date: UtcDateTime) -> (.result: Errable#(UnixTimestamp, (..out_of_range))) {
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..out_of_range)
         return
@@ -55,7 +55,10 @@ unix_timestamp(.date: UtcDateTime) -> (.result: Errable#(UnixTimestamp, (..out_o
     while month < date.month {
         days = [
             days
-            + days_in_month(.year = date.year, .month = month).count | convert#(.to: Int64)(_)
+            + [
+                days_in_month(.year = date.year, .month = month).count
+                | convert#(.to: Int64)(_)
+            ]
         ]
         month = [month + 1]
     }
@@ -71,7 +74,7 @@ unix_timestamp(.date: UtcDateTime) -> (.result: Errable#(UnixTimestamp, (..out_o
     result = unix_timestamp_precise(.seconds = seconds, .nanoseconds = date.nanoseconds)
 }
 
-utc_date(.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of_range))) := {
+utc_date := (.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of_range))) {
     seconds ::= unix_seconds(&timestamp).value
 
     if seconds < -62135596800 or seconds > 253402300799 {
@@ -120,7 +123,7 @@ utc_date(.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of
 }
 
 -- Sunday is zero, matching conventional civil weekday numbering.
-weekday(.date: UtcDateTime) -> (.result: Errable#(UInt32, (..out_of_range))) := {
+weekday := (.date: UtcDateTime) -> (.result: Errable#(UInt32, (..out_of_range))) {
     timestamp ::= unix_timestamp(.date = date)!
     days ::= [unix_seconds(&timestamp).value + 62135596800] / 86400
 

@@ -1,6 +1,6 @@
 -- Borrows both the reader and an initialized byte buffer. Construction does
 -- not allocate. Returned bytes are copied values independent of the buffer.
-BufferedReader#(.base_type: Type: Reader#(base_type)): Type = (
+BufferedReader := #(.base_type: Type: Reader#(base_type)) (
     .base   : $&base_type
     .buffer : MutableArrayView#(.t: UInt8)
     .start  : UIntNative

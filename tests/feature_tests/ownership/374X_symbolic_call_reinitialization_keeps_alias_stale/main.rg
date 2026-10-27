@@ -1,14 +1,14 @@
 drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { drops = drops + 1 }
 )
 
-initialize(.target: $&Resource) -> () := { target&= Resource(.value = 2) }
+initialize := (.target: $&Resource) -> () { target&= Resource(.value = 2) }
 
-cycle(.target: $&Resource) -> () := {
+cycle := (.target: $&Resource) -> () {
     old := target
     deinit(.self = target)
     initialize(.target = target)
@@ -16,7 +16,7 @@ cycle(.target: $&Resource) -> () := {
     deinit(.self = target)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     {
         owner :: Resource = Resource(.value = 1)
         cycle(.target = $&owner)

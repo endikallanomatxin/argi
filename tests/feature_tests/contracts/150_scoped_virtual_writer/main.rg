@@ -1,6 +1,6 @@
 Output#(.Stream: Type): Contract = (
     .write_byte : (.self: $&Stream, .byte: UInt8) -> (
-        .result : Errable#(Void, (..stream_write_failed))
+        .result: Errable#(Void, (..stream_write_failed))
     ) where {
         on result ..ok {}
         on result ..error { depends_on(result, error_tracer) }
@@ -8,15 +8,12 @@ Output#(.Stream: Type): Contract = (
     .flush : (.self: $&Stream) -> () where {}
 )
 
-Sink: Type = (.last: UInt8 = 0, .flushed: Bool = false)
+Sink := (.last: UInt8 = 0, .flushed: Bool = false)
 
-implement Output#(Sink)(
-    .write_byte = (
-            .self : $&Sink,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed))
-        ) {
+implement Output#(Sink) (
+    .write_byte = (.self: $&Sink, .byte: UInt8) -> (
+        .result: Errable#(Void, (..stream_write_failed))
+    ) {
         self&.last = byte
         result = ..ok Void()
     }

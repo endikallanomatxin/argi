@@ -1,16 +1,21 @@
-Counter: Type = (.count: UIntNative)
+Counter := (.count: UIntNative)
+
 implement CollectionLength#(Counter) (
     .measure_length = (.self: &Counter) -> (.count: UIntNative) { count = self&.count }
 )
+
 implement CollectionCapacity#(Counter) (
     .measure_capacity = (.self: &Counter) -> (.count: UIntNative) { count = self&.count + 1 }
 )
-query#(.Value: Type: CollectionLength#(Value)) := (.self: &Value) -> (.count: UIntNative) {
+
+query := #(.Value: Type: CollectionLength#(Value)) (.self: &Value) -> (.count: UIntNative) {
     count = length(self)
 }
-read_maximum#(.Value: Type: IntegerBounds#(Value)) := (.value: Value) -> (.maximum: Value) {
+
+read_maximum := #(.Value: Type: IntegerBounds#(Value)) (.value: Value) -> (.maximum: Value) {
     maximum = integer_limits(value).maximum
 }
+
 main := () -> (.status_code: Int32 = 0) {
     counter ::= Counter(7)
     if query(&counter) != 7 or capacity(&counter) != 8 { status_code = 1 }

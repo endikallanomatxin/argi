@@ -810,7 +810,7 @@ test "unit selection preserves pending binding types for later materialization" 
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
-        \\identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
         \\helper := () -> (.result: Int32) {
         \\    local ::= identity#(.T: Int32)(.value = 7)
         \\    result = local
@@ -875,7 +875,7 @@ test "virtual signature completion is stable across repeated unit preparation" {
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
-        \\Box: Type = (.value: Int32)
+        \\Box := (.value: Int32)
         \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 42)
@@ -913,7 +913,7 @@ test "semantic unit completion keeps the same graph open for later roots" {
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
-        \\identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
         \\helper := () -> (.result: Int32) {
         \\    local ::= identity#(.T: Int32)(.value = 7)
         \\    result = local
@@ -993,7 +993,7 @@ test "semantic storage domain metadata is released with its graph owner" {
         \\    domain contents
         \\    .read: (.source: &Source) -> (.result: Int32) where {}
         \\)
-        \\Box: Type = (.value: Int32)
+        \\Box := (.value: Int32)
         \\implement Readable#(Box) (
         \\    .read = (.source: &Box) -> (.result: Int32) { result = source&.value }
         \\) where { contents(self.value) }

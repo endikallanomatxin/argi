@@ -1,3 +1,3 @@
-Box#(.t: Type): Type = (.value: t)
+Box := #(.t: Type) (.value: t)
 
-main() -> () := { value: Box#(4) = (.value = 1) }
+main := () -> () { value: Box#(4) = (.value = 1) }

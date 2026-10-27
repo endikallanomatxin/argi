@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value :: Int32 = 7
     pointer :: ?$&Int32 = ..some(.value = $&value)
     view ::= MutableArrayView#(.t: Int32)(._data = pointer, ._length = 100000)

@@ -3,7 +3,7 @@ Direction : Type = (
     ..south,
 )
 
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     value : Direction = ..south
 
     match value {

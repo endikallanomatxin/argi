@@ -1,7 +1,7 @@
 -- Dense row-major owners encode compatibility in their comptime dimensions.
-Vector#(.n: UIntNative, .t: Type: Scalar): Type = (.values: Array#(.n = n, .t: t))
+Vector := #(.n: UIntNative, .t: Type: Scalar) (.values: Array#(.n = n, .t: t))
 
-Matrix#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar): Type = (
+Matrix := #(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) (
     .values : Array#(.n = rows, .t: Array#(.n = cols, .t: t))
 )
 
@@ -58,7 +58,7 @@ implement#(.n: UIntNative, .t: Type: Scalar) Add#(
     }
 )
 
-_math_dot_fixed_vector#(.n: UIntNative, .t: Type: Scalar) := (
+_math_dot_fixed_vector := #(.n: UIntNative, .t: Type: Scalar) (
     .left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t)
 ) -> (.result: t) {
     result = zeroed#(.t: t)()
@@ -70,7 +70,7 @@ _math_dot_fixed_vector#(.n: UIntNative, .t: Type: Scalar) := (
     }
 }
 
-_math_scale_fixed_vector#(.n: UIntNative, .t: Type: Scalar) := (
+_math_scale_fixed_vector := #(.n: UIntNative, .t: Type: Scalar) (
     .self: &Vector#(.n = n, .t: t), .factor: t
 ) -> (.result: Vector#(.n = n, .t: t)) {
     result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
@@ -114,7 +114,7 @@ implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) Add#(
     }
 )
 
-_math_transpose_fixed_matrix#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) := (
+_math_transpose_fixed_matrix := #(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) (
     .self : &Matrix#(.rows = rows, .cols = cols, .t: t)
 ) -> (.result: Matrix#(.rows = cols, .cols = rows, .t: t)) {
     result = (.values = zeroed#(.t: Array#(.n = cols, .t: Array#(.n = rows, .t: t)))())

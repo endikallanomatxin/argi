@@ -1,37 +1,38 @@
-Box : Type = (.counter: $&Int32, .created: $&Int32)
-NumberBox : Type = (.value: Int32)
+Box := (.counter: $&Int32, .created: $&Int32)
+
+NumberBox := (.value: Int32)
 
 implement Init#(Box, (.counter: $&Int32, .created: $&Int32)) (
-    .Result: Type = Box
-    .init = (.args: (.counter: $&Int32, .created: $&Int32)) -> (.result: Result) {
+    .Result : Type = Box
+    .init   = (.args: (.counter: $&Int32, .created: $&Int32)) -> (.result: Result) {
         counter ::= ~args.counter
         created ::= ~args.created
 
         result.counter = counter
         result.created = created
-        created& = created& + 1
+        created&= created&+ 1
     }
 )
 
 implement Deinit#(Box) (
     .deinit = (.self: $&Box) -> () {
-        self&.counter& = self&.counter& + 1
+        self&.counter&= self&.counter&+ 1
     }
 )
 
-positive(.box: $&Box) -> (.result: Bool) := {
-    result = box&.counter& < 3
+positive := (.box: $&Box) -> (.result: Bool) {
+    result = box&.counter&< 3
 }
 
-read(.number: &Int32) -> (.result: Int32) := {
+read := (.number: &Int32) -> (.result: Int32) {
     result = number&
 }
 
-read_mut(.number: $&Int32) -> (.result: Int32) := {
+read_mut := (.number: $&Int32) -> (.result: Int32) {
     result = number&
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     count ::= 0
     created ::= 0
     if read(.number = &7).result != 7 { status_code = 4 }

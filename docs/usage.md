@@ -15,7 +15,7 @@ creates a library. Existing files are preserved. The generated entrypoint
 sets up allocator, error tracing, and I/O capabilities:
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume ffi ::= system.ffi
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     assume error_tracer ::= FixedSizeErrorTracer(

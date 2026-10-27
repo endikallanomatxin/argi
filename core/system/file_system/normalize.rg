@@ -2,9 +2,9 @@
 -- never follows links or queries FileSystem; a normalized path is not a
 -- containment proof. Relative leading parents remain, rooted parents clamp
 -- at the root, and Windows drive-relative prefixes retain their meaning.
-normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
+normalize_path := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .view: StringView, .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(Path, (..invalid_path, ..out_of_memory))) := {
+) -> (.result: Errable#(Path, (..invalid_path, ..out_of_memory))) {
     assume allocator
     index :: UIntNative = 0
 

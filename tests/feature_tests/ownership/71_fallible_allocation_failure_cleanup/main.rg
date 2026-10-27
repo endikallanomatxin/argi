@@ -1,9 +1,9 @@
-FailingAllocator: Type = (
+FailingAllocator := (
     .allocations   : Int32
     .deallocations : Int32
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     allocator_storage :: FailingAllocator = (
         .allocations   = 0
         .deallocations = 0
@@ -17,26 +17,22 @@ main() -> (.status_code: Int32) := {
     status_code = 1
 }
 
-implement Allocator#(FailingAllocator)(
-    .allocate = (
-            .self      : $&FailingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative          = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(FailingAllocator) (
+    .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
         self&.allocations = self&.allocations + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-implement Deallocator#(FailingAllocator)(
+implement Deallocator#(FailingAllocator) (
     .deallocate = (
-            .self      : $&FailingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () {
+        .self      : $&FailingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {
         self&.deallocations = self&.deallocations + 1
     }
 )

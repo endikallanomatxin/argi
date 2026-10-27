@@ -1,5 +1,6 @@
-CleanupCounter: Type = (.value: Int32)
-Resource: Type = (.value: Int32)
+CleanupCounter := (.value: Int32)
+
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource, .counter: $&CleanupCounter = reach cleanup_counter) -> () {
@@ -7,13 +8,13 @@ implement Deinit#(Resource) (
     }
 )
 
-make(.external: $&CleanupCounter) -> (.result: &Resource) := {
+make := (.external: $&CleanupCounter) -> (.result: &Resource) {
     assume cleanup_counter ::= external
     resource :: Resource = (.value = 7)
     result = &resource
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     escaped :: &Resource
     {
         counter ::= CleanupCounter(.value = 0)

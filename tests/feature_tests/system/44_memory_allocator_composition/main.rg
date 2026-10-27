@@ -1,10 +1,10 @@
-TrackingAllocator: Type = (
+TrackingAllocator := (
     .backing       : $&PageAllocator
     .allocations   : UIntNative
     .deallocations : UIntNative
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     tracker :: TrackingAllocator = (
         .backing       = system.page_allocator
         .allocations   = 0
@@ -61,15 +61,13 @@ main(.system: System) -> (.status_code: Int32) := {
     status_code = 0
 }
 
-implement Allocator#(TrackingAllocator)(
-    .allocate = (
-            .self      : $&TrackingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
-        allocated ::= allocate_bytes(.self = self&.backing, .size = size, .alignment = alignment)
+implement Allocator#(TrackingAllocator) (
+    .allocate = (.self: $&TrackingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
+        allocated ::= allocate_bytes(
+            .self = self&.backing, .size = size, .alignment = alignment
+        )
         match allocated {
             ..error _ { result = ..error(.reason = ..out_of_memory) }
             ..ok ~payload {
@@ -83,19 +81,16 @@ implement Allocator#(TrackingAllocator)(
     }
 )
 
-implement Deallocator#(TrackingAllocator)(
+implement Deallocator#(TrackingAllocator) (
     .deallocate = (
-            .self      : $&TrackingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () {
+        .self      : $&TrackingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {
         self&.deallocations = self&.deallocations + 1
         Deallocator#().deallocate(
-            .self      = self&.backing&.memory
-            .data      = data
-            .size      = size
-            .alignment = alignment
+            .self = self&.backing&.memory, .data = data, .size = size, .alignment = alignment
         )
     }
 )

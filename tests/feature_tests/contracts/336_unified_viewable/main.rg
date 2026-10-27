@@ -1,10 +1,8 @@
-borrow#(.Source: Type: Viewable#(Source)) := (.self: Source) -> (
-    .view : Viewable#(Source).Result
-) {
+borrow := #(.Source: Type: Viewable#(Source)) (.self: Source) -> (.view: Viewable#(Source).Result) {
     view = Viewable#(Source).make_view(.self = self)
 }
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume allocator := system.page_allocator
     values :: [2]UInt8 = (65, 66)
     mutable :: MutableArrayView#(UInt8) = borrow($&values)

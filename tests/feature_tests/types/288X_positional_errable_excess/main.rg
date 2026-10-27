@@ -1,10 +1,11 @@
 Reasons: Type = (..unavailable)
 
-run_main() -> (.result: Errable#(Void, Reasons, Int32)) := {
+check_fallible_result := () -> (.result: Errable#(Void, Reasons, Int32)) {
     result = ..ok Void()
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main()!!!
+main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume writer ::= $&system.terminal&.stderr
+    check_fallible_result()!!!
     status_code = 0
 }

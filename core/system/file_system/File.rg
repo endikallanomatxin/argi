@@ -1,3 +1,5 @@
+_FileInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 FileOpenMode: Type = (
     ..read
     ..write
@@ -8,19 +10,19 @@ implement ImplicitlyCopyable#(FileOpenMode) ()
 
 ..file_open_failed
 
-File: Type = (
+File := (
     ._ffi           : $&ForeignFunctionInterface
     .stream_address : UIntNative                 = 0
     .should_close   : Bool                       = 0 == 1
 )
 
-once _acquire_file := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: File) {
+once _acquire_file := (.args: _FileInitArgs) -> (.result: File) {
     ffi ::= args.ffi
 
     result = (._ffi = ffi, .stream_address = 0, .should_close = false)
 }
 
-implement Init#(File, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(File, _FileInitArgs) (
     .Result : Type = File
     .init   = _acquire_file
 )
@@ -49,11 +51,11 @@ implement Init#(
     }
 )
 
-_is_open_File(.self: &File) -> (.ok: Bool) := {
+_is_open_File := (.self: &File) -> (.ok: Bool) {
     ok = self&.stream_address != 0
 }
 
-file_open_mode_c_string(.mode: FileOpenMode) -> (.text: &CChar) := {
+file_open_mode_c_string := (.mode: FileOpenMode) -> (.text: &CChar) {
     if is(.value = mode, .variant = ..read) {
         text = "rb"
         return
@@ -67,7 +69,7 @@ file_open_mode_c_string(.mode: FileOpenMode) -> (.text: &CChar) := {
     text = "ab"
 }
 
-file_stream_pointer(.self: &File) -> (.stream: &Any) := {
+file_stream_pointer := (.self: &File) -> (.stream: &Any) {
     raw ::= raw_pointer#(.t: Any)(.address = self&.stream_address)
     mutable_stream ::= trusted_establish_inherited_reference#(.t: Any)(
         .raw = raw, .root = erase_reference#(.t: File)(.base = self).reference
@@ -110,7 +112,7 @@ _file_close(.stream: UIntNative) -> (.status: Int32): CFunction(
     .symbol = "_argi_file_close"
 )
 
-init_stdin(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
+init_stdin := (.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () {
     p&= (
         ._ffi           = ffi
         .stream_address = _standard_stream(.descriptor = 0)
@@ -118,7 +120,7 @@ init_stdin(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     )
 }
 
-init_stdout(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
+init_stdout := (.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () {
     p&= (
         ._ffi           = ffi
         .stream_address = _standard_stream(.descriptor = 1)
@@ -126,7 +128,7 @@ init_stdout(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     )
 }
 
-init_stderr(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
+init_stderr := (.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () {
     p&= (
         ._ffi           = ffi
         .stream_address = _standard_stream(.descriptor = 2)
@@ -134,7 +136,7 @@ init_stderr(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     )
 }
 
-_close_File(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) := {
+_close_File := (.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) {
     assume ffi := self&._ffi
 
     if self&.stream_address == 0 {
@@ -198,9 +200,9 @@ implement Reader#(File) (
     }
 )
 
-_read_file(.self: $&File, .buffer: MutableArrayView#(.t: UInt8)) -> (
+_read_file := (.self: $&File, .buffer: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..stream_read_failed))
-) := {
+) {
     assume ffi := self&._ffi
 
     if self&.stream_address == 0 {
@@ -221,9 +223,9 @@ _read_file(.self: $&File, .buffer: MutableArrayView#(.t: UInt8)) -> (
     result = ..ok read_count
 }
 
-_file_write(.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
+_file_write := (.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
-) := {
+) {
     assume ffi := self&._ffi
 
     if self&.stream_address == 0 {

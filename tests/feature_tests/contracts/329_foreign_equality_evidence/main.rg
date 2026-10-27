@@ -2,7 +2,7 @@ Mode: CEnum = (..first, ..second)
 
 Callback(.value: CInt) -> (.result: CInt): CFunctionPointer
 
-same#(.T: Type)(.a: T, .b: T) -> (.ok: Bool) := { ok = a == b }
+same := #(.T: Type) (.a: T, .b: T) -> (.ok: Bool) { ok = a == b }
 
 main := () -> (.status_code: Int32 = 0) {
     a: Mode = ..first

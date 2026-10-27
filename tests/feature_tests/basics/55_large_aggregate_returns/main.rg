@@ -1,25 +1,27 @@
-BufferSource#(.Participant: Type): Contract = (.read: (.self: &Participant) -> (.bytes: [65536]UInt8) where {})
+BufferSource#(.Participant: Type): Contract = (
+    .read : (.self: &Participant) -> (.bytes: [65536]UInt8) where {}
+)
 
 Source: Type = ()
 
 implement BufferSource#(Source) (.read = _impl_read_Source)
 
-_impl_read_Source := (.self: &Source) -> (.bytes: [65536]UInt8)  {
+_impl_read_Source := (.self: &Source) -> (.bytes: [65536]UInt8) {
     bytes = zeroed#(.t: [65536]UInt8)()
     bytes[65535] = 7
 }
 
-multiple() -> (.bytes: [65536]UInt8, .marker: Int32) := {
+multiple := () -> (.bytes: [65536]UInt8, .marker: Int32) {
     bytes = zeroed#(.t: [65536]UInt8)()
     bytes[0] = 9
     marker = 42
 }
 
-check(.value: UInt8, .expected: UInt8) -> (.status: Int32 = 0) := {
+check := (.value: UInt8, .expected: UInt8) -> (.status: Int32 = 0) {
     if value != expected { status = 1 }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     bytes ::= zeroed#(.t: [65536]UInt8)()
     status_code = check(bytes[0], 0) + check(bytes[65535], 0)
     values ::= multiple()

@@ -3,18 +3,18 @@ unsafe_allocation := import ("../../_support/unsafe_allocation")
 SlotProtocol#(.Value: Type): Contract = (
     domain contents
 
-    .put: (.self: $&Value, .value: Allocation) -> () where retains(self.contents, value)
-    .take: (.self: $&Value) -> (.value: Allocation) where {
+    .put  : (.self: $&Value, .value: Allocation) -> () where retains(self.contents, value)
+    .take : (.self: $&Value) -> (.value: Allocation) where {
         owns(value)
         from_storage(value, self.contents)
         empties(self.contents)
     }
 )
 
-Slot: Type = (.storage: Allocation)
+Slot := (.storage: Allocation)
 
 implement SlotProtocol#(Slot) (
-    .put = _slot_put
+    .put  = _slot_put
     .take = _slot_take
 ) where { contents(self.storage) }
 
@@ -33,15 +33,15 @@ _slot_take := (.self: $&Slot) -> (.value: Allocation) {
     trusted_opaque_mark_empty($&self&.storage)
 }
 
-forward_put(.slot: $&Virtual#(SlotProtocol), .value: Allocation) -> () := {
+forward_put := (.slot: $&Virtual#(SlotProtocol), .value: Allocation) -> () {
     put(slot, ~value)
 }
 
-forward_take(.slot: $&Virtual#(SlotProtocol)) -> (.value: Allocation) := {
+forward_take := (.slot: $&Virtual#(SlotProtocol)) -> (.value: Allocation) {
     value = take(slot)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     implementation ::= Slot(unwrap_or_abort(allocate#(Allocation)(allocator)))
     slot ::= to_virtual#(SlotProtocol)($&implementation)

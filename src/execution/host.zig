@@ -105,12 +105,13 @@ fn failedHostLink(allocator: std.mem.Allocator) !void {
     const source = p.SourceRef{ .file_index = 0, .offset = 0 };
     const name = try graph.addString(a, "host_step");
     const ffi = try graph.addString(a, "ffi");
-    try graph.modules.append(a, .{ .dir = name, .is_bundled_core = true, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 2 } });
+    try graph.modules.append(a, .{ .dir = name, .is_bundled_core = true, .files = .{ .start = 0, .len = 1 }, .declarations = .{ .start = 0, .len = 2 } });
     try graph.declarations.appendSlice(a, &.{
         .{ .kind = .type, .name = try graph.addString(a, "ForeignFunctionInterface"), .source = source, .type_id = @enumFromInt(1) },
         .{ .kind = .function, .name = name, .source = source, .function_id = @enumFromInt(0) },
     });
-    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .declared = @enumFromInt(0) }, .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } } });
+    try graph.type_definitions.append(a, .{ .source = source, .declaration = @enumFromInt(0) });
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .nominal = @enumFromInt(0) }, .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } } });
     try graph.fields.appendSlice(a, &.{
         .{ .name = name, .ty = @enumFromInt(0), .source = source },
         .{ .name = ffi, .ty = @enumFromInt(2), .source = source },

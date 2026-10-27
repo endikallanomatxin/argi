@@ -1,4 +1,4 @@
-Widget : Type = (.value: Int32)
+Widget := (.value: Int32)
 
 implement Init#(Widget, ()) (
     .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))
@@ -9,7 +9,7 @@ implement Init#(Widget, ()) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     widget :: Widget
     outcome ::= Widget()
     match outcome {

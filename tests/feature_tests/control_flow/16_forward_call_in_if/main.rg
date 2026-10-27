@@ -1,4 +1,4 @@
-foo(.x: Int32) -> (.ok: Bool) := {
+foo := (.x: Int32) -> (.ok: Bool) {
     if bar(.x = x) {
         ok = true
         return
@@ -7,11 +7,11 @@ foo(.x: Int32) -> (.ok: Bool) := {
     ok = false
 }
 
-bar(.x: Int32) -> (.ok: Bool) := {
+bar := (.x: Int32) -> (.ok: Bool) {
     ok = true
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     if foo(.x = 42) {
         status_code = 0
         return

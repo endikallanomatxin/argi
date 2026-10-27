@@ -1,6 +1,6 @@
 ..missing
 
-Owner: Type = (.value: Int32)
+Owner := (.value: Int32)
 
 implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () {
@@ -8,11 +8,11 @@ implement Deinit#(Owner) (
     }
 )
 
-make(.fail: Bool) -> (.result: Errable#(.t: Owner, .reasons: (..missing))) := {
+make := (.fail: Bool) -> (.result: Errable#(.t: Owner, .reasons: (..missing))) {
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok(.value = 7) }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     first ::= make(.fail = false) handle error, value { value = (.value = 9) }
     second ::= make(.fail = true) handle error, value { value = (.value = 9) }
     if first.value != 7 or second.value != 9 { abort }

@@ -1,8 +1,10 @@
-first(.source: &Virtual#(ArgumentSource)) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8))) := {
+first := (.source: &Virtual#(ArgumentSource)) -> (
+    .result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
+) {
     result = get(source, 0)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     args: [2]StringView = ("alpha", "beta")
     source ::= CliArgumentViews(view(&args))
     erased ::= to_virtual#(ArgumentSource)(&source)

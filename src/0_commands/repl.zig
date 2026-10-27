@@ -344,7 +344,7 @@ test "REPL presents persistent string literals as escaped text" {
     defer sources.deinit();
     var diagnostics = diag.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "StringView: Type = (._data: &UInt8, ._length: UIntNative)");
+    const loaded = try sources.loadModule(&diagnostics, "StringView := (._data: &UInt8, ._length: UIntNative)");
     var core = loaded.*;
     core.is_bundled_core = true;
     var session: interactive.Interactive = undefined;

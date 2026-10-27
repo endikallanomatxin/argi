@@ -1,4 +1,4 @@
-Value: Type = (.number: Int32)
+Value := (.number: Int32)
 
 implement Equal#(Value, Value, (.left: &Value, .right: &Value, .bias: Int32 = reach bias)) (
     .equal = (.args: (.left: &Value, .right: &Value, .bias: Int32 = reach bias)) -> (.ok: Bool) {

@@ -1,12 +1,12 @@
 ..bounded_test_failure
 
-CountAllocator: Type = (.backing: $&PageAllocator, .calls: UIntNative = 0, .fail: Bool = false)
+CountAllocator := (.backing: $&PageAllocator, .calls: UIntNative = 0, .fail: Bool = false)
 
-ProbeWriter: Type = (.count: UIntNative = 0, .fail: Bool = false)
+ProbeWriter := (.count: UIntNative = 0, .fail: Bool = false)
 
-fail() -> !Void := { result = ..error(.reason = ..bounded_test_failure) }
+fail := () -> !Void { result = ..error(.reason = ..bounded_test_failure) }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     counting_allocator :: CountAllocator = (
         .backing = system.page_allocator
         .calls   = 0
@@ -80,8 +80,7 @@ main(.system: System) -> (.status_code: Int32) := {
             virtual_writer ::= to_virtual#(Writer)($&writer)
             unwrap_or_abort(
                 .value = ErrorTracer#().report(
-                    .self   = $&virtual_unbuffered
-                    .writer = $&virtual_writer
+                    .self = $&virtual_unbuffered, .writer = $&virtual_writer
                 )
             )
             if writer.count != 43 or counting_allocator.calls != 0 {
@@ -93,34 +92,27 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 }
 
-implement Writer#(ProbeWriter)(
-    .write_byte = (
-            .self : $&ProbeWriter,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+implement Writer#(ProbeWriter) (
+    .write_byte = (.self: $&ProbeWriter, .byte: UInt8) -> (
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         self&.count = self&.count + 1
-        if self&.fail { result = ..error(.reason = ..stream_write_failed) } else {
+        if self&.fail {
+            result = ..error(.reason = ..stream_write_failed)
+        } else {
             result = ..ok Void()
         }
     }
 
-    .flush = (
-            .self : $&ProbeWriter
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) { result = ..ok Void() }
+    .flush = (.self: $&ProbeWriter) -> (
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) { result = ..ok Void() }
 )
 
-implement Allocator#(CountAllocator)(
-    .allocate = (
-            .self      : $&CountAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(CountAllocator) (
+    .allocate = (.self: $&CountAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
         self&.calls = self&.calls + 1
         if self&.fail {
             result = ..error(.reason = ..out_of_memory)

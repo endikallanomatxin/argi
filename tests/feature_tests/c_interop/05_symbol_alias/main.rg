@@ -1,7 +1,8 @@
-_absolute(.value: Int32) -> (.result: Int32) : CFunction(.symbol = "abs")
-_other_absolute(.value: Int32) -> (.result: Int32) : CFunction(.symbol = "abs")
+_absolute(.value: Int32) -> (.result: Int32): CFunction(.symbol = "abs")
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+_other_absolute(.value: Int32) -> (.result: Int32): CFunction(.symbol = "abs")
+
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     first := _absolute(-42)
     second := _other_absolute(-7)

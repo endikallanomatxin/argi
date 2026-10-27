@@ -1,6 +1,6 @@
-Counter: Type = (.count: Int32 = 0)
+Counter := (.count: Int32 = 0)
 
-Resource: Type = (.counter: $&Counter)
+Resource := (.counter: $&Counter)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -8,11 +8,11 @@ implement Deinit#(Resource) (
     }
 )
 
-replace(.target: $&Resource, .counter: $&Counter) -> () := {
+replace := (.target: $&Resource, .counter: $&Counter) -> () {
     target&= Resource(.counter = counter)
 }
 
-main() -> () := {
+main := () -> () {
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter)

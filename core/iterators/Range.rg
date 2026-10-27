@@ -1,10 +1,10 @@
-Range#(.t: Type): Type = (
+Range := #(.t: Type) (
     .start : t
     .end   : t
     .step  : t
 )
 
-RangeIterator#(.t: Type): Type = (
+RangeIterator := #(.t: Type) (
     .current : t
     .end     : t
     .step    : t

@@ -1,17 +1,23 @@
 _case(.value: CInt) -> (): CFunction(.symbol = "argi_clock_case")
+
 _sleeps() -> (.count: CInt): CFunction(.symbol = "argi_clock_sleeps")
-expect_clock_error(.value: Errable#(.t: MonotonicInstant,
-        .reasons : (..clock_read_failed, ..out_of_range)),
-    .reason : (..clock_read_failed, ..out_of_range)) -> () := {
+
+expect_clock_error := (
+    .value: Errable#(.t: MonotonicInstant, .reasons: (..clock_read_failed, ..out_of_range)),
+    .reason : (..clock_read_failed, ..out_of_range)
+) -> () {
     if is(.value = value, .variant = ..error) {
         if reason == ..out_of_range {
             if value ..error.reason != ..out_of_range { abort }
         } else {
             if value ..error.reason != ..clock_read_failed { abort }
         }
-    } else { abort }
+    } else {
+        abort
+    }
 }
-main(.system: System) -> (.status_code: Int32 = 0) := {
+
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi ::= system.ffi
     assume clock ::= system.clock
     _case(.value = 0)
@@ -36,7 +42,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     reversed ::= elapsed(.start = largest, .end = first)
     if is(.value = reversed, .variant = ..error) {
         if reversed ..error.reason != ..out_of_range { abort }
-    } else { abort }
+    } else {
+        abort
+    }
     _case(.value = 3)
     expect_clock_error(.value = monotonic_now(), .reason = ..out_of_range)
     _case(.value = 4)
@@ -45,12 +53,16 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     invalid_wall ::= wall_now()
     if is(.value = invalid_wall, .variant = ..error) {
         if invalid_wall ..error.reason != ..clock_read_failed { abort }
-    } else { abort }
+    } else {
+        abort
+    }
     _case(.value = 6)
     failed ::= sleep(.duration = delay)
     if is(.value = failed, .variant = ..error) {
         if failed ..error.reason != ..sleep_failed { abort }
-    } else { abort }
+    } else {
+        abort
+    }
     if _sleeps().count != 1 { abort }
     _case(.value = 7)
     unwrap_or_abort(.value = sleep(.duration = Duration(.nanoseconds = 18446744073709551615)))
@@ -60,7 +72,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if _sleeps().count != 0 { abort }
     _case(.value = 9)
     oldest ::= unwrap_or_abort(.value = wall_now()).result
-    if unix_seconds(.self = &oldest).value != -9223372036854775808 or nanoseconds(.self = &oldest).value != 999999999 {
+    if [
+        unix_seconds(.self = &oldest).value != -9223372036854775808
+        or nanoseconds(.self = &oldest).value != 999999999
+    ] {
         abort
     }
 }

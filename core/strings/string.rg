@@ -1,5 +1,5 @@
 -- Reserve one byte for String's trailing NUL without assuming a native width.
-_string_max_result_length() -> (.length: UIntNative) := {
+_string_max_result_length := () -> (.length: UIntNative) {
     length = 0
     bytes ::= size_of(.type = UIntNative)
     index :: UIntNative = 0
@@ -12,20 +12,20 @@ _string_max_result_length() -> (.length: UIntNative) := {
     length = length - 1
 }
 
-_StringShape: Type = (.marker: UInt8)
+_StringShape := (.marker: UInt8)
 
 implement Deinit#(_StringShape) (.deinit = (.self: $&_StringShape) -> () {})
 
-String: Type = (
+String := (
     -- UTF-8 text with private storage and an initialized trailing NUL.
     ._allocation : Allocation
     ._length     : UIntNative
     ._shape      : _StringShape
 )
 
-string_with_length#(.AllocatorType: Type: Allocator#(AllocatorType))(
+string_with_length := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .allocator: $&AllocatorType, .length: UIntNative
-) -> (.result: Errable#(String, (..out_of_memory))) := {
+) -> (.result: Errable#(String, (..out_of_memory))) {
     assume allocator
 
     if length > _string_max_result_length().length {
@@ -48,9 +48,9 @@ string_with_length#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~out
 }
 
-string_with_capacity#(.AllocatorType: Type: Allocator#(AllocatorType))(
+string_with_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .allocator: $&AllocatorType, .capacity: UIntNative
-) -> (.result: Errable#(String, (..out_of_memory))) := {
+) -> (.result: Errable#(String, (..out_of_memory))) {
     assume allocator
 
     actual_capacity ::= capacity
@@ -128,9 +128,9 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
 )
 
 -- The trailing NUL belongs to C interop, outside the logical byte range.
-string_byte_reference(.string: &String, .index: UIntNative) -> (
+string_byte_reference := (.string: &String, .index: UIntNative) -> (
     .result : Errable#(&UInt8, (..out_of_bounds))
-) := {
+) {
     if index >= string&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -140,14 +140,14 @@ string_byte_reference(.string: &String, .index: UIntNative) -> (
     ).reference
 }
 
-_string_get_byte(.view: &String, .index: UIntNative) -> (
+_string_get_byte := (.view: &String, .index: UIntNative) -> (
     .result : Errable#(UInt8, (..out_of_bounds))
-) := {
+) {
     reference ::= string_byte_reference(.string = view, .index = index)!
     result = ..ok reference&
 }
 
-_string_set_byte(.string: $&String, .index: UIntNative, .value: UInt8) -> () := {
+_string_set_byte := (.string: $&String, .index: UIntNative, .value: UInt8) -> () {
     _invalidate_string(string)
     -- Writers also initialize capacity bytes and the trailing NUL.
     if index >= string&._allocation.size { abort }
@@ -157,7 +157,7 @@ _string_set_byte(.string: $&String, .index: UIntNative, .value: UInt8) -> () := 
     ptr&= value
 }
 
-_string_text_view(.self: &String) -> (.view: StringView) := {
+_string_text_view := (.self: &String) -> (.view: StringView) {
     if self&._length == 0 {
         view = ""
         return
@@ -172,7 +172,7 @@ _string_text_view(.self: &String) -> (.view: StringView) := {
     view = (._data = borrowed, ._length = self&._length)
 }
 
-capacity(.self: &String) -> (.count: UIntNative) := {
+capacity := (.self: &String) -> (.count: UIntNative) {
     if self&._allocation.size == 0 {
         count = 0
         return
@@ -181,13 +181,13 @@ capacity(.self: &String) -> (.count: UIntNative) := {
     count = self&._allocation.size - 1
 }
 
-_invalidate_string(.self: $&String) -> () := {
+_invalidate_string := (.self: $&String) -> () {
     shape ::= $&self&._shape
     deinit(.self = shape)
     shape&= (.marker = 0)
 }
 
-clear(.self: $&String) -> () := {
+clear := (.self: $&String) -> () {
     _invalidate_string(self)
     self&._length = 0
 
@@ -196,11 +196,11 @@ clear(.self: $&String) -> () := {
     }
 }
 
-has_space(.self: &String) -> (.ok: Bool) := {
+has_space := (.self: &String) -> (.ok: Bool) {
     ok = self&._length < capacity(self).count
 }
 
-_string_growth_capacity(.self: &String, .min_capacity: UIntNative) -> (.value: UIntNative) := {
+_string_growth_capacity := (.self: &String, .min_capacity: UIntNative) -> (.value: UIntNative) {
     limit ::= _string_max_result_length().length
 
     if min_capacity > limit { abort }
@@ -223,17 +223,17 @@ _string_growth_capacity(.self: &String, .min_capacity: UIntNative) -> (.value: U
     }
 }
 
-ensure_capacity#(.AllocatorType: Type: Allocator#(AllocatorType))(
+ensure_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&String, .capacity: UIntNative, .allocator: $&AllocatorType
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
 
     result = ensure_capacity_growing(self, .target_capacity = capacity, .allocator = allocator)
 }
 
-ensure_capacity_growing#(.AllocatorType: Type: Allocator#(AllocatorType))(
+ensure_capacity_growing := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&String, .target_capacity: UIntNative, .allocator: $&AllocatorType
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
 
     if target_capacity > _string_max_result_length().length {
@@ -290,14 +290,14 @@ ensure_capacity_growing#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 }
 
-_string_append_byte(.self: $&String, .byte: UInt8) -> () := {
+_string_append_byte := (.self: $&String, .byte: UInt8) -> () {
     if has_space(self).ok == false { abort }
     _string_set_byte(.string = self, .index = self&._length, .value = byte)
     self&._length = self&._length + 1
     _string_set_byte(.string = self, .index = self&._length, .value = 0)
 }
 
-_string_append_bytes(.self: $&String, .source: ArrayView#(.t: UInt8)) -> () := {
+_string_append_bytes := (.self: $&String, .source: ArrayView#(.t: UInt8)) -> () {
     current_capacity ::= capacity(self).count
 
     if self&._length > current_capacity { abort }
@@ -318,9 +318,9 @@ _string_append_bytes(.self: $&String, .source: ArrayView#(.t: UInt8)) -> () := {
     _string_set_byte(.string = self, .index = self&._length, .value = 0)
 }
 
-_string_push_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
+_string_push_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&String, .byte: UInt8, .allocator: $&AllocatorType
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
 
     if self&._length >= _string_max_result_length().length {
@@ -349,9 +349,9 @@ _string_push_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok Void()
 }
 
-push_c_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
+push_c_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&String, .text: &CChar, .allocator: $&AllocatorType
-) -> (.result: Errable#(Void, (..out_of_memory, ..invalid_utf8))) := {
+) -> (.result: Errable#(Void, (..out_of_memory, ..invalid_utf8))) {
     assume allocator
 
     append_length ::= c_string_length(.text = text).length
@@ -394,9 +394,9 @@ push_c_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok Void()
 }
 
-push_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
+push_view := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&String, .view: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
 
     limit ::= _string_max_result_length().length
@@ -431,7 +431,7 @@ push_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok Void()
 }
 
-c_string_length(.text: &CChar) -> (.length: UIntNative) := {
+c_string_length := (.text: &CChar) -> (.length: UIntNative) {
     length = 0
     c_length :: UIntNative = 0
 
@@ -451,7 +451,7 @@ c_string_length(.text: &CChar) -> (.length: UIntNative) := {
     length = c_length
 }
 
-_trusted_c_string_view(.text: &CChar) -> (.view: StringView) := {
+_trusted_c_string_view := (.text: &CChar) -> (.view: StringView) {
     bytes ::= _c_string_bytes(.text = text)
     _ ::= unwrap_or_abort(.value = validate_utf8_bytes(.bytes = bytes))
     if length(&bytes).count == 0 {
@@ -461,9 +461,9 @@ _trusted_c_string_view(.text: &CChar) -> (.view: StringView) := {
     view = (._data = data(&bytes).pointer, ._length = length(&bytes).count)
 }
 
-concat_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
+concat_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .left: &StringView, .right: &StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..out_of_memory))) := {
+) -> (.result: Errable#(String, (..out_of_memory))) {
     assume allocator
 
     limit ::= _string_max_result_length().length
@@ -649,9 +649,9 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider
 
 -- Copy before validation: allocator callbacks may mutate borrowed input bytes.
 -- Only the independent, fully validated text escapes this function.
-string_from_bytes#(.Provider: Type: Allocator)(
+string_from_bytes := #(.Provider: Type: Allocator) (
     .bytes: ArrayView#(UInt8), .allocator: $&Provider = reach allocator
-) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) := {
+) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
     assume allocator
     size ::= length(&bytes).count
     text ::= string_with_capacity(.allocator = allocator, .capacity = size)!
@@ -660,9 +660,9 @@ string_from_bytes#(.Provider: Type: Allocator)(
     result = ..ok ~text
 }
 
-push_ascii#(.Provider: Type: Allocator)(
+push_ascii := #(.Provider: Type: Allocator) (
     .self: $&String, .byte: UInt8, .allocator: $&Provider = reach allocator
-) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_memory))) {
     assume allocator
     if byte >= 128 {
         result = ..error(.reason = ..invalid_ascii)
@@ -672,9 +672,9 @@ push_ascii#(.Provider: Type: Allocator)(
     result = ..ok Void()
 }
 
-push_scalar#(.Provider: Type: Allocator)(
+push_scalar := #(.Provider: Type: Allocator) (
     .self: $&String, .scalar: UnicodeScalar, .allocator: $&Provider = reach allocator
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
     encoded ::= zeroed#(.t: [4]UInt8)()
     storage ::= view($&encoded)
@@ -690,7 +690,7 @@ push_scalar#(.Provider: Type: Allocator)(
     result = ..ok Void()
 }
 
-_validate_string(.self: &String) -> (.result: Errable#(Void, (..invalid_utf8))) := {
+_validate_string := (.self: &String) -> (.result: Errable#(Void, (..invalid_utf8))) {
     if self&._length == 0 {
         result = ..ok Void()
         return
@@ -705,9 +705,9 @@ _validate_string(.self: &String) -> (.result: Errable#(Void, (..invalid_utf8))) 
     result = ..ok Void()
 }
 
-set_ascii(.self: $&String, .index: UIntNative, .byte: UInt8) -> (
+set_ascii := (.self: $&String, .index: UIntNative, .byte: UInt8) -> (
     .result : Errable#(Void, (..invalid_ascii, ..out_of_bounds))
-) := {
+) {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -723,9 +723,9 @@ set_ascii(.self: $&String, .index: UIntNative, .byte: UInt8) -> (
     result = ..ok Void()
 }
 
-append_ascii_assume_capacity(.self: $&String, .byte: UInt8) -> (
+append_ascii_assume_capacity := (.self: $&String, .byte: UInt8) -> (
     .result : Errable#(Void, (..invalid_ascii))
-) := {
+) {
     if byte >= 128 {
         result = ..error(.reason = ..invalid_ascii)
         return
@@ -734,7 +734,7 @@ append_ascii_assume_capacity(.self: $&String, .byte: UInt8) -> (
     result = ..ok Void()
 }
 
-append_text_assume_capacity(.self: $&String, .text: StringView) -> () := {
+append_text_assume_capacity := (.self: $&String, .text: StringView) -> () {
     _string_append_bytes(self, .source = string_bytes(.text = text))
 }
 

@@ -1,5 +1,5 @@
-Value : Type = (
-    .number: UInt8
+Value := (
+    .number : UInt8
 )
 
 implement Deinit#(Value) (
@@ -8,13 +8,13 @@ implement Deinit#(Value) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     source :: Value = (.number = 0)
     lifetime :: Value = (.number = 1)
     original ::= &source.number
     restricted ::= restrict_reference#(.t: &UInt8)(.input = original, .on = &lifetime).reference
     deinit(.self = $&source)
-    if restricted& == 0 {
+    if restricted&== 0 {
         status_code = 0
     } else {
         status_code = 1

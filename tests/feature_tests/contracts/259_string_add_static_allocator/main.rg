@@ -1,4 +1,4 @@
-join#(.Provider: Type: Allocator) := (
+join := #(.Provider: Type: Allocator) (
     .left: &StringView, .right: &StringView, .allocator: $&Provider
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     result = ~[left + right]

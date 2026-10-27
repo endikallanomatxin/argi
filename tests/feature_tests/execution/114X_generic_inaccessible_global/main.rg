@@ -1,6 +1,6 @@
 foreign := import ("./foreign")
 
-read#(.T: Type) := (.input: T) -> (.result: Int32) {
+read := #(.T: Type) (.input: T) -> (.result: Int32) {
     result = foreign_value
 }
 

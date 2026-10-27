@@ -1,5 +1,5 @@
-FailFirstAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
+FailFirstAllocator := (
+    .ffi           : $&ForeignFunctionInterface
     .allocations   : Int32
     .deallocations : Int32
 )
@@ -13,7 +13,7 @@ implement Init#(FailFirstAllocator, (.ffi: $&ForeignFunctionInterface)) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     backing ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     out ::= unwrap_or_abort(
         .value = string_with_capacity(.allocator = $&backing, .capacity = 1)
@@ -28,7 +28,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Allocator#(FailFirstAllocator) (
     .allocate = (.self: $&FailFirstAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.allocations = self&.allocations + 1
         if self&.allocations > 0 {

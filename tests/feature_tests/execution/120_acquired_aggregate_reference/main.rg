@@ -1,4 +1,4 @@
-Pair: Type = (.left: Int32, .right: Int32)
+Pair := (.left: Int32, .right: Int32)
 
 main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()

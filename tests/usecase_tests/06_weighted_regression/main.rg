@@ -2,7 +2,7 @@ math ::= import ("math/linear_algebra")
 
 -- Form the normal equations for y = intercept + slope * x. The diagonal
 -- weights stay compact while their products with the design matrix are dense.
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     design: math.Matrix#(.rows = 3, .cols = 2, .t: Float64) = (
         .values = (
             (1.0, 0.0),

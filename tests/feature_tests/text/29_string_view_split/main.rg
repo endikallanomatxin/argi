@@ -1,15 +1,15 @@
-expect_segment#(.T: Type: Iterator#(T))(.iterator: $&T, .expected: StringView) -> () := {
+expect_segment := #(.T: Type: Iterator#(T)) (.iterator: $&T, .expected: StringView) -> () {
     if has_next(.self = iterator).ok == false { abort }
     segment ::= next(.self = iterator).value
     if segment != expected { abort }
 }
 
-first_segment(.text: StringView) -> (.view: StringView) := {
+first_segment := (.text: StringView) -> (.view: StringView) {
     iterator ::= unwrap_or_abort(.value = split(.self = text, .separator = ","))
     view = next(.self = $&iterator).value
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if is(.value = split(.self = "abc", .separator = ""), .variant = ..ok) { abort }
     empty ::= unwrap_or_abort(.value = split(.self = "", .separator = ","))
     expect_segment(.iterator = $&empty, .expected = "")

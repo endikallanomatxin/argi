@@ -1,15 +1,15 @@
 ..test_error
 
-fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+fail := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error)))  {
     result = ..error(.reason = ..test_error)
 }
 
-propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+propagate := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error)))  {
     value := fail()!
     result = ..ok value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     tracer ::= ProbeTracer()
     virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
@@ -36,7 +36,7 @@ main() -> (.status_code: Int32) := {
     }
 }
 
-ProbeTracer: Type = (
+ProbeTracer := (
     .count           : UIntNative = 0
     .line            : UIntNative = 0
     .column          : UIntNative = 0

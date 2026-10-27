@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= CAllocator(.ffi = ffi)

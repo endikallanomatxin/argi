@@ -1,8 +1,8 @@
-Storage: Type = (.aligner: UIntNative, .bytes: [291]UInt8)
+Storage := (.aligner: UIntNative, .bytes: [291]UInt8)
 
-ProbeWriter: Type = (.bytes: UIntNative = 0)
+ProbeWriter := (.bytes: UIntNative = 0)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     -- The numeric prefix aligns bytes; slicing at one deliberately misaligns
     -- slot headers. Sentinels also cover the unused tail and both boundaries.
     storage ::= Storage(.aligner = 0, .bytes = zeroed#(.t: [291]UInt8)())

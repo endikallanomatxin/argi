@@ -1,33 +1,33 @@
 Result: Type = (..ok(.value: Int32), ..empty)
 
-make(.value: Int32) -> (.result: Result) := { result = ..ok(.value = value) }
+make := (.value: Int32) -> (.result: Result) { result = ..ok(.value = value) }
 
-read(.result: Result) -> (.value: Int32) := {
+read := (.result: Result) -> (.value: Int32) {
     match result {
         ..ok payload { value = payload.value }
         ..empty { value = 0 }
     }
 }
 
-select(.value: $&Result, .calls: $&Int32) -> (.result: $&Result) := {
+select := (.value: $&Result, .calls: $&Int32) -> (.result: $&Result) {
     calls&= calls&+ 1
     result = value
 }
 
 ReferenceResult: Type = (..some(.value: $&Int32), ..empty)
 
-wrap_reference(.value: $&Int32) -> (.result: ReferenceResult) := {
+wrap_reference := (.value: $&Int32) -> (.result: ReferenceResult) {
     result = ..some(.value = value)
 }
 
-unwrap_reference(.value: ReferenceResult) -> (.result: $&Int32) := {
+unwrap_reference := (.value: ReferenceResult) -> (.result: $&Int32) {
     match value {
         ..some payload { result = payload.value }
         ..empty { abort }
     }
 }
 
-exercise() -> (.answer: Int32 = 0) := {
+exercise := () -> (.answer: Int32 = 0) {
     result :: Result = make(.value = 1)
     saved ::= result
     match result {
@@ -52,7 +52,7 @@ exercise() -> (.answer: Int32 = 0) := {
     if read(.result = result) != 0 { abort }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     compiled ::= #run () -> (.value: Int32) { value = exercise() }
     if compiled != 42 { abort }
     status_code = exercise()

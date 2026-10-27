@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume ffi := system.ffi
     bytes ::= zeroed#(.t: [288]UInt8)()
     tracer ::= FixedSizeErrorTracer(.buffer = view($&bytes))

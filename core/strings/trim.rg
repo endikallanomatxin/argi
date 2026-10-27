@@ -1,8 +1,8 @@
 -- Internal byte subranges are checked against the source view's recorded
 -- extent. Empty results use static storage and form no one-past reference.
-_string_view_subrange(.self: StringView, .start: UIntNative, .count: UIntNative) -> (
+_string_view_subrange := (.self: StringView, .start: UIntNative, .count: UIntNative) -> (
     .view : StringView
-) := {
+) {
     if start > self._length { abort }
     if count > self._length - start { abort }
     if _string_boundary(.text = self, .offset = start).ok == false { abort }
@@ -20,7 +20,7 @@ _string_view_subrange(.self: StringView, .start: UIntNative, .count: UIntNative)
     )
 }
 
-trim_start(.self: StringView) -> (.view: StringView) := {
+trim_start := (.self: StringView) -> (.view: StringView) {
     start :: UIntNative = 0
 
     while start < self._length {
@@ -36,7 +36,7 @@ trim_start(.self: StringView) -> (.view: StringView) := {
     view = _string_view_subrange(self, .start = start, .count = self._length - start).view
 }
 
-trim_end(.self: StringView) -> (.view: StringView) := {
+trim_end := (.self: StringView) -> (.view: StringView) {
     end :: UIntNative = self._length
 
     while end > 0 {
@@ -52,16 +52,16 @@ trim_end(.self: StringView) -> (.view: StringView) := {
     view = _string_view_subrange(self, .start = 0, .count = end).view
 }
 
-trim(.self: StringView) -> (.view: StringView) := {
+trim := (.self: StringView) -> (.view: StringView) {
     leading ::= trim_start(self).view
     view = trim_end(leading).view
 }
 
 -- Validate by subtraction before forming a borrowed reference. Empty results
 -- use static storage, including a slice at the source extent.
-slice(.self: StringView, .start: UIntNative, .count: UIntNative) -> (
+slice := (.self: StringView, .start: UIntNative, .count: UIntNative) -> (
     .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8_boundary))
-) := {
+) {
     if start > self._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -82,7 +82,7 @@ slice(.self: StringView, .start: UIntNative, .count: UIntNative) -> (
     result = ..ok _string_view_subrange(self, .start = start, .count = count).view
 }
 
-_string_boundary(.text: StringView, .offset: UIntNative) -> (.ok: Bool) := {
+_string_boundary := (.text: StringView, .offset: UIntNative) -> (.ok: Bool) {
     if offset > text._length {
         ok = false
         return

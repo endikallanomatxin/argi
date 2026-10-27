@@ -1,6 +1,6 @@
 -- The initialized interval shrinks from the front without relocating values.
 -- Slots outside [_next, _end) are vacant and are never read or destroyed.
-DynamicArrayMovingIterator#(.t: Type): Type = (
+DynamicArrayMovingIterator := #(.t: Type) (
     ._allocation : Allocation,
     ._next       : UIntNative,
     ._end        : UIntNative
@@ -17,7 +17,7 @@ implement#(.t: Type) Deinit#(DynamicArrayMovingIterator#(.t: t)) (
     }
 )
 
-DequeMovingIterator#(.t: Type): Type = (._owner: Deque#(.t: t))
+DequeMovingIterator := #(.t: Type) (._owner: Deque#(.t: t))
 
 implement#(.t: Type) Deinit#(DequeMovingIterator#(.t: t)) (
     .deinit = (.self: $&DequeMovingIterator#(.t: t)) -> () {

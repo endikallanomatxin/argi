@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -11,7 +11,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 1
         return
     }
-    value ::= value_result..ok
+    value ::= value_result ..ok
     push(.self = $&destination, .value = value)
 
     deinit(.self = $&source)
@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 2
         return
     }
-    if destination_result..ok != 7 {
+    if destination_result ..ok != 7 {
         deinit(.self = $&destination)
         status_code = 1
         return

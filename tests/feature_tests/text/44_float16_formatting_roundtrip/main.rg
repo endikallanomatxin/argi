@@ -1,4 +1,4 @@
-DecimalBuffer: Type = (
+DecimalBuffer := (
     .bytes : [32]UInt8 = (
         0,
         0,
@@ -36,7 +36,7 @@ DecimalBuffer: Type = (
     .length : UIntNative = 0
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator ::= system.page_allocator
     index :: UInt32 = 0
     buffer ::= DecimalBuffer()
@@ -49,9 +49,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             ).reference&
             buffer.length = 0
             unwrap_or_abort(
-                .value = WriteValue#(
-                    DecimalBuffer, Float16
-                ).write_value(.self = $&buffer, .value = original)
+                .value = WriteValue#(DecimalBuffer, Float16).write_value(
+                    .self = $&buffer, .value = original
+                )
             )
             bytes ::= unwrap_or_abort(
                 .value = slice(&view(&buffer.bytes), .start = 0, .count = buffer.length)
@@ -72,7 +72,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Writer#(DecimalBuffer) (
     .write_byte = (.self: $&DecimalBuffer, .byte: UInt8) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         if self&.length == 32 { abort }
         self&.bytes[self&.length] = byte
@@ -81,7 +81,7 @@ implement Writer#(DecimalBuffer) (
     }
 
     .flush = (.self: $&DecimalBuffer) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
         abort
     }

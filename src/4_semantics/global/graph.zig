@@ -6,6 +6,8 @@ const module_sg = @import("../module/graph.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
 pub const GlobalTypeId = enum(u32) { _ };
+pub const GlobalTypeDefinitionId = enum(u32) { _ };
+pub const GlobalFamilyDefinitionId = enum(u32) { _ };
 pub const GlobalFunctionId = enum(u32) { _ };
 pub const GlobalBindingId = enum(u32) { _ };
 pub const GlobalNodeId = enum(u32) { _ };
@@ -34,6 +36,8 @@ pub const GlobalModuleId = enum(u32) { _ };
 pub const Ids = struct {
     pub const DeclId = GlobalDeclId;
     pub const TypeId = GlobalTypeId;
+    pub const TypeDefinitionId = GlobalTypeDefinitionId;
+    pub const FamilyDefinitionId = GlobalFamilyDefinitionId;
     pub const FunctionId = GlobalFunctionId;
     pub const BindingId = GlobalBindingId;
     pub const NodeId = GlobalNodeId;
@@ -66,6 +70,9 @@ pub const FieldRange = primitives.Range(GlobalFieldId);
 pub const VariantRange = primitives.Range(GlobalVariantId);
 
 pub const Declaration = primitives.Declaration(Ids);
+pub const TypeDefinition = primitives.TypeDefinition(Ids);
+pub const FamilyDefinition = primitives.FamilyDefinition(Ids);
+pub const DefinitionValue = primitives.DefinitionValue(Ids);
 pub const GlobalType = primitives.SemanticType(Ids);
 pub const GenericInstance = type_shapes.GenericInstance(Ids);
 pub const Field = primitives.Field(Ids);
@@ -98,7 +105,7 @@ pub const ContractSafetyConformance = struct {
 // erased receiver and participates in the ordinary append-only checkpoints.
 pub const ContractOperationBindingId = enum(u32) { _ };
 pub const ContractOperationBinding = struct {
-    contract_declaration: GlobalDeclId,
+    contract_definition: GlobalFamilyDefinitionId,
     requirement_index: u32,
     requirement_source: primitives.SourceRef,
     implementation_source: primitives.SourceRef,
@@ -106,6 +113,8 @@ pub const ContractOperationBinding = struct {
     name: StringRange,
     declaration: GlobalDeclId,
     instantiate_associated: bool = false,
+    materialized_function: ?GlobalFunctionId = null,
+    parameter_count: u32 = 0,
 };
 pub const ContractConformance = struct {
     // Declaration/signature validation is separate from the later safety proof.
@@ -113,10 +122,9 @@ pub const ContractConformance = struct {
     implementation_arguments: primitives.Range(GlobalGenericArgId) = .{ .start = 0, .len = 0 },
     operation_bindings: primitives.Range(ContractOperationBindingId) = .{ .start = 0, .len = 0 },
     context: GlobalModuleId = @enumFromInt(0),
-    declaration: GlobalDeclId,
+    declaration: GlobalFamilyDefinitionId,
     participants: primitives.Range(GlobalGenericArgId),
     associated_arguments: primitives.Range(GlobalGenericArgId),
-    operations: primitives.Range(GlobalFunctionId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
 };
 pub const ReachAlternative = primitives.ReachAlternative(Ids);
@@ -162,7 +170,7 @@ pub const Symbol = struct {
 /// with identical runtime signatures from being merged accidentally.
 pub const GenericFunctionInstance = struct {
     function: GlobalFunctionId,
-    parameterized_declaration: GlobalDeclId,
+    parameterized_definition: GlobalFamilyDefinitionId,
     arguments: primitives.Range(GlobalGenericArgId),
 };
 
@@ -180,11 +188,11 @@ pub const TypeResolutionState = enum(u8) {
     unresolved,
 };
 
-pub const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u32));
+pub const unresolved_type_poison_definition: GlobalTypeDefinitionId = @enumFromInt(std.math.maxInt(u32));
 const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
 pub const ArgumentDefaultTemporary = struct { expression: GlobalNodeId, declaration: GlobalNodeId };
-pub const ArgumentDefaultBinding = struct { ty: ?GlobalTypeId, integer: ?i64 };
+pub const ArgumentDefaultBinding = struct { ty: ?GlobalTypeId, integer: ?i64, definition: ?DefinitionValue = null };
 pub const ArgumentDefault = struct {
     module_index: usize,
     expression: @import("../module/parameterized/ir.zig").ParameterizedNodeId,
@@ -208,13 +216,16 @@ pub const GlobalSemanticGraph = struct {
         block_rewrites_len: usize,
         error_context_rewrites_len: usize,
         conformance_rewrites_len: usize,
+        operation_completions_len: usize,
         variant_rewrites_len: usize,
+        definition_rewrites_len: usize,
         error_propagation_rewrites_len: usize,
         safety_arena: ?*std.heap.ArenaAllocator,
     };
 
     const MutationFrontier = struct {
         types: usize,
+        type_definitions: usize,
         bindings: usize,
         virtual_registries: usize,
         nodes: usize,
@@ -222,6 +233,7 @@ pub const GlobalSemanticGraph = struct {
         error_propagations: usize,
         error_contexts: usize,
         contract_conformances: usize,
+        contract_operation_bindings: usize,
         variants: usize,
         functions: usize,
         depth: usize,
@@ -262,6 +274,7 @@ pub const GlobalSemanticGraph = struct {
         const parent = self.mutation_frontier;
         const frontier: MutationFrontier = .{
             .types = self.types.items.len,
+            .type_definitions = self.type_definitions.items.len,
             .bindings = self.bindings.items.len,
             .virtual_registries = self.virtual_registries.items.len,
             .nodes = self.nodes.items.len,
@@ -269,6 +282,7 @@ pub const GlobalSemanticGraph = struct {
             .error_propagations = self.error_propagations.items.len,
             .error_contexts = self.error_contexts.items.len,
             .contract_conformances = self.contract_conformances.items.len,
+            .contract_operation_bindings = self.contract_operation_bindings.items.len,
             .variants = self.variants.items.len,
             .functions = self.functions.items.len,
             .depth = if (parent) |value| value.depth + 1 else 1,
@@ -289,7 +303,9 @@ pub const GlobalSemanticGraph = struct {
     const ConstructionState = struct {
         function_rewrites: std.ArrayList(struct { id: GlobalFunctionId, previous: Function }) = .empty,
         error_propagation_rewrites: std.ArrayList(struct { id: GlobalErrorPropagationId, previous: ErrorPropagation }) = .empty,
+        definition_rewrites: std.ArrayList(struct { id: GlobalTypeDefinitionId, previous: TypeDefinition }) = .empty,
         variant_rewrites: std.ArrayList(struct { id: GlobalVariantId, previous: ChoiceVariant }) = .empty,
+        operation_completions: std.ArrayList(struct { id: ContractOperationBindingId, previous: ?GlobalFunctionId }) = .empty,
         conformance_rewrites: std.ArrayList(struct { index: u32, previous: ContractConformance }) = .empty,
         error_context_rewrites: std.ArrayList(struct { id: GlobalErrorContextId, previous: ErrorContext }) = .empty,
         block_rewrites: std.ArrayList(struct { id: GlobalBlockId, previous: Block }) = .empty,
@@ -315,6 +331,8 @@ pub const GlobalSemanticGraph = struct {
             self.block_rewrites.deinit(allocator);
             self.error_context_rewrites.deinit(allocator);
             self.conformance_rewrites.deinit(allocator);
+            self.operation_completions.deinit(allocator);
+            self.definition_rewrites.deinit(allocator);
             self.variant_rewrites.deinit(allocator);
             self.error_propagation_rewrites.deinit(allocator);
             self.type_resolution.deinit(allocator);
@@ -366,6 +384,8 @@ pub const GlobalSemanticGraph = struct {
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(GlobalDeclId) = .empty,
     types: std.ArrayList(GlobalType) = .empty,
+    type_definitions: std.ArrayList(TypeDefinition) = .empty,
+    family_definitions: std.ArrayList(FamilyDefinition) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
     generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
@@ -524,7 +544,9 @@ pub const GlobalSemanticGraph = struct {
             .block_rewrites_len = self.construction.block_rewrites.items.len,
             .error_context_rewrites_len = self.construction.error_context_rewrites.items.len,
             .conformance_rewrites_len = self.construction.conformance_rewrites.items.len,
+            .operation_completions_len = self.construction.operation_completions.items.len,
             .variant_rewrites_len = self.construction.variant_rewrites.items.len,
+            .definition_rewrites_len = self.construction.definition_rewrites.items.len,
             .error_propagation_rewrites_len = self.construction.error_propagation_rewrites.items.len,
             .safety_arena = self.safety_arena,
         };
@@ -562,9 +584,17 @@ pub const GlobalSemanticGraph = struct {
             const rewrite = self.construction.error_propagation_rewrites.pop().?;
             self.error_propagations.items[@intFromEnum(rewrite.id)] = rewrite.previous;
         }
+        while (self.construction.definition_rewrites.items.len > saved.definition_rewrites_len) {
+            const rewrite = self.construction.definition_rewrites.pop().?;
+            self.type_definitions.items[@intFromEnum(rewrite.id)] = rewrite.previous;
+        }
         while (self.construction.variant_rewrites.items.len > saved.variant_rewrites_len) {
             const rewrite = self.construction.variant_rewrites.pop().?;
             self.variants.items[@intFromEnum(rewrite.id)] = rewrite.previous;
+        }
+        while (self.construction.operation_completions.items.len > saved.operation_completions_len) {
+            const completion = self.construction.operation_completions.pop().?;
+            self.contract_operation_bindings.items[@intFromEnum(completion.id)].materialized_function = completion.previous;
         }
         while (self.construction.conformance_rewrites.items.len > saved.conformance_rewrites_len) {
             const rewrite = self.construction.conformance_rewrites.pop().?;
@@ -621,18 +651,18 @@ pub const GlobalSemanticGraph = struct {
         }
         self.safety_batches.deinit(allocator);
         inline for (.{
-            &self.modules,                     &self.module_aliases,             &self.files,                        &self.declarations,
-            &self.symbols,                     &self.symbol_declarations,        &self.types,                        &self.generic_instances,
-            &self.functions,                   &self.generic_function_instances, &self.bindings,                     &self.nodes,
-            &self.blocks,                      &self.fields,                     &self.variants,                     &self.generic_arguments,
-            &self.value_fields,                &self.switch_cases,               &self.switches,                     &self.auto_deinit_fields,
-            &self.auto_deinits,                &self.virtual_registries,         &self.virtualizes,                  &self.virtual_calls,
-            &self.reach_segments,              &self.reach_alternatives,         &self.reaches,                      &self.nullable_unwraps,
-            &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,               &self.node_refs,
-            &self.type_refs,                   &self.binding_refs,               &self.function_refs,                &self.virtual_registry_refs,
-            &self.strings,                     &self.roots,                      &self.contract_safety_conformances, &self.contract_conformances,
-            &self.contract_operation_bindings, &self.argument_defaults,          &self.argument_default_temporaries, &self.argument_default_bindings,
-            &self.comptime_requests,           &self.block_assumptions,
+            &self.modules,                      &self.module_aliases,            &self.files,                       &self.declarations,
+            &self.symbols,                      &self.symbol_declarations,       &self.types,                       &self.type_definitions,
+            &self.family_definitions,           &self.generic_instances,         &self.functions,                   &self.generic_function_instances,
+            &self.bindings,                     &self.nodes,                     &self.blocks,                      &self.fields,
+            &self.variants,                     &self.generic_arguments,         &self.value_fields,                &self.switch_cases,
+            &self.switches,                     &self.auto_deinit_fields,        &self.auto_deinits,                &self.virtual_registries,
+            &self.virtualizes,                  &self.virtual_calls,             &self.reach_segments,              &self.reach_alternatives,
+            &self.reaches,                      &self.nullable_unwraps,          &self.testing_expect_errors,       &self.error_propagations,
+            &self.error_contexts,               &self.node_refs,                 &self.type_refs,                   &self.binding_refs,
+            &self.function_refs,                &self.virtual_registry_refs,     &self.strings,                     &self.roots,
+            &self.contract_safety_conformances, &self.contract_conformances,     &self.contract_operation_bindings, &self.argument_defaults,
+            &self.argument_default_temporaries, &self.argument_default_bindings, &self.comptime_requests,           &self.block_assumptions,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -793,6 +823,35 @@ pub const GlobalSemanticGraph = struct {
         return if (self.lookup.parameterized_function_names.get(name)) |matches| matches.items else &.{};
     }
 
+    pub fn familyDefinition(self: *const GlobalSemanticGraph, id: GlobalFamilyDefinitionId) FamilyDefinition {
+        return self.family_definitions.items[@intFromEnum(id)];
+    }
+
+    pub fn familyDeclaration(self: *const GlobalSemanticGraph, id: GlobalFamilyDefinitionId) GlobalDeclId {
+        return self.familyDefinition(id).declaration.?;
+    }
+
+    pub fn familyForDeclaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) ?GlobalFamilyDefinitionId {
+        return self.declaration(id).family_definition;
+    }
+
+    pub fn familyDefinitionName(self: *const GlobalSemanticGraph, id: GlobalFamilyDefinitionId) []const u8 {
+        return if (self.familyDefinition(id).declaration) |declaration_id| self.text(self.declaration(declaration_id).name) else "<anonymous>";
+    }
+
+    pub fn moduleForFamilyDefinition(self: *const GlobalSemanticGraph, id: GlobalFamilyDefinitionId) ?GlobalModuleId {
+        return self.moduleForPartition("files", self.familyDefinition(id).source.file_index);
+    }
+
+    pub fn typeDefinitionName(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) []const u8 {
+        const definition = self.typeDefinition(id);
+        return if (definition.declaration) |declaration_id| self.text(self.declaration(declaration_id).name) else "<anonymous>";
+    }
+
+    pub fn typeDefinition(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) TypeDefinition {
+        return self.type_definitions.items[@intFromEnum(id)];
+    }
+
     pub fn declaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) Declaration {
         return self.declarations.items[@intFromEnum(id)];
     }
@@ -823,7 +882,7 @@ pub const GlobalSemanticGraph = struct {
         try self.recordTypeRewrite(allocator, id, false);
         try self.ensureTypeResolutionCovers(allocator, self.types.items.len);
         self.construction.type_resolution.items[raw] = .unresolved;
-        self.types.items[raw] = .{ .declared = unresolved_type_poison_decl };
+        self.types.items[raw] = .{ .nominal = unresolved_type_poison_definition };
     }
 
     /// Publish a type through the construction-state boundary. Type holes must
@@ -906,6 +965,10 @@ pub const GlobalSemanticGraph = struct {
         self.construction.error_context_rewrites = .empty;
         self.construction.conformance_rewrites.deinit(allocator);
         self.construction.conformance_rewrites = .empty;
+        self.construction.operation_completions.deinit(allocator);
+        self.construction.operation_completions = .empty;
+        self.construction.definition_rewrites.deinit(allocator);
+        self.construction.definition_rewrites = .empty;
         self.construction.variant_rewrites.deinit(allocator);
         self.construction.variant_rewrites = .empty;
         self.construction.error_propagation_rewrites.deinit(allocator);
@@ -976,10 +1039,35 @@ pub const GlobalSemanticGraph = struct {
         self.error_contexts.items[raw] = value;
     }
 
+    pub fn completeOperationBinding(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: ContractOperationBindingId, function_id: GlobalFunctionId) !void {
+        const raw = @intFromEnum(id);
+        const previous = self.contract_operation_bindings.items[raw].materialized_function;
+        if (previous) |published| {
+            std.debug.assert(published == function_id);
+            return;
+        }
+        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.contract_operation_bindings)
+            try self.construction.operation_completions.append(allocator, .{ .id = id, .previous = previous });
+        self.contract_operation_bindings.items[raw].materialized_function = function_id;
+    }
+
     pub fn setContractConformance(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, index: u32, value: ContractConformance) !void {
         if (self.mutation_frontier == null or index < self.mutation_frontier.?.contract_conformances)
             try self.construction.conformance_rewrites.append(allocator, .{ .index = index, .previous = self.contract_conformances.items[index] });
         self.contract_conformances.items[index] = value;
+    }
+
+    pub fn hasPendingTypeDefinitionCompletion(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) bool {
+        for (self.construction.definition_rewrites.items) |rewrite| if (rewrite.id == id) return true;
+        return false;
+    }
+
+    pub fn completeTypeDefinition(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalTypeDefinitionId, value: TypeDefinition) !void {
+        const raw = @intFromEnum(id);
+        std.debug.assert(self.type_definitions.items[raw].struct_fields == null and self.type_definitions.items[raw].choice_variants == null);
+        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.type_definitions)
+            try self.construction.definition_rewrites.append(allocator, .{ .id = id, .previous = self.type_definitions.items[raw] });
+        self.type_definitions.items[raw] = value;
     }
 
     pub fn setVariant(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalVariantId, value: ChoiceVariant) !void {
@@ -1130,12 +1218,19 @@ pub const GlobalSemanticGraph = struct {
         // verifyModulePartitions checks that invariant before graph validation
         // uses this lookup. Empty modules and source fragments retain their own
         // positions. Canonical namespace ownership is a separate operation.
-        const raw = @intFromEnum(id);
+        return self.moduleForPartition("declarations", @intFromEnum(id));
+    }
+
+    pub fn moduleForTypeDefinition(self: *const GlobalSemanticGraph, id: GlobalTypeDefinitionId) ?GlobalModuleId {
+        return self.moduleForPartition("files", self.typeDefinition(id).source.file_index);
+    }
+
+    fn moduleForPartition(self: *const GlobalSemanticGraph, comptime field: []const u8, raw: u32) ?GlobalModuleId {
         var first: usize = 0;
         var end = self.modules.items.len;
         while (first < end) {
             const middle = first + (end - first) / 2;
-            const range = self.modules.items[middle].declarations;
+            const range = @field(self.modules.items[middle], field);
             if (raw < range.start) {
                 end = middle;
             } else if (raw - range.start >= range.len) {
@@ -1225,7 +1320,7 @@ test "global semantic graph derives symbol module ownership from declarations" {
         .source = .{ .file_index = 0, .offset = 4 },
         .type_id = @enumFromInt(0),
     });
-    try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .nominal = @enumFromInt(0) });
     try graph.symbol_declarations.append(allocator, @enumFromInt(0));
     const symbol = Symbol{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } };
     try graph.symbols.append(allocator, symbol);
@@ -1710,7 +1805,7 @@ test "resolution transactions undo canonicalization and completion in write orde
     try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .UInt8 });
     transaction.rollback();
     try std.testing.expect(graph.isTypeUnresolved(@enumFromInt(0)));
-    try std.testing.expectEqual(unresolved_type_poison_decl, graph.semanticType(@enumFromInt(0)).declared);
+    try std.testing.expectEqual(unresolved_type_poison_definition, graph.semanticType(@enumFromInt(0)).nominal);
     try std.testing.expectEqualDeep(before, graph.checkpoint());
 }
 
@@ -2077,6 +2172,8 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             try graph.error_propagations.append(a, propagation);
             try graph.error_contexts.append(a, context);
             try graph.contract_conformances.append(a, conformance);
+            const operation = std.mem.zeroes(ContractOperationBinding);
+            try graph.contract_operation_bindings.append(a, operation);
             try graph.variants.append(a, variant);
             try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 0 } });
             try graph.types.append(a, .{ .builtin = .Int32 });
@@ -2089,6 +2186,7 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
                 std.debug.assert(std.meta.eql(propagation, graph.error_propagations.items[0]));
                 std.debug.assert(std.meta.eql(context, graph.error_contexts.items[0]));
                 std.debug.assert(std.meta.eql(conformance, graph.contract_conformances.items[0]));
+                std.debug.assert(std.meta.eql(operation, graph.contract_operation_bindings.items[0]));
                 std.debug.assert(std.meta.eql(variant, graph.variants.items[0]));
                 std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
             }
@@ -2107,8 +2205,8 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             updated_context.ok_value_field_index = 2;
             try graph.setErrorContext(a, @enumFromInt(0), updated_context);
             var validated = conformance;
-            try graph.function_refs.append(a, @enumFromInt(0));
-            validated.operations = .{ .start = 0, .len = 1 };
+            try graph.completeOperationBinding(a, @enumFromInt(0), @enumFromInt(0));
+            validated.operation_bindings = .{ .start = 0, .len = 1 };
             validated.declaration_validated = true;
             try graph.setContractConformance(a, 0, validated);
             var resolved_variant = variant;
@@ -2124,6 +2222,7 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             try std.testing.expectEqualDeep(propagation, graph.error_propagations.items[0]);
             try std.testing.expectEqualDeep(context, graph.error_contexts.items[0]);
             try std.testing.expectEqualDeep(conformance, graph.contract_conformances.items[0]);
+            try std.testing.expectEqualDeep(operation, graph.contract_operation_bindings.items[0]);
             try std.testing.expectEqualDeep(variant, graph.variants.items[0]);
             try std.testing.expectEqualDeep(saved, graph.checkpoint());
         }
@@ -2157,4 +2256,22 @@ test "module ownership lookup preserves empty partitions fragments and rollback"
     try std.testing.expectEqual(null, graph.moduleForDeclaration(@enumFromInt(7)));
     graph.modules.clearRetainingCapacity();
     try std.testing.expectEqual(null, graph.moduleForDeclaration(@enumFromInt(0)));
+}
+
+test "nominal definition completion rolls back without changing identity" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const id: GlobalTypeDefinitionId = @enumFromInt(0);
+    try graph.type_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 7 } });
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    var complete = graph.typeDefinition(id);
+    complete.struct_fields = .{ .start = 0, .len = 0 };
+    try graph.completeTypeDefinition(a, id, complete);
+    try std.testing.expect(graph.typeDefinition(id).struct_fields != null);
+    transaction.rollback();
+    try std.testing.expectEqual(@as(usize, 1), graph.type_definitions.items.len);
+    try std.testing.expectEqual(null, graph.typeDefinition(id).struct_fields);
+    try std.testing.expectEqual(@as(u32, 7), graph.typeDefinition(id).source.offset);
 }

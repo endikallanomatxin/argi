@@ -1,4 +1,4 @@
-CountingTracer: Type = (.count: Int32, .location: UInt32)
+CountingTracer := (.count: Int32, .location: UInt32)
 
 implement ErrorTracer#(CountingTracer) (
     .add_context = (
@@ -10,7 +10,7 @@ implement ErrorTracer#(CountingTracer) (
     }
     .reset_context = (.self: $&CountingTracer) -> () {}
     .report        = (.self: $&CountingTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
         result = ..ok Void()
     }

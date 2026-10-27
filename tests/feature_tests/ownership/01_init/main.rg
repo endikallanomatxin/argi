@@ -1,24 +1,24 @@
-Point : Type = (
-    .x: Int32,
-    .y: Int32,
+Point := (
+    .x : Int32,
+    .y : Int32,
 )
 
 implement Init#(Point, (.x: Int32, .y: Int32)) (
-    .Result: Type = Point
-    .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
+    .Result : Type = Point
+    .init   = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
         x ::= ~args.x
         y ::= ~args.y
 
-        result = (.x=x, .y=y)
+        result = (.x = x, .y = y)
     }
 )
 
-initialize_value(.p: $&Point, .x: Int32, .y: Int32) -> () := {
-    p& = (.x=x, .y=y)
+initialize_value := (.p: $&Point, .x: Int32, .y: Int32) -> () {
+    p&= (.x = x, .y = y)
 }
 
-main () -> (.status_code: Int32) := {
-    my_point :: Point = (.x=0, .y=0)
+main := () -> (.status_code: Int32) {
+    my_point :: Point = (.x = 0, .y = 0)
     my_point = Point(.x = 1, .y = 2)
     alias ::= &my_point
     initialize_value(.p = $&my_point, .x = 3, .y = 4)

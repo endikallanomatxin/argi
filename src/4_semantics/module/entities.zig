@@ -3,6 +3,8 @@ const primitives = @import("../primitives/schema.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
 pub const ModuleTypeId = enum(u32) { _ };
+pub const ModuleTypeDefinitionId = enum(u32) { _ };
+pub const ModuleFamilyDefinitionId = enum(u32) { _ };
 pub const ModuleFunctionId = enum(u32) { _ };
 pub const ModuleBindingId = enum(u32) { _ };
 pub const ModuleNodeId = enum(u32) { _ };
@@ -37,6 +39,8 @@ pub const unresolved_binding_type_poison: ModuleTypeId = @enumFromInt(std.math.m
 pub const Ids = struct {
     pub const DeclId = ModuleDeclId;
     pub const TypeId = ModuleTypeId;
+    pub const TypeDefinitionId = ModuleTypeDefinitionId;
+    pub const FamilyDefinitionId = ModuleFamilyDefinitionId;
     pub const FunctionId = ModuleFunctionId;
     pub const BindingId = ModuleBindingId;
     pub const NodeId = ModuleNodeId;
@@ -71,6 +75,8 @@ pub const GenericArgRange = primitives.Range(ModuleGenericArgId);
 
 pub const ResolvedType = primitives.SemanticType(Ids);
 pub const Declaration = primitives.Declaration(Ids);
+pub const TypeDefinition = primitives.TypeDefinition(Ids);
+pub const FamilyDefinition = primitives.FamilyDefinition(Ids);
 pub const Field = primitives.Field(Ids);
 pub const ChoiceVariant = primitives.ChoiceVariant(Ids);
 pub const GenericArgument = primitives.GenericArgument(Ids);
@@ -99,12 +105,6 @@ pub const ModuleType = union(enum) {
     external: ExternalRefId,
 };
 
-pub const DeclarationSemantic = struct {
-    declaration: ModuleDeclId,
-    struct_layout: primitives.StructLayout = .regular,
-    choice_layout: primitives.ChoiceLayout = .regular,
-};
-
 /// Cold relation for declaration kinds that own runtime storage. Keeping this
 /// sparse avoids inflating every Declaration while making the identity explicit
 /// for lookup, reach, Safety and Codegen.
@@ -119,30 +119,6 @@ pub const ModuleAlias = struct {
     declaration: ModuleDeclId,
     path: primitives.StringRange,
     source: primitives.SourceRef,
-};
-
-pub const FunctionSemantic = struct {
-    function: ModuleFunctionId,
-    body: ?ModuleBlockId = null,
-    input_bindings: BindingRange = .{ .start = 0, .len = 0 },
-    output_bindings: BindingRange = .{ .start = 0, .len = 0 },
-    inferred_error_reasons: ?ModuleTypeId = null,
-    foreign_symbol: ?primitives.StringRange = null,
-    safety_primitive: primitives.SafetyPrimitive = .none,
-    flags: primitives.FunctionFlags = .{},
-};
-
-pub const FieldSemantic = struct {
-    field: ModuleFieldId,
-    default_value: ?ModuleNodeId = null,
-    // Executable outputs initialize through their function entry statements.
-    default_at_entry: bool = false,
-};
-
-pub const VariantSemantic = struct {
-    variant: ModuleVariantId,
-    value: i32,
-    option_decl: ?ModuleDeclId = null,
 };
 
 pub const Scope = struct {
@@ -171,9 +147,14 @@ pub const ExternalRef = struct {
 };
 
 pub const PendingOperation = union(enum) {
+    resolve_function_signature: struct { function: ModuleFunctionId, template_index: u32 },
     resolve_type: struct {
         external: ExternalRefId,
         destination: ModuleTypeId,
+    },
+    resolve_entity_value: struct {
+        node: ModuleNodeId,
+        expression: @import("parameterized/ir.zig").ParameterizedTypeId,
     },
     resolve_value_type: struct {
         value: ModuleNodeId,
@@ -341,10 +322,10 @@ pub const ModuleNode = union(enum) {
 };
 
 test "module semantic identities instantiate the shared schema" {
-    const decl: ModuleDeclId = @enumFromInt(1);
-    const resolved = ResolvedType{ .declared = decl };
+    const definition: ModuleTypeDefinitionId = @enumFromInt(1);
+    const resolved = ResolvedType{ .nominal = definition };
     const ty = ModuleType{ .resolved = resolved };
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ty.resolved.declared));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ty.resolved.nominal));
 
     const external = ExternalRef{
         .kind = .type,
@@ -356,7 +337,7 @@ test "module semantic identities instantiate the shared schema" {
     try std.testing.expectEqual(ExternalKind.type, external.kind);
     try std.testing.expectEqual(@as(u32, 2), external.generic_arguments.?.start);
 
-    const link = DeclarationBinding{ .declaration = decl, .binding = @enumFromInt(3) };
+    const link = DeclarationBinding{ .declaration = @enumFromInt(1), .binding = @enumFromInt(3) };
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(link.binding));
 
     const pending = PendingOperation{ .resolve_binary = .{

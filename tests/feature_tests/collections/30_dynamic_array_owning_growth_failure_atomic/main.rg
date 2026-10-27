@@ -1,4 +1,4 @@
-Tracked: Type = (
+Tracked := (
     .id         : Int32
     .allocation : Allocation
 )
@@ -14,9 +14,9 @@ implement Deinit#(Tracked) (
     }
 )
 
-make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(
+make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .allocator: $&AllocatorType, .id: Int32
-) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) {
     assume allocator
 
     allocated ::= allocate_bytes(.self = allocator, .size = 1)
@@ -29,8 +29,8 @@ make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 }
 
-FailSecondAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
+FailSecondAllocator := (
+    .ffi           : $&ForeignFunctionInterface
     .allocations   : Int32
     .deallocations : Int32
 )
@@ -46,7 +46,7 @@ implement Init#(FailSecondAllocator, (.ffi: $&ForeignFunctionInterface)) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -112,7 +112,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Allocator#(FailSecondAllocator) (
     .allocate = (.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         if self&.allocations != 0 {
             result = ..error(.reason = ..out_of_memory)

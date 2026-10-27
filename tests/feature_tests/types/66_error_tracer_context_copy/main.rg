@@ -1,10 +1,10 @@
 ..copy_test_failure
 
-fail() -> !Void := { result = ..error(.reason = ..copy_test_failure) }
+fail := () -> !Void { result = ..error(.reason = ..copy_test_failure) }
 
-context_failure(.allocator: $&PageAllocator) -> (
-    .result : Errable#(.t: Void, .reasons: (..copy_test_failure))
-) := {
+context_failure := (.allocator: $&PageAllocator) -> (
+    .result: Errable#(.t: Void, .reasons: (..copy_test_failure))
+) {
     text ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 3))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 66))
@@ -15,7 +15,7 @@ context_failure(.allocator: $&PageAllocator) -> (
     result = ..ok Void()
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [4096]UInt8)()))
     virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer

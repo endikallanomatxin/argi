@@ -1,20 +1,20 @@
+_MemoryInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 -- Page mappings retain the foreign-call authorization used to acquire them.
-Memory: Type = (
+Memory := (
     ._ffi       : $&ForeignFunctionInterface
     ._page_size : UIntNative
 )
 
 -- Trimming an aligned page mapping keeps the same acquisition authorization.
 -- The platform boundary proves this address is a subrange of base's mapping.
-_trusted_acquisition_subaddress(.base: UIntNative, .address: UIntNative) -> (
+_trusted_acquisition_subaddress := (.base: UIntNative, .address: UIntNative) -> (
     .result : UIntNative
-) := {
+) {
     result = address
 }
 
-once _acquire_memory := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : Memory
-) {
+once _acquire_memory := (.args: _MemoryInitArgs) -> (.result: Memory) {
     assume ffi := args.ffi
 
     result._ffi = ffi
@@ -23,14 +23,14 @@ once _acquire_memory := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) 
     if result._page_size == 0 { result._page_size = 4096 }
 }
 
-implement Init#(Memory, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(Memory, _MemoryInitArgs) (
     .Result : Type = Memory
     .init   = _acquire_memory
 )
 
-_memory_map_aligned(.size: UIntNative, .alignment: UIntNative, .page_size: UIntNative) -> (
+_memory_map_aligned := (.size: UIntNative, .alignment: UIntNative, .page_size: UIntNative) -> (
     .result : Errable#(AcquiredStorage, (..out_of_memory))
-) := {
+) {
     _require_allocation_alignment(.alignment = alignment)
 
     if page_size == 0 {
@@ -55,9 +55,9 @@ _memory_map_aligned(.size: UIntNative, .alignment: UIntNative, .page_size: UIntN
     result = ..ok(._address = address, ._size = mapped_size, ._alignment = alignment)
 }
 
-map_pages(.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
+map_pages := (.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
     .result : Errable#(Allocation, (..out_of_memory))
-) := {
+) {
     assume ffi := self&._ffi
     physical_size ::= page_allocator_round_up(
         .size = size, .alignment = self&._page_size

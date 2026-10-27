@@ -1,6 +1,6 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Large: Type = (.values: [128]Int32)
+Large := (.values: [128]Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -10,14 +10,9 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-transfer_if(
-        .source      : $&Resource,
-        .destination : $&Resource,
-        .move        : Bool
-    ) -> (
-        .count  : Int32  = 1,
-        .result : ?Large
-    ) := {
+transfer_if := (.source: $&Resource, .destination: $&Resource, .move: Bool) -> (
+    .count : Int32 = 1, .result: ?Large
+) {
     if move {
         relocate(source, destination)
         result = ..some(.value = Large(zeroed#([128]Int32)()))
@@ -27,7 +22,7 @@ transfer_if(
     result = ..none
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if true {
         source ::= Resource(42)
         destination ::= Resource(0)

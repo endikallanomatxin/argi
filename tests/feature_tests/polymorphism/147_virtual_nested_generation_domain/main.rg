@@ -2,8 +2,8 @@
 
 Source#(.Participant: Type): Contract = (
     domain storage
-    .get: (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
-    .edit: (.self: $&Participant, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) where {
+    .get  : (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
+    .edit : (.self: $&Participant, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) where {
         on result ..ok {
             on result ..some { invalidates(self.storage) }
             on result ..none {}
@@ -12,13 +12,15 @@ Source#(.Participant: Type): Contract = (
     }
 )
 
-Cell: Type = (.value: Int32, .other: Int32)
+Cell := (.value: Int32, .other: Int32)
 
-implement Source#(Cell) (.get = _impl_get_Cell, .edit = _impl_edit_Cell) where { storage(self.value) }
+implement Source#(Cell) (.get = _impl_get_Cell, .edit = _impl_edit_Cell) where {
+    storage(self.value)
+}
 
-_impl_get_Cell := (.self: &Cell) -> (.value: &Int32)  { value = &self&.value }
+_impl_get_Cell := (.self: &Cell) -> (.value: &Int32) { value = &self&.value }
 
-_impl_edit_Cell := (.self: $&Cell, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed)))  {
+_impl_edit_Cell := (.self: $&Cell, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) {
     if succeed {
         self&.value = 42
         result = ..ok ..some(.value = 42)
@@ -28,11 +30,13 @@ _impl_edit_Cell := (.self: $&Cell, .succeed: Bool) -> (.result: Errable#(?Int32,
     result = ..ok ..none
 }
 
-apply_edit(.source: $&Virtual#(Source), .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) := {
+apply_edit := (.source: $&Virtual#(Source), .succeed: Bool) -> (
+    .result: Errable#(?Int32, (..failed))
+) {
     result = edit(source, succeed)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(41, 9)
     source ::= to_virtual#(Source)($&cell)
     previous ::= get(&source)

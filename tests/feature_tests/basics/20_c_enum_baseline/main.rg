@@ -1,9 +1,9 @@
-AccessMode : CEnum = (
+AccessMode: CEnum = (
     ..missing,
     ..exists,
 )
 
-choose(.flag: Bool) -> (.mode: AccessMode) := {
+choose := (.flag: Bool) -> (.mode: AccessMode) {
     if flag {
         mode = ..exists
         return
@@ -12,8 +12,8 @@ choose(.flag: Bool) -> (.mode: AccessMode) := {
     mode = ..missing
 }
 
-main() -> (.status_code: Int32) := {
-    mode : AccessMode = ..exists
+main := () -> (.status_code: Int32) {
+    mode: AccessMode = ..exists
     if mode != ..exists {
         status_code = 1
         return

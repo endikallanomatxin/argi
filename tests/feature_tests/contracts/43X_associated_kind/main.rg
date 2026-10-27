@@ -1,7 +1,11 @@
 Product#(.Left: Type, .Right: Type): Contract = (
-    .Result: Type
+    .Result : Type
 )
+
 Row: Type = ()
+
 Column: Type = ()
+
 implement Product#(Row, Column) (.Result: Int = 42)
-main() -> () := {}
+
+main := () -> () {}

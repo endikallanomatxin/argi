@@ -1,5 +1,6 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-main(.system: System) -> (.status_code: Int32) := {
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     assume backing_allocator ::= $&allocator_storage
@@ -9,9 +10,9 @@ main(.system: System) -> (.status_code: Int32) := {
     match initialized {
         ..ok ~constructed_value { arena = ~constructed_value }
         ..error _ {
-        status_code = 1
-        return
-    }
+            status_code = 1
+            return
+        }
     }
 
     first_result ::= allocate_bytes(.self = $&arena, .size = 8)
@@ -21,10 +22,12 @@ main(.system: System) -> (.status_code: Int32) := {
             status_code = 2
             return
         }
-        ..ok ~ first_payload {
+        ..ok ~first_payload {
             first ::= ~first_payload
-            byte_pointer_21 ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&first, .offset = 0).reference
-            byte_pointer_21& = 1
+            byte_pointer_21 ::= unsafe_allocation.trusted_allocation_byte_rw(
+                .allocation = $&first, .offset = 0
+            ).reference
+            byte_pointer_21&= 1
             deinit(.self = $&first)
             reset(.self = $&arena)
         }
@@ -37,10 +40,12 @@ main(.system: System) -> (.status_code: Int32) := {
             status_code = 3
             return
         }
-        ..ok ~ second_payload {
+        ..ok ~second_payload {
             second ::= ~second_payload
-            byte_pointer_36 ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&second, .offset = 0).reference
-            byte_pointer_36& = 2
+            byte_pointer_36 ::= unsafe_allocation.trusted_allocation_byte_rw(
+                .allocation = $&second, .offset = 0
+            ).reference
+            byte_pointer_36&= 2
             deinit(.self = $&second)
             reset(.self = $&arena)
         }

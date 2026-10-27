@@ -1,10 +1,10 @@
 -- Tokens borrow the original text. Only ASCII whitespace separates tokens;
 -- repeated separators never produce empty tokens.
-StringWhitespaceIterator: Type = (._text: StringView, ._start: UIntNative)
+StringWhitespaceIterator := (._text: StringView, ._start: UIntNative)
 
 -- Iteration copies the remaining cursor state and preserves source lifetimes.
 
-_whitespace_token_start(.text: StringView, .start: UIntNative) -> (.position: UIntNative) := {
+_whitespace_token_start := (.text: StringView, .start: UIntNative) -> (.position: UIntNative) {
     position = start
 
     while position < text._length {
@@ -20,7 +20,7 @@ _whitespace_token_start(.text: StringView, .start: UIntNative) -> (.position: UI
     }
 }
 
-split_whitespace(.self: StringView) -> (.iterator: StringWhitespaceIterator) := {
+split_whitespace := (.self: StringView) -> (.iterator: StringWhitespaceIterator) {
     iterator = (._text = self, ._start = 0)
 }
 

@@ -1,8 +1,8 @@
-Counter: Type = (.value: Int32)
+Counter := (.value: Int32)
 
 Counting#(.State: Type): Contract = (
-    .bump : (.self: $&State, .amount: Int32) -> () where {}
-    .read : (.self: &State) -> (.result: Int32) where {}
+    .bump           : (.self: $&State, .amount: Int32) -> () where {}
+    .read           : (.self: &State) -> (.result: Int32) where {}
     .read_reference : (.self: &State) -> (.result: &Int32) where depends_on(result, self)
 )
 

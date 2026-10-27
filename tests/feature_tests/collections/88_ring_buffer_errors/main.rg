@@ -1,6 +1,6 @@
-FailingAllocator: Type = (.attempts: UIntNative = 0)
+FailingAllocator := (.attempts: UIntNative = 0)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     allocator :: FailingAllocator = (.attempts = 0)
     match RingBuffer#(.t: Int32)(.capacity = 0, .allocator = $&allocator) {
         ..ok _ { abort }
@@ -24,24 +24,20 @@ main() -> (.status_code: Int32 = 0) := {
     if allocator.attempts != 1 { abort }
 }
 
-implement Allocator#(FailingAllocator)(
-    .allocate = (
-            .self      : $&FailingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative          = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(FailingAllocator) (
+    .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-implement Deallocator#(FailingAllocator)(
+implement Deallocator#(FailingAllocator) (
     .deallocate = (
-            .self      : $&FailingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () { abort }
+        .self      : $&FailingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () { abort }
 )

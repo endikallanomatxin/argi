@@ -21,10 +21,10 @@ pub fn validate(graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) !vo
     const pointer = graph.semanticType(capability.ty);
     if (pointer != .pointer or pointer.pointer.mutability != .read_write) return error.UnsupportedHostSignature;
     const child = graph.semanticType(pointer.pointer.child);
-    if (child != .declared) return error.UnsupportedHostSignature;
+    if (child != .nominal) return error.UnsupportedHostSignature;
     const owner = types.nominalTypeOwner(graph, pointer.pointer.child) orelse return error.UnsupportedHostSignature;
     if (!graph.modules.items[@intFromEnum(owner)].is_bundled_core or
-        !std.mem.eql(u8, graph.text(graph.declaration(child.declared).name), "ForeignFunctionInterface"))
+        !std.mem.eql(u8, graph.typeDefinitionName(child.nominal), "ForeignFunctionInterface"))
         return error.UnsupportedHostSignature;
     for (inputs[0 .. inputs.len - 1]) |field|
         if (b.integerBounds(graph, field.ty) == null) return error.UnsupportedHostSignature;

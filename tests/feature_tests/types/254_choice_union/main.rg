@@ -4,7 +4,7 @@
 
 Left : Type = (..first, ..shared)
 Right : Type = (..shared, ..second)
-make(.select_second: Bool) -> (.result: choice_union#(.a: Left, .b: Right)) := {
+make := (.select_second: Bool) -> (.result: choice_union#(.a: Left, .b: Right))  {
     if select_second {
         result = ..second
     } else {
@@ -12,11 +12,11 @@ make(.select_second: Bool) -> (.result: choice_union#(.a: Left, .b: Right)) := {
     }
 }
 
-make_reversed() -> (.result: choice_union#(.a: Right, .b: Left)) := {
+make_reversed := () -> (.result: choice_union#(.a: Right, .b: Left))  {
     result = ..first
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     combined ::= make(.select_second = false)
     match combined {
         ..first { status_code = 1 }

@@ -1,12 +1,12 @@
 Releaser#(.Participant: Type): Contract = (
-    .release: (.self: &Participant, .resource: &Resource) -> () where consumes(resource)
+    .release : (.self: &Participant, .resource: &Resource) -> () where consumes(resource)
 )
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
 implement Releaser#(Manager) (.release = _impl_release_Manager)
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -16,9 +16,9 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-_impl_release_Manager := (.self: &Manager, .resource: &Resource) -> ()  {}
+_impl_release_Manager := (.self: &Manager, .resource: &Resource) -> () {}
 
-main() -> () := {
+main := () -> () {
     manager ::= Manager(0)
     releaser ::= to_virtual#(Releaser)(&manager)
 }

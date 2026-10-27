@@ -1,3 +1,8 @@
-Owner: Type = (.value: Int32)
+Owner := (.value: Int32)
+
 implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () {})
-main := () -> () { value ::= Owner(42) erased ::= to_virtual#(Deinit)($&value) }
+
+main := () -> () {
+    value ::= Owner(42)
+    erased ::= to_virtual#(Deinit)($&value)
+}

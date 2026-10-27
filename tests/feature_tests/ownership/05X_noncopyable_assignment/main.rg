@@ -1,8 +1,8 @@
-Resource : Type = ()
+Resource: Type = ()
 
 implement Init#(Resource, ()) (
-    .Result: Type = Resource
-    .init = (.args: ()) -> (.result: Result) {
+    .Result : Type = Resource
+    .init   = (.args: ()) -> (.result: Result) {
         result = ()
     }
 )
@@ -13,7 +13,7 @@ implement Deinit#(Resource) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     first := Resource()
     second := first
     _ = second

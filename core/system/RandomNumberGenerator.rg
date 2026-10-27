@@ -1,7 +1,9 @@
--- The system source is a capability, independent of deterministic Pcg32 state.
-RandomNumberGenerator: Type = (._ffi: $&ForeignFunctionInterface)
+_RandomNumberGeneratorInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
 
-once _acquire_random_number_generator := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+-- The system source is a capability, independent of deterministic Pcg32 state.
+RandomNumberGenerator := (._ffi: $&ForeignFunctionInterface)
+
+once _acquire_random_number_generator := (.args: _RandomNumberGeneratorInitArgs) -> (
     .result : RandomNumberGenerator
 ) {
     ffi ::= args.ffi
@@ -9,7 +11,7 @@ once _acquire_random_number_generator := (.args: (.ffi: $&ForeignFunctionInterfa
     result = (._ffi = ffi)
 }
 
-implement Init#(RandomNumberGenerator, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(RandomNumberGenerator, _RandomNumberGeneratorInitArgs) (
     .Result : Type = RandomNumberGenerator
     .init   = _acquire_random_number_generator
 )
@@ -30,9 +32,9 @@ implement Init#(RandomNumberGenerator, (.ffi: $&ForeignFunctionInterface = reach
 
 -- Fill only initialized storage. A failing source may have changed a prefix;
 -- callers must discard all bytes after an error. Empty requests need no FFI.
-fill_random_bytes(.self: $&RandomNumberGenerator, .destination: MutableArrayView#(.t: UInt8)) -> (
-    .result : Errable#(Void, (..entropy_unavailable))
-) := {
+fill_random_bytes := (
+    .self: $&RandomNumberGenerator, .destination: MutableArrayView#(.t: UInt8)
+) -> (.result: Errable#(Void, (..entropy_unavailable))) {
     extent ::= length(&destination).count
 
     if extent == 0 {

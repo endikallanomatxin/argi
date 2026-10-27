@@ -1,4 +1,4 @@
-Resource: Type = (.counter: $&Int32, .value: Int32)
+Resource := (.counter: $&Int32, .value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -6,12 +6,12 @@ implement Deinit#(Resource) (
     }
 )
 
-make(.counter: $&Int32, .value: Int32) -> (.result: &Resource) := {
+make := (.counter: $&Int32, .value: Int32) -> (.result: &Resource) {
     resource :: Resource = (.counter = counter, .value = value)
     result = &resource
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     counter :: Int32 = 0
     {
         first ::= make(.counter = $&counter, .value = 7)

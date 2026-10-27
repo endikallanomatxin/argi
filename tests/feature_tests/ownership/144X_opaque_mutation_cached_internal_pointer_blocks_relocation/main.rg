@@ -1,6 +1,7 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-AddressSensitive : Type = (
-    .next: Nullable#(.t: $&UInt8)
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+AddressSensitive := (
+    .next : Nullable#(.t: $&UInt8)
 )
 
 implement Deinit#(AddressSensitive) (
@@ -9,16 +10,28 @@ implement Deinit#(AddressSensitive) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = AddressSensitive) * 2)
+    slots_result ::= allocate_bytes(
+        .self = $&allocator_storage, .size = [size_of(.type = AddressSensitive) * 2]
+    )
     match slots_result {
         ..error _ { status_code = 1 }
-        ..ok ~ slots_payload {
+        ..ok ~slots_payload {
             slots ::= ~slots_payload
-            source_slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: AddressSensitive)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
-            destination_slot ::= trusted_mutable_reference_offset#(.t: AddressSensitive)(.base = source_slot, .elements = 1).reference
-            cached ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference
+            source_slot ::= trusted_mutable_reinterpret_reference#(
+                .from: UInt8, .to: AddressSensitive
+            )(
+                .base = unsafe_allocation.trusted_allocation_byte_rw(
+                    .allocation = $&slots, .offset = 0
+                ).reference
+            ).reference
+            destination_slot ::= trusted_mutable_reference_offset#(.t: AddressSensitive)(
+                .base = source_slot, .elements = 1
+            ).reference
+            cached ::= unsafe_allocation.trusted_allocation_byte_rw(
+                .allocation = $&slots, .offset = 0
+            ).reference
             value :: AddressSensitive = (.next = ..none)
 
             trusted_opaque_move(.destination = source_slot, .source = ~value)

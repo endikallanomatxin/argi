@@ -1,21 +1,21 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 Store#(.Participant: Type): Contract = (
-    .put: (.self: &Participant, .storage: $&Allocation, .slot: $&Allocation, .value: Allocation) -> () where retains(
-        storage
-        value
-    )
+    .put : (.self: &Participant, .storage: $&Allocation, .slot: $&Allocation, .value: Allocation) -> (
+    ) where retains(storage, value)
 )
 
 Cell: Type = ()
 
 implement Store#(Cell) (.put = _impl_put_Cell)
 
-_impl_put_Cell := (.self: &Cell, .storage: $&Allocation, .slot: $&Allocation, .value: Allocation) -> ()  {
+_impl_put_Cell := (
+    .self: &Cell, .storage: $&Allocation, .slot: $&Allocation, .value: Allocation
+) -> () {
     trusted_opaque_move_in#(Allocation, Allocation)(storage, slot, ~value)
 }
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     storage ::= unwrap_or_abort(allocate#(Allocation)(allocator))
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(

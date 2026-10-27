@@ -232,6 +232,15 @@ pub const MethodSafetyContract = struct {
     outcomes: []const Outcome = &.{},
     source: SourceRef,
 
+    /// Frees independently allocated declaration metadata. Arena-backed GlobalSG
+    /// proofs are released with their arena instead of through this method.
+    pub fn deinit(self: MethodSafetyContract, allocator: std.mem.Allocator) void {
+        for (self.outcomes) |outcome| outcome.deinit(allocator);
+        inline for (@typeInfo(MethodSafetyContract).@"struct".fields) |field| {
+            if (@typeInfo(field.type) == .pointer) allocator.free(@field(self, field.name));
+        }
+    }
+
     pub const Relocation = struct { destination: u32, source: u32 };
     pub const StorageInput = struct { input_index: u32, domain_index: ?u32 = null };
     pub const Retention = struct { storage: StorageInput, input: u32 };
@@ -259,6 +268,13 @@ pub const MethodSafetyContract = struct {
         /// Repeated selectors follow their payload; other selectors conjoin.
         outcomes: []const Outcome = &.{},
         source: SourceRef,
+
+        pub fn deinit(self: Outcome, allocator: std.mem.Allocator) void {
+            for (self.outcomes) |outcome| outcome.deinit(allocator);
+            inline for (@typeInfo(Outcome).@"struct".fields) |field| {
+                if (@typeInfo(field.type) == .pointer) allocator.free(@field(self, field.name));
+            }
+        }
     };
 };
 
@@ -270,33 +286,69 @@ pub const StorageDomainMapping = struct {
 
 /// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
 /// provenance is graph-local; semantic references use the corresponding Ids
-/// namespace. Layout lives here for nominal types because `.declared` type IDs
-/// intentionally carry only nominal identity.
+/// namespace. A declaration binds a name to a value; nominal representation
+/// belongs to the definition referenced by that value.
 pub fn Declaration(comptime Ids: type) type {
     return struct {
         kind: DeclarationKind,
         name: StringRange,
         source: SourceRef,
         type_id: ?Ids.TypeId = null,
-        /// Representation only; type_id continues to name this declaration.
-        underlying_type: ?Ids.TypeId = null,
+        function_id: ?Ids.FunctionId = null,
+        family_definition: ?Ids.FamilyDefinitionId = null,
+    };
+}
+
+/// A nominal definition owns its representation independently of any binding.
+/// The optional declaration is a source-name association, never its identity.
+pub fn TypeDefinition(comptime Ids: type) type {
+    return struct {
+        source: SourceRef,
+        declaration: ?Ids.DeclId = null,
+        specialization: ?struct { origin: Ids.TypeDefinitionId, arguments: Range(Ids.GenericArgId) } = null,
+        /// Checked C callback prototype; it provides representation and ABI,
+        /// independently of the optional source-name association above.
         function_id: ?Ids.FunctionId = null,
         struct_fields: ?Range(Ids.FieldId) = null,
         choice_variants: ?Range(Ids.VariantId) = null,
-        generic_parameter_count: ?u32 = null,
-        contract_domain_count: u32 = 0,
         struct_layout: StructLayout = .regular,
         choice_layout: ChoiceLayout = .regular,
+    };
+}
+
+/// Identity and body locator of a compile-time parameterized definition.
+/// Template indices address the owning module's corresponding immutable pool.
+pub const FamilyKind = enum { type, function, contract };
+pub fn FamilyDefinition(comptime Ids: type) type {
+    return struct {
+        source: SourceRef,
+        declaration: ?Ids.DeclId = null,
+        kind: FamilyKind,
+        parameter_count: u32,
+        domain_count: u32 = 0,
+        template_index: ?u32 = null,
     };
 }
 
 /// `Ids` is a namespace containing the graph-specific identity types. ModuleSG
 /// and GlobalSG instantiate the same resolved semantic shapes with different
 /// enum IDs.
+/// A compile-time family value retains its definition and lexical bindings.
+/// Its classification remains the originating family; captures are value data.
+pub fn DefinitionValue(comptime Ids: type) type {
+    return struct {
+        origin: Ids.FamilyDefinitionId,
+        captures: Range(Ids.GenericArgId) = .{ .start = 0, .len = 0 },
+    };
+}
+
 pub fn SemanticType(comptime Ids: type) type {
     return union(enum) {
         builtin: BuiltinType,
-        declared: Ids.DeclId,
+        nominal: Ids.TypeDefinitionId,
+        /// Compile-time classification of an unspecialized definition value.
+        /// It has no runtime storage layout and is not a concrete Type value.
+        definition: Ids.FamilyDefinitionId,
         pointer: struct { child: Ids.TypeId, mutability: PointerMutability },
         array: struct { length: u64, element: Ids.TypeId },
         nullable: Ids.TypeId,
@@ -317,7 +369,7 @@ pub fn SemanticType(comptime Ids: type) type {
             layout: ChoiceLayout = .regular,
         },
         generic: struct {
-            base: Ids.DeclId,
+            base: Ids.FamilyDefinitionId,
             arguments: Range(Ids.GenericArgId),
         },
         /// Runtime pair (data pointer, vtable pointer) carrying contract evidence.
@@ -353,6 +405,7 @@ pub fn GenericArgument(comptime Ids: type) type {
         value: Value,
 
         pub const Value = union(enum) {
+            definition: DefinitionValue(Ids),
             type: Ids.TypeId,
             comptime_int: i64,
         };
@@ -364,6 +417,8 @@ pub fn Function(comptime Ids: type) type {
         declaration: Ids.DeclId,
         input: Range(Ids.FieldId),
         output: Range(Ids.FieldId),
+        input_type: ?Ids.TypeId = null,
+        output_type: ?Ids.TypeId = null,
         body: ?Ids.BlockId = null,
         input_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         output_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
@@ -514,7 +569,7 @@ pub fn Virtualize(comptime Ids: type) type {
     return struct {
         value: Ids.NodeId,
         concrete_type: Ids.TypeId,
-        contract_decl: Ids.DeclId,
+        contract_decl: Ids.FamilyDefinitionId,
         virtual_type: Ids.TypeId,
         methods: Range(Ids.FunctionId),
         safety_methods: Range(Ids.VirtualRegistryId),
@@ -769,6 +824,7 @@ pub fn Node(comptime Ids: type) type {
                 cleanup_target: ?Ids.NodeId = null,
             },
             type_literal: Ids.TypeId,
+            definition_literal: DefinitionValue(Ids),
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };
     };
@@ -777,6 +833,8 @@ pub fn Node(comptime Ids: type) type {
 test "semantic primitives instantiate with isolated id namespaces" {
     const Ids = struct {
         pub const DeclId = enum(u32) { _ };
+        pub const TypeDefinitionId = enum(u32) { _ };
+        pub const FamilyDefinitionId = enum(u32) { _ };
         pub const TypeId = enum(u32) { _ };
         pub const FunctionId = enum(u32) { _ };
         pub const BindingId = enum(u32) { _ };
@@ -806,14 +864,12 @@ test "semantic primitives instantiate with isolated id namespaces" {
     const pointer = Ty{ .pointer = .{ .child = @enumFromInt(3), .mutability = .read_only } };
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(pointer.pointer.child));
 
-    const Decl = Declaration(Ids);
-    const decl = Decl{
-        .kind = .type,
-        .name = .{ .start = 0, .len = 1 },
+    const Definition = TypeDefinition(Ids);
+    const definition = Definition{
         .source = .{ .file_index = 0, .offset = 0 },
         .struct_layout = .c_union,
     };
-    try std.testing.expectEqual(StructLayout.c_union, decl.struct_layout);
+    try std.testing.expectEqual(StructLayout.c_union, definition.struct_layout);
 
     const SemanticNode = Node(Ids);
     const node = SemanticNode{

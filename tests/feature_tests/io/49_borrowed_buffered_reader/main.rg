@@ -1,4 +1,4 @@
-Source: Type = (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_once: Bool = false)
+Source := (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_once: Bool = false)
 
 implement Reader#(Source) (
     .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
@@ -20,14 +20,14 @@ implement Reader#(Source) (
     }
 )
 
-expect_byte#(.Stream: Type: Reader#(Stream))(.reader: $&Stream, .expected: UInt8 = 65) -> () := {
+expect_byte := #(.Stream: Type: Reader#(Stream)) (.reader: $&Stream, .expected: UInt8 = 65) -> () {
     match unwrap_or_abort(.value = Reader#().read_byte(reader)) {
         ..end { abort }
         ..ok byte { if byte != expected { abort } }
     }
 }
 
-main() -> () := {
+main := () -> () {
     -- Empty storage is a deliberate unbuffered adapter, without lookahead.
     -- TODO: Contextual record literals must materialize omitted middle defaults.
     source :: Source = (.position = 0, .calls = 0, .fail_once = false)

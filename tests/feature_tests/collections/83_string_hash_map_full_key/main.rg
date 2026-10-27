@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator := system.page_allocator
     keys: [32]StringView = (
         "entry_00000_end",

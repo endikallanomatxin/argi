@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
     file ::= File(.stream_address = 0, .should_close = 0 == 1)
 

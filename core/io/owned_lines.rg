@@ -1,14 +1,14 @@
-OwnedByteLine: Type = (.bytes: DynamicArray#(.t: UInt8), .terminated: Bool)
+OwnedByteLine := (.bytes: DynamicArray#(.t: UInt8), .terminated: Bool)
 
 -- Each returned line owns independent storage. LF terminates; a CR preceding
 -- LF is removed. The raw payload limit includes CR. An exact fit may consume
 -- one lookahead byte; callers must stop after any error. Capacity is reserved
 -- before reading each payload byte, so allocation failure does not consume it.
-read_line_owned#(
+read_line_owned := #(
     .SelfType: Type: Reader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
-)(.self: $&SelfType, .maximum: UIntNative, .allocator: $&AllocatorType = reach allocator) -> (
+) (.self: $&SelfType, .maximum: UIntNative, .allocator: $&AllocatorType = reach allocator) -> (
     .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
-) := {
+) {
     assume allocator
     bytes ::= DynamicArray#(.t: UInt8)(.capacity = 1)!
     terminated ::= false
@@ -53,7 +53,7 @@ read_line_owned#(
 
 -- Fallible iteration exposes EOF explicitly rather than hiding errors in a
 -- has_next probe. Stop after an error; the failed reader cannot be resumed.
-OwnedLineReader#(.t: Type: Reader#(t)): Type = (
+OwnedLineReader := #(.t: Type: Reader#(t)) (
     ._source  : $&t,
     ._maximum : UIntNative,
     ._ended   : Bool
@@ -71,11 +71,11 @@ implement#(.t: Type: Reader#(t)) Init#(
     }
 )
 
-next#(.t: Type: Reader#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
+next := #(.t: Type: Reader#(t), .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&OwnedLineReader#(.t: t), .allocator: $&AllocatorType = reach allocator
 ) -> (
     .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
-) := {
+) {
     assume allocator
 
     if self&._ended {

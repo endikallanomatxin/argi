@@ -8,7 +8,6 @@ const parameterized_lowerer = @import("parameterized/lowerer.zig");
 const function_identity_lowerer = @import("function_identity_lowerer.zig");
 const contract_relation_lowerer = @import("contract_relation_lowerer.zig");
 const generic_call_args_lowerer = @import("generic_call_args_lowerer.zig");
-const canonicalize_storage = @import("canonicalize_storage.zig");
 const complete_verify = @import("complete_verify.zig");
 const diagnostic = @import("../../1_base/diagnostic.zig");
 const source_files = @import("../../1_base/source_files.zig");
@@ -57,15 +56,12 @@ pub fn finish(
 ) !BuildStats {
     if (graph.semantic.local_semantics_complete) return error.ModuleSemanticGraphAlreadyComplete;
 
-    // Declaration discovery can leave interfaces whose imported/generic types
-    // and default values still need source syntax. Finish that construction
-    // work first; everything after canonicalization consumes one Module* ID
-    // space and must not depend on the discovery-time construction prefixes.
+    // Discovery publishes names and forward type identities. Construct every
+    // interface and body in the same canonical semantic pools.
     try function_identity_lowerer.validateOrdinaryIdentities(graph, files, diagnostics);
     const module_aliases = try module_alias_lowerer.lower(allocator, graph, files);
     const initializers = try initializer_lowerer.lower(allocator, graph, files, diagnostics);
-    try lowerNominalLayouts(allocator, graph, files);
-    try canonicalize_storage.run(allocator, graph);
+    try lowerNominalLayouts(graph, files);
 
     const global_roots = try global_roots_lowerer.lower(allocator, graph);
 
@@ -73,7 +69,7 @@ pub fn finish(
     try lowerModuleConditions(allocator, graph, files);
     // Templates register contract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
-    const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
+    const bodies = try body_lowerer.lowerSourceFunctions(allocator, graph, files, diagnostics);
     try function_identity_lowerer.lower(graph, files, diagnostics);
     const relation_stats = try contract_relation_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, graph, files);
@@ -112,18 +108,18 @@ fn lowerModuleConditions(allocator: std.mem.Allocator, graph: *module_sg.ModuleS
 // Incomplete types and callback signatures have no structural fields. Layout
 // metadata distinguishes an incomplete identity from a pointer-valued signature
 // and from an ordinary record whose fields are still unresolved.
-fn lowerNominalLayouts(allocator: std.mem.Allocator, graph: *module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput) !void {
+fn lowerNominalLayouts(graph: *module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput) !void {
     for (graph.declarations.items, 0..) |declaration, raw| {
         if (declaration.kind != .type) continue;
         const file = files[declaration.module_file_index];
         const node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         const tag = file.tree.tag(node);
         if (tag != .c_enum_declaration and tag != .c_union_declaration and tag != .c_struct_declaration and tag != .c_incomplete_declaration and tag != .c_function_pointer_declaration) continue;
-        try graph.semantic.declaration_semantics.append(allocator, .{
-            .declaration = @enumFromInt(@as(u32, @intCast(raw))),
-            .choice_layout = if (tag == .c_enum_declaration) .c_enum else .regular,
-            .struct_layout = if (tag == .c_function_pointer_declaration) .c_function_pointer else if (tag == .c_union_declaration) .c_union else if (tag == .c_struct_declaration) .c_struct else if (tag == .c_incomplete_declaration) .c_incomplete else .regular,
-        });
+        const identity = graph.definitionForDeclaration(@enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+        const definition = &graph.semantic.type_definitions.items[@intFromEnum(identity)];
+        definition.function_id = declaration.function_id;
+        definition.choice_layout = if (tag == .c_enum_declaration) .c_enum else .regular;
+        definition.struct_layout = if (tag == .c_function_pointer_declaration) .c_function_pointer else if (tag == .c_union_declaration) .c_union else if (tag == .c_struct_declaration) .c_struct else if (tag == .c_incomplete_declaration) .c_incomplete else .regular;
     }
 }
 
@@ -139,7 +135,7 @@ test "finish completes an already discovered module graph" {
 
 test "finish lowers explicit bundled contract bounds in one pass" {
     const allocator = std.testing.allocator;
-    const source = "consume#(.Value: Type: PreludeContract)(.value: Value) -> () := {}\n";
+    const source = "consume := #(.Value: Type: PreludeContract) (.value: Value) -> ()  {}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
     var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
     defer diagnostics.deinit();
@@ -179,7 +175,7 @@ test "qualified external signature lowers without a contract catalog" {
     const allocator = std.testing.allocator;
     const source =
         "dep := import(\"../dep\")\n" ++
-        "consume_imported#(.Value: Type: dep.Protocol)(.value: Value) -> (.result: Int32) := {\n" ++
+        "consume_imported := #(.Value: Type: dep.Protocol) (.value: Value) -> (.result: Int32)  {\n" ++
         "    result = score(.value = value).result\n" ++
         "}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};

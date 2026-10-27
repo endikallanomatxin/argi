@@ -2,7 +2,7 @@
 -- native blocking I/O or destroy task resources. The source owns one atomic
 -- cell; observer tokens borrow it. Cross-thread transfer remains subject to
 -- the language's transfer rules, independently of this native atomic storage.
-CancellationSource: Type = (._state: AtomicUInt32)
+CancellationSource := (._state: AtomicUInt32)
 
 implement Init#(CancellationSource, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
     .Result : Type = Errable#(CancellationSource, (..out_of_memory))
@@ -21,21 +21,21 @@ implement Deinit#(CancellationSource) (
     }
 )
 
-CancellationToken: Type = (._source: &CancellationSource)
+CancellationToken := (._source: &CancellationSource)
 
 implement ImplicitlyCopyable#(CancellationToken) ()
 
-cancellation_token(.self: &CancellationSource) -> (.token: CancellationToken) := {
+cancellation_token := (.self: &CancellationSource) -> (.token: CancellationToken) {
     token = (._source = self)
 }
 
-cancel(.self: $&CancellationSource) -> () := { store($&self&._state, .value = 1) }
+cancel := (.self: $&CancellationSource) -> () { store($&self&._state, .value = 1) }
 
-is_cancelled(.self: CancellationToken) -> (.value: Bool) := {
+is_cancelled := (.self: CancellationToken) -> (.value: Bool) {
     value = [load(&self._source&._state).value != 0]
 }
 
-CancellationContext: Type = (
+CancellationContext := (
     .token    : ?CancellationToken = ..none,
     .deadline : ?Deadline          = ..none
 )
@@ -44,9 +44,9 @@ implement ImplicitlyCopyable#(CancellationContext) ()
 
 -- The caller supplies a monotonic reading to make checkpoints deterministic
 -- and avoid unnecessary system calls. Cancellation wins when both apply.
-check_cancelled(.self: CancellationContext, .now: MonotonicInstant) -> (
+check_cancelled := (.self: CancellationContext, .now: MonotonicInstant) -> (
     .result : Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()
-) := {
+) {
     match self.token {
         ..none {}
         ..some entry {

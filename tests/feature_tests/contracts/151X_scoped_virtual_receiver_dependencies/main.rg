@@ -2,9 +2,9 @@ Storage#(.Receiver: Type): Contract = (
     .replace : (.self: $&Receiver, .value: &Int32) -> () where {}
 )
 
-Cell: Type = (.reference: &Int32)
+Cell := (.reference: &Int32)
 
-implement Storage#(Cell)(
+implement Storage#(Cell) (
     .replace = (.self: $&Cell, .value: &Int32) -> () { self&.reference = value }
 )
 

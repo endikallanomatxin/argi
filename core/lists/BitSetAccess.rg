@@ -6,18 +6,18 @@ BitSetAccess#(.Set: Type): Contract = (
     .population : (.self: &Set) -> (.count: UIntNative)
 )
 
-contains_bit#(.Set: Type: BitSetAccess#(Set)) := (.self: &Set, .index: UIntNative) -> (
+contains_bit := #(.Set: Type: BitSetAccess#(Set)) (.self: &Set, .index: UIntNative) -> (
     .result : Errable#(Bool, (..out_of_bounds))
 ) {
     result = BitSetAccess#(Set).read_bit(.self = self, .index = index)
 }
 
-set_bit#(.Set: Type: BitSetAccess#(Set)) := (
+set_bit := #(.Set: Type: BitSetAccess#(Set)) (
     .self: $&Set, .index: UIntNative, .value: Bool = true
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     result = BitSetAccess#(Set).write_bit(.self = self, .index = index, .value = value)
 }
 
-count_set#(.Set: Type: BitSetAccess#(Set)) := (.self: &Set) -> (.count: UIntNative) {
+count_set := #(.Set: Type: BitSetAccess#(Set)) (.self: &Set) -> (.count: UIntNative) {
     count = BitSetAccess#(Set).population(.self = self)
 }

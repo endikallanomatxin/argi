@@ -1,14 +1,14 @@
 drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Holder: Type = (.reference: $&Resource)
+Holder := (.reference: $&Resource)
 
 implement ImplicitlyCopyable#(Holder) ()
 
 implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { drops = drops + 1 })
 
-check(.holder: $&Holder, .first: $&Resource, .second: $&Resource) -> (.result: Int32) := {
+check := (.holder: $&Holder, .first: $&Resource, .second: $&Resource) -> (.result: Int32) {
     holder&.reference = first
     saved ::= holder&.reference
     copied ::= holder&
@@ -17,7 +17,7 @@ check(.holder: $&Holder, .first: $&Resource, .second: $&Resource) -> (.result: I
     result = saved&.value + copied.reference&.value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         owner :: Resource = Resource(.value = 1)
         first :: Resource = Resource(.value = 2)

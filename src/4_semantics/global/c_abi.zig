@@ -25,8 +25,8 @@ fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
         // Legacy bindings use references as pointer parameters. Their pointee
         // layout and foreign effects remain obligations of the binding.
         .pointer => |pointer| types.incompleteDeclaration(graph, pointer.child) == null,
-        .declared => |id| graph.declaration(id).choice_variants != null and
-            graph.declaration(id).choice_layout == .c_enum,
+        .nominal => |id| graph.typeDefinition(id).choice_variants != null and
+            graph.typeDefinition(id).choice_layout == .c_enum,
         .structural_choice => |shape| shape.layout == .c_enum,
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .alias => |target| supportsScalarValue(graph, target, depth + 1),
@@ -115,7 +115,7 @@ pub fn physicalInputCount(function: graph_mod.Function) u32 {
 pub fn isFunctionPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
-        .declared => |id| graph.declaration(id).struct_layout == .c_function_pointer,
+        .nominal => |id| graph.typeDefinition(id).struct_layout == .c_function_pointer,
         else => false,
     };
 }
@@ -155,9 +155,9 @@ fn rawPointerDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     switch (instance.shape) {
         .alias => |target| return rawPointerDepth(graph, target, depth + 1),
         .structure => |shape| {
-            const declaration = graph.declaration(generic.base);
+            const declaration = graph.declaration(graph.familyDeclaration(generic.base));
             if (!std.mem.eql(u8, graph.text(declaration.name), "RawPointer")) return false;
-            const module = graph.moduleForDeclaration(generic.base) orelse return false;
+            const module = graph.moduleForFamilyDefinition(generic.base) orelse return false;
             if (!graph.modules.items[@intFromEnum(module)].is_bundled_core or shape.fields.len != 1) return false;
             const field = graph.fields.items[shape.fields.start];
             return std.mem.eql(u8, graph.text(field.name), "address") and types.isBuiltin(graph, field.ty, .UIntNative);
@@ -176,8 +176,8 @@ fn representationDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
     if (depth >= 32) return false;
     if (supportsScalarValue(graph, ty, depth)) return true;
     return switch (graph.types.items[@intFromEnum(ty)]) {
-        .declared => |id| blk: {
-            const declaration = graph.declaration(id);
+        .nominal => |id| blk: {
+            const declaration = graph.typeDefinition(id);
             if (declaration.struct_layout == .regular) break :blk false;
             break :blk fieldsHaveRepresentation(graph, declaration.struct_fields orelse break :blk false, depth);
         },
@@ -309,8 +309,8 @@ fn recordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
             .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Bool, .Float32, .Float64 => true,
             else => false,
         },
-        .declared => |id| blk: {
-            const declaration = graph.declaration(id);
+        .nominal => |id| blk: {
+            const declaration = graph.typeDefinition(id);
             if (declaration.choice_layout == .c_enum and declaration.choice_variants != null) break :blk true;
             if (declaration.struct_layout == .regular) break :blk false;
             break :blk recordFields(graph, declaration.struct_fields orelse break :blk false, depth);
@@ -409,8 +409,8 @@ fn numericShape(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
             shape.leaf(offset, layout.size, scalarIsFloating(graph, ty));
             return;
         },
-        .declared => |id| {
-            const declaration = graph.declaration(id);
+        .nominal => |id| {
+            const declaration = graph.typeDefinition(id);
             if (declaration.choice_variants != null) {
                 const layout = types.layoutOf(graph, ty) catch return;
                 shape.leaf(offset, layout.size, false);
@@ -811,9 +811,10 @@ fn extendForeignCapabilities(allocator: std.mem.Allocator) !void {
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
     const capability_name = try graph.addString(allocator, "ForeignFunctionInterface");
-    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .is_bundled_core = true, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 2 } });
+    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .is_bundled_core = true, .files = .{ .start = 0, .len = 1 }, .declarations = .{ .start = 0, .len = 2 } });
     try graph.declarations.append(allocator, .{ .kind = .type, .name = capability_name, .source = .{ .file_index = 0, .offset = 0 }, .type_id = @enumFromInt(0) });
-    try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try graph.type_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .declaration = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .nominal = @enumFromInt(0) });
     try graph.declarations.append(allocator, .{ .kind = .function, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 } });
     const foreign: graph_mod.Function = .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_c_abi = true } };
     try graph.functions.append(allocator, foreign);

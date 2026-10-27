@@ -159,8 +159,9 @@ pub const Sources = struct {
                 if (declaration.value) |value| parsed.tree.tag(value) == .import_statement else false
             else
                 false;
-            const kind: SubmissionKind = if (is_import) .definitions else switch (parsed.tree.tag(root)) {
-                .function_declaration, .function_declaration_once, .contract_declaration, .contract_conformance, .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration, .choice_option_declaration => .definitions,
+            const is_definition = parsed.tree.functionDeclaration(root) != null or parsed.tree.typeDeclaration(root) != null;
+            const kind: SubmissionKind = if (is_import or is_definition) .definitions else switch (parsed.tree.tag(root)) {
+                .function_declaration, .function_declaration_once, .contract_declaration, .contract_conformance, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration, .choice_option_declaration => .definitions,
                 else => .statements,
             };
             if (result != .empty and result != kind) {

@@ -1,10 +1,10 @@
-run() -> !Int32 := {
-    dep := import("./dep")
+run := () -> !Int32 {
+    dep := import ("./dep")
     value := dep.load()!
     result = ..ok value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     outcome := run()
 
     match outcome {
@@ -12,7 +12,7 @@ main() -> (.status_code: Int32) := {
             status_code = payload
             return
         }
-        ..error & err {
+        ..error&err {
             match err&.reason {
                 ..import_error {
                     status_code = 46

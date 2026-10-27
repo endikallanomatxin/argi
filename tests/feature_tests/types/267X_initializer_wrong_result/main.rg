@@ -1,4 +1,4 @@
-Widget : Type = (.value: Int32)
+Widget := (.value: Int32)
 
 implement Init#(Widget, ()) (
     .Result: Type = Int32
@@ -7,7 +7,7 @@ implement Init#(Widget, ()) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     widget ::= Widget()
     status_code = widget.value
 }

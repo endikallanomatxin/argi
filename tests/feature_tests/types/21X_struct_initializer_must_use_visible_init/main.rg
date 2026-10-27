@@ -1,4 +1,4 @@
-Point : Type = (
+Point := (
     .x: Int32,
     .y: Int32,
 )
@@ -15,7 +15,7 @@ implement Init#(Point, (.sum: Int32)) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32)  {
     point := Point(.x = 1, .y = 2)
     status_code = point.x + point.y
 }

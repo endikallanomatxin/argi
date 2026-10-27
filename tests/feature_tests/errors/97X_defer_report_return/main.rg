@@ -1,2 +1,6 @@
-fail() -> !Void = ..ok Void() := {}
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> () := { defer { fail()!!! } }
+fail := () -> !Void = ..ok Void() {}
+
+main := (.system: System) -> () {
+    assume writer ::= $&system.terminal&.stderr
+    defer { fail()!!! }
+}

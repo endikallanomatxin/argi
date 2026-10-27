@@ -9,7 +9,7 @@ HashPolicy#(.Policy: Type, .key: Type): Contract = (
 )
 
 -- The standard policy combines Hashable evidence with borrowed equality.
-StandardHashPolicy: Type = (.seed: UInt64 = 14695981039346656037)
+StandardHashPolicy := (.seed: UInt64 = 14695981039346656037)
 
 implement ImplicitlyCopyable#(StandardHashPolicy) ()
 

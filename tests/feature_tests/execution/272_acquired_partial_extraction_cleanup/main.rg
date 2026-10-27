@@ -1,12 +1,12 @@
 drops :: Int32 = 0
 
-Resource: Type = (.id: Int32)
+Resource := (.id: Int32)
 
 Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
 
 implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { drops = drops + self&.id })
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     assume error_tracer ::= $&noop_error_tracer
     allocator ::= CAllocator(.ffi = ffi)

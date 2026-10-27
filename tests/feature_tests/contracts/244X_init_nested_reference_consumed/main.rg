@@ -1,5 +1,7 @@
 drops :: Int32 = 0
-Owner: Type = (.value: Int32)
+
+Owner := (.value: Int32)
+
 Witness: Type = ()
 
 implement Deinit#(Owner) (
@@ -7,8 +9,8 @@ implement Deinit#(Owner) (
 )
 
 implement Init#(Witness, (.pair: (.left: $&Owner, .right: &Owner))) (
-    .Result: Type = Witness
-    .init = (.args: (.pair: (.left: $&Owner, .right: &Owner))) -> (.result: Result) {
+    .Result : Type = Witness
+    .init   = (.args: (.pair: (.left: $&Owner, .right: &Owner))) -> (.result: Result) {
         Deinit#(Owner).deinit(.self = args.pair.left)
         result = ()
     }

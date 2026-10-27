@@ -26,7 +26,7 @@ nested ::= #run () -> (.value: Int32) {
     value = first + second
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     if defaulted != 42 or pair.left + pair.right != 42 or selected != 42 { abort }
     if nested != 42 { abort }
     status_code = answer

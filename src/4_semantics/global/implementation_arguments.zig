@@ -13,8 +13,8 @@ const ir = @import("../module/parameterized/ir.zig");
 
 pub const Participant = union(enum) {
     known: graph_mod.GlobalTypeId,
-    family: graph_mod.GlobalDeclId,
-    partial: struct { family: graph_mod.GlobalDeclId, arguments: primitives.Range(graph_mod.GlobalGenericArgId) },
+    family: graph_mod.GlobalFamilyDefinitionId,
+    partial: struct { family: graph_mod.GlobalFamilyDefinitionId, arguments: primitives.Range(graph_mod.GlobalGenericArgId) },
     inferred,
 };
 
@@ -72,7 +72,7 @@ pub const Resolver = struct {
         return .completed;
     }
 
-    fn bindPartialTargetExplicit(self: *Resolver, module_index: usize, pattern_id: ir.ParameterizedTypeId, family: graph_mod.GlobalDeclId, arguments: primitives.Range(graph_mod.GlobalGenericArgId), bindings: *generic_mod.Resolver.Bindings) !bool {
+    fn bindPartialTargetExplicit(self: *Resolver, module_index: usize, pattern_id: ir.ParameterizedTypeId, family: graph_mod.GlobalFamilyDefinitionId, arguments: primitives.Range(graph_mod.GlobalGenericArgId), bindings: *generic_mod.Resolver.Bindings) !bool {
         const located = self.generics.findTypeParameterized(family) orelse return false;
         const family_module = &self.modules[located.module_index];
         const parameters = located.parameterized.parameters;
@@ -84,7 +84,7 @@ pub const Resolver = struct {
         const pattern = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern_id)];
         if (pattern == .resolved and pattern.resolved == .generic) {
             const generic = pattern.resolved.generic;
-            if (try self.generics.resolveParameterizedDeclaration(module_index, generic.base) != family) return false;
+            if (try self.generics.resolveParameterizedFamily(module_index, generic.base) != family) return false;
             return self.matchPartialBindings(module_index, generic.arguments, located, &supplied, bindings);
         }
         const closed = self.generics.instantiateParameterizedType(module_index, pattern_id, bindings) catch |err| switch (err) {
@@ -103,6 +103,10 @@ pub const Resolver = struct {
             if (supplied.types[raw]) |ty| {
                 if (actual.value != .type or !types.equal(self.graph, ty, actual.value.type)) return false;
             }
+            if (supplied.definitions[raw]) |definition| {
+                if (actual.value != .definition or definition.origin != actual.value.definition.origin or
+                    !types.genericArgumentsEqual(self.graph, definition.captures, actual.value.definition.captures)) return false;
+            }
             if (supplied.ints[raw]) |integer| {
                 if (actual.value != .comptime_int or integer != actual.value.comptime_int) return false;
             }
@@ -110,7 +114,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn completePartialTargetDefaults(self: *Resolver, module_index: usize, pattern_id: ir.ParameterizedTypeId, family: graph_mod.GlobalDeclId, bindings: *generic_mod.Resolver.Bindings) !bool {
+    fn completePartialTargetDefaults(self: *Resolver, module_index: usize, pattern_id: ir.ParameterizedTypeId, family: graph_mod.GlobalFamilyDefinitionId, bindings: *generic_mod.Resolver.Bindings) !bool {
         const pattern = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern_id)];
         if (pattern != .resolved or pattern.resolved != .generic) return true;
         const generic = pattern.resolved.generic;
@@ -126,8 +130,23 @@ pub const Resolver = struct {
             const parameter = family_module.semantic.parameterized_storage.comptime_parameters.items[raw];
             const argument = self.generics.findPatternArgument(module_index, generic.arguments, index, family_module.text(parameter.name)) orelse continue;
             switch (argument.value) {
+                .projection => |projection| {
+                    const value = self.generics.instantiateArgumentProjection(module_index, projection, bindings) catch |err| switch (err) {
+                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
+                        else => return err,
+                    };
+                    switch (value) {
+                        .definition => |v| inferred.definitions[raw] = v,
+                        .type => |v| inferred.types[raw] = v,
+                        .comptime_int => |v| inferred.ints[raw] = v,
+                    }
+                },
                 .type => |ty| inferred.types[raw] = self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
                     error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
+                    else => return err,
+                },
+                .definition => |definition| inferred.definitions[raw] = self.generics.instantiateDefinitionValue(module_index, definition, bindings) catch |err| switch (err) {
+                    error.UnboundDefinitionParameter => null,
                     else => return err,
                 },
                 .comptime_int => |expression| inferred.ints[raw] = self.generics.evalInt(module_index, expression, bindings) catch |err| switch (err) {
@@ -151,8 +170,20 @@ pub const Resolver = struct {
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
             const argument = self.generics.findPatternArgument(module_index, patterns, index, module.text(parameter.name)) orelse continue;
             switch (argument.value) {
+                .projection => |projection| {
+                    const value = try self.generics.instantiateArgumentProjection(module_index, projection, bindings);
+                    const bound_value: graph_mod.GenericArgument.Value = switch (parameter.kind) {
+                        .definition => .{ .definition = actual.definitions[raw] orelse return false },
+                        .type => .{ .type = actual.types[raw] orelse return false },
+                        .comptime_int => .{ .comptime_int = actual.ints[raw] orelse return false },
+                    };
+                    if (!types.genericArgumentValuesEqual(self.graph, value, bound_value)) return false;
+                },
                 .type => |ty| if (actual.types[raw]) |value| {
                     if (!try self.contracts.inferConstraintTypePattern(module_index, ty, value, bindings)) return false;
+                },
+                .definition => |definition| if (actual.definitions[raw]) |value| {
+                    if (!try self.generics.inferDefinitionValue(module_index, definition, value, bindings)) return false;
                 },
                 .comptime_int => |expression| if (actual.ints[raw]) |value| {
                     if (!try self.contracts.inferConstraintIntPattern(module_index, expression, value, bindings)) return false;
@@ -162,7 +193,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    pub fn infer(self: *Resolver, declaration: graph_mod.GlobalDeclId, prefix: []const Participant, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
+    pub fn infer(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
         const allocator = self.core.allocator;
         const Candidate = struct { module: usize, template: storage_mod.ContractConformance, participants: []const graph_mod.GlobalTypeId };
         var candidates: std.ArrayList(Candidate) = .empty;
@@ -200,11 +231,11 @@ pub const Resolver = struct {
                     .family => |family| {
                         const pattern = storage.ir.types.items[@intFromEnum(patterns[index].value.type)];
                         if (pattern == .resolved and pattern.resolved == .generic) {
-                            if (try self.generics.resolveParameterizedDeclaration(module_index, pattern.resolved.generic.base) != family) continue :templates;
+                            if (try self.generics.resolveParameterizedFamily(module_index, pattern.resolved.generic.base) != family) continue :templates;
                         } else if (pattern == .concrete) {
                             const closed = try self.generics.instantiateParameterizedType(module_index, patterns[index].value.type, &bindings);
                             const identity = switch (self.graph.resolvedSemanticType(closed) orelse continue :templates) {
-                                .declared => |id| id,
+                                .definition => |id| id,
                                 .generic => |generic| generic.base,
                                 else => continue :templates,
                             };

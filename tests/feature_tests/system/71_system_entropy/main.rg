@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     bytes ::= zeroed#(.t: [515]UInt8)().value
     bytes[0] = 17
     bytes[514] = 23

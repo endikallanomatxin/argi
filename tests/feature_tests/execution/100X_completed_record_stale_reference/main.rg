@@ -1,4 +1,4 @@
-Pair: Type = (.first: Int32, .second: Int32)
+Pair := (.first: Int32, .second: Int32)
 
 implement Deinit#(Pair) (
     .deinit = (.self: $&Pair) -> () {}

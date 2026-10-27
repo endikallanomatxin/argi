@@ -1,14 +1,14 @@
+_TerminalInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+
 -- Canonical endpoints do not allocate or choose a buffering policy.
 -- Programs borrow these files and wrap them in readers or writers as needed.
-Terminal: Type = (
+Terminal := (
     .stdin  : File
     .stdout : File
     .stderr : File
 )
 
-once _acquire_terminal := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : Terminal
-) {
+once _acquire_terminal := (.args: _TerminalInitArgs) -> (.result: Terminal) {
     assume ffi := args.ffi
 
     init_stdin(.p = $&result.stdin)
@@ -16,7 +16,7 @@ once _acquire_terminal := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)
     init_stderr(.p = $&result.stderr)
 }
 
-implement Init#(Terminal, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+implement Init#(Terminal, _TerminalInitArgs) (
     .Result : Type = Terminal
     .init   = _acquire_terminal
 )
@@ -30,11 +30,11 @@ implement Deinit#(Terminal) (
     }
 )
 
-read_line_into_buffer#(
+read_line_into_buffer := #(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
-)(.buffer: $&String, .allocator: $&AllocatorType, .reader: $&ReaderType) -> (
+) (.buffer: $&String, .allocator: $&AllocatorType, .reader: $&ReaderType) -> (
     .result : Errable#(Void, (..stream_read_failed, ..invalid_utf8))
-) := {
+) {
     assume allocator
     assume reader
 
@@ -98,11 +98,11 @@ read_line_into_buffer#(
     result = ..ok Void()
 }
 
-read_line#(
+read_line := #(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
-)(.allocator: $&AllocatorType, .reader: $&ReaderType) -> (
+) (.allocator: $&AllocatorType, .reader: $&ReaderType) -> (
     .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory, ..invalid_utf8))
-) := {
+) {
     assume allocator
     assume reader
 
@@ -130,7 +130,7 @@ read_line#(
     result = ..ok ..ok ~line
 }
 
-flush#(.WriterType: Type: Writer#(WriterType)) := (.writer: $&WriterType) -> (
+flush := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType) -> (
     .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
 ) {
     assume writer
@@ -138,9 +138,9 @@ flush#(.WriterType: Type: Writer#(WriterType)) := (.writer: $&WriterType) -> (
     result = Writer#().flush(.self = writer)
 }
 
-print_error#(.WriterType: Type: Writer#(WriterType))(.value: StringView, .writer: $&WriterType) -> (
-    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-) := {
+print_error := #(.WriterType: Type: Writer#(WriterType)) (
+    .value: StringView, .writer: $&WriterType
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume writer
 
     i :: UIntNative = 0
@@ -168,16 +168,16 @@ print_error#(.WriterType: Type: Writer#(WriterType))(.value: StringView, .writer
     result = ..ok Void()
 }
 
-flush_error#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType) -> (
+flush_error := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType) -> (
     .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-) := {
+) {
     assume writer
 
     result = Writer#().flush(.self = writer)
 }
 
 -- Rendering is selected by WriteValue, not an ordinary print overload family.
-print#(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) := (
+print := #(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) (
     .value: Value, .writer: $&Stream = reach writer, .terminator: StringView = "\n"
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     write(.self = writer, .value = ~value)!

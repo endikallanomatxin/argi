@@ -1,9 +1,9 @@
-verify_Int8(
-        .actual   : Errable#(.t: Int8, .reasons: (..out_of_range)),
-        .expected : Int32,
-        .minimum  : Int32,
-        .maximum  : Int32
-    ) -> () := {
+verify_Int8 := (
+    .actual: Errable#(.t: Int8, .reasons: (..out_of_range)),
+    .expected : Int32,
+    .minimum  : Int32,
+    .maximum  : Int32
+) -> () {
     match actual {
         ..ok value {
             if expected < minimum or expected > maximum { abort }
@@ -16,12 +16,12 @@ verify_Int8(
     }
 }
 
-verify_UInt8(
-        .actual   : Errable#(.t: UInt8, .reasons: (..out_of_range)),
-        .expected : Int32,
-        .minimum  : Int32,
-        .maximum  : Int32
-    ) -> () := {
+verify_UInt8 := (
+    .actual: Errable#(.t: UInt8, .reasons: (..out_of_range)),
+    .expected : Int32,
+    .minimum  : Int32,
+    .maximum  : Int32
+) -> () {
     match actual {
         ..ok value {
             if expected < minimum or expected > maximum { abort }
@@ -34,7 +34,7 @@ verify_UInt8(
     }
 }
 
-check_int8() -> () := {
+check_int8 := () -> () {
     left :: Int32 = -128
     while left <= 127 {
         right :: Int32 = -128
@@ -49,21 +49,15 @@ check_int8() -> () := {
             )
             verify_Int8(
                 .actual   = checked_subtract(.left = a, .right = b)
-                .expected = [
-                    left
-                    - right
-                ]
-                .minimum = -128
-                .maximum = 127
+                .expected = [left - right]
+                .minimum  = -128
+                .maximum  = 127
             )
             verify_Int8(
                 .actual   = checked_multiply(.left = a, .right = b)
-                .expected = [
-                    left
-                    * right
-                ]
-                .minimum = -128
-                .maximum = 127
+                .expected = [left * right]
+                .minimum  = -128
+                .maximum  = 127
             )
             match checked_divide(.left = a, .right = b) {
                 ..ok value {
@@ -87,7 +81,7 @@ check_int8() -> () := {
     }
 }
 
-check_uint8() -> () := {
+check_uint8 := () -> () {
     left :: Int32 = 0
     while left <= 255 {
         right :: Int32 = 0
@@ -96,30 +90,21 @@ check_uint8() -> () := {
             b ::= unwrap_or_abort(.value = right | convert#(.to: UInt8)(_)).result
             verify_UInt8(
                 .actual   = checked_add(.left = a, .right = b)
-                .expected = [
-                    left
-                    + right
-                ]
-                .minimum = 0
-                .maximum = 255
+                .expected = [left + right]
+                .minimum  = 0
+                .maximum  = 255
             )
             verify_UInt8(
                 .actual   = checked_subtract(.left = a, .right = b)
-                .expected = [
-                    left
-                    - right
-                ]
-                .minimum = 0
-                .maximum = 255
+                .expected = [left - right]
+                .minimum  = 0
+                .maximum  = 255
             )
             verify_UInt8(
                 .actual   = checked_multiply(.left = a, .right = b)
-                .expected = [
-                    left
-                    * right
-                ]
-                .minimum = 0
-                .maximum = 255
+                .expected = [left * right]
+                .minimum  = 0
+                .maximum  = 255
             )
             match checked_divide(.left = a, .right = b) {
                 ..ok value {
@@ -143,7 +128,7 @@ check_uint8() -> () := {
     }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     check_int8()
     check_uint8()
 }

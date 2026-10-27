@@ -14,7 +14,7 @@ directly or transferred into `..ok`. Ordinary ownership and automatic cleanup
 apply to intermediate values on every exit.
 
 ```rg
-Point: Type = (.x: Int32, .y: Int32)
+Point := (.x: Int32, .y: Int32)
 implement Init#(Point, (.x: Int32, .y: Int32 = 0)) (
     .Result: Type = Point
     .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
@@ -28,7 +28,7 @@ point ::= Point(.x = 10)
 Generic implementations declare their compile-time parameters after `implement`:
 
 ```rg
-Box#(.T: Type): Type = (.value: T)
+Box := #(.T: Type) (.value: T)
 implement#(.T: Type) Init#(Box#(T), (.value: T)) (
     .Result: Type = Box#(T)
     .init = (.args: (.value: T)) -> (.result: Result) { result = (.value = args.value) }

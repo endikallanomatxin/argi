@@ -5,9 +5,9 @@ allocation_static_anchor :: UInt8 = 0
 
 -- Logical extent retained by typed allocation requests. This describes slots,
 -- never their occupancy, initialization or cleanup obligations.
-_AllocationSlotExtent: Type = (.element_size: UIntNative, .count: UIntNative)
+_AllocationSlotExtent := (.element_size: UIntNative, .count: UIntNative)
 
-Allocation: Type = (
+Allocation := (
     --
     -- Contiguous allocated storage together with the deallocator required for
     -- its physical cleanup.
@@ -46,7 +46,7 @@ Allocation: Type = (
 -- The allocator certifies acquisition and containment; these scalar arguments
 -- are not themselves evidence that storage was acquired. Private bounds keep
 -- that assertion intact when the receipt crosses ordinary caller code.
-trusted_establish_allocation(
+trusted_establish_allocation := (
     .storage     : UIntNative,
     .size        : UIntNative,
     .alignment   : UIntNative,
@@ -54,7 +54,7 @@ trusted_establish_allocation(
     .anchor      : &Any        = erase_reference#(.t: UInt8)(
         .base = &allocation_static_anchor
     ).reference,
-) -> (.allocation: Allocation) := {
+) -> (.allocation: Allocation) {
     _require_allocation_alignment(.alignment = alignment)
 
     if storage == 0 and size != 0 { abort }
@@ -77,7 +77,7 @@ trusted_establish_allocation(
 -- Normal establishment requires an acquisition receipt. Its private bounds
 -- remain authoritative while forwarding moves the receipt. Establishment
 -- consumes that receipt through the ordinary move rules.
-establish_allocation(
+establish_allocation := (
     .storage     : AcquiredStorage,
     .size        : UIntNative,
     .alignment   : UIntNative,
@@ -85,7 +85,7 @@ establish_allocation(
     .anchor      : &Any             = erase_reference#(.t: UInt8)(
         .base = &allocation_static_anchor
     ).reference,
-) -> (.allocation: Allocation) := {
+) -> (.allocation: Allocation) {
     _require_allocation_alignment(.alignment = alignment)
 
     if size > storage._size { abort }
@@ -118,13 +118,13 @@ implement Deinit#(Allocation) (
 
 -- Shared across element types. Forward failures intact instead of capturing
 -- another tracer context while attaching metadata to successful receipts.
-_typed_allocation_result(
+_typed_allocation_result := (
     .allocated    : Errable#(Allocation, (..out_of_memory)),
     .element_size : UIntNative,
     .count        : UIntNative,
     .prefix       : UIntNative,
     .payload_size : UIntNative
-) -> (.result: Errable#(Allocation, (..out_of_memory))) := {
+) -> (.result: Errable#(Allocation, (..out_of_memory))) {
     match allocated {
         ..ok ~payload {
             allocation ::= ~payload

@@ -268,7 +268,7 @@ const SelectedCleanupContext = struct {
         var result = std.hash.Wyhash.init(0);
         std.hash.autoHash(&result, std.meta.activeTag(ty));
         switch (ty) {
-            .declared => |declaration| std.hash.autoHash(&result, declaration),
+            .nominal => |declaration| std.hash.autoHash(&result, declaration),
             .builtin => |builtin| std.hash.autoHash(&result, builtin),
             .generic => |generic| std.hash.autoHash(&result, generic.base),
             .array => |array| std.hash.autoHash(&result, array.length),
@@ -294,7 +294,7 @@ pub fn owningTypes(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticG
     var selected: std.HashMapUnmanaged(g.GlobalTypeId, void, SelectedCleanupContext, 80) = .empty;
     defer selected.deinit(allocator);
     const context: SelectedCleanupContext = .{ .graph = graph };
-    if (standard_contracts.standardDeclaration(graph, "Deinit")) |deinit| {
+    if (standard_contracts.standardDefinition(graph, "Deinit")) |deinit| {
         for (graph.contract_conformances.items) |conformance| {
             if (conformance.declaration != deinit or conformance.participants.len == 0) continue;
             const participant = graph.generic_arguments.items[conformance.participants.start].value;
@@ -495,16 +495,18 @@ test "selected cleanup evidence covers every slot of one nominal declaration" {
     defer graph.deinit(a);
     const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
     const name = try graph.addString(a, "Deinit");
-    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source });
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.family_definitions.append(a, .{ .source = source, .declaration = @enumFromInt(0), .kind = .contract, .parameter_count = 1 });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Resource"), .source = source });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Other"), .source = source });
     try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 3 }, .is_bundled_core = true });
+    for (0..graph.declarations.items.len) |_| try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 0 } });
     try graph.types.appendSlice(a, &.{
-        .{ .declared = @enumFromInt(1) },
-        .{ .declared = @enumFromInt(1) },
+        .{ .nominal = @enumFromInt(1) },
+        .{ .nominal = @enumFromInt(1) },
         .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
         .{ .array = .{ .element = @enumFromInt(1), .length = 2 } },
-        .{ .declared = @enumFromInt(2) },
+        .{ .nominal = @enumFromInt(2) },
     });
     try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } });
     try graph.contract_conformances.append(a, .{ .declaration = @enumFromInt(0), .participants = .{ .start = 0, .len = 1 }, .associated_arguments = .{ .start = 0, .len = 0 }, .source = source });
@@ -521,7 +523,8 @@ test "selected cleanup evidence covers equivalent generic argument slots" {
     defer graph.deinit(a);
     const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
     const name = try graph.addString(a, "Deinit");
-    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source });
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.family_definitions.append(a, .{ .source = source, .declaration = @enumFromInt(0), .kind = .contract, .parameter_count = 1 });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Box"), .source = source });
     try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 2 }, .is_bundled_core = true });
     try graph.types.appendSlice(a, &.{
@@ -549,7 +552,8 @@ test "cleanup ownership follows late aggregate children and generic aliases with
     defer graph.deinit(a);
     const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
     const name = try graph.addString(a, "Deinit");
-    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source });
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.family_definitions.append(a, .{ .source = source, .declaration = @enumFromInt(0), .kind = .contract, .parameter_count = 1 });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Resource"), .source = source });
     try graph.declarations.append(a, .{ .kind = .type, .name = try graph.addString(a, "Alias"), .source = source });
     try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 3 }, .is_bundled_core = true });
@@ -561,12 +565,13 @@ test "cleanup ownership follows late aggregate children and generic aliases with
         .{ .name = name, .source = source, .value = 0, .payload_type = @enumFromInt(3) },
         .{ .name = name, .source = source, .value = 1, .payload_type = null },
     });
+    for (0..graph.declarations.items.len) |_| try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 0 } });
     try graph.types.appendSlice(a, &.{
         .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
         .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } },
         .{ .array = .{ .element = @enumFromInt(4), .length = 2 } },
         .{ .generic = .{ .base = @enumFromInt(2), .arguments = .{ .start = 0, .len = 0 } } },
-        .{ .declared = @enumFromInt(1) },
+        .{ .nominal = @enumFromInt(1) },
         .{ .pointer = .{ .child = @enumFromInt(4), .mutability = .read_write } },
         .{ .structural = .{ .fields = .{ .start = 1, .len = 1 } } },
         .{ .builtin = .Int32 },

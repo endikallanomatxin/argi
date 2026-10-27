@@ -16,9 +16,19 @@ pub const LexicalModuleAlias = struct {
 // argument describes a vtable contract, unlike an ordinary generic argument
 // whose type can be specialized from a concrete call input.
 pub fn isRuntimeVirtualType(tree: *const syn.FileSyntaxTree, source: []const u8, generic: syn.GenericType) bool {
-    const base = tree.syntaxType(generic.base) orelse return false;
+    const base = tree.typeReference(generic.base) orelse return false;
     return base == .name and base.name.qualifier_token == null and
         std.mem.eql(u8, tree.tokenTextFromSource(source, base.name.name_token), "Virtual");
+}
+
+/// Payload/value declarations define closed variants. Bare option references
+/// retain the compositional set representation used by error reasons.
+pub fn definesChoiceVariants(tree: *const syn.FileSyntaxTree, literal: syn.ChoiceTypeLiteral) bool {
+    for (literal.variants) |node| {
+        const variant = tree.choiceTypeVariant(node) orelse continue;
+        if (variant.payload_type != null or variant.value != null) return true;
+    }
+    return false;
 }
 
 pub const Context = struct {
@@ -31,29 +41,31 @@ pub const Context = struct {
     generated_source: ?primitives.SourceRef = null,
 
     pub fn lower(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleTypeId {
-        const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedTypeSyntax;
+        const syntax_type = self.tree.typeReference(node) orelse return error.ExpectedTypeSyntax;
         return switch (syntax_type) {
             .name => |name| self.lowerName(node, name.name_token, name.qualifier_token, null),
             .pointer => |pointer| blk: {
                 const child = try self.lower(pointer.child);
-                break :blk try self.writer.addResolvedType(.{ .pointer = .{
+                break :blk try self.internDerived(.{ .pointer = .{
                     .child = child,
                     .mutability = graph_mod.pointerMutabilityFromSyntax(pointer.mutability),
                 } });
             },
             .array => |array| blk: {
+                if (self.tree.tokens.items(.content)[@intFromEnum(array.length_token)] == .identifier)
+                    break :blk try self.lowerComputedType(node);
                 const length_text = self.tree.tokenTextFromSource(self.source, array.length_token);
                 const length = std.fmt.parseInt(u64, length_text, 0) catch return error.InvalidArrayLength;
                 const element = try self.lower(array.element);
-                break :blk try self.writer.addResolvedType(.{ .array = .{ .length = length, .element = element } });
+                break :blk try self.internDerived(.{ .array = .{ .length = length, .element = element } });
             },
             .nullable => |child_node| blk: {
                 const child = try self.lower(child_node);
-                break :blk try self.writer.addResolvedType(.{ .nullable = child });
+                break :blk try self.internDerived(.{ .nullable = child });
             },
             .inferred_errable => |child_node| blk: {
                 const child = try self.lower(child_node);
-                break :blk try self.writer.addResolvedType(.{ .inferred_errable = child });
+                break :blk try self.internDerived(.{ .inferred_errable = child });
             },
             .struct_literal => |literal| self.lowerStructural(node, literal),
             .choice_literal => |literal| self.lowerChoice(node, literal),
@@ -90,7 +102,7 @@ pub const Context = struct {
         if (qualifier_token == null) {
             if (self.localTypeDeclaration(name_text)) |declaration| {
                 if (generic_arguments) |arguments| {
-                    return self.writer.addResolvedType(.{ .generic = .{ .base = declaration, .arguments = arguments } });
+                    return self.writer.addResolvedType(.{ .generic = .{ .base = self.graph.declaration(declaration).family_definition orelse return error.ExpectedParameterizedDefinition, .arguments = arguments } });
                 }
                 return self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse error.LocalTypeNotPredeclared;
             }
@@ -126,54 +138,67 @@ pub const Context = struct {
     // Entry signatures initialize their output defaults in the function body.
     // Their field types still retain nested record defaults normally.
     pub fn lowerRecordFields(self: *Context, owner: syn.NodeIndex, literal: syn.StructTypeLiteral) anyerror!entities.ModuleTypeId {
-        _ = owner;
-        // Child types may append their own fields. Publish siblings together
-        // only after lowering those children, preserving one contiguous range.
+        const definition = try self.writer.typeDefinitionAt(.{ .file_index = self.file_index, .offset = self.tree.location(owner).offset });
+        if (self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields == null) {
+            const fields = try self.lowerFields(literal);
+            self.graph.semantic.type_definitions.items[@intFromEnum(definition)].struct_fields = fields;
+        }
+        return self.internDerived(.{ .nominal = definition });
+    }
+
+    pub fn lowerFields(self: *Context, literal: syn.StructTypeLiteral) anyerror!entities.FieldRange {
+        // Publish siblings only after children: nested types append to these
+        // same pools, so reserving a range before recursion is incorrect.
         var fields: std.ArrayList(entities.Field) = .empty;
         defer fields.deinit(self.writer.allocator);
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
             const ty_node = field.type_node orelse return error.StructFieldTypeRequired;
             try fields.append(self.writer.allocator, .{
-                .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)),
+                .name = try self.writer.addString(if (field.inferred_result) "result" else self.tree.tokenTextFromSource(self.source, field.name_token)),
                 .ty = try self.lower(ty_node),
                 .source = self.sourceRef(field_node),
-                .default_value = null,
             });
         }
         const start: u32 = @intCast(views.fieldCount(self.graph));
         for (fields.items) |field| _ = try self.writer.addField(field);
-        return self.writer.addResolvedType(.{ .structural = .{
-            .fields = .{ .start = start, .len = @intCast(fields.items.len) },
+        return .{ .start = start, .len = @intCast(fields.items.len) };
+    }
+
+    fn lowerChoice(self: *Context, owner: syn.NodeIndex, literal: syn.ChoiceTypeLiteral) anyerror!entities.ModuleTypeId {
+        if (definesChoiceVariants(self.tree, literal)) {
+            const definition = try self.writer.typeDefinitionAt(.{ .file_index = self.file_index, .offset = self.tree.location(owner).offset });
+            if (self.graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants == null) {
+                const variants = try self.lowerVariants(literal);
+                self.graph.semantic.type_definitions.items[@intFromEnum(definition)].choice_variants = variants;
+            }
+            return self.internDerived(.{ .nominal = definition });
+        }
+        return self.writer.addResolvedType(.{ .structural_choice = .{
+            .variants = try self.lowerVariants(literal),
             .layout = .regular,
         } });
     }
 
-    fn lowerChoice(self: *Context, owner: syn.NodeIndex, literal: syn.ChoiceTypeLiteral) anyerror!entities.ModuleTypeId {
-        var first: ?entities.ModuleVariantId = null;
-        var count: u32 = 0;
-        for (literal.variants) |variant_node| {
+    pub fn lowerVariants(self: *Context, literal: syn.ChoiceTypeLiteral) anyerror!entities.VariantRange {
+        var variants: std.ArrayList(entities.ChoiceVariant) = .empty;
+        defer variants.deinit(self.writer.allocator);
+        for (literal.variants, 0..) |variant_node, index| {
             const variant = self.tree.choiceTypeVariant(variant_node) orelse return error.InvalidChoiceVariant;
             const name_text = self.tree.tokenTextFromSource(self.source, variant.name_token);
             const payload_type = if (variant.payload_type) |payload| try self.lower(payload) else null;
-            const option_decl = if (variant.module_qualifier == null) self.localChoiceOption(name_text) else null;
-            const name = try self.writer.addString(name_text);
-            const id = try self.writer.addVariant(.{
-                .name = name,
+            try variants.append(self.writer.allocator, .{
+                .name = try self.writer.addString(name_text),
                 .qualifier = if (variant.module_qualifier) |qualifier| try self.modulePathForQualifier(qualifier, variant.name_token) else null,
                 .payload_type = payload_type,
-                .option_decl = option_decl,
+                .option_decl = if (variant.module_qualifier == null) self.localChoiceOption(name_text) else null,
                 .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(variant.name_token).offset },
-                .value = variant.value orelse @intCast(count),
+                .value = variant.value orelse @intCast(index),
             });
-            if (first == null) first = id;
-            count += 1;
         }
-        _ = owner;
-        return self.writer.addResolvedType(.{ .structural_choice = .{
-            .variants = .{ .start = if (first) |id| @intFromEnum(id) else @intCast(views.variantCount(self.graph)), .len = count },
-            .layout = .regular,
-        } });
+        const start: u32 = @intCast(views.variantCount(self.graph));
+        for (variants.items) |variant| _ = try self.writer.addVariant(variant);
+        return .{ .start = start, .len = @intCast(variants.items.len) };
     }
 
     fn lowerComputedType(self: *Context, owner: syn.NodeIndex) anyerror!entities.ModuleTypeId {
@@ -203,12 +228,12 @@ pub const Context = struct {
     }
 
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
-        const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
+        const base = self.tree.typeReference(generic.base) orelse return error.InvalidGenericBase;
         const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
-        if (@import("type_arguments.zig").requiresResolution(self.tree, generic.arguments) or std.mem.eql(u8, base_name, "choice_union")) {
+        if (base == .projection or @import("type_arguments.zig").requiresResolution(self.tree, generic.arguments) or std.mem.eql(u8, base_name, "choice_union")) {
             return self.lowerComputedType(owner);
         }
-        const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
+        const arguments_literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidGenericArguments;
         if (base == .name and base.name.qualifier_token == null and
             std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Array"))
         {
@@ -226,7 +251,7 @@ pub const Context = struct {
                 } else return error.InvalidArrayArguments;
             }
             if (length == null or element == null) return error.InvalidArrayArguments;
-            return self.writer.addResolvedType(.{ .array = .{ .length = length.?, .element = element.? } });
+            return self.internDerived(.{ .array = .{ .length = length.?, .element = element.? } });
         }
         if (base == .name and base.name.qualifier_token == null and
             std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Errable"))
@@ -238,7 +263,7 @@ pub const Context = struct {
                 const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidGenericArgument;
                 if (std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, base_name), "t")) {
                     const child = try self.lower(field.type_node orelse return error.InvalidGenericArgument);
-                    return self.writer.addResolvedType(.{ .inferred_errable = child });
+                    return self.internDerived(.{ .inferred_errable = child });
                 }
             }
         }
@@ -247,7 +272,7 @@ pub const Context = struct {
             const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidVirtualArguments;
             if (!type_arguments.isVirtualContractParameter(type_arguments.name(self.tree, self.source, field, base_name))) return error.InvalidVirtualArguments;
             const contract_type = try self.lower(field.type_node orelse return error.InvalidVirtualArguments);
-            return self.writer.addResolvedType(.{ .virtual = contract_type });
+            return self.internDerived(.{ .virtual = contract_type });
         }
         // Nested generic types may append to the same argument pool. Buffer
         // this level until their complete ranges have been published.
@@ -291,6 +316,23 @@ pub const Context = struct {
             .binary_modulo => if (rhs == 0) return error.InvalidComptimeInteger else @mod(lhs, rhs),
             else => error.InvalidComptimeInteger,
         };
+    }
+
+    fn internDerived(self: *Context, ty: entities.ResolvedType) !entities.ModuleTypeId {
+        for (self.graph.semantic.types.items, 0..) |candidate, raw| {
+            if (candidate != .resolved or std.meta.activeTag(candidate.resolved) != std.meta.activeTag(ty)) continue;
+            const same = switch (ty) {
+                .nominal => |value| candidate.resolved.nominal == value,
+                .pointer => |value| candidate.resolved.pointer.child == value.child and candidate.resolved.pointer.mutability == value.mutability,
+                .array => |value| candidate.resolved.array.element == value.element and candidate.resolved.array.length == value.length,
+                .nullable => |value| candidate.resolved.nullable == value,
+                .inferred_errable => |value| candidate.resolved.inferred_errable == value,
+                .virtual => |value| candidate.resolved.virtual == value,
+                else => unreachable,
+            };
+            if (same) return @enumFromInt(@as(u32, @intCast(raw)));
+        }
+        return self.writer.addResolvedType(ty);
     }
 
     fn internBuiltin(self: *Context, builtin: graph_mod.BuiltinType) !entities.ModuleTypeId {

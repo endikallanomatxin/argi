@@ -767,7 +767,7 @@ pub const CodeGenerator = struct {
                 .binding_declaration => |id| id,
                 else => continue,
             };
-            if (self.global_bindings.contains(binding)) continue;
+            if (self.global_bindings.contains(binding) or types.isStaticBinding(self.graph, binding)) continue;
             const record = self.graph.bindings.items[@intFromEnum(binding)];
             const type_ref = try self.toLLVMType(record.ty);
             const name_z = try self.dupZ(self.graph.text(record.name));
@@ -1155,9 +1155,9 @@ pub const CodeGenerator = struct {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .argument_default => CodegenError.InvalidType,
-            .declaration, .reach_directive, .type_literal => null,
+            .declaration, .reach_directive, .type_literal, .definition_literal => null,
             .binding_declaration => |binding| blk: {
-                if (types.staticTypeBinding(self.graph, binding) != null) break :blk null;
+                if (types.isStaticBinding(self.graph, binding)) break :blk null;
                 if (self.global_bindings.contains(binding)) {
                     try self.ensureGlobalInitialized(binding);
                 } else {
@@ -3286,7 +3286,7 @@ pub const CodeGenerator = struct {
 
     fn isCEnum(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
-            .declared => |decl| self.graph.declarations.items[@intFromEnum(decl)].choice_layout == .c_enum,
+            .nominal => |decl| self.graph.typeDefinition(decl).choice_layout == .c_enum,
             .structural_choice => |shape| shape.layout == .c_enum,
             .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
                 .choice => |shape| shape.layout == .c_enum,
@@ -3838,7 +3838,7 @@ test "native and bytecode metadata primitives share selected type geometry" {
     try graph.bindings.append(a, .{ .name = graph.fields.items[5].name, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
     try graph.binding_refs.append(a, @enumFromInt(0));
     try graph.generic_arguments.append(a, .{ .name = try graph.addString(a, "t"), .value = .{ .type = @enumFromInt(3) } });
-    try graph.generic_function_instances.append(a, .{ .function = @enumFromInt(0), .parameterized_declaration = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } });
+    try graph.generic_function_instances.append(a, .{ .function = @enumFromInt(0), .parameterized_definition = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } });
     var diagnostics = diagnostic.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var generator = try CodeGenerator.init(a, std.testing.io, &graph, &diagnostics, .{});

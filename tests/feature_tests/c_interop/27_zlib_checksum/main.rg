@@ -1,7 +1,8 @@
-zlib := import("codecs/checksum/zlib")
-main(.system: System) -> (.status_code: Int32 = 0) := {
+zlib := import ("codecs/checksum/zlib")
+
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
-    bytes : [9]UInt8 = (49, 50, 51, 52, 53, 54, 55, 56, 57)
+    bytes: [9]UInt8 = (49, 50, 51, 52, 53, 54, 55, 56, 57)
     source := view(&bytes)
     whole := zlib.crc32(&source)
     if whole != 3421780262 { status_code = 1 }

@@ -60,7 +60,7 @@ built-in signed or unsigned integer type, including target-width `UIntNative`.
 Both operands have the same type; compatible integer literals follow a typed
 operand. A successful result contains that same integer type.
 
-The first three operations return `Errable<T, out_of_range>`. Their checks
+The first three operations return `Errable#(T, out_of_range)`. Their checks
 precede arithmetic that could overflow or underflow. Division additionally
 reports `division_by_zero` for a zero divisor, including `0 / 0`. Signed division
 truncates toward zero. Dividing a signed minimum by `-1` reports `out_of_range`,

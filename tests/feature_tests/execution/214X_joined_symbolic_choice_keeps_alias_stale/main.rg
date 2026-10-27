@@ -2,9 +2,9 @@ drops :: Int32 = 0
 tokens :: Int32 = 0
 whole_drops :: Int32 = 0
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Token: Type = (.value: Int32)
+Token := (.value: Int32)
 
 Choice: Type = (..pair(.left: Resource, .right: Resource), ..empty)
 
@@ -25,12 +25,12 @@ implement Deinit#(Choice) (
     }
 )
 
-select_choice(.target: $&Choice, .token: Token) -> (.result: $&Choice) := {
+select_choice := (.target: $&Choice, .token: Token) -> (.result: $&Choice) {
     held ::= ~token
     result = target
 }
 
-replace(.target: $&Choice, .token: Token, .consume: Bool) -> () := {
+replace := (.target: $&Choice, .token: Token, .consume: Bool) -> () {
     previous ::= target
     match target&{
         ..pair $&payload { if consume { deinit(.self = $&payload&.left) } }
@@ -46,7 +46,7 @@ replace(.target: $&Choice, .token: Token, .consume: Bool) -> () := {
     }
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     {
         value :: Choice = ..pair(.left = (.value = 1), .right = (.value = 2))
         token :: Token = (.value = 0)

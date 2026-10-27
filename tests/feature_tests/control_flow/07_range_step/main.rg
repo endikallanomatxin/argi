@@ -1,4 +1,4 @@
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     ascending :: Int32 = 0
     descending :: Int32 = 0
 

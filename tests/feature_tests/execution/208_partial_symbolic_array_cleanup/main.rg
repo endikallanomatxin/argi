@@ -1,10 +1,10 @@
-Counter: Type = (.drops: Int32 = 0)
+Counter := (.drops: Int32 = 0)
 
 tokens :: Int32 = 0
 
-Resource: Type = (.value: Int32, .counter: $&Counter)
+Resource := (.value: Int32, .counter: $&Counter)
 
-Token: Type = (.value: Int32)
+Token := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { self&.counter&.drops = [self&.counter&.drops + 1] }
@@ -12,12 +12,12 @@ implement Deinit#(Resource) (
 
 implement Deinit#(Token) (.deinit = (.self: $&Token) -> () { tokens = tokens + 1 })
 
-select_array(.target: $&[2]Resource, .token: Token) -> (.result: $&[2]Resource) := {
+select_array := (.target: $&[2]Resource, .token: Token) -> (.result: $&[2]Resource) {
     held ::= ~token
     result = target
 }
 
-replace(.target: $&[2]Resource, .token: Token, .counter: $&Counter) -> () := {
+replace := (.target: $&[2]Resource, .token: Token, .counter: $&Counter) -> () {
     deinit(.self = $&target&[0])
     [select_array(.target = target, .token = ~token)]&= (
         (.value = 3, .counter = counter),
@@ -25,7 +25,7 @@ replace(.target: $&[2]Resource, .token: Token, .counter: $&Counter) -> () := {
     )
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     counter :: Counter = Counter()
     {
         values :: [2]Resource = (

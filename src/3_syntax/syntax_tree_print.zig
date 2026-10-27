@@ -9,6 +9,17 @@ pub fn printNode(tree: *const syn.FileSyntaxTree, db: *const source_db.SourceDb,
     if (token_text.len != 0 and token_text[0] != '\n') std.debug.print(" `{s}`", .{token_text});
     std.debug.print(" @{d}\n", .{tree.location(node).offset});
 
+    if (tree.parameterizedDefinition(node)) |definition| {
+        printNodes(tree, db, definition.parameters, level + 1);
+        printNode(tree, db, definition.value, level + 1);
+        return;
+    }
+    if (tree.functionDefinition(node)) |definition| {
+        printNode(tree, db, definition.input, level + 1);
+        printNode(tree, db, definition.output, level + 1);
+        if (definition.body.unwrap()) |body| printNode(tree, db, body, level + 1);
+        return;
+    }
     if (tree.comptimeEntry(node)) |entry| {
         if (entry.input) |input| printNode(tree, db, input, level + 1);
         if (entry.output) |output| printNode(tree, db, output, level + 1);
@@ -27,6 +38,8 @@ pub fn printNode(tree: *const syn.FileSyntaxTree, db: *const source_db.SourceDb,
         if (declaration.function.body) |body| printNode(tree, db, body, level + 1);
         return;
     }
+    if (tree.parameterList(node)) |list| return printNodes(tree, db, list.fields, level + 1);
+    if (tree.specializationArguments(node)) |list| return printNodes(tree, db, list.fields, level + 1);
     if (tree.structTypeLiteral(node)) |literal| return printNodes(tree, db, literal.fields, level + 1);
     if (tree.choiceTypeLiteral(node)) |literal| return printNodes(tree, db, literal.variants, level + 1);
     if (tree.structValueLiteral(node)) |literal| return printNodes(tree, db, literal.fields, level + 1);

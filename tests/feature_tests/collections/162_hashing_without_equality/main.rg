@@ -1,4 +1,4 @@
-Key: Type = (.id: Int32)
+Key := (.id: Int32)
 
 implement#(.State: Type: Hasher#(State)) Hashable#(Key, State) (
     .hash_into = (.key: &Key, .hasher: $&State) -> () {
@@ -6,7 +6,7 @@ implement#(.State: Type: Hasher#(State)) Hashable#(Key, State) (
     }
 )
 
-Counter: Type = (.bytes: UIntNative = 0)
+Counter := (.bytes: UIntNative = 0)
 
 implement Hasher#(Counter) (
     .write_bytes = (.self: $&Counter, .bytes: ArrayView#(UInt8)) -> () {
@@ -15,7 +15,7 @@ implement Hasher#(Counter) (
     .finish = (.self: &Counter) -> (.hash: UIntNative) { hash = self&.bytes }
 )
 
-main() -> () := {
+main := () -> () {
     key: Key = (.id = 42)
     counter :: Counter = (.bytes = 0)
     Hashable#(Key, Counter).hash_into(.key = &key, .hasher = $&counter)

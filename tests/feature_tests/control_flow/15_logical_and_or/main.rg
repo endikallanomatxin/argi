@@ -1,9 +1,9 @@
-increment_and_is_true(.value: $&Int32) -> (.ok: Bool) := {
-    value& = value& + 1
+increment_and_is_true := (.value: $&Int32) -> (.ok: Bool) {
+    value&= value&+ 1
     ok = true
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     a := true
     b := false
     side_effect :: Int32 = 0

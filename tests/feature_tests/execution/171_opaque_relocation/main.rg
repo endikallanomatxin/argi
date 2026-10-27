@@ -1,11 +1,11 @@
-Pair: Type = (.left: Int32, .right: Int32)
+Pair := (.left: Int32, .right: Int32)
 
-observe(.calls: $&Int32, .reference: $&Int32) -> (.result: $&Int32) := {
+observe := (.calls: $&Int32, .reference: $&Int32) -> (.result: $&Int32) {
     calls&= calls&+ 1
     result = reference
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
     address ::= aligned_alloc(.alignment = 8, .size = 32).address
     if address == 0 { abort }

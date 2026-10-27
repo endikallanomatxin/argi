@@ -114,7 +114,7 @@ aliases retain their original provenance.
 
 ## Opaque storage
 
-Containers such as `DynamicArray<T>` may contain runtime slots whose individual
+Containers such as `DynamicArray#(T)` may contain runtime slots whose individual
 cleanup responsibilities cannot be represented precisely. An Opaque Storage
 Domain, identified by a storage Place, conservatively retains hidden
 dependencies.
@@ -246,11 +246,11 @@ Uses on mutually exclusive branches are alternatives, even when the caller
 supplies aliases for their inputs. Loops and recursive forwarding must not allow
 one authorization to be consumed repeatedly.
 
-An `ArrayView<T>` or `MutableArrayView<T>` length must describe initialized elements inside its
+An `ArrayView#(T)` or `MutableArrayView#(T)` length must describe initialized elements inside its
 physical region. Checking an index against length is necessary but cannot
 validate a forged region. A zero-length region contains no readable element,
 and constructing a view must not require dereferencing a nonexistent first
-element. `MaybeUninit<T>` provides storage for `T`; occupancy must be proved
+element. `MaybeUninit#(T)` provides storage for `T`; occupancy must be proved
 separately before reading or destroying a `T`.
 
 At a trusted boundary, the caller must discharge the physical obligations

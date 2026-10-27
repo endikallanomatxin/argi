@@ -1,4 +1,4 @@
-StorageSlot : Type = (.address: Int32)
+StorageSlot := (.address: Int32)
 
 implement Deinit#(StorageSlot) (
     .deinit = (.self: $&StorageSlot) -> () {
@@ -6,7 +6,7 @@ implement Deinit#(StorageSlot) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     source :: StorageSlot = (.address = 1)
     destination :: StorageSlot = (.address = 0)
     deinit(.self = $&destination)

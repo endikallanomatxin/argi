@@ -4,7 +4,7 @@
 ..unexpected_option_value
 ..invalid_cli_schema
 
-CliSpec: Type = (
+CliSpec := (
     .name          : StringView,
     .short_name    : StringView  = "",
     .help          : StringView  = "",
@@ -16,11 +16,11 @@ CliSpec: Type = (
 
 implement ImplicitlyCopyable#(CliSpec) ()
 
-CliValue: Type = (.name: StringView, .value: ?StringView)
+CliValue := (.name: StringView, .value: ?StringView)
 
 implement ImplicitlyCopyable#(CliValue) ()
 
-CliMatches: Type = (
+CliMatches := (
     .options     : DynamicArray#(.t: CliValue),
     .positionals : DynamicArray#(.t: StringView)
 )
@@ -41,12 +41,12 @@ CliReasons: Type = (
 -- Specs and results borrow their text. Callers retain both the argument source
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
-parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
+parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType)) (
     .source    : &t,
     .specs     : ArrayView#(.t: CliSpec),
     .start     : UIntNative               = 0,
     .allocator : $&AllocatorType          = reach allocator
-) -> (.result: Errable#(CliMatches, CliReasons)) := {
+) -> (.result: Errable#(CliMatches, CliReasons)) {
     assume allocator
     count ::= length(&specs).count
     index :: UIntNative = 0
@@ -184,12 +184,12 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
     result = ..ok(.options = ~options, .positionals = ~positionals)
 }
 
-write_cli_help#(.WriterType: Type: Writer#(WriterType))(
+write_cli_help := #(.WriterType: Type: Writer#(WriterType)) (
     .writer  : $&WriterType,
     .program : StringView,
     .about   : StringView,
     .specs   : ArrayView#(.t: CliSpec)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
     write(writer, .value = about)!
     write(writer, .value = "\nUsage: ")!
     write(writer, .value = program)!

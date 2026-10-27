@@ -4,9 +4,9 @@ Hashable#(.Key: Type, .State: Type: Hasher#(State)): Contract = (
     .hash_into : (.key: &Key, .hasher: $&State) -> ()
 )
 
-_hash_unsigned#(.State: Type: Hasher#(State))(
+_hash_unsigned := #(.State: Type: Hasher#(State)) (
     .value: UInt64, .count: UIntNative, .hasher: $&State
-) -> () := {
+) -> () {
     storage ::= zeroed#(.t: [8]UInt8)()
     remaining ::= value
     index :: UIntNative = 0
@@ -19,8 +19,9 @@ _hash_unsigned#(.State: Type: Hasher#(State))(
     Hasher#(State).write_bytes(hasher, .bytes = bytes)
 }
 
-_hash_signed#(.State: Type: Hasher#(State))(.value: Int64, .count: UIntNative, .hasher: $&State) -> (
-) := {
+_hash_signed := #(.State: Type: Hasher#(State)) (
+    .value: Int64, .count: UIntNative, .hasher: $&State
+) -> () {
     bits :: UInt64 = 0
     if value >= 0 {
         bits = unwrap_or_abort(.value = [value | convert#(.to: UInt64)(_)])
@@ -31,7 +32,7 @@ _hash_signed#(.State: Type: Hasher#(State))(.value: Int64, .count: UIntNative, .
     _hash_unsigned(.value = bits, .count = count, .hasher = hasher)
 }
 
-_hash_text#(.State: Type: Hasher#(State))(.text: StringView, .hasher: $&State) -> () := {
+_hash_text := #(.State: Type: Hasher#(State)) (.text: StringView, .hasher: $&State) -> () {
     extent ::= byte_length(&text) | convert#(.to: UInt64)(_)
     _hash_unsigned(.value = extent, .count = 8, .hasher = hasher)
     Hasher#(State).write_bytes(hasher, .bytes = string_bytes(.text = text))

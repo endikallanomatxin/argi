@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     text :: StringView = "café"
     whole ::= unwrap_or_abort(.value = slice(.self = text, .start = 0, .count = 5))
     if equals(.left = whole, .right = text).ok == false { abort }

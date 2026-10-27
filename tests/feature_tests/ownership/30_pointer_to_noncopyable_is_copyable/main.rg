@@ -1,8 +1,8 @@
-Resource : Type = ()
+Resource: Type = ()
 
 implement Init#(Resource, ()) (
-    .Result: Type = Resource
-    .init = (.args: ()) -> (.result: Result) {
+    .Result : Type = Resource
+    .init   = (.args: ()) -> (.result: Result) {
         result = ()
     }
 )
@@ -13,14 +13,14 @@ implement Deinit#(Resource) (
     }
 )
 
-consume_ptr(.ptr: &Resource) -> (.status_code: Int32) := {
+consume_ptr := (.ptr: &Resource) -> (.status_code: Int32) {
     status_code = 0
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     resource := Resource()
-    first_ptr : &Resource = &resource
-    second_ptr : &Resource = first_ptr
+    first_ptr: &Resource = &resource
+    second_ptr: &Resource = first_ptr
 
     status_code = consume_ptr(.ptr = second_ptr).status_code
 }

@@ -1,8 +1,8 @@
-forward(.text: StringView) -> (.view: StringView) := {
+forward := (.text: StringView) -> (.view: StringView) {
     view = trim(.self = text).view
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if trim(.self = "").view != "" { abort }
     if trim(.self = " \t\r\n ").view != "" { abort }
     if trim(.self = "hello").view != "hello" { abort }

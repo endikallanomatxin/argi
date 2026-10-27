@@ -1,10 +1,10 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
+unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Owned : Type = (.allocation: Allocation)
+Owned := (.allocation: Allocation)
 
 implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, (.allocator: $&AllocatorProvider)) (
-    .Result: Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
-    .init = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
+    .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
+    .init   = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
         allocator ::= ~args.allocator
 
         constructed :: Owned
@@ -12,7 +12,7 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, (.allocator: $&Allo
         allocated ::= allocate_bytes(.self = allocator, .size = 1)
         match allocated {
             ..error _ { result = ..error(.reason = ..out_of_memory) }
-            ..ok ~ payload {
+            ..ok ~payload {
                 constructed = (.allocation = ~payload)
                 result = ..ok ~constructed
             }
@@ -26,16 +26,18 @@ implement Deinit#(Owned) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     result ::= Owned(.allocator = $&allocator_storage)
     match result {
         ..error _ {}
-        ..ok ~ value {
+        ..ok ~value {
             owner ::= ~value
-            reference ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&owner.allocation, .offset = 0).reference
+            reference ::= unsafe_allocation.trusted_allocation_byte_rw(
+                .allocation = $&owner.allocation, .offset = 0
+            ).reference
             deinit(.self = $&owner)
-            if reference& != 0 { status_code = 1 }
+            if reference&!= 0 { status_code = 1 }
         }
     }
 }

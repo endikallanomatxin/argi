@@ -1,5 +1,5 @@
 -- Byte ordering is unsigned and lexicographic. Equal prefixes compare by length.
-compare(.left: ArrayView#(.t: UInt8), .right: ArrayView#(.t: UInt8)) -> (.order: Int32 = 0) := {
+compare := (.left: ArrayView#(.t: UInt8), .right: ArrayView#(.t: UInt8)) -> (.order: Int32 = 0) {
     count ::= length(&left).count
     other ::= length(&right).count
 
@@ -24,13 +24,13 @@ compare(.left: ArrayView#(.t: UInt8), .right: ArrayView#(.t: UInt8)) -> (.order:
     if length(&left).count > other { order = 1 }
 }
 
-equals(.left: ArrayView#(.t: UInt8), .right: ArrayView#(.t: UInt8)) -> (.ok: Bool) := {
+equals := (.left: ArrayView#(.t: UInt8), .right: ArrayView#(.t: UInt8)) -> (.ok: Bool) {
     ok = compare(.left = left, .right = right).order == 0
 }
 
-_bytes_match_at(
+_bytes_match_at := (
     .self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8), .start: UIntNative
-) -> (.ok: Bool = false) := {
+) -> (.ok: Bool = false) {
     size ::= length(&self).count
     count ::= length(&pattern).count
 
@@ -49,9 +49,9 @@ _bytes_match_at(
 }
 
 -- Empty patterns match at zero forward and at the extent in reverse searches.
-find(.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (
+find := (.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (
     .index : ?UIntNative = ..none
-) := {
+) {
     size ::= length(&self).count
     count ::= length(&pattern).count
 
@@ -69,9 +69,9 @@ find(.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (
     }
 }
 
-find_last(.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (
+find_last := (.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (
     .index : ?UIntNative = ..none
-) := {
+) {
     size ::= length(&self).count
     count ::= length(&pattern).count
 
@@ -88,7 +88,7 @@ find_last(.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (
     }
 }
 
-find_byte(.self: ArrayView#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative = ..none) := {
+find_byte := (.self: ArrayView#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative = ..none) {
     offset :: UIntNative = 0
 
     while offset < length(&self).count {
@@ -101,11 +101,13 @@ find_byte(.self: ArrayView#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative = 
     }
 }
 
-starts_with(.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (.ok: Bool) := {
+starts_with := (.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (.ok: Bool) {
     ok = _bytes_match_at(self, .pattern = pattern, .start = 0).ok
 }
 
-ends_with(.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (.ok: Bool = false) := {
+ends_with := (.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (
+    .ok : Bool = false
+) {
     size ::= length(&self).count
     count ::= length(&pattern).count
 
@@ -113,6 +115,6 @@ ends_with(.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (.ok
     ok = _bytes_match_at(self, .pattern = pattern, .start = size - count).ok
 }
 
-contains(.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (.ok: Bool) := {
+contains := (.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> (.ok: Bool) {
     ok = find(self, .pattern = pattern).index ?
 }

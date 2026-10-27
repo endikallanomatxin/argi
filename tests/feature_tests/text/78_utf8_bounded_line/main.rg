@@ -1,4 +1,4 @@
-main(.system: System) -> () := {
+main := (.system: System) -> ()  {
     assume allocator := system.page_allocator
     bytes: [5]UInt8 = (240, 159, 152, 128, 10)
     reader ::= ByteReader(.bytes = view(&bytes))

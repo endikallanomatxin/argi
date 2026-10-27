@@ -1,6 +1,6 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Tracked: Type = (.drops: $&Int32)
+Tracked := (.drops: $&Int32)
 
 implement Deinit#(Tracked) (
     .deinit = (.self: $&Tracked) -> () {
@@ -8,16 +8,16 @@ implement Deinit#(Tracked) (
     }
 )
 
-Slot: Type = (.storage: Allocation)
+Slot := (.storage: Allocation)
 
-put(.self: $&Slot, .value: Tracked) -> () := {
+put := (.self: $&Slot, .value: Tracked) -> () {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
     trusted_opaque_move_in#(Tracked, Allocation)($&self&.storage, slot, ~value)
 }
 
-drain(.self: $&Slot, .empty: Bool) -> (.result: ?Int32) := {
+drain := (.self: $&Slot, .empty: Bool) -> (.result: ?Int32) {
     if empty {
         slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
             unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
@@ -38,7 +38,7 @@ implement Deinit#(Slot) (
     }
 )
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
 

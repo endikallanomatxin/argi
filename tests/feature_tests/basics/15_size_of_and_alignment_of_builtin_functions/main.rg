@@ -1,11 +1,11 @@
 -- Exercise builtin size_of and alignment_of using type arguments (type_of helper)
 
-Vector2 : Type = (
-    .x: Int32,
-    .y: Int16,
+Vector2 := (
+    .x : Int32,
+    .y : Int16,
 )
 
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     size_int32 :: UIntNative = size_of(.type = Int32)
     if size_int32 != 4 {
         status_code = 1
@@ -18,7 +18,7 @@ main () -> (.status_code: Int32) := {
         return
     }
 
-    y_value : Int16 = 2
+    y_value: Int16 = 2
     v :: Vector2 = (.x = 1, .y = y_value)
 
     size_vec_from_type :: UIntNative = size_of(.type = Vector2)
@@ -39,7 +39,7 @@ main () -> (.status_code: Int32) := {
         return
     }
 
-    ptr : $&Vector2 = $&v
+    ptr: $&Vector2 = $&v
     size_ptr :: UIntNative = size_of(.type = type_of(.value = ptr))
     if size_ptr != 8 {
         status_code = 6

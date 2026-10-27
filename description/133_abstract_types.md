@@ -11,12 +11,12 @@ through an explicit implementation:
 Animal#(.Value: Type): Contract = (
     .speak: (.who: &Value) -> (.sound: Int32)
 )
-Dog: Type = (.voice: Int32)
+Dog := (.voice: Int32)
 implement Animal#(Dog) (
     .speak = (.who: &Dog) -> (.sound: Int32) { sound = who&.voice }
 )
 
-listen#(.Value: Type: Animal#(Value))(.who: &Value) -> (.sound: Int32) := {
+listen := #(.Value: Type: Animal#(Value)) (.who: &Value) -> (.sound: Int32)  {
     sound = Animal#(Value).speak(who)
 }
 ```

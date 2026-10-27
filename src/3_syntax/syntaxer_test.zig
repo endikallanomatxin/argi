@@ -32,6 +32,203 @@ fn parseTestSource(path: []const u8, source: []const u8) !syntax_tree.FileSyntax
     return tree;
 }
 
+test "compact syntaxing binds type and function definition values with their own parameters" {
+    const source =
+        \\Point := (.x: Float64, .y: Float64 = 0)
+        \\Box := #(.T: Type) (.value: T)
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
+        \\Alias := Box
+    ;
+    var tree = try parseTestSource("definitions.rg", source);
+    defer tree.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 4), tree.roots.len);
+    for (tree.roots) |root| try std.testing.expect(tree.symbolDeclaration(root) != null);
+    const point = tree.definitionValue(tree.roots[0]).?;
+    try std.testing.expect(tree.structTypeLiteral(point) != null);
+    const box = tree.parameterizedDefinition(tree.definitionValue(tree.roots[1]).?).?;
+    try std.testing.expectEqual(@as(usize, 1), box.parameters.len);
+    try std.testing.expect(tree.parameterList(box.parameters_struct.?) != null);
+    try std.testing.expect(tree.structTypeLiteral(box.parameters_struct.?) == null);
+    try std.testing.expect(tree.structTypeLiteral(box.value) != null);
+    const identity = tree.parameterizedDefinition(tree.definitionValue(tree.roots[2]).?).?;
+    const function = tree.functionDefinition(identity.value).?;
+    try std.testing.expect(function.body.unwrap() != null);
+    try std.testing.expect(tree.functionDeclaration(tree.roots[2]) != null);
+    try std.testing.expect(tree.functionDeclaration(identity.value) == null);
+    const alias = tree.definitionValue(tree.roots[3]).?;
+    try std.testing.expectEqual(syntax_tree.Node.Tag.identifier, tree.tag(alias));
+}
+
+test "compact syntaxing specializes values and calls with one hash-list representation" {
+    const source =
+        \\result := identity#(Int32)(.value = 42)
+        \\family := Box#(Box#(Int32))
+        \\qualified := utility.identity#(.T: Int32)(.value = 42)
+        \\operation := Compare#(Int32, Int32).compare(.left = a, .right = b)
+        \\box: Box#(Int32)=(.value = 42)
+        \\converted := value | convert#(.to: UIntNative)(_)
+    ;
+    var tree = try parseTestSource("specializations.rg", source);
+    defer tree.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 6), tree.roots.len);
+    const first = tree.functionCall(tree.symbolDeclaration(tree.roots[0]).?.value.?).?;
+    try std.testing.expectEqual(syntax_tree.Node.Tag.specialization, tree.tag(first.callee));
+    try std.testing.expect(first.specialization_arguments != null);
+    try std.testing.expect(tree.specializationArguments(first.specialization_arguments.?) != null);
+    try std.testing.expect(tree.structTypeLiteral(first.specialization_arguments.?) == null);
+    try std.testing.expectEqualStrings("(", tree.tokenTextFromSource(source, tree.mainToken(first.specialization_arguments.?)));
+    const family = tree.definitionValue(tree.roots[1]).?;
+    try std.testing.expectEqual(syntax_tree.Node.Tag.specialization, tree.tag(family));
+    const field = tree.structTypeField(tree.specializationArguments(tree.data(family).node_and_node.second).?.fields[0]).?;
+    try std.testing.expectEqual(syntax_tree.Node.Tag.specialization, tree.tag(field.type_node.?));
+    const qualified = tree.functionCall(tree.definitionValue(tree.roots[2]).?).?;
+    try std.testing.expectEqualStrings("utility", tree.tokenTextFromSource(source, qualified.module_qualifier.?));
+    const operation = tree.functionCall(tree.definitionValue(tree.roots[3]).?).?;
+    try std.testing.expect(operation.contract_type != null);
+    try std.testing.expect(tree.symbolDeclaration(tree.roots[4]).?.value != null);
+}
+
+test "compact syntaxing requires ordinary parameters on definition values" {
+    for ([_][]const u8{
+        "Box#(.T: Type) := (.value: T)",
+        "Box#(.T: Type): Type = (.value: T)",
+        "identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }",
+    }) |source| try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("declaration_parameters.rg", source));
+
+    var tree = try parseTestSource("definition_parameters.rg", "Box := #(.T: Type) (.value: T)\nForward: Type = #(.T: Type) Box#(T)\nidentity := #(.T: Type) (.value: T) -> (.result: T) { result = value }");
+    defer tree.deinit(std.testing.allocator);
+    for (tree.roots) |root| try std.testing.expect(tree.parameterizedDefinition(tree.definitionValue(root).?) != null);
+}
+
+test "compact syntaxing accepts specialized calls as statements" {
+    const source = "main := () -> () { push#(Int32)(.value = 1)\npush#(.T: Int32)(.value = 2) }";
+    var tree = try parseTestSource("statement_calls.rg", source);
+    defer tree.deinit(std.testing.allocator);
+    var calls: usize = 0;
+    for (tree.nodes.items(.tag), 0..) |tag, index| {
+        if (tag != .function_call) continue;
+        const call = tree.functionCall(@enumFromInt(index)).?;
+        try std.testing.expect(call.specialization_arguments != null);
+        calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), calls);
+}
+
+test "compact syntaxing rejects declaration-owned ordinary function bodies" {
+    try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy.rg", "identity(.value: Int32) -> (.result: Int32) := { result = value }"));
+    try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy-test.rg", "test example() -> () := {}"));
+}
+
+test "compact syntaxing rejects parameterized declaration-owned function bodies" {
+    try std.testing.expectError(error.ExpectedDeclarationOrAssignment, parseTestSource("legacy.rg", "identity#(.T: Type)(.value: T) -> (.result: T) := { result = value }"));
+}
+
+test "compact syntaxing separates comparison chains from explicit specialization" {
+    const cases = [_]struct { source: []const u8, tag: syntax_tree.Node.Tag }{
+        .{ .source = "answer := a < b", .tag = .compare_less },
+        .{ .source = "answer := a > b", .tag = .compare_greater },
+        .{ .source = "answer := a < b > c", .tag = .compare_greater },
+        .{ .source = "answer := a < b + c >= d", .tag = .compare_greater_equal },
+        .{ .source = "answer := family#(.Flag = [a < b or c >= d])", .tag = .specialization },
+        .{ .source = "answer := a <= b", .tag = .compare_less_equal },
+        .{ .source = "answer := a >= b", .tag = .compare_greater_equal },
+        .{ .source = "answer := exponent < -4 or exponent >= 16", .tag = .logical_or },
+        .{ .source = "answer := a < b > (c)", .tag = .compare_greater },
+        .{ .source = "answer := [a < b] > c", .tag = .compare_greater },
+        .{ .source = "answer := family#(Int32)", .tag = .specialization },
+        .{ .source = "answer := family#(\nInt32,\nBox#(Int32)\n)", .tag = .specialization },
+    };
+    for (cases) |case| {
+        var tree = try parseTestSource("comparisons.rg", case.source);
+        defer tree.deinit(std.testing.allocator);
+        const value = tree.symbolDeclaration(tree.roots[0]).?.value.?;
+        try std.testing.expectEqual(case.tag, tree.tag(value));
+    }
+    var sequence = try parseTestSource("comparisons.rg", "a < b\nc < d\ne < f");
+    defer sequence.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 3), sequence.roots.len);
+}
+
+test "compact syntaxing distinguishes choice definitions from choice value collections" {
+    const cases = [_]struct { source: []const u8, tag: syntax_tree.Node.Tag }{
+        .{ .source = "Choice := (..pair(.left: Resource, .right: Resource), ..empty)", .tag = .choice_type_literal },
+        .{ .source = "Choice := (..items [2]Resource, ..empty)", .tag = .choice_type_literal },
+        .{ .source = "values: [2]Choice = (..pair(.left = (.id = 7), .right = (.id = 11)), ..empty)", .tag = .list_literal },
+        .{ .source = "values: [2]Choice = (..number 7, ..number 11)", .tag = .list_literal },
+    };
+    for (cases) |case| {
+        var tree = try parseTestSource("choices.rg", case.source);
+        defer tree.deinit(std.testing.allocator);
+        const value = tree.symbolDeclaration(tree.roots[0]).?.value.?;
+        try std.testing.expectEqual(case.tag, tree.tag(value));
+        if (case.tag == .list_literal) for (tree.nodes.items(.tag)) |tag|
+            try std.testing.expect(tag != .choice_type_literal and tag != .struct_type_literal);
+    }
+}
+
+test "compact syntaxing retains named array dimensions for semantic resolution" {
+    var tree = try parseTestSource("dimensions.rg", "values: [count]Int32 = (20, 22)");
+    defer tree.deinit(std.testing.allocator);
+    const annotation = tree.symbolDeclaration(tree.roots[0]).?.type_node.?;
+    const dimension = tree.typeReference(annotation).?.array;
+    try std.testing.expectEqualStrings("count", tree.tokenTextFromSource("values: [count]Int32 = (20, 22)", dimension.length_token));
+}
+
+test "compact syntaxing permits ordinary named input and output types on function values" {
+    var tree = try parseTestSource("signatures.rg", "f := Args -> Results { result = x }\ng := #(.T: Type) Args -> Results { result = x }\nh := schema.Args -> schema.Results { result = x }\ni := schema.Args#(Bool) -> schema.Results#(Bool) { result = x }");
+    defer tree.deinit(std.testing.allocator);
+    for (tree.roots) |root| {
+        const value = tree.definitionBody(tree.definitionValue(root).?);
+        const definition = tree.functionDefinition(value).?;
+        try std.testing.expect(tree.typeReference(definition.input) != null);
+        try std.testing.expect(tree.typeReference(definition.output) != null);
+    }
+}
+
+test "compact syntaxing permits parameterized values in explicit type declarations" {
+    var tree = try parseTestSource("families.rg", "Forward: Type = #(.T: Type) Original#(T)");
+    defer tree.deinit(std.testing.allocator);
+    try std.testing.expectEqual(syntax_tree.Node.Tag.symbol_declaration_constant, tree.tag(tree.roots[0]));
+    const declaration = tree.typeDeclaration(tree.roots[0]).?;
+    try std.testing.expectEqual(@as(usize, 1), declaration.generic_params.len);
+    try std.testing.expect(tree.typeReference(declaration.value) != null);
+}
+
+test "compact syntaxing reports missing parentheses and positional separators" {
+    try std.testing.expectError(error.ExpectedRightParen, parseTestSource("missing.rg", "value: Box#(Int32 = zeroed()"));
+    try std.testing.expectError(error.ExpectedComma, parseTestSource("separator.rg", "value: Pair#(Int32 Int64)"));
+    try std.testing.expectError(error.ExpectedRightParen, parseTestSource("missing-named.rg", "value := family#(.T: Int32"));
+}
+
+test "compact syntaxing parses comparisons and specializations under allocation failure" {
+    const source = "comparison := a < b + c >= d\nbox: Box#(Box#(Int32))=(.value = 42)";
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const base = arena.allocator();
+    const files = [_]source_files.SourceFile{.{ .path = "speculation.rg", .code = source }};
+    var diagnostics = diagnostic.Diagnostics.init(&base, &files);
+    defer diagnostics.deinit();
+    var lex = tokenizer.Tokenizer.init(base, &diagnostics, source, diagnostics.source_db.fileId(0));
+    _ = try lex.tokenize();
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(allocator: std.mem.Allocator, text: []const u8, view: @import("../2_tokens/token.zig").View, owner: *const diagnostic.Diagnostics) !void {
+            var messages = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer messages.deinit();
+            const temporary = messages.allocator();
+            var local = diagnostic.Diagnostics.initBorrowed(&temporary, owner);
+            defer local.deinit();
+            var parser = try syntaxer.Syntaxer.init(allocator, view, text, &local);
+            defer parser.deinit();
+            var tree = try parser.parse();
+            defer tree.deinit(allocator);
+            try std.testing.expectEqual(@as(usize, 2), tree.roots.len);
+            try std.testing.expectEqual(@as(usize, 0), local.list.items.len);
+            const value = tree.definitionValue(tree.roots[0]).?;
+            try std.testing.expectEqual(syntax_tree.Node.Tag.compare_greater_equal, tree.tag(value));
+        }
+    }.run, .{ source, @import("../2_tokens/token.zig").View.init(&lex.tokens), &diagnostics });
+}
+
 test "compact syntaxing represents anonymous compile-time entries independently of calls" {
     const sources = [_][]const u8{
         "#run { calculate() }",
@@ -108,7 +305,7 @@ test "compact syntaxing preserves generic parameter indices across extra data gr
     defer tree.deinit(std.testing.allocator);
 
     const declaration = tree.functionDeclaration(tree.roots[0]).?;
-    const generic_struct = tree.structTypeLiteral(declaration.generic_params_struct.?).?;
+    const generic_struct = tree.parameterList(declaration.generic_params_struct.?).?;
     try std.testing.expectEqual(@as(usize, 1), declaration.generic_params.len);
     try std.testing.expectEqualSlices(syntax_tree.NodeIndex, generic_struct.fields, declaration.generic_params);
 
@@ -156,7 +353,7 @@ test "compact syntaxing preserves adversarial grammar distinctions" {
         .function_call,
         .pipe_expression,
     });
-    try expectTags("tests/feature_tests/types/17_generic_type_initializer_from_init/main.rg", &.{.generic_type_instantiation});
+    try expectTags("tests/feature_tests/types/17_generic_type_initializer_from_init/main.rg", &.{.specialization});
     try expectTags("tests/feature_tests/functions/13_mixed_function_call/main.rg", &.{
         .struct_value_literal,
         .positional_value_field,
@@ -223,10 +420,10 @@ test "compact syntax views preserve semantic distinctions" {
 }
 
 test "generic type applications retain positional arguments" {
-    try expectTags("tests/feature_tests/types/280_positional_type_arguments/main.rg", &.{ .generic_type_instantiation, .positional_type_field });
+    try expectTags("tests/feature_tests/types/280_positional_type_arguments/main.rg", &.{ .specialization, .positional_type_field });
 }
 
-test "modern and legacy test declarations share function payloads" {
+test "test definitions share ordinary function payloads" {
     var tree = try parseTestFile("tests/feature_tests/testing/21_modern_test_syntax/main.rg");
     defer tree.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 3), tree.roots.len);
@@ -236,4 +433,39 @@ test "modern and legacy test declarations share function payloads" {
         try std.testing.expectEqual(@as(usize, 1), tree.structTypeLiteral(declaration.function.input).?.fields.len);
         try std.testing.expectEqual(syntax_tree.Node.Tag.test_declaration, tree.tag(root));
     }
+}
+
+test "compact syntaxing keeps contract and operation specialization arguments distinct" {
+    const source = "value := Protocol#(Owner).apply#(.Value: Bool)(.value = true)";
+    var tree = try parseTestSource("operation.rg", source);
+    defer tree.deinit(std.testing.allocator);
+    const call = tree.functionCall(tree.definitionValue(tree.roots[0]).?).?;
+    try std.testing.expect(call.contract_type != null);
+    try std.testing.expect(call.specialization_arguments != null);
+    try std.testing.expectEqual(syntax_tree.Node.Tag.specialization, tree.tag(call.contract_type.?));
+    const parameters = tree.specializationArguments(call.specialization_arguments.?).?;
+    try std.testing.expectEqual(@as(usize, 1), parameters.fields.len);
+    const field = tree.structTypeField(parameters.fields[0]).?;
+    try std.testing.expectEqualStrings("Value", tree.tokenTextFromSource(source, field.name_token));
+}
+
+test "compact syntaxing specializes an associated type family in a type annotation" {
+    var tree = try parseTestSource("associated_family.rg", "value: Factory#(Owner).Args#(Bool) = (.value = true)\n");
+    defer tree.deinit(std.testing.allocator);
+    const declaration = tree.symbolDeclaration(tree.roots[0]).?;
+    const specialization = tree.syntaxType(declaration.type_node.?).?;
+    try std.testing.expect(specialization == .generic);
+    const projection = tree.syntaxType(specialization.generic.base).?;
+    try std.testing.expect(projection == .projection);
+    try std.testing.expect(tree.syntaxType(projection.projection.base).? == .generic);
+}
+
+test "compact syntaxing uses hash parameters on contract and implementation headers" {
+    var tree = try parseTestSource("headers.rg", "Example#(.Item: Type): Contract = ()\nimplement#(.Item: Type) Example#(Item) ()\n");
+    defer tree.deinit(std.testing.allocator);
+    const contract = tree.contractDeclaration(tree.roots[0]).?;
+    try std.testing.expectEqual(@as(usize, 1), tree.parameterList(contract.participants_struct.?).?.fields.len);
+    const implementation = tree.contractConformance(tree.roots[1]).?;
+    try std.testing.expectEqual(@as(usize, 1), implementation.generic_params.len);
+    try std.testing.expect(tree.syntaxType(implementation.contract_type).? == .generic);
 }

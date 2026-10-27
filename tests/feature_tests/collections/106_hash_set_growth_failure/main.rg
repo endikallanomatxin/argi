@@ -1,11 +1,11 @@
-RecordingAllocator: Type = (
-    .ffi : $&ForeignFunctionInterface
-    .fail : Bool = false
-    .allocations   : UIntNative = 0
-    .deallocations : UIntNative = 0
+RecordingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
+    .fail          : Bool                       = false
+    .allocations   : UIntNative                 = 0
+    .deallocations : UIntNative                 = 0
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     set ::= unwrap_or_abort(
         .value = HashSet#(.key: UIntNative, .policy: StandardHashPolicy)(
@@ -37,7 +37,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 implement Allocator#(RecordingAllocator) (
     .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         if self&.fail {
             result = ..error(.reason = ..out_of_memory)

@@ -1,12 +1,12 @@
-Pair: Type = (.left: Int32, .right: Int32)
+Pair := (.left: Int32, .right: Int32)
 
-update(.value: $&Pair) -> () := { value&.left = 40 }
+update := (.value: $&Pair) -> () { value&.left = 40 }
 
-read(.value: &Int32) -> (.result: Int32) := { result = value&}
+read := (.value: &Int32) -> (.result: Int32) { result = value&}
 
-borrow(.value: &Int32) -> (.result: &Int32) := { result = value }
+borrow := (.value: &Int32) -> (.result: &Int32) { result = value }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     pairs :: [2]Pair = ((.left = 1, .right = 2), (.left = 3, .right = 4))
     saved ::= pairs
     index :: UIntNative = 0

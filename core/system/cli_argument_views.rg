@@ -1,4 +1,4 @@
-CliArgumentViews: Type = (._values: ArrayView#(.t: StringView))
+CliArgumentViews := (._values: ArrayView#(.t: StringView))
 
 implement Init#(CliArgumentViews, (.values: ArrayView#(.t: StringView))) (
     .Result : Type = CliArgumentViews

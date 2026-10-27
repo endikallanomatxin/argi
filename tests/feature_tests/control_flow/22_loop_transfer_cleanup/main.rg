@@ -8,7 +8,7 @@ implement Deinit#(Tracked) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     while true {
         owner ::= Tracked()
         {

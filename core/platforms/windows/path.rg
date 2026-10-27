@@ -1,9 +1,9 @@
 #if target_os("windows") {
-    _platform_path_is_separator(.byte: UInt8) -> (.ok: Bool) := {
+    _platform_path_is_separator := (.byte: UInt8) -> (.ok: Bool) {
         ok = byte == 47 or byte == 92
     }
 
-    _platform_path_root_length(.view: &StringView) -> (.length: UIntNative = 0) := {
+    _platform_path_root_length := (.view: &StringView) -> (.length: UIntNative = 0) {
         if view&._length == 0 { return }
         first ::= unwrap_or_abort(.value = bytes_get(.view = view, .index = 0))
         if _platform_path_is_separator(.byte = first).ok {

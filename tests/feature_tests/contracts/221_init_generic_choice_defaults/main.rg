@@ -1,19 +1,22 @@
 Mode: Type = (..quiet, ..verbose)
 
-Options#(.T: Type): Type = (.value: T, .mode: Mode, .enabled: Bool, .marker: UnicodeScalar)
+Options := #(.T: Type) (.value: T, .mode: Mode, .enabled: Bool, .marker: UnicodeScalar)
 
 implement#(.T: Type) Init#(
     Options#(T),
     (
-        .value: T, .mode: Mode = ..quiet, .enabled: Bool = true, .marker: UnicodeScalar = 'Q'
+        .value   : T,
+        .mode    : Mode          = ..quiet,
+        .enabled : Bool          = true,
+        .marker  : UnicodeScalar = 'Q'
     )
 ) (
     .Result : Type = Options#(T)
     .init   = (
         .args : (
             .value   : T
-            .mode    : Mode = ..quiet
-            .enabled : Bool = true
+            .mode    : Mode          = ..quiet
+            .enabled : Bool          = true
             .marker  : UnicodeScalar = 'Q'
         )
     ) -> (.result: Result) {

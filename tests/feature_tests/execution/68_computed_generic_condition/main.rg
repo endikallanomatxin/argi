@@ -1,6 +1,6 @@
-positive(.value: Int32) -> (.ok: Bool) := { ok = value > 0 }
+positive := (.value: Int32) -> (.ok: Bool) { ok = value > 0 }
 
-choose#(.n: Int32)() -> (.value: Int32 = 0) := {
+choose := #(.n: Int32) () -> (.value: Int32 = 0) {
     #if positive(.value = n) {
         value = 42
     } #else {
@@ -8,7 +8,7 @@ choose#(.n: Int32)() -> (.value: Int32 = 0) := {
     }
 }
 
-negative#(.n: Int32)() -> (.value: Int32 = 0) := {
+negative := #(.n: Int32) () -> (.value: Int32 = 0) {
     #if positive(.value = n) {
         unavailable_in_discarded_branch()
     } #else {
@@ -16,11 +16,11 @@ negative#(.n: Int32)() -> (.value: Int32 = 0) := {
     }
 }
 
-both#(.n: Int32)() -> (.value: Int32 = 0) := {
+both := #(.n: Int32) () -> (.value: Int32 = 0) {
     #if n > 0 { value = 42 } #else { value = 41 }
 }
 
-locals#(.n: Int32)() -> (.value: Int32 = 0) := {
+locals := #(.n: Int32) () -> (.value: Int32 = 0) {
     previous := 0
     #if n > 0 {
         previous := 40
@@ -42,7 +42,7 @@ implement Selected#(Int32) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     if locals#(.n = 1)() != 42 { abort }
     if locals#(.n = -1)() != 42 { abort }
     if selected_value(.input = 42) != 42 { abort }

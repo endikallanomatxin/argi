@@ -135,6 +135,8 @@ pub const Context = struct {
         };
         self.generics.projection_context = &self.contracts;
         self.generics.projection_resolver = contract_mod.Resolver.resolveAssociatedType;
+        self.generics.value_projection_resolver = @import("contract_projections.zig").resolveAssociatedValue;
+        self.generics.definition_projection_resolver = contract_mod.Resolver.resolveAssociatedDefinition;
         self.generics.constant_projection_resolver = contract_mod.Resolver.resolveAssociatedInt;
         self.constructors.contracts = &self.contracts;
         self.control.generic_functions = &self.generic_functions;
@@ -142,6 +144,8 @@ pub const Context = struct {
         self.contracts.function_context = &self.generic_functions;
         self.contracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
         self.contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
+        self.contracts.infer_operation_parameters = generic_functions_mod.Resolver.inferOperationParameters;
+        self.contracts.instantiate_generic_operation = generic_functions_mod.Resolver.instantiateGenericOperation;
         self.argument_defaults = .{
             .context = &self.generic_functions,
             .checkpoint = generic_functions_mod.Resolver.checkpointDefaultEffects,

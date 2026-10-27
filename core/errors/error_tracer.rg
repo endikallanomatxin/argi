@@ -30,26 +30,26 @@ add_context_text := (
     )
 }
 
-capture_error_tracer(
+capture_error_tracer := (
     .location     : SourceLocationId,
     .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
-) -> (.tracer: $&Virtual#(.contract: ErrorTracer)) := {
+) -> (.tracer: $&Virtual#(.contract: ErrorTracer)) {
     add_context(.context = "", .location = location, .error_tracer = error_tracer)
     tracer = error_tracer
 }
 
 -- Propagation binds the original capability explicitly. The text/view
 -- helpers keep length-delimited views separate from zero-terminated text.
-_add_error_context(
+_add_error_context := (
     .tracer   : $&Virtual#(.contract: ErrorTracer),
     .location : SourceLocationId,
     .context  : StringView
-) -> () := {
+) -> () {
     add_context(.context = context, .location = location, .error_tracer = tracer)
 }
 
-_add_error_context_text(
+_add_error_context_text := (
     .tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar
-) -> () := {
+) -> () {
     add_context_text(.context = context, .location = location, .error_tracer = tracer)
 }

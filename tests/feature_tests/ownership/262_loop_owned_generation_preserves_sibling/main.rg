@@ -1,6 +1,6 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Pair: Type = (
+Pair := (
     .changing : String
     .stable   : String
 )
@@ -12,7 +12,7 @@ implement Deinit#(Pair) (
     }
 )
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

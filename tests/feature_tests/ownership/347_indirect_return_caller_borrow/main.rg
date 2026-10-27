@@ -1,4 +1,4 @@
-Large: Type = (.reference: &Int32, .values: [128]Int32)
+Large := (.reference: &Int32, .values: [128]Int32)
 
 drops :: Int32 = 0
 
@@ -9,15 +9,15 @@ implement Deinit#(Large) (
     }
 )
 
-make(.reference: &Int32) -> (.result: Large) := {
+make := (.reference: &Int32) -> (.result: Large) {
     result = Large(reference, zeroed#([128]Int32)())
 }
 
-relay(.reference: &Int32) -> (.result: Large) := {
+relay := (.reference: &Int32) -> (.result: Large) {
     result = make(reference)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     local ::= 31
 
     {
