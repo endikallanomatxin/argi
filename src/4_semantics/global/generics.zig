@@ -1060,15 +1060,15 @@ pub const Resolver = struct {
             } else if (left.value == .definition and right.value == .definition and left.value.definition == .parameter and right.value.definition == .parameter and scope.sameParameter(left.value.definition.parameter, right.value.definition.parameter)) {
                 continue;
             } else {
-                const left_value = try self.instantiateSignatureArgument(scope.expected_module, left.value, scope.expected_bindings);
-                const right_value = try self.instantiateSignatureArgument(scope.actual_module, right.value, scope.actual_bindings);
+                const left_value = try self.instantiateArgumentValue(scope.expected_module, left.value, scope.expected_bindings);
+                const right_value = try self.instantiateArgumentValue(scope.actual_module, right.value, scope.actual_bindings);
                 if (!global_types.genericArgumentValuesEqual(self.graph, left_value, right_value)) return false;
             }
         }
         return true;
     }
 
-    fn instantiateSignatureArgument(self: *Resolver, module_index: usize, value: ir.GenericArgument.Value, bindings: *Bindings) !global_sg.GenericArgument.Value {
+    pub fn instantiateArgumentValue(self: *Resolver, module_index: usize, value: ir.GenericArgument.Value, bindings: *Bindings) !global_sg.GenericArgument.Value {
         return switch (value) {
             .type => |ty| .{ .type = try self.instantiateParameterizedType(module_index, ty, bindings) },
             .definition => |definition| .{ .definition = try self.instantiateDefinitionValue(module_index, definition, bindings) },
@@ -1171,12 +1171,7 @@ pub const Resolver = struct {
             const argument = storage.generic_arguments.items[range.start + @as(u32, @intCast(offset))];
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(argument.name)),
-                .value = switch (argument.value) {
-                    .projection => |projection| try self.instantiateArgumentProjection(module_index, projection, bindings),
-                    .definition => |value| .{ .definition = try self.instantiateDefinitionValue(module_index, value, bindings) },
-                    .type => |value| .{ .type = try self.instantiateParameterizedType(module_index, value, bindings) },
-                    .comptime_int => |value| .{ .comptime_int = try self.evalInt(module_index, value, bindings) },
-                },
+                .value = try self.instantiateArgumentValue(module_index, argument.value, bindings),
             });
         }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);

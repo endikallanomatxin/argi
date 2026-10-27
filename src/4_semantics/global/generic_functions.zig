@@ -1070,6 +1070,46 @@ pub const Resolver = struct {
         }
     }
 
+    fn bindKnownOperationAssociations(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), arguments: primitives.Range(ir.ParameterizedGenericArgId), bindings: *generic_mod.Resolver.Bindings) !bool {
+        if (parameters.len == 0) return true;
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage;
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            const argument = self.generics.findPatternArgument(module_index, arguments, raw - parameters.start, module.text(parameter.name)) orelse return false;
+            // Facts learned from operation inputs may bind a declared associated
+            // pattern (e.g. Args = Packet#(T)); never use an expected output.
+            const compatible = switch (argument.value) {
+                .type => |pattern| if (bindings.types[raw]) |actual| try self.inferInputType(module_index, pattern, actual, bindings) else true,
+                .comptime_int => |pattern| if (bindings.ints[raw]) |actual| try self.inferIntExpression(module_index, pattern, actual, bindings) else true,
+                .definition => |pattern| if (bindings.definitions[raw]) |actual| try self.generics.inferDefinitionValue(module_index, pattern, actual, bindings) else true,
+                .projection => true,
+            };
+            if (!compatible) return false;
+            // Keep unrelated associated projections deferred until their own
+            // implementation parameters are known; they are not dispatch inputs.
+            const value = self.generics.instantiateArgumentValue(module_index, argument.value, bindings) catch |err| switch (err) {
+                error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.UnboundDefinitionParameter => continue,
+                else => return err,
+            };
+            switch (parameter.kind) {
+                .type => if (bindings.types[raw]) |old| {
+                    if (value != .type or !global_types.equal(self.graph, old, value.type)) return false;
+                },
+                .comptime_int => if (bindings.ints[raw]) |old| {
+                    if (value != .comptime_int or old != value.comptime_int) return false;
+                },
+                .definition => if (bindings.definitions[raw]) |old| {
+                    if (value != .definition or old.origin != value.definition.origin or !global_types.genericArgumentsEqual(self.graph, old.captures, value.definition.captures)) return false;
+                },
+            }
+            const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+            try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, module.text(parameter.name)), .value = value });
+            try self.generics.bindGlobalArgumentsPartial(module_index, parameters, .{ .start = start, .len = 1 }, bindings);
+        }
+        return true;
+    }
+
     /// Inline operations capture implementation parameters by position. Infer
     /// in the callable's own parameter pool, then transfer the captured prefix
     /// back to the conformance; equal parameter names do not establish identity.
@@ -1085,6 +1125,7 @@ pub const Resolver = struct {
         associated: primitives.Range(ir.ParameterizedGenericArgId),
     ) !?global_sg.GlobalTypeId {
         const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
+        if (!try self.bindKnownOperationAssociations(module_index, operation.associated_parameters, associated, bindings)) return null;
         if (operation.function == .expression) {
             const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
             const expression = storage.nodes.items[@intFromEnum(operation.function.expression)];
@@ -1098,6 +1139,9 @@ pub const Resolver = struct {
                 }
             }
         }
+        // Input inference may complete implementation parameters. Reapply their
+        // associated definitions and reject inferred facts that contradict them.
+        if (!try self.bindKnownOperationAssociations(module_index, operation.associated_parameters, associated, bindings)) return null;
         const target = try contracts.resolveFunctionTarget(module_index, operation.function, bindings);
         const definition = target.value(self.graph) orelse return error.DeferredGenericFunction;
         const declaration = self.graph.familyDeclaration(definition.origin);

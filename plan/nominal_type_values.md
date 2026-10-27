@@ -219,7 +219,13 @@ associated families and compile-time entries use the common resolution pipeline.
 Existing focused coverage includes native, VM, REPL and `#run`; that coverage is
 not proof that the complete migration passes.
 
-Implementation-owned operation signatures use `.operation: _`. Their definitions
+The `.operation: _` spelling is transitional. The final contract model must
+retain an explicit relationship between associated inputs/outputs and the
+operation signature. A concrete `Args: Type` works for concrete operations;
+operation-local parameters require associated families with the same scope.
+Do not treat an unconstrained open operation as the completed signature model.
+
+Implementation-owned operation signatures currently use `.operation: _`. Their definitions
 or aliases use ordinary function inference, defaults, reached capabilities and
 Safety. Qualified static calls work; erased virtual interfaces require fixed
 signatures. Unqualified static calls infer participants from input signatures,
@@ -264,10 +270,17 @@ and callable applications share input inference; `Init#(Box#(T))` can reuse
 captured-expression recipes, including deferred aliases and journaled completion.
 Dormant templates no longer publish unused operation-binding records.
 
+Operation-value expressions now share the implementation's associated scope.
+Type and integer members can specialize ordinary functions, and input-derived
+facts can bind declared associated patterns without inferring from outputs.
+The public Init contract has not been changed while its signature model is reviewed.
+
 Outstanding before completion:
 
-- Bind associated elements into operation-value expression scopes. A direct
-  `identity#(Result)` does not yet resolve the implementation's `.Result` member.
+- Settle the explicit Args/Result signature model before changing public standard
+  contracts. One Init conformance per target is retained. Rust-style generic
+  associated inputs would fix the operation's generic binder in the contract;
+  implementation-owned binders are a distinct design and remain under review.
 - Review remaining anonymous aggregate/choice identities, contextual literals,
   associated signature properties and generic operation inference against the
   design above. Remove obsolete representations rather than keep fallbacks.

@@ -2057,6 +2057,10 @@ pub const Resolver = struct {
             // Dormant generic expressions are instantiated only after the
             // participant pattern binds their lexical parameters.
             if (bindings == null and operation.function == .expression) continue;
+            if (operation.associated_parameters.len != 0) {
+                const values = try self.generics.instantiateParameterizedArguments(module_index, conformance.associated_arguments, bindings.?);
+                try self.generics.bindGlobalArguments(module_index, operation.associated_parameters, values, bindings.?);
+            }
             const definition = (self.resolveFunctionValue(module_index, operation.function, bindings, self.sourceFor(module_index, operation.source)) catch |err| {
                 failure.source = self.sourceFor(module_index, operation.source);
                 failure.reason = switch (err) {

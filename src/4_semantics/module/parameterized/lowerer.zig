@@ -1248,8 +1248,11 @@ pub const Context = struct {
             const token = self.tree.mainToken(node);
             const name = self.tree.tokenTextFromSource(self.source, token);
             if (self.parameter(name)) |binding| {
-                if (binding.kind == .definition) return .{ .definition = .{ .parameter = binding.id } };
-                if (binding.kind == .type) return .{ .type = try self.addType(.{ .parameter = binding.id }) };
+                return switch (binding.kind) {
+                    .definition => .{ .definition = .{ .parameter = binding.id } },
+                    .type => .{ .type = try self.addType(.{ .parameter = binding.id }) },
+                    .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = binding.id }) },
+                };
             } else if (self.localType(name)) |declaration_id| {
                 const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
                 if (declaration.family_definition != null and declaration.kind == .type) {

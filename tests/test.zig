@@ -16070,3 +16070,10 @@ test "argi repl resolves operation value expressions" {
     ;
     try expectReplFixture(null, commands, "_0 = 42\n_1 = 7\n");
 }
+
+test "feature_tests/contracts/352_associated_operation_expressions" {
+    const path = "tests/feature_tests/contracts/352_associated_operation_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}

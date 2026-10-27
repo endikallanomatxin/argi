@@ -95,6 +95,7 @@ pub const DomainMapping = struct {
 // Tuple evidence keeps selector arguments separate from associated outputs.
 pub const ContractOperationId = enum(u32) { _ };
 pub const ContractOperation = struct {
+    associated_parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     instantiate_associated: bool = false,
     name: primitives.StringRange,
     function: Function,

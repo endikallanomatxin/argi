@@ -187,6 +187,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
 
     for (storage.contract_operations.items) |operation| {
         try require(verify.stringFits(operation.name, graph.strings.items));
+        try require(verify.rangeFits(operation.associated_parameters, storage.comptime_parameters.items.len));
         switch (operation.function) {
             .module => |id| try declarationRef(graph, .{ .module = id }),
             .external => |id| try declarationRef(graph, .{ .external = id }),
