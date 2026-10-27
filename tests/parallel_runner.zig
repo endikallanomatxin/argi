@@ -4,6 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("program_test_options");
 const sharding = @import("program_test_sharding");
+const suite = @import("program_tests");
 
 pub const std_options: std.Options = .{ .logFn = log };
 var log_errors: usize = 0;
@@ -13,10 +14,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const args = try init.args.toSlice(allocator);
     defer allocator.free(args);
     if (args.len < 2 or args.len > 3) return error.ExpectedShardArgument;
-    const serial = std.mem.eql(u8, args[1], "serial");
-    const worker = if (serial) 0 else try std.fmt.parseUnsigned(u32, args[1], 10);
-    if (!serial and worker >= options.workers) return error.InvalidShard;
-
     const runner_io = std.Io.Threaded.global_single_threaded.io();
     const progress_file: ?std.Io.File = if (args.len == 3) file: {
         try std.Io.Dir.cwd().createDirPath(runner_io, std.fs.path.dirname(args[2]).?);
@@ -28,33 +25,44 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const root_node = std.Progress.start(runner_io, .{ .root_name = "Program tests" });
     defer root_node.end();
 
-    var tree = try std.zig.Ast.parse(allocator, @embedFile("test.zig"), .zig);
-    defer tree.deinit(allocator);
-    var keys: std.StringHashMap(?[]const u8) = .init(allocator);
-    defer keys.deinit();
-    for (tree.rootDecls()) |node| {
-        if (tree.nodeTag(node) != .test_decl) continue;
-        const name_token = tree.nodeData(node).opt_token_and_node[0].unwrap() orelse continue;
-        const literal = tree.tokenSlice(name_token);
-        try keys.put(literal[1 .. literal.len - 1], sharding.fixtureKey(&tree, node));
+    var namespaces: std.StringHashMap(usize) = .init(allocator);
+    defer namespaces.deinit();
+    try namespaces.put(suite.central_prefix, suite.groups.len);
+    for (suite.groups, 0..) |group, index| {
+        const entry = try namespaces.getOrPut(group.prefix);
+        if (entry.found_existing) return error.DuplicateTestNamespace;
+        entry.value_ptr.* = index;
     }
+    const assignments = try allocator.alloc(usize, builtin.test_functions.len);
+    defer allocator.free(assignments);
+    const covered = try allocator.alloc(bool, suite.groups.len);
+    defer allocator.free(covered);
+    @memset(covered, false);
+    for (builtin.test_functions, assignments) |test_fn, *assignment| {
+        assignment.* = sharding.groupIndex(&namespaces, test_fn.name) orelse {
+            std.debug.print("test has no discovered group: {s}\n", .{test_fn.name});
+            return error.UnknownTestNamespace;
+        };
+        if (assignment.* < covered.len) covered[assignment.*] = true;
+    }
+    if (!options.filtered) for (covered, suite.groups) |present, group| {
+        if (!present) {
+            std.debug.print("discovered file declares no tests: {s}/test.zig\n", .{group.fixture});
+            return error.EmptyFixtureTestFile;
+        }
+    };
 
     var passed: usize = 0;
     var skipped: usize = 0;
     var failed: usize = 0;
     var leaks: usize = 0;
-    for (builtin.test_functions) |test_fn| {
-        // Root test names are prefixed by their Zig module name.
-        var source_name = test_fn.name;
-        while (!keys.contains(source_name)) {
-            const separator = std.mem.indexOfScalar(u8, source_name, '.') orelse break;
-            source_name = source_name[separator + 1 ..];
-        }
-        const key = if (keys.get(source_name)) |entry| entry else null;
-        if (key) |fixture| {
-            if (serial or sharding.workerFor(fixture, options.workers) != worker) continue;
-        } else if (!serial) continue;
-
+    for (builtin.test_functions, assignments) |test_fn, assignment| {
+        const group: ?suite.Group = if (assignment < suite.groups.len) suite.groups[assignment] else null;
+        const fixture = if (group) |g| g.fixture else null;
+        const exclusive = if (group) |g| g.isolation == .exclusive else true;
+        if (!try sharding.selected(fixture, exclusive, args[1], options.workers)) continue;
+        const started = std.Io.Timestamp.now(runner_io, .boot).nanoseconds;
+        var outcome: []const u8 = "passed";
         std.testing.allocator_instance = .{};
         std.testing.io_instance = .init(std.testing.allocator, .{
             .argv0 = .init(init.args),
@@ -72,16 +80,26 @@ pub fn main(init: std.process.Init.Minimal) !void {
         if (test_fn.func()) |_| {
             passed += 1;
         } else |err| switch (err) {
-            error.SkipZigTest => skipped += 1,
+            error.SkipZigTest => {
+                skipped += 1;
+                outcome = "skipped";
+            },
             else => {
                 failed += 1;
+                outcome = "failed";
                 std.debug.print("[programs {s}] FAIL {s}: {s}\n", .{ args[1], test_fn.name, @errorName(err) });
                 if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace);
             },
         }
         test_node.end();
         std.testing.io_instance.deinit();
-        if (std.testing.allocator_instance.deinit() == .leak) leaks += 1;
+        const leaked = std.testing.allocator_instance.deinit() == .leak;
+        if (leaked) leaks += 1;
+        if (progress_writer) |*writer| {
+            const elapsed = std.Io.Timestamp.now(runner_io, .boot).nanoseconds - started;
+            try writer.interface.print("case\t{s}\t{s}\t{d} ns\t{s}\tleak={}\n", .{ if (exclusive) "exclusive" else "fixture", outcome, elapsed, test_fn.name, leaked });
+            try writer.interface.flush();
+        }
     }
     var stdout_buffer: [1024]u8 = undefined;
     var stdout = std.Io.File.stdout().writerStreaming(runner_io, &stdout_buffer);

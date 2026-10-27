@@ -1,0 +1,11 @@
+const support = @import("../../../support.zig");
+const expectSuccessfulBuild = support.expectSuccessfulBuild;
+const runExpectFailure = support.runExpectFailure;
+
+pub const isolation: support.Isolation = .fixture;
+
+test "feature_tests/types/81X_allocation_slot_at_storage_end" {
+    const path = "tests/feature_tests/types/81X_allocation_slot_at_storage_end";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}

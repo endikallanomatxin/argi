@@ -96,7 +96,7 @@ pub fn build(b: *std.Build) void {
     // TEST -------------------------------------------------------------------
 
     const tests_mod = b.createModule(.{
-        .root_source_file = b.path("tests/test.zig"),
+        .root_source_file = @import("build_support/program_tests.zig").discover(b) catch @panic("cannot discover program tests"),
         .target = target,
         .optimize = optimize,
     });
@@ -106,16 +106,23 @@ pub fn build(b: *std.Build) void {
     const program_options = b.addOptions();
     program_options.addOption(u32, "workers", test_jobs);
     program_options.addOption(bool, "progress", test_progress);
+    program_options.addOption(bool, "filtered", test_filters.len != 0);
+    program_options.addOption([]const u8, "repository_root", b.pathFromRoot("."));
     tests_mod.addOptions("program_test_options", program_options);
+    tests_mod.addImport("program_tests", tests_mod);
     tests_mod.addImport("program_test_sharding", b.createModule(.{ .root_source_file = b.path("tests/sharding.zig"), .target = target, .optimize = optimize }));
     const exe_tests = b.addTest(.{
         .root_module = tests_mod,
         .filters = test_filters,
-        .test_runner = if (test_jobs > 1) .{ .path = b.path("tests/parallel_runner.zig"), .mode = .simple } else null,
+        .test_runner = .{ .path = b.path("tests/parallel_runner.zig"), .mode = .simple },
     });
     const program_test_step = b.step("test-programs", "Run Argi program tests");
     if (test_jobs == 1) {
-        const run_exe_tests = addTestRun(b, exe_tests, test_progress);
+        const run_exe_tests = b.addRunArtifact(exe_tests);
+        run_exe_tests.addArgs(&.{ "all", ".zig-cache/program-tests/serial.log" });
+        run_exe_tests.expectExitCode(0);
+        run_exe_tests.expectStdOutMatch("[programs all]");
+        run_exe_tests.has_side_effects = true;
         run_exe_tests.step.dependOn(b.getInstallStep());
         program_test_step.dependOn(&run_exe_tests.step);
     } else {

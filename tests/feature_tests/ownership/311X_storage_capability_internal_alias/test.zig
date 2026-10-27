@@ -1,0 +1,8 @@
+const support = @import("../../../support.zig");
+const buildExpectFail = support.buildExpectFail;
+
+pub const isolation: support.Isolation = .fixture;
+
+test "feature_tests/ownership/311X_storage_capability_internal_alias" {
+    try buildExpectFail("tests/feature_tests/ownership/311X_storage_capability_internal_alias", "more than once");
+}

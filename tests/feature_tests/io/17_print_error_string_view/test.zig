@@ -1,0 +1,11 @@
+const support = @import("../../../support.zig");
+const expectSuccessfulBuild = support.expectSuccessfulBuild;
+const runExpectStderr = support.runExpectStderr;
+
+pub const isolation: support.Isolation = .exclusive;
+
+test "feature_tests/io/17_print_error_string_view" {
+    const test_path = "tests/feature_tests/io/17_print_error_string_view";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStderr(test_path, 0, "error view");
+}
