@@ -93,6 +93,7 @@ comptime {
     _ = @import("execution/interactive.zig");
     _ = c_abi;
     _ = semantic_literals;
+    _ = @import("4_semantics/numeric_diagnostics_test.zig");
     _ = source_files;
     _ = @import("1_base/conditional_source.zig");
     _ = @import("1_base/lexical.zig");

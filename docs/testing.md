@@ -68,6 +68,15 @@ compare runs using the same optimization mode and environment.
 
 ## Coverage maintenance
 
+Pure source diagnostics can live in compiler unit tests instead of launching the
+CLI per case. `src/4_semantics/numeric_diagnostics_test.zig` demonstrates a bounded
+table of independent sources checked through `FrontendPipeline`, including real
+Safety analysis. It verifies exact diagnostic messages and source offsets, with
+valid boundary cases as controls. These builtin-only cases need no installed
+core; tests of library contracts must preserve their real module dependencies.
+Keep representative CLI fixtures for rendered diagnostics and remove equivalent
+integration cases when moving their semantic checks in-process.
+
 Each test should establish a distinct rule, boundary or interaction. Before
 adding a regression, check nearby fixtures and extend an existing one when it
 can assert the new behavior independently. Keep failures isolated when an
