@@ -32,16 +32,12 @@ implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) Init#(
 )
 
 implement#(.n: UIntNative, .t: Type: Scalar) Add#(
-    Vector#(.n = n, .t: t),
-    Vector#(.n = n, .t: t),
-    (.left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t))
+    &Vector#(.n = n, .t: t), &Vector#(.n = n, .t: t)
 ) (
     .Result : Type = Vector#(.n = n, .t: t)
-    .add    = (.args: (.left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t))) -> (
+    .add    = (.left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t)) -> (
         .result : Result
     ) {
-        left ::= args.left
-        right ::= args.right
 
         result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
         i :: UIntNative = 0
@@ -78,22 +74,13 @@ _math_scale_fixed_vector := #(.n: UIntNative, .t: Type: Scalar) (
 }
 
 implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) Add#(
-    Matrix#(.rows = rows, .cols = cols, .t: t),
-    Matrix#(.rows = rows, .cols = cols, .t: t),
-    (
-        .left  : &Matrix#(.rows = rows, .cols = cols, .t: t),
-        .right : &Matrix#(.rows = rows, .cols = cols, .t: t)
-    )
+    &Matrix#(.rows = rows, .cols = cols, .t: t), &Matrix#(.rows = rows, .cols = cols, .t: t)
 ) (
     .Result : Type = Matrix#(.rows = rows, .cols = cols, .t: t)
     .add    = (
-        .args : (
-            .left  : &Matrix#(.rows = rows, .cols = cols, .t: t),
-            .right : &Matrix#(.rows = rows, .cols = cols, .t: t)
-        )
+        .left  : &Matrix#(.rows = rows, .cols = cols, .t: t),
+        .right : &Matrix#(.rows = rows, .cols = cols, .t: t)
     ) -> (.result: Result) {
-        left ::= args.left
-        right ::= args.right
 
         result = (.values = zeroed#(.t: Array#(.n = rows, .t: Array#(.n = cols, .t: t)))())
         row :: UIntNative = 0

@@ -48,8 +48,8 @@ nominal family registry or global overload fallback.
 
 Init, Deinit and Convert use contract dispatch throughout bundled core, official
 more and compiler fixtures. Their former declaration syntax and numeric type-call
-conversions are rejected. Custom addition and equality use Add and Equal with an
-Args participant to retain static dispatch for auxiliary capabilities. The !=
+conversions are rejected. Custom addition and equality use Add and Equal with the operand types as
+participants. Auxiliary capabilities belong to the selected operation signature. The !=
 symbol negates the selected Equal operation, never selecting a second identity.
 Legacy operator declarations, their metadata and global selectors are removed.
 

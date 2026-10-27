@@ -24,8 +24,6 @@ main := () -> (.status_code: Int32 = 0) {
         or generic != 19
         or real != 5.75
     ] { status_code = 1 }
-    qualified ::= Multiply#(UInt8, UInt8, (.left: UInt8, .right: UInt8)).multiply(
-        .args = (.left = byte, .right = 3)
-    )
+    qualified ::= Multiply#(UInt8, UInt8).multiply(.left = byte, .right = 3)
     if qualified != 27 { status_code = 2 }
 }

@@ -12069,7 +12069,7 @@ test "feature_tests/contracts/93_constant_projection_imported_concrete_call" {
 }
 
 test "feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch", "associated element is not an integer constant", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch", "compile-time argument kind does not match its parameter", "failed without a diagnostic");
 }
 
 test "feature_tests/contracts/95X_constant_projection_concrete_unknown_participant" {
@@ -12514,7 +12514,7 @@ test "feature_tests/contracts/193X_init_legacy_collision" {
 }
 
 test "feature_tests/contracts/194X_init_scalar_arguments" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "construction arguments do not match the selected Init operation signature");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "arguments do not match this specialized function definition");
 }
 
 test "feature_tests/contracts/195X_init_generic_default_type" {
@@ -12862,7 +12862,7 @@ test "feature_tests/contracts/260X_legacy_add_operator" {
 }
 
 test "feature_tests/contracts/261X_add_args_ambiguous" {
-    try buildExpectFail("tests/feature_tests/contracts/261X_add_args_ambiguous", "ambiguous Add argument shapes");
+    try buildExpectFail("tests/feature_tests/contracts/261X_add_args_ambiguous", "ambiguous conformances for the same participant tuple");
 }
 
 test "feature_tests/contracts/262_add_borrowed_result" {
@@ -12884,7 +12884,7 @@ test "feature_tests/contracts/265_add_qualified_argument_shape" {
 }
 
 test "feature_tests/contracts/266X_add_missing_reached_argument" {
-    try buildExpectFail("tests/feature_tests/contracts/266X_add_missing_reached_argument", "Add.Args requires a reachable capability");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/266X_add_missing_reached_argument", "required reachable capabilities", "without a diagnostic");
 }
 
 test "feature_tests/contracts/267_equal_scoped_specialization" {
@@ -15939,4 +15939,15 @@ test "feature_tests/contracts/337X_inline_once_init_value" {
 
 test "feature_tests/polymorphism/342X_once_generic_value_reuse" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/342X_once_generic_value_reuse", "is consumed more than once", "without a diagnostic");
+}
+
+test "feature_tests/contracts/338X_arithmetic_signature_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/338X_arithmetic_signature_result", "arithmetic operation must return exactly (.result: Result)", "without a diagnostic");
+}
+
+test "feature_tests/contracts/339_arithmetic_callable_provider" {
+    const path = "tests/feature_tests/contracts/339_arithmetic_callable_provider";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
 }

@@ -166,8 +166,10 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
-  Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left,
-  Right and Args participants. Custom equality uses Equal with Left and Right;
+  Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left and
+  Right participants and implementation-owned operation signatures. Auxiliary
+  providers specialize the selected callable, never the conformance. Custom
+  equality uses Equal with Left and Right;
   borrowed equality uses reference participants and direct operation inputs.
   Equal returns (.ok: Bool), and != negates one selected operation call.
   Ordering uses CompareRelations#(Left, Right), with explicit operand types and

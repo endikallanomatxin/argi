@@ -1,11 +1,11 @@
-implement Add#(Int32, Int32, (.left: Int32, .right: Int32)) (
+implement Add#(Int32, Int32) (
     .Result : Type = Int64
-    .add    = (.args: (.left: Int32, .right: Int32)) -> (.result: Result) {
-        result = args.left | convert#(.to: Int64)(_)
+    .add    = (.left: Int32, .right: Int32) -> (.result: Result) {
+        result = left | convert#(.to: Int64)(_)
     }
 )
 
-choose := #(.T: Type) (.left: T, .right: T) -> (.result: Add#(T, T, (.left: T, .right: T)).Result) {
+choose := #(.T: Type) (.left: T, .right: T) -> (.result: Add#(T, T).Result) {
     result = ~[left + right]
 }
 

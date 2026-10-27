@@ -498,17 +498,15 @@ concat_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     }
 }
 
-implement#(.Provider: Type: Allocator) Add#(
-    String, CChar, (.left: &String, .right: &CChar, .allocator: $&Provider = reach allocator)
-) (
+implement Add#(&String, &CChar) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
-    .add    = (
-        .args : (.left: &String, .right: &CChar, .allocator: $&Provider = reach allocator)
+    .add    = #(.Provider: Type: Allocator) (
+        .left: &String, .right: &CChar, .allocator: $&Provider = reach allocator
     ) -> (.result: Result) {
-        assume allocator ::= args.allocator
+        assume allocator
 
-        left_view ::= view(args.left)
-        right_text ::= string_from_c_string(.text = args.right)!
+        left_view ::= view(left)
+        right_text ::= string_from_c_string(.text = right)!
         right_view ::= view(&right_text)
 
         combined ::= concat_views(.left = &left_view, .right = &right_view)!
@@ -516,89 +514,69 @@ implement#(.Provider: Type: Allocator) Add#(
     }
 )
 
-implement#(.Provider: Type: Allocator) Add#(
-    String,
-    StringView,
-    (.left: &String, .right: &StringView, .allocator: $&Provider = reach allocator)
-) (
+implement Add#(&String, &StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
-    .add    = (
-        .args : (.left: &String, .right: &StringView, .allocator: $&Provider = reach allocator)
+    .add    = #(.Provider: Type: Allocator) (
+        .left: &String, .right: &StringView, .allocator: $&Provider = reach allocator
     ) -> (.result: Result) {
-        assume allocator ::= args.allocator
+        assume allocator
 
-        left_view ::= view(args.left)
+        left_view ::= view(left)
 
-        result = concat_views(.left = &left_view, .right = args.right)
+        result = concat_views(.left = &left_view, .right = right)
     }
 )
 
-implement#(.Provider: Type: Allocator) Add#(
-    String, String, (.left: &String, .right: &String, .allocator: $&Provider = reach allocator)
-) (
+implement Add#(&String, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
-    .add    = (
-        .args : (.left: &String, .right: &String, .allocator: $&Provider = reach allocator)
+    .add    = #(.Provider: Type: Allocator) (
+        .left: &String, .right: &String, .allocator: $&Provider = reach allocator
     ) -> (.result: Result) {
-        assume allocator ::= args.allocator
+        assume allocator
 
-        left_view ::= view(args.left)
-        right_view ::= view(args.right)
+        left_view ::= view(left)
+        right_view ::= view(right)
 
         result = concat_views(.left = &left_view, .right = &right_view)
     }
 )
 
-implement#(.Provider: Type: Allocator) Add#(
-    StringView,
-    CChar,
-    (.left: &StringView, .right: &CChar, .allocator: $&Provider = reach allocator)
-) (
+implement Add#(&StringView, &CChar) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
-    .add    = (
-        .args : (.left: &StringView, .right: &CChar, .allocator: $&Provider = reach allocator)
+    .add    = #(.Provider: Type: Allocator) (
+        .left: &StringView, .right: &CChar, .allocator: $&Provider = reach allocator
     ) -> (.result: Result) {
-        assume allocator ::= args.allocator
+        assume allocator
 
-        right_text ::= string_from_c_string(.text = args.right)!
+        right_text ::= string_from_c_string(.text = right)!
         right_view ::= view(&right_text)
 
-        combined ::= concat_views(.left = args.left, .right = &right_view)!
+        combined ::= concat_views(.left = left, .right = &right_view)!
         result = ..ok ~combined
     }
 )
 
-implement#(.Provider: Type: Allocator) Add#(
-    StringView,
-    StringView,
-    (.left: &StringView, .right: &StringView, .allocator: $&Provider = reach allocator)
-) (
+implement Add#(&StringView, &StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
-    .add    = (
-        .args : (
-            .left: &StringView, .right: &StringView, .allocator: $&Provider = reach allocator
-        )
+    .add    = #(.Provider: Type: Allocator) (
+        .left: &StringView, .right: &StringView, .allocator: $&Provider = reach allocator
     ) -> (.result: Result) {
-        assume allocator ::= args.allocator
+        assume allocator
 
-        result = concat_views(.left = args.left, .right = args.right)
+        result = concat_views(.left = left, .right = right)
     }
 )
 
-implement#(.Provider: Type: Allocator) Add#(
-    StringView,
-    String,
-    (.left: &StringView, .right: &String, .allocator: $&Provider = reach allocator)
-) (
+implement Add#(&StringView, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
-    .add    = (
-        .args : (.left: &StringView, .right: &String, .allocator: $&Provider = reach allocator)
+    .add    = #(.Provider: Type: Allocator) (
+        .left: &StringView, .right: &String, .allocator: $&Provider = reach allocator
     ) -> (.result: Result) {
-        assume allocator ::= args.allocator
+        assume allocator
 
-        right_view ::= view(args.right)
+        right_view ::= view(right)
 
-        result = concat_views(.left = args.left, .right = &right_view)
+        result = concat_views(.left = left, .right = &right_view)
     }
 )
 

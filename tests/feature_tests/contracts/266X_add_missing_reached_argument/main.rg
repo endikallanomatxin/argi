@@ -1,11 +1,11 @@
 Value := (.number: Int32)
 
-implement Add#(Value, Value, (.left: &Value, .right: &Value, .bias: Int32 = reach bias)) (
+implement Add#(&Value, &Value) (
     .Result : Type = Int32
-    .add    = (.args: (.left: &Value, .right: &Value, .bias: Int32 = reach bias)) -> (
+    .add    = (.left: &Value, .right: &Value, .bias: Int32 = reach bias) -> (
         .result : Result
     ) {
-        result = args.left&.number + args.right&.number + args.bias
+        result = left&.number + right&.number + bias
     }
 )
 

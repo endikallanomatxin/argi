@@ -2,17 +2,17 @@ Left := (.value: Int32)
 
 Right := (.value: Int32)
 
-implement Add#(Left, Right, (.left: &Left, .right: &Right, .bias: Int32 = 1)) (
+implement Add#(&Left, &Right) (
     .Result : Type = Int32
-    .add    = (.args: (.left: &Left, .right: &Right, .bias: Int32 = 1)) -> (.result: Result) {
-        result = args.left&.value + args.right&.value + args.bias
+    .add    = (.left: &Left, .right: &Right, .bias: Int32 = 1) -> (.result: Result) {
+        result = left&.value + right&.value + bias
     }
 )
 
-implement Add#(Left, Right, (.left: &Left, .right: &Right, .offset: Int32 = 2)) (
+implement Add#(&Left, &Right) (
     .Result : Type = Int32
-    .add    = (.args: (.left: &Left, .right: &Right, .offset: Int32 = 2)) -> (.result: Result) {
-        result = args.left&.value + args.right&.value + args.offset
+    .add    = (.left: &Left, .right: &Right, .offset: Int32 = 2) -> (.result: Result) {
+        result = left&.value + right&.value + offset
     }
 )
 

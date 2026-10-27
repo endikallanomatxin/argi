@@ -1,4 +1,4 @@
-Divide#(.Left: Type, .Right: Type, .Args: Type): Contract = (
+Divide#(.Left: Type, .Right: Type): Contract = (
     .Result : Type
-    .divide : (.args: Args) -> (.result: Result)
+    .divide : _
 )

@@ -136,26 +136,24 @@ Operators identify standard contracts such as Add, Multiply and Equal. Their
 conformances use the same participant dispatch and obey explicit copy, move and
 reference rules.
 
-Binary arithmetic contracts include an argument-record participant:
+Binary arithmetic contracts select by their two operand types:
 
 ```argi
-Add#(.Left: Type, .Right: Type, .Args: Type): Contract = (
+Add#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
-    .add: (.args: Args) -> (.result: Result)
+    .add: _
 )
 ```
 
-The Args pattern contains the operands and any additional operation capabilities.
-For example, a string implementation can include a reference to a generic
-allocator with a reach default. Its provider is inferred from that field, so
-selection remains static without adding a provider to every arithmetic contract
-or erasing the allocator. Operand participants and Args are inferred together
-from implementation input patterns; Result contributes no inference bindings.
-The selected Args record completes defaults and reached capabilities before
-invoking the scoped operation. These arithmetic contracts still include Args
-as a participant; Init instead selects by target before inferring its signature.
-Addition now uses this lowering for concrete and specialized generic expressions.
-Bundled string concatenation implementations retain a statically selected allocator.
+Each implementation supplies its operation signature. Its ordinary inputs include
+both operands and any auxiliary capabilities. An allocator provider can be a
+compile-time parameter of that callable, inferred from an explicit input or a
+reach default after the conformance has been selected. It does not distinguish
+conformances. The operation returns `(.result: Result)`; Result never selects an
+implementation. Borrowed operands use reference participants and explicit
+reference arguments. Concrete and specialized generic expressions share this
+selected-evidence path.
+
 Equality uses `Equal#(Left, Right)` with an `equal` operation taking the two
 operand types directly and returning `(.ok: Bool)`. Borrowed equality uses
 reference participants, such as `Equal#(&Key, &Key)`. Auxiliary inputs belong

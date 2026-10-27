@@ -92,26 +92,14 @@ _math_set_dynamic_matrix := #(.t: Type: Scalar) (
     result = ..ok Void()
 }
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
-    DynamicMatrix#(.t: t),
-    DynamicMatrix#(.t: t),
-    (
+implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
+    .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
+    .add    = #(.Provider: Type: Allocator) (
         .left      : &DynamicMatrix#(.t: t),
         .right     : &DynamicMatrix#(.t: t),
         .allocator : $&Provider              = reach allocator
-    )
-) (
-    .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
-    .add    = (
-        .args : (
-            .left      : &DynamicMatrix#(.t: t),
-            .right     : &DynamicMatrix#(.t: t),
-            .allocator : $&Provider              = reach allocator
-        )
     ) -> (.result: Result) {
-        left ::= args.left
-        right ::= args.right
-        assume allocator ::= args.allocator
+        assume allocator
 
         if left&._rows != right&._rows or left&._cols != right&._cols {
             result = ..error(.reason = ..dimension_mismatch)
@@ -133,26 +121,14 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
     }
 )
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Multiply#(
-    DynamicMatrix#(.t: t),
-    DynamicMatrix#(.t: t),
-    (
+implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
+    .Result   : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
+    .multiply = #(.Provider: Type: Allocator) (
         .left      : &DynamicMatrix#(.t: t),
         .right     : &DynamicMatrix#(.t: t),
         .allocator : $&Provider              = reach allocator
-    )
-) (
-    .Result   : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
-    .multiply = (
-        .args : (
-            .left      : &DynamicMatrix#(.t: t),
-            .right     : &DynamicMatrix#(.t: t),
-            .allocator : $&Provider              = reach allocator
-        )
     ) -> (.result: Result) {
-        left ::= args.left
-        right ::= args.right
-        assume allocator ::= args.allocator
+        assume allocator
 
         if left&._cols != right&._rows {
             result = ..error(.reason = ..dimension_mismatch)
@@ -285,26 +261,14 @@ _math_dot_dynamic_vector := #(.t: Type: Scalar) (
     result = ..ok sum
 }
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
-    DynamicVector#(.t: t),
-    DynamicVector#(.t: t),
-    (
+implement#(.t: Type: Scalar) Add#(&DynamicVector#(.t: t), &DynamicVector#(.t: t)) (
+    .Result : Type = Errable#(DynamicVector#(.t: t), (..dimension_mismatch, ..out_of_memory))
+    .add    = #(.Provider: Type: Allocator) (
         .left      : &DynamicVector#(.t: t),
         .right     : &DynamicVector#(.t: t),
         .allocator : $&Provider              = reach allocator
-    )
-) (
-    .Result : Type = Errable#(DynamicVector#(.t: t), (..dimension_mismatch, ..out_of_memory))
-    .add    = (
-        .args : (
-            .left      : &DynamicVector#(.t: t),
-            .right     : &DynamicVector#(.t: t),
-            .allocator : $&Provider              = reach allocator
-        )
     ) -> (.result: Result) {
-        left ::= args.left
-        right ::= args.right
-        assume allocator ::= args.allocator
+        assume allocator
 
         count ::= length(left).count
 

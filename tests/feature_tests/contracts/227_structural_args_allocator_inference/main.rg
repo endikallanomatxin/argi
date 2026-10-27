@@ -1,3 +1,5 @@
+ConstructionArgs := #(.Provider: Type) (.allocator: $&Provider, .length: UIntNative)
+
 Construct#(.Target: Type, .Args: Type): Contract = (
     .Result    : Type
     .construct : (.args: Args) -> (.result: Result)
@@ -5,12 +7,12 @@ Construct#(.Target: Type, .Args: Type): Contract = (
 
 Owner := (.allocation: Allocation)
 
-implement#(.A: Type: Allocator) Construct#(Owner, (.allocator: $&A, .length: UIntNative)) (
+implement#(.A: Type: Allocator) Construct#(Owner, ConstructionArgs#(A)) (
     .Result    : Type = Errable#(Owner, (..out_of_memory))
-    .construct = (.args: (.allocator: $&A, .length: UIntNative)) -> (.result: Result) {
-        allocation ::= Allocator#(A).allocate(
-            .self = args.allocator, .size = args.length, .alignment = 1
-        )!
+    .construct = (.args: ConstructionArgs#(A)) -> (.result: Result) {
+        allocation ::= Allocator#(
+            A
+        ).allocate(.self = args.allocator, .size = args.length, .alignment = 1)!
         result = ..ok(.allocation = ~allocation)
     }
 )
@@ -20,13 +22,11 @@ implement Deinit#(Owner) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    args :: (.allocator: $&PageAllocator, .length: UIntNative) = (
+    args :: ConstructionArgs#(PageAllocator) = (
         .allocator = system.page_allocator
         .length    = 4
     )
     owner ::= unwrap_or_abort(
-        Construct#(Owner, (.allocator: $&PageAllocator, .length: UIntNative)).construct(
-            .args = args
-        )
+        Construct#(Owner, ConstructionArgs#(PageAllocator)).construct(.args = args)
     )
 }

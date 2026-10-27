@@ -226,6 +226,10 @@ remain to be completed where required by the final contract design.
 Init now has only T as participant. The constructor resolver selects its evidence
 before inferring operation-local parameters and passes ordinary inputs directly.
 There is no two-participant Init or wrapping of construction inputs in Args.
+Arithmetic now also selects by two operand participants and calls an
+implementation-owned signature directly. Auxiliary providers specialize the
+callable. The legacy argument-record inference and wrapping path has been
+removed; named records remain ordinary signature types, including MatrixProductArgs.
 Partial-target inference maps the operation's captured parameter IDs back to the
 implementation by capture position. Different inferred targets are ambiguous;
 conformance specificity only compares candidates for one concrete tuple.
@@ -242,10 +246,6 @@ Outstanding before completion:
 - Finish and validate generic selected-evidence queries: a generic operation can
   have many concrete functions, and matching its family alone is insufficient.
   Captured argument values must match the selected conformance.
-- Complete the arithmetic migration away from incidental Args participants.
-  Equality now uses two operand participants, direct operation inputs and the
-  common comparison evidence path. Borrowed equality uses reference participants;
-  independent Args identities no longer participate in its conformance lookup.
 - Review remaining anonymous aggregate/choice identities, contextual literals,
   associated signature properties and generic operation inference against the
   design above. Remove obsolete representations rather than keep fallbacks.
@@ -265,4 +265,9 @@ contexts. Parameterized functions preserve the once property when materialized.
 The focused equality program suite passes, including missing-capability and
 duplicate-conformance diagnostics. The word-count use case also passes after
 restoring standard hash-policy resolution through borrowed Equal evidence.
-No full program-suite success is claimed.
+The complete contract program suite passes after the arithmetic migration,
+including static provider inference in native, VM and #run execution. Required
+operation results are checked against Result; auxiliary inputs cannot create
+another conformance for one operand tuple. Former structural argument fixtures
+now use explicit nominal argument families. Full program validation is underway;
+no full program-suite success is claimed.

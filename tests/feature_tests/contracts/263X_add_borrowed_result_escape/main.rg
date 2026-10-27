@@ -2,10 +2,10 @@ Left := (.value: Int32)
 
 Right := (.value: Int32)
 
-implement Add#(Left, Right, (.left: &Left, .right: &Right)) (
+implement Add#(&Left, &Right) (
     .Result : Type = &Int32
-    .add    = (.args: (.left: &Left, .right: &Right)) -> (.result: Result) {
-        result = &args.left&.value
+    .add    = (.left: &Left, .right: &Right) -> (.result: Result) {
+        result = &left&.value
     }
 )
 

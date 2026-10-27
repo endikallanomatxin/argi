@@ -120,18 +120,23 @@ pub fn scalarArithmeticPrimitive(name: []const u8) ?primitives.BinaryOperator {
     return null;
 }
 
-/// Diagnostics retain the selected identity without allocating messages into
-/// graph storage that a failed speculative operation will roll back.
-pub fn operatorMessage(contract: []const u8, comptime prefix: []const u8, comptime suffix: []const u8) []const u8 {
-    inline for (.{ "Add", "Subtract", "Multiply", "Divide", "Remainder", "Equal", "CompareRelations" }) |name| {
-        if (std.mem.eql(u8, contract, name)) return prefix ++ name ++ suffix;
-    }
-    return prefix ++ "operator" ++ suffix;
-}
-
 /// Standard protocol result guarantees apply to the selected callable,
 /// whether its signature was prescribed or supplied by the implementation.
 pub fn operationResultFailure(graph: *const graph_mod.GlobalSemanticGraph, conformance: graph_mod.ContractConformance, method: graph_mod.GlobalFunctionId) ?[]const u8 {
+    inline for (.{ "Add", "Subtract", "Multiply", "Divide", "Remainder" }) |name| {
+        if (standardDefinition(graph, name) == conformance.declaration) {
+            const reason = "arithmetic operation must return exactly (.result: Result)";
+            const function = graph.function(method);
+            if (function.output.len != 1 or conformance.associated_arguments.len != 1) return reason;
+            const expected = switch (graph.generic_arguments.items[conformance.associated_arguments.start].value) {
+                .type => |ty| ty,
+                else => return reason,
+            };
+            const output = graph.fields.items[function.output.start];
+            if (graph.isTypeUnresolved(expected) or graph.isTypeUnresolved(output.ty)) return null;
+            return if (std.mem.eql(u8, graph.text(output.name), "result") and @import("types.zig").equal(graph, expected, output.ty)) null else reason;
+        }
+    }
     const is_init = standardDefinition(graph, "Init") == conformance.declaration;
     const is_convert = standardDefinition(graph, "Convert") == conformance.declaration;
     if (!is_init and !is_convert) return null;

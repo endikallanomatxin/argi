@@ -2025,6 +2025,14 @@ pub const Resolver = struct {
         const call = self.call_implementation_operation orelse return error.MissingOperationInstantiator;
         var node = call(self.function_context.?, module_index, evidence.binding.declaration, .{ .start = start, .len = @intCast(captures.items.len) }, arguments, input, context, source) catch |err| switch (err) {
             error.DeferredGenericFunction, error.ComptimeExecutionPending => return null,
+            error.InvalidGenericCallArguments => {
+                self.participant_conformance_failure = .{
+                    .source = source,
+                    .contract_name = self.graph.familyDefinitionName(conformance.declaration),
+                    .reason = if (self.generics.comptime_failure) |failure| failure.reason else "arguments do not match the selected contract operation",
+                };
+                return error.InvalidContractOperation;
+            },
             else => return err,
         };
         const method = node.content.function_call.callee;
@@ -2047,7 +2055,17 @@ pub const Resolver = struct {
     fn resolveOperationBinding(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(index)) orelse return error.InvalidContractOperation;
         if (evidence.materializedFunction()) |function| return function;
-        const method = try self.resolveOperationBody(conformance, index);
+        const method = self.resolveOperationBody(conformance, index) catch |err| switch (err) {
+            error.ContextualSignatureMismatch, error.ContextualOutputSignatureMismatch => {
+                self.participant_conformance_failure = .{
+                    .source = conformance.source,
+                    .contract_name = self.graph.familyDefinitionName(conformance.declaration),
+                    .reason = if (err == error.ContextualSignatureMismatch) "implementation operation has an incompatible input signature" else if (standard_contracts.standardDefinition(self.graph, "Equal") == conformance.declaration) "Equal.equal must return exactly (.ok: Bool)" else "operation returns an incompatible associated result",
+                };
+                return error.InvalidContractOperation;
+            },
+            else => return err,
+        };
         if (standard_contracts.standardDefinition(self.graph, "Deinit") == conformance.declaration)
             return self.makeDestructorOperation(method, try self.core.functionOutputType(method), conformance.source);
         return method;

@@ -27,13 +27,13 @@ implement#(.n: UIntNative, .t: Type: Scalar) MatrixProduct#(
 ) (
     .Args     : Type = MatrixProductArgs#(Diagonal#(.n = n, .t: t), Diagonal#(.n = n, .t: t))
     .Result   : Type = Diagonal#(.n = n, .t: t)
-    .multiply = (.args: MatrixProductArgs#(Diagonal#(.n = n, .t: t), Diagonal#(.n = n, .t: t))) -> (
+    .multiply = MatrixProductArgs#(Diagonal#(.n = n, .t: t), Diagonal#(.n = n, .t: t)) -> (
         .result : Result
     ) {
         result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
         i :: UIntNative = 0
         while i < n {
-            result.values[i] = args.left&.values[i] * args.right&.values[i]
+            result.values[i] = left&.values[i] * right&.values[i]
             i = i + 1
         }
     }
@@ -44,13 +44,11 @@ implement#(
     .columns : UIntNative,
     .t       : Type: Scalar,
     .Right   : Type: MatrixShape#(.Value: Right, .Rows = n, .Columns = columns, .Element: t)
-) Multiply#(
-    Diagonal#(.n = n, .t: t), Right, MatrixProductArgs#(Diagonal#(.n = n, .t: t), Right)
-) (
+) Multiply#(&Diagonal#(.n = n, .t: t), &Right) (
     .Result   : Type = MatrixProduct#(Diagonal#(.n = n, .t: t), Right).Result
-    .multiply = (.args: MatrixProductArgs#(Diagonal#(.n = n, .t: t), Right)) -> (
-        .result : Result
-    ) {
-        result = ~MatrixProduct#(Diagonal#(.n = n, .t: t), Right).multiply(args)
+    .multiply = MatrixProductArgs#(Diagonal#(.n = n, .t: t), Right) -> (.result: Result) {
+        result = ~MatrixProduct#(
+            Diagonal#(.n = n, .t: t), Right
+        ).multiply(.left = left, .right = right)
     }
 )

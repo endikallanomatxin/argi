@@ -1,4 +1,4 @@
-Subtract#(.Left: Type, .Right: Type, .Args: Type): Contract = (
+Subtract#(.Left: Type, .Right: Type): Contract = (
     .Result   : Type
-    .subtract : (.args: Args) -> (.result: Result)
+    .subtract : _
 )

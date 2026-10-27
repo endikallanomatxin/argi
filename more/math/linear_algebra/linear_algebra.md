@@ -16,7 +16,7 @@ copyable; constructors accept matching arrays. Dimensions belong to the type.
 - `&left * &right` accepts R×K and K×C and returns R×C through Multiply.
 - `transpose` returns C×R from R×C.
 
-Addition selects Add evidence with explicit readonly references in Args. There
+Addition selects Add evidence with explicit reference operands. There
 is no ordinary add overload family. Shared comptime parameters reject mismatched
 shapes during semantizing. Results
 own their storage and do not borrow inputs. Empty vectors have a zero dot
@@ -52,8 +52,9 @@ the source view's length. Overflow or incompatible dimensions return
 
 Vectors expose `length`, checked `get`/`set`, `dot`, `+`, and `scale`. Matrices
 expose `shape`, checked `get`/`set`, `+`, `*`, and `transpose`. Dynamic
-shape incompatibilities return `dimension_mismatch`. Addition and multiplication carry a statically inferred allocator reference
-inside their Add or Multiply Args record, with a reach default. Other operations returning owners
+shape incompatibilities return `dimension_mismatch`. Addition and multiplication
+infer their allocator provider in the selected operation's compile-time parameters.
+Its ordinary allocator input has a reach default. Other operations returning owners
 take `.allocator`; scalar reads, writes, and dot products do not allocate.
 Index errors return `out_of_bounds` without writing. No operation resizes an
 existing owner or exposes mutable shape fields.
@@ -89,9 +90,7 @@ following the same implementation ownership rules as other contracts.
 math := import("math/linear_algebra")
 product := #(.A: Type, .B: Type) (.left: &A, .right: &B)
     -> (.result: math.MatrixProduct#(A, B).Result) {
-    result = ~math.MatrixProduct#(A, B).multiply(
-        .args = (.left = left, .right = right)
-    )
+    result = ~math.MatrixProduct#(A, B).multiply(.left = left, .right = right)
 }
 ```
 

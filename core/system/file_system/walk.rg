@@ -87,8 +87,7 @@ _next_directory_walker := #(.Provider: Type: Allocator#(Provider)) (
                 text ::= view(&path)
                 info ::= metadata(self&._filesystem, .path = text, .follow_links = false)!
                 depth ::= frame&.depth + 1
-                directory_kind :: FileKind = ..directory
-                if info.kind == directory_kind and depth < self&._maximum_depth {
+                if info.kind == ..directory and depth < self&._maximum_depth {
                     ensure_capacity(.self = $&self&._frames, .capacity = count + 1)!
                     owned ::= copy(&path, .allocator = allocator)!
                     directory ::= Directory(.self = self&._filesystem, .path = text)!

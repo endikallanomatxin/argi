@@ -2,36 +2,36 @@ Input := (.number: Int32)
 
 Output := (.number: Int32)
 
-implement Subtract#(Input, Input, (.left: &Input, .right: &Input)) (
+implement Subtract#(&Input, &Input) (
     .Result   : Type = Output
-    .subtract = (.args: (.left: &Input, .right: &Input)) -> (.result: Result) {
-        result = (.number = [args.left&.number - args.right&.number])
+    .subtract = (.left: &Input, .right: &Input) -> (.result: Result) {
+        result = (.number = [left&.number - right&.number])
     }
 )
 
-implement Multiply#(Input, Input, (.left: &Input, .right: &Input)) (
+implement Multiply#(&Input, &Input) (
     .Result   : Type = Int64
-    .multiply = (.args: (.left: &Input, .right: &Input)) -> (.result: Result) {
-        result = [[args.left&.number * args.right&.number] | convert#(.to: Int64)(_)]
+    .multiply = (.left: &Input, .right: &Input) -> (.result: Result) {
+        result = [[left&.number * right&.number] | convert#(.to: Int64)(_)]
     }
 )
 
-implement Divide#(Input, Input, (.left: &Input, .right: &Input)) (
+implement Divide#(&Input, &Input) (
     .Result : Type = Int32
-    .divide = (.args: (.left: &Input, .right: &Input)) -> (.result: Result) {
-        result = [args.left&.number / args.right&.number]
+    .divide = (.left: &Input, .right: &Input) -> (.result: Result) {
+        result = [left&.number / right&.number]
     }
 )
 
-implement Remainder#(Input, Input, (.left: &Input, .right: &Input)) (
+implement Remainder#(&Input, &Input) (
     .Result    : Type = Int32
-    .remainder = (.args: (.left: &Input, .right: &Input)) -> (.result: Result) {
-        result = [args.left&.number % args.right&.number]
+    .remainder = (.left: &Input, .right: &Input) -> (.result: Result) {
+        result = [left&.number % right&.number]
     }
 )
 
 multiply_values := #(.T: Type) (.left: &T, .right: &T) -> (
-    .result: Multiply#(T, T, (.left: &T, .right: &T)).Result
+    .result: Multiply#(&T, &T).Result
 ) { result = ~[left * right] }
 
 main := () -> (.status_code: Int32 = 0) {

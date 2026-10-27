@@ -294,7 +294,7 @@ pub const Resolver = struct {
         if (!module.is_bundled_core or !std.mem.eql(u8, std.fs.path.basename(self.graph.text(file.path)), "scalar_arithmetic.rg")) return false;
         // Prove the exact primitive body before eliding the call. Adding checks,
         // capabilities or other effects in core must retain the ordinary call.
-        if ((function.input.len != 1 and function.input.len != 2) or function.output.len != 1 or function.input_bindings.len != function.input.len or function.output_bindings.len != 1) return false;
+        if (function.input.len != 2 or function.output.len != 1 or function.input_bindings.len != 2 or function.output_bindings.len != 1) return false;
         const body = self.graph.blocks.items[@intFromEnum(function.body orelse return false)];
         if (body.nodes.len != 1) return false;
         const statement = self.graph.node(self.graph.node_refs.items[body.nodes.start]);
@@ -312,13 +312,7 @@ pub const Resolver = struct {
         };
         for (primitive_operands, 0..) |operand, position| {
             const projection = self.graph.node(operand).content;
-            if (function.input.len == 2) {
-                if (projection != .binding_use or projection.binding_use != self.graph.binding_refs.items[function.input_bindings.start + position]) return false;
-                continue;
-            }
-            if (projection != .struct_field_access or projection.struct_field_access.field_index != position) return false;
-            const record = self.graph.node(projection.struct_field_access.value).content;
-            if (record != .binding_use or record.binding_use != self.graph.binding_refs.items[function.input_bindings.start]) return false;
+            if (projection != .binding_use or projection.binding_use != self.graph.binding_refs.items[function.input_bindings.start + position]) return false;
         }
         return true;
     }
@@ -340,8 +334,20 @@ pub const Resolver = struct {
     }
 
     fn makeComparisonCall(self: *Resolver, module_index: usize, operator: primitives.ComparisonOperator, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
+        // A bare variant tests the discriminant; it is not a call to Equal
+        // between two choice values. Parameterized lowering canonicalizes the
+        // value first and represents the tested tag as an integer literal.
+        if (operator == .equal or operator == .not_equal) {
+            const left_type = self.graph.node(operands[0]).ty;
+            if (left_type != null and global_types.variants(self.graph, left_type.?) != null and
+                self.graph.node(operands[1]).content == .int_literal) return null;
+        }
         const identity = standard_contracts.comparisonOperation(operator);
-        const declaration = standard_contracts.standardDefinition(self.graph, identity.contract) orelse return null;
+        return self.makeContractOperator(module_index, identity.contract, identity.operation, operands, reach, assumed);
+    }
+
+    fn makeContractOperator(self: *Resolver, module_index: usize, contract_name: []const u8, operation_name: []const u8, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
+        const declaration = standard_contracts.standardDefinition(self.graph, contract_name) orelse return null;
         const contracts = self.nested_call_context orelse return null;
         for (operands) |operand| {
             const ty = self.graph.node(operand).ty orelse return null;
@@ -356,6 +362,11 @@ pub const Resolver = struct {
         errdefer |err| {
             if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
         }
+        const participants = [_]global_sg.GlobalTypeId{ self.graph.node(operands[0]).ty.?, self.graph.node(operands[1]).ty.? };
+        // Missing operator evidence uses the ordinary operator diagnostic (and
+        // the explicit pointer-arithmetic diagnostic), not a qualified-call error.
+        const comparison = std.mem.eql(u8, contract_name, "Equal") or std.mem.eql(u8, contract_name, "CompareRelations");
+        if (!comparison and try contracts.selectConformance(declaration, &participants, null, 0, null) == null) return null;
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         for (operands) |operand| try self.graph.generic_arguments.append(self.allocator, .{
             .name = .{ .start = 0, .len = 0 },
@@ -363,12 +374,11 @@ pub const Resolver = struct {
         });
         const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 2 } } });
         const input = try self.makePositionalInput(operands);
-        if (assumed) |node| {
-            var completed_input = self.graph.node(input);
-            completed_input.content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
-            try self.graph.setNode(self.allocator, input, completed_input);
-        }
-        const call = contracts.makeScopedOperationCall(module_index, contract, identity.operation, input, reach, self.graph.node(operands[0]).source) catch |err| {
+        var completed_input = self.graph.node(input);
+        if (reach == .global) completed_input.content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
+        if (assumed) |node| completed_input.content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
+        try self.graph.setNode(self.allocator, input, completed_input);
+        const call = contracts.makeScopedOperationCall(module_index, contract, operation_name, input, reach, self.graph.node(operands[0]).source) catch |err| {
             failure = contracts.participant_conformance_failure;
             if (failure) |*value| {
                 value.input = null;
@@ -383,65 +393,6 @@ pub const Resolver = struct {
             }
             return null;
         };
-        if (call.ty == null or self.graph.isTypeUnresolved(call.ty.?)) return null;
-        speculation.commit();
-        self.stats.calls += 1;
-        return call;
-    }
-
-    fn makeContractOperator(self: *Resolver, module_index: usize, contract_name: []const u8, operation_name: []const u8, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
-        for (operands) |operand| {
-            const ty = self.graph.node(operand).ty orelse return null;
-            if (self.graph.isTypeUnresolved(ty)) return null;
-        }
-        const declaration = standard_contracts.standardDefinition(self.graph, contract_name) orelse return null;
-        const contracts = self.nested_call_context orelse return null;
-        var speculation = self.beginSpeculation();
-        var failure: ?contract_mod.ParticipantConformanceFailure = null;
-        defer if (speculation.active) {
-            speculation.deinit();
-            if (failure) |value| contracts.participant_conformance_failure = value;
-        };
-        errdefer |err| {
-            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
-        }
-        const input = try self.makePositionalInput(operands);
-        // Operand transfer is explicit. No distinguished receiver is borrowed
-        // automatically, and Args completion handles all auxiliary capabilities.
-        var completed_input = self.graph.node(input);
-        completed_input.content.struct_value_literal.dispatch_prefix_positional_count = 0;
-        if (reach == .global) completed_input.content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
-        if (assumed) |node| completed_input.content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
-        try self.graph.setNode(self.allocator, input, completed_input);
-        var resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = self.generics, .functions = self, .contracts = contracts };
-        const selected = switch (try resolver.infer(declaration, &.{ .inferred, .inferred }, input, reach)) {
-            .selected => |selection| selection,
-            .ambiguous => {
-                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = standard_contracts.operatorMessage(contract_name, "ambiguous ", " argument shapes; qualify the contract with an explicit Args type") };
-                return error.InvalidContractOperator;
-            },
-            .missing_reach => {
-                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = standard_contracts.operatorMessage(contract_name, "", ".Args requires a reachable capability or an explicitly qualified operation call") };
-                return error.InvalidContractOperator;
-            },
-            else => return null,
-        };
-        defer self.allocator.free(selected.participants);
-        const args_type = selected.participants[2];
-        _ = try self.generics.ensureGenericInstance(args_type);
-        switch (try resolver.complete(args_type, input, reach)) {
-            .completed => {},
-            .incompatible_default => {
-                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = "default value is incompatible with its selected operator Args field type" };
-                return error.InvalidContractOperator;
-            },
-            else => return null,
-        }
-        const arguments_start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        for (selected.participants) |participant| try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
-        const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = arguments_start, .len = 3 } } });
-        const wrapped = try self.makePositionalInput(&.{input});
-        const call = try contracts.makeScopedOperationCall(module_index, contract, operation_name, wrapped, reach, self.graph.node(operands[0]).source) orelse return null;
         if (call.ty == null or self.graph.isTypeUnresolved(call.ty.?)) return null;
         speculation.commit();
         self.stats.calls += 1;
@@ -528,18 +479,13 @@ pub const Resolver = struct {
         else
             self.selectImplicitGenericFunctionFiltered(module_index, self.graph.familyDefinitionName(definition.origin), null, input, reach, null, definition)) catch |err| switch (err) {
             error.NoMatchingGenericFunction, error.ConflictingGenericArgument => {
-                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match this specialized function definition" };
+                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match this specialized function definition, including its required reachable capabilities" };
                 return error.InvalidGenericCallArguments;
             },
             else => return err,
         };
         const function = try self.instantiate(selected.declaration, selected.arguments);
-        if (!try self.core.completeCallInputFieldsWithReach(self.graph.function(function).input, input, reach)) return error.DeferredGenericFunction;
-        return .{
-            .source = source,
-            .ty = try self.core.functionOutputType(function),
-            .content = .{ .function_call = .{ .callee = function, .input = input } },
-        };
+        return self.makeConcreteFunctionCall(function, input, reach, source);
     }
 
     pub fn resolveDefinitionCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype, definition: global_sg.DefinitionValue) !resolution.Result {
@@ -1143,18 +1089,6 @@ pub const Resolver = struct {
             bindings.definitions[to] = inferred.definitions[from];
         }
         return signature;
-    }
-
-    pub fn inferArgumentRecordBindings(
-        self: *Resolver,
-        module_index: usize,
-        pattern: ir.ParameterizedTypeId,
-        input: global_sg.GlobalNodeId,
-        context: ReachInferenceContext,
-        bindings: *generic_mod.Resolver.Bindings,
-    ) !bool {
-        if (!try self.inferBindingsFromInputFields(module_index, pattern, input, bindings, 0, true)) return false;
-        return self.inferBindingsFromReachDefaultFields(module_index, pattern, input, bindings, context, 0);
     }
 
     fn inferAndValidateConstraints(
@@ -2225,10 +2159,10 @@ pub const Resolver = struct {
         if (self.core.functionSignaturePending(function)) return error.DeferredGenericFunction;
         const signature = self.graph.function(function);
         if (self.core.callInputHasPendingTypes(input)) return error.DeferredGenericFunction;
-        switch (self.core.matchCallInput(signature.input, input)) {
+        switch (try self.core.matchCallInputWithReach(signature.input, input, reach)) {
             .deferred => return error.DeferredGenericFunction,
             .no_match => {
-                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match the selected function definition" };
+                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match the selected function definition, including its required reachable capabilities" };
                 return error.InvalidGenericCallArguments;
             },
             .applicable => {},
