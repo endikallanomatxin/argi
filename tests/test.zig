@@ -1917,9 +1917,9 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:22:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
-        \\      wrapped : Wrapper = (.res = handle)
-        \\                                  ^
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:22:32: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\      wrapped: Wrapper = (.res = handle)
+        \\                                 ^
         \\
     );
 }
@@ -3306,9 +3306,9 @@ test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
 
 test "feature_tests/ownership/42X_reference_use_after_root_end" {
     try buildExpectFailExact("tests/feature_tests/ownership/42X_reference_use_after_root_end",
-        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:12:8: error: reference depends on a root that has ended
-        \\      if reference& == 0 {
-        \\         ^
+        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:15:16: error: reference depends on a root that has ended
+        \\              if reference&== 0 {
+        \\                 ^
         \\
     );
 }
@@ -3384,9 +3384,9 @@ test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
 
 test "feature_tests/ownership/64X_owned_root_cycle" {
     try buildExpectFailExact("tests/feature_tests/ownership/64X_owned_root_cycle",
-        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:18:5: error: root ownership must be acyclic
-        \\      slot_b& = ~a
-        \\      ^
+        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:35:21: error: root ownership must be acyclic
+        \\                      slot_b&= ~a
+        \\                      ^
         \\
     );
 }
@@ -4388,9 +4388,9 @@ test "feature_tests/ownership/218X_conditional_opaque_reference_source_closes_ow
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
-        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:21:8: error: reference depends on a root that has ended
-        \\      if alias& == 0 {
-        \\         ^
+        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:26:16: error: reference depends on a root that has ended
+        \\              if alias&== 0 {
+        \\                 ^
         \\
     );
 }
@@ -4401,9 +4401,9 @@ test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
 
 test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
     try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
-        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:15:10: error: reference depends on a root that has ended
-        \\      if b.to_a& == 0 {
-        \\           ^
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:18:18: error: reference depends on a root that has ended
+        \\              if b.to_a&== 0 {
+        \\                   ^
         \\
     );
 }
@@ -4438,7 +4438,7 @@ test "feature_tests/ownership/49X_structural_field_use_after_move" {
 
 test "feature_tests/ownership/50X_branch_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/50X_branch_may_move_value",
-        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:9:24: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:7:26)
+        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:10:24: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:8:26)
         \\      status_code = pair.left
         \\                         ^
         \\
@@ -4447,7 +4447,7 @@ test "feature_tests/ownership/50X_branch_may_move_value" {
 
 test "feature_tests/ownership/51X_loop_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/51X_loop_may_move_value",
-        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:32: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:26)
+        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:8:32: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:8:26)
         \\          consume(.value = ~pair.left)
         \\                                 ^
         \\
