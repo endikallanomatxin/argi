@@ -16,11 +16,11 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
     const bounds = makeBounds(graph);
     for (graph.comptime_requests.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
     try verifyModulePartitions(graph);
-    for (graph.argument_defaults.items) |recipe| {
+    for (graph.captured_expressions.items) |recipe| {
         try require(recipe.module_index < graph.modules.items.len);
-        try require(verify.rangeFits(recipe.bindings, graph.argument_default_bindings.items.len));
+        try require(verify.rangeFits(recipe.bindings, graph.captured_expression_bindings.items.len));
     }
-    for (graph.argument_default_bindings.items) |binding|
+    for (graph.captured_expression_bindings.items) |binding|
         try require(verify.optionalIdFits(binding.ty, graph.types.items.len));
     for (graph.argument_default_temporaries.items) |temporary| {
         try require(verify.idFits(temporary.expression, graph.nodes.items.len));
@@ -371,7 +371,7 @@ fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
 
 fn makeBounds(graph: *const graph_mod.GlobalSemanticGraph) payload.Bounds {
     return .{
-        .argument_defaults = graph.argument_defaults.items.len,
+        .captured_expressions = graph.captured_expressions.items.len,
         .files = graph.files.items.len,
         .declarations = graph.declarations.items.len,
         .type_definitions = graph.type_definitions.items.len,

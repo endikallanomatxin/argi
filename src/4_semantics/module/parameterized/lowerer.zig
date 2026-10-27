@@ -1647,7 +1647,7 @@ pub const Context = struct {
         };
     }
 
-    fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
+    pub fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
         // A deferred action must complete without bypassing remaining defers
         // or automatic owner cleanup. Handle its failures locally instead.
         if (self.in_defer) switch (self.tree.tag(node)) {

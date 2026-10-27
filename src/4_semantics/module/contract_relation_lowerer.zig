@@ -144,6 +144,23 @@ const Context = struct {
                     });
                     continue;
                 }
+                var simple_reference = self.tree.tag(value) == .identifier;
+                if (self.tree.structFieldAccess(value)) |access| {
+                    var root = access.value;
+                    while (self.tree.structFieldAccess(root)) |parent| root = parent.value;
+                    simple_reference = self.tree.tag(root) == .identifier;
+                }
+                if (!simple_reference) {
+                    var lowerer = self.parameterizedContext();
+                    defer lowerer.bindings.deinit();
+                    const expression = try lowerer.lowerBodyNode(value);
+                    try storage.contract_operations.append(self.allocator, .{
+                        .name = try self.writer.addString(member_name),
+                        .function = .{ .expression = expression },
+                        .source = .{ .file_index = self.sourceRef(member_node).file_index, .offset = self.tree.tokenLocation(member.name_token).offset },
+                    });
+                    continue;
+                }
                 var qualifier: ?syn.TokenIndex = null;
                 const function_token = switch (self.tree.tag(value)) {
                     .identifier => self.tree.mainToken(value),

@@ -746,15 +746,27 @@ pub const Resolver = struct {
         return self.inferFamilyApplication(module_index, expression.resolved.generic, .{ .fields = input }, bindings, field_offset, reach);
     }
 
-    const FamilyInput = union(enum) { fields: global_sg.GlobalNodeId, value_type: global_sg.GlobalTypeId, signature_type: global_sg.GlobalTypeId };
+    const FamilyInput = union(enum) {
+        fields: global_sg.GlobalNodeId,
+        value_type: global_sg.GlobalTypeId,
+        signature_type: global_sg.GlobalTypeId,
+        callable: struct { input: global_sg.GlobalNodeId, arguments: primitives.Range(global_sg.GlobalGenericArgId) },
+    };
 
     fn inferFamilyApplication(self: *Resolver, module_index: usize, application: @FieldType(ir.ResolvedType, "generic"), input: FamilyInput, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, reach: ?ReachInferenceContext) anyerror!bool {
         const definition = try self.generics.resolveParameterizedDefinitionValue(module_index, application.base, bindings);
-        const located = self.generics.findTypeParameterized(definition.origin) orelse return false;
+        const ApplicationDefinition = struct { module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), shape: ir.ParameterizedTypeId };
+        const located: ApplicationDefinition = if (input == .callable) callable: {
+            const function = self.findParameterized(self.graph.familyDeclaration(definition.origin)) orelse return false;
+            break :callable .{ .module_index = function.module_index, .parameters = function.parameterized.parameters, .shape = function.parameterized.input };
+        } else family: {
+            const ty = self.generics.findTypeParameterized(definition.origin) orelse return false;
+            break :family .{ .module_index = ty.module_index, .parameters = ty.parameterized.parameters, .shape = ty.parameterized.body };
+        };
         const module = &self.modules[located.module_index];
         var local = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
         defer local.deinit(self.allocator);
-        const parameters = try self.generics.bindDefinitionCaptures(located.module_index, located.parameterized.parameters, definition, &local);
+        const parameters = try self.generics.bindDefinitionCaptures(located.module_index, located.parameters, definition, &local);
         // Transfer known arguments into the definition's lexical parameter IDs.
         for (0..parameters.len) |offset| {
             const raw = parameters.start + offset;
@@ -786,20 +798,36 @@ pub const Resolver = struct {
                 },
             }
         }
+        if (input == .callable) {
+            if (application.arguments.len > parameters.len) return false;
+            const remaining: primitives.Range(ir.ComptimeParameterId) = .{
+                .start = parameters.start + application.arguments.len,
+                .len = parameters.len - application.arguments.len,
+            };
+            self.generics.bindGlobalArgumentsPartial(located.module_index, remaining, input.callable.arguments, &local) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return false,
+            };
+        }
         switch (input) {
-            .fields => |node| {
-                if (!try self.inferBindingsFromInputFields(located.module_index, located.parameterized.body, node, &local, field_offset, true)) return false;
+            .callable => |call| {
+                if (!try self.inferBindingsFromInputFields(located.module_index, located.shape, call.input, &local, field_offset, true)) return false;
                 if (reach) |context|
-                    if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.parameterized.body, node, &local, context, field_offset)) return false;
+                    if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.shape, call.input, &local, context, field_offset)) return false;
             },
-            .value_type => |actual| if (!try self.inferInputType(located.module_index, located.parameterized.body, actual, &local)) return false,
-            .signature_type => |required| if (!try self.inferSignatureBindings(located.module_index, located.parameterized.body, required, &local)) return false,
+            .fields => |node| {
+                if (!try self.inferBindingsFromInputFields(located.module_index, located.shape, node, &local, field_offset, true)) return false;
+                if (reach) |context|
+                    if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.shape, node, &local, context, field_offset)) return false;
+            },
+            .value_type => |actual| if (!try self.inferInputType(located.module_index, located.shape, actual, &local)) return false,
+            .signature_type => |required| if (!try self.inferSignatureBindings(located.module_index, located.shape, required, &local)) return false,
         }
         try self.generics.applyParameterDefaults(located.module_index, parameters, &local);
         // Captures are fixed lexical evidence. Traversing the family body may
         // check them, but cannot infer a different environment from call inputs.
         for (0..definition.captures.len) |offset| {
-            const raw = located.parameterized.parameters.start + offset;
+            const raw = located.parameters.start + offset;
             const captured = self.graph.generic_arguments.items[definition.captures.start + offset].value;
             switch (captured) {
                 .definition => |value| {
@@ -1057,7 +1085,20 @@ pub const Resolver = struct {
         associated: primitives.Range(ir.ParameterizedGenericArgId),
     ) !?global_sg.GlobalTypeId {
         const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
-        const target = try contracts.resolveFunctionTarget(module_index, operation.function);
+        if (operation.function == .expression) {
+            const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+            const expression = storage.nodes.items[@intFromEnum(operation.function.expression)];
+            if (expression == .pending) {
+                const pending = storage.pending.items[@intFromEnum(expression.pending)];
+                if (pending == .resolve_expression and pending.resolve_expression.kind == .entity_application) {
+                    const application = storage.types.items[@intFromEnum(pending.resolve_expression.detail.entity_application)];
+                    if (application == .resolved and application.resolved == .generic) {
+                        if (!try self.inferFamilyApplication(module_index, application.resolved.generic, .{ .callable = .{ .input = input, .arguments = arguments } }, bindings, 0, context)) return null;
+                    }
+                }
+            }
+        }
+        const target = try contracts.resolveFunctionTarget(module_index, operation.function, bindings);
         const definition = target.value(self.graph) orelse return error.DeferredGenericFunction;
         const declaration = self.graph.familyDeclaration(definition.origin);
         const located = self.findParameterized(declaration) orelse {
@@ -2300,6 +2341,11 @@ pub const Resolver = struct {
         return self.instantiateWithSignature(declaration, arguments, if (contextual) .{ .input = input, .output = output } else null);
     }
 
+    pub fn instantiateOperationValue(context: *anyopaque, module_index: usize, node: ir.ParameterizedNodeId, bindings: *generic_mod.Resolver.Bindings) anyerror!global_sg.GlobalNodeId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        return self.instantiateComptimeExpression(module_index, node, bindings);
+    }
+
     pub fn instantiateOperationAlias(context: *anyopaque, definition: global_sg.DefinitionValue, input: global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId {
         const self: *Resolver = @ptrCast(@alignCast(context));
         const declaration = self.graph.familyDeclaration(definition.origin);
@@ -2677,12 +2723,12 @@ pub const Resolver = struct {
         self.rollbackSideEffects(saved);
     }
 
-    pub fn instantiateArgumentDefault(context: *anyopaque, recipe_id: u32, reach: ReachInferenceContext) anyerror!global_sg.GlobalNodeId {
+    pub fn instantiateCapturedExpression(context: *anyopaque, recipe_id: u32, reach: ReachInferenceContext) anyerror!global_sg.GlobalNodeId {
         const self: *Resolver = @ptrCast(@alignCast(context));
-        const recipe = self.graph.argument_defaults.items[recipe_id];
+        const recipe = self.graph.captured_expressions.items[recipe_id];
         var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, recipe.bindings.len);
         defer substitutions.deinit(self.allocator);
-        for (self.graph.argument_default_bindings.items[recipe.bindings.start..][0..recipe.bindings.len], 0..) |binding, index| {
+        for (self.graph.captured_expression_bindings.items[recipe.bindings.start..][0..recipe.bindings.len], 0..) |binding, index| {
             substitutions.types[index] = binding.ty;
             substitutions.ints[index] = binding.integer;
             substitutions.definitions[index] = binding.definition;

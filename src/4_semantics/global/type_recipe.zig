@@ -186,10 +186,10 @@ pub const Recipe = struct {
                     break :record true;
                 },
                 .pending => |v| pending: {
-                    if (actual.content != .argument_default) break :pending false;
-                    const expression = self.graph.argument_defaults.items[actual.content.argument_default];
+                    if (actual.content != .captured_expression) break :pending false;
+                    const expression = self.graph.captured_expressions.items[actual.content.captured_expression];
                     if (expression.module_index != v.module_index or expression.expression != v.expression or expression.bindings.len != v.bindings.len) break :pending false;
-                    for (self.recipe.default_bindings.items[v.bindings.start..][0..v.bindings.len], self.graph.argument_default_bindings.items[expression.bindings.start..][0..expression.bindings.len]) |saved_binding, current_binding| {
+                    for (self.recipe.default_bindings.items[v.bindings.start..][0..v.bindings.len], self.graph.captured_expression_bindings.items[expression.bindings.start..][0..expression.bindings.len]) |saved_binding, current_binding| {
                         if (saved_binding.integer != current_binding.integer) break :pending false;
                         if (saved_binding.definition) |definition| {
                             const current_definition = current_binding.definition orelse break :pending false;
@@ -397,12 +397,12 @@ pub const Recipe = struct {
                         try self.recipe.default_fields.appendSlice(self.a, fields);
                         break :record .{ .record = .{ .fields = .{ .start = start, .len = v.fields.len }, .positional = v.dispatch_prefix_positional_count } };
                     },
-                    .argument_default => |v| pending: {
-                        if (v >= self.graph.argument_defaults.items.len) return error.ComptimeTypeRecipePending;
-                        const expression = self.graph.argument_defaults.items[v];
+                    .captured_expression => |v| pending: {
+                        if (v >= self.graph.captured_expressions.items.len) return error.ComptimeTypeRecipePending;
+                        const expression = self.graph.captured_expressions.items[v];
                         const bindings = try self.a.alloc(DefaultBinding, expression.bindings.len);
                         defer self.a.free(bindings);
-                        for (self.graph.argument_default_bindings.items[expression.bindings.start..][0..expression.bindings.len], bindings) |binding, *out| {
+                        for (self.graph.captured_expression_bindings.items[expression.bindings.start..][0..expression.bindings.len], bindings) |binding, *out| {
                             out.* = .{ .ty = if (binding.ty) |ty| try self.typeId(ty, depth + 1) else null, .integer = binding.integer, .definition = if (binding.definition) |definition| .{ .origin = try self.familyDefinition(definition.origin), .captures = try self.captureArguments(definition.captures, depth + 1) } else null };
                         }
                         const start = std.math.cast(u32, self.recipe.default_bindings.items.len) orelse return error.SemanticGraphTooLarge;
@@ -534,17 +534,17 @@ pub const Recipe = struct {
                             break :record .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = v.fields.len }, .dispatch_prefix_positional_count = v.positional } };
                         },
                         .pending => |v| pending: {
-                            const bindings = try self.a.alloc(g.ArgumentDefaultBinding, v.bindings.len);
+                            const bindings = try self.a.alloc(g.CapturedExpressionBinding, v.bindings.len);
                             defer self.a.free(bindings);
                             for (self.recipe.default_bindings.items[v.bindings.start..][0..v.bindings.len], bindings) |binding, *out| {
                                 out.* = .{ .ty = if (binding.ty) |ty| try self.typeId(ty) else null, .integer = binding.integer, .definition = if (binding.definition) |definition| .{ .origin = definition.origin, .captures = try self.publishArguments(definition.captures) } else null };
                             }
                             const graph = self.generics.graph;
-                            const start = std.math.cast(u32, graph.argument_default_bindings.items.len) orelse return error.SemanticGraphTooLarge;
-                            try graph.argument_default_bindings.appendSlice(self.a, bindings);
-                            const recipe = std.math.cast(u32, graph.argument_defaults.items.len) orelse return error.SemanticGraphTooLarge;
-                            try graph.argument_defaults.append(self.a, .{ .module_index = v.module_index, .expression = v.expression, .bindings = .{ .start = start, .len = v.bindings.len } });
-                            break :pending .{ .argument_default = recipe };
+                            const start = std.math.cast(u32, graph.captured_expression_bindings.items.len) orelse return error.SemanticGraphTooLarge;
+                            try graph.captured_expression_bindings.appendSlice(self.a, bindings);
+                            const recipe = std.math.cast(u32, graph.captured_expressions.items.len) orelse return error.SemanticGraphTooLarge;
+                            try graph.captured_expressions.append(self.a, .{ .module_index = v.module_index, .expression = v.expression, .bindings = .{ .start = start, .len = v.bindings.len } });
+                            break :pending .{ .captured_expression = recipe };
                         },
                     },
                 };
@@ -728,7 +728,7 @@ test "type recipes defer unresolved defaults and open inferred identities" {
     var graph: g.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
     try graph.types.append(a, .{ .builtin = .Int32 });
-    try graph.nodes.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .content = .{ .argument_default = 0 } });
+    try graph.nodes.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .content = .{ .captured_expression = 0 } });
     try graph.fields.append(a, .{ .name = try graph.addString(a, "item"), .ty = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 }, .default_value = @enumFromInt(0) });
     try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
     const roots = [_]?g.GlobalTypeId{@enumFromInt(1)};
@@ -836,9 +836,9 @@ fn pendingDefaultFailures(a: std.mem.Allocator) !void {
     const checkpoint = graph.checkpoint();
     try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
     try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } });
-    try graph.argument_default_bindings.appendSlice(a, &.{ .{ .ty = @enumFromInt(1), .integer = null }, .{ .ty = null, .integer = 42, .definition = .{ .origin = @enumFromInt(0), .captures = .{ .start = 0, .len = 1 } } } });
-    try graph.argument_defaults.append(a, .{ .module_index = 0, .expression = @enumFromInt(7), .bindings = .{ .start = 0, .len = 2 } });
-    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .argument_default = 0 } });
+    try graph.captured_expression_bindings.appendSlice(a, &.{ .{ .ty = @enumFromInt(1), .integer = null }, .{ .ty = null, .integer = 42, .definition = .{ .origin = @enumFromInt(0), .captures = .{ .start = 0, .len = 1 } } } });
+    try graph.captured_expressions.append(a, .{ .module_index = 0, .expression = @enumFromInt(7), .bindings = .{ .start = 0, .len = 2 } });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .captured_expression = 0 } });
     const name = try graph.addString(a, "value");
     try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(0), .source = source, .default_value = @enumFromInt(0) });
     try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
@@ -847,15 +847,15 @@ fn pendingDefaultFailures(a: std.mem.Allocator) !void {
     var retained = try recipe.clone(a);
     defer retained.deinit(a);
     try std.testing.expect(try retained.matches(a, &graph, &.{@enumFromInt(2)}));
-    graph.argument_default_bindings.items[1].integer = 43;
+    graph.captured_expression_bindings.items[1].integer = 43;
     try std.testing.expect(!try retained.matches(a, &graph, &.{@enumFromInt(2)}));
-    graph.argument_default_bindings.items[1].integer = 42;
+    graph.captured_expression_bindings.items[1].integer = 42;
     graph.generic_arguments.items[0].value = .{ .type = @enumFromInt(0) };
     try std.testing.expect(!try retained.matches(a, &graph, &.{@enumFromInt(2)}));
     graph.rollback(a, checkpoint);
     // Recycled graph pools cannot become part of the retained substitution.
     try graph.types.append(a, .{ .builtin = .Bool });
-    try graph.argument_defaults.append(a, .{ .module_index = 0, .expression = @enumFromInt(99), .bindings = .{ .start = 0, .len = 0 } });
+    try graph.captured_expressions.append(a, .{ .module_index = 0, .expression = @enumFromInt(99), .bindings = .{ .start = 0, .len = 0 } });
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
@@ -865,9 +865,9 @@ fn pendingDefaultFailures(a: std.mem.Allocator) !void {
     try std.testing.expect(try retained.matches(a, &graph, &published));
     const fields = graph.types.items[@intFromEnum(published[0].?)].structural.fields;
     const node = graph.node(graph.fields.items[fields.start].default_value.?);
-    const expression = graph.argument_defaults.items[node.content.argument_default];
+    const expression = graph.captured_expressions.items[node.content.captured_expression];
     try std.testing.expectEqual(@as(u32, 7), @intFromEnum(expression.expression));
-    const bindings = graph.argument_default_bindings.items[expression.bindings.start..][0..expression.bindings.len];
+    const bindings = graph.captured_expression_bindings.items[expression.bindings.start..][0..expression.bindings.len];
     try std.testing.expectEqual(@as(?i64, 42), bindings[1].integer);
     try std.testing.expect(graph.semanticType(bindings[0].ty.?) == .pointer);
     const definition = bindings[1].definition.?;

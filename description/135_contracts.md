@@ -58,6 +58,11 @@ implement Product#(Row, Column) (
 )
 ```
 
+Members may also use a specialized definition directly, for example
+`.copy = copy_value#(T)`. Its compile-time arguments retain the implementation's
+lexical bindings. Function-value expressions are resolved through the ordinary
+captured-expression machinery; pending aliases do not force premature evaluation.
+
 Generic binders belong after `implement`, for example
 `implement#(.T: Type) Copyable#(Box#(T)) (...)`. Applicable conformances are ranked
 by structural pattern specificity. Select one uniquely most specific conformance;

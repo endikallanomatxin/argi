@@ -62,7 +62,7 @@ pub const Context = struct {
     dispatch: dispatch_mod.Resolver,
     ownership: ownership_mod.Resolver,
     staged_execution: execution.Scheduler,
-    argument_defaults: core_mod.Resolver.ArgumentDefaults,
+    captured_expressions: core_mod.Resolver.CapturedExpressions,
 
     pub fn init(self: *Context, allocator: std.mem.Allocator, graph: *global_sg.GlobalSemanticGraph, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets, diagnostics: ?*diagnostics_mod.Diagnostics, profile_io: ?std.Io) void {
         self.core = .{
@@ -144,18 +144,19 @@ pub const Context = struct {
         self.core.session_value_bindings = &self.expressions.session_bindings;
         self.contracts.function_context = &self.generic_functions;
         self.contracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
+        self.contracts.instantiate_operation_value = generic_functions_mod.Resolver.instantiateOperationValue;
         self.contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
         self.contracts.infer_operation_parameters = generic_functions_mod.Resolver.inferOperationParameters;
         self.contracts.probe_implementation_operation = generic_functions_mod.Resolver.probeImplementationOperation;
         self.contracts.instantiate_generic_operation = generic_functions_mod.Resolver.instantiateGenericOperation;
         self.contracts.call_implementation_operation = generic_functions_mod.Resolver.callImplementationOperation;
-        self.argument_defaults = .{
+        self.captured_expressions = .{
             .context = &self.generic_functions,
             .checkpoint = generic_functions_mod.Resolver.checkpointDefaultEffects,
             .rollback = generic_functions_mod.Resolver.rollbackDefaultEffects,
-            .instantiate = generic_functions_mod.Resolver.instantiateArgumentDefault,
+            .instantiate = generic_functions_mod.Resolver.instantiateCapturedExpression,
         };
-        self.core.argument_defaults = &self.argument_defaults;
+        self.core.captured_expressions = &self.captured_expressions;
         self.generic_functions.nested_call_context = &self.contracts;
         self.generic_functions.nested_call_resolver = contract_mod.Resolver.resolveNestedCall;
         self.generic_functions.nested_constructor_context = &self.constructors;
@@ -355,7 +356,7 @@ test "resolver context retains staged demand through its callback transactions" 
     try std.testing.expect(context.contracts.generics == &context.generics);
     try std.testing.expect(context.staged_execution.functions == &context.generic_functions);
     try std.testing.expect(context.ownership.dispatch.? == &context.dispatch);
-    const defaults = context.core.argument_defaults.?;
+    const defaults = context.core.captured_expressions.?;
     const saved = defaults.checkpoint(defaults.context);
     const evaluate = context.generics.execute_integer.?;
     try std.testing.expectError(error.ComptimeExecutionPending, evaluate(context.generics.execution_context.?, 0, @enumFromInt(0), &bindings));

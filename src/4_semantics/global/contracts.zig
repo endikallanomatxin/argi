@@ -91,6 +91,7 @@ pub const Resolver = struct {
     function_context: ?*anyopaque = null,
     instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
 
+    instantiate_operation_value: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *generic_mod.Resolver.Bindings) anyerror!global_sg.GlobalNodeId = null,
     instantiate_alias: ?*const fn (*anyopaque, global_sg.DefinitionValue, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
     infer_operation_parameters: ?*const fn (*anyopaque, usize, parameterized_storage.ContractRequirement, global_sg.GlobalNodeId, *generic_mod.Resolver.Bindings, reach_context.Context) anyerror!bool = null,
     probe_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalFamilyDefinitionId, u32, []const u8, global_sg.GlobalNodeId, reach_context.Context, primitives.Range(global_sg.GlobalGenericArgId), *bool, *?ParticipantConformanceFailure) anyerror!?OperationCandidate = null,
@@ -1009,7 +1010,7 @@ pub const Resolver = struct {
         try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, actual, &contract_bindings);
         try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, &contract_bindings);
         var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, selected_template.source), .contract_name = self.graph.familyDefinitionName(declaration), .reason = "" };
-        const operations = try self.prepareOperationBindings(module_index, located, selected_template, &failure);
+        const operations = try self.prepareOperationBindings(module_index, located, selected_template, bindings, &failure);
         const implementation = try self.publishImplementationArguments(module_index, selected_template.parameters, bindings);
         const index = self.graph.contract_conformances.items.len;
         try self.graph.contract_conformances.append(self.allocator, .{
@@ -1733,6 +1734,7 @@ pub const Resolver = struct {
             }
         else generic: {
             const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(method_index)) orelse return error.InvalidContractOperation;
+            if (!try self.materializeOperationValue(evidence.binding.definition)) return null;
             var captures: std.ArrayList(global_sg.GenericArgument) = .empty;
             defer captures.deinit(self.allocator);
             if (evidence.binding.instantiate_associated) {
@@ -1965,7 +1967,7 @@ pub const Resolver = struct {
         }
         if (conformance.parameters.len != 0) {
             // Templates are instantiated from participants by selection.
-            _ = try self.prepareOperationBindings(module_index, located, conformance, &failure);
+            _ = try self.prepareOperationBindings(module_index, located, conformance, null, &failure);
             return;
         }
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
@@ -2002,7 +2004,7 @@ pub const Resolver = struct {
                 return;
             }
         }
-        const operations = self.prepareOperationBindings(module_index, located, conformance, &failure) catch |err| {
+        const operations = self.prepareOperationBindings(module_index, located, conformance, &implementation_bindings, &failure) catch |err| {
             if (err != error.InvalidContractConformance) return err;
             self.participant_conformance_failure = failure;
             return;
@@ -2021,7 +2023,7 @@ pub const Resolver = struct {
         });
     }
 
-    fn prepareOperationBindings(self: *Resolver, module_index: usize, located: LocatedContractDefinition, conformance: parameterized_storage.ContractConformance, failure: *ParticipantConformanceFailure) !primitives.Range(global_sg.ContractOperationBindingId) {
+    fn prepareOperationBindings(self: *Resolver, module_index: usize, located: LocatedContractDefinition, conformance: parameterized_storage.ContractConformance, bindings: ?*generic_mod.Resolver.Bindings, failure: *ParticipantConformanceFailure) !primitives.Range(global_sg.ContractOperationBindingId) {
         const storage = &self.modules[module_index].semantic.parameterized_storage;
         const required_storage = &self.modules[located.module_index].semantic.parameterized_storage;
         const requirements = required_storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len];
@@ -2052,7 +2054,10 @@ pub const Resolver = struct {
                 return error.InvalidContractConformance;
             };
             failure.operation = name;
-            const definition = self.resolveFunctionValue(module_index, operation.function) catch |err| {
+            // Dormant generic expressions are instantiated only after the
+            // participant pattern binds their lexical parameters.
+            if (bindings == null and operation.function == .expression) continue;
+            const definition = (self.resolveFunctionValue(module_index, operation.function, bindings, self.sourceFor(module_index, operation.source)) catch |err| {
                 failure.source = self.sourceFor(module_index, operation.source);
                 failure.reason = switch (err) {
                     error.UnknownGlobalDeclaration => "unknown or inaccessible implementation function",
@@ -2060,7 +2065,7 @@ pub const Resolver = struct {
                     else => return err,
                 };
                 return error.InvalidContractConformance;
-            };
+            }) orelse continue;
             try functions.append(self.allocator, .{
                 .contract_definition = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)).?,
                 .requirement_index = @intCast(requirement_index),
@@ -2068,7 +2073,7 @@ pub const Resolver = struct {
                 .implementation_source = self.sourceFor(module_index, operation.source),
                 .alias_source = switch (operation.function) {
                     .external => |external| self.sourceFor(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)].source),
-                    .module => null,
+                    .module, .expression => null,
                 },
                 .name = try self.graph.addString(self.allocator, name),
                 .definition = definition,
@@ -2080,11 +2085,26 @@ pub const Resolver = struct {
         return .{ .start = start, .len = @intCast(functions.items.len) };
     }
 
+    /// Complete the same captured expression whether demanded by a call or
+    /// declaration validation. setNode journals the monotonic completion.
+    fn materializeOperationValue(self: *Resolver, node: global_sg.GlobalNodeId) !bool {
+        const expression = self.graph.node(node);
+        if (expression.content != .captured_expression) return true;
+        const expressions = self.core.captured_expressions orelse return error.MissingOperationInstantiator;
+        const resolved = expressions.instantiate(expressions.context, expression.content.captured_expression, reach_context.Context.fromGlobal(&.{}, null)) catch |err| switch (err) {
+            error.ComptimeExecutionPending, error.DeferredGenericFunction => return false,
+            else => return err,
+        };
+        try self.graph.setNode(self.allocator, node, self.graph.node(resolved));
+        return true;
+    }
+
     /// The selected conformance owns the callable definition. Ordinary function
     /// inference determines its signature, defaults and reached capabilities.
     fn makeImplementationOperationCall(self: *Resolver, module_index: usize, conformance_index: usize, operation_index: usize, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const conformance = self.graph.contract_conformances.items[conformance_index];
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(operation_index)) orelse return error.InvalidContractOperation;
+        if (!try self.materializeOperationValue(evidence.binding.definition)) return null;
         _ = evidence.definitionValue(self.graph) orelse return null;
         var captures: std.ArrayList(global_sg.GenericArgument) = .empty;
         defer captures.deinit(self.allocator);
@@ -2150,6 +2170,7 @@ pub const Resolver = struct {
     fn resolveOperationBody(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(index)) orelse return error.InvalidContractOperation;
         const binding = evidence.binding;
+        if (!try self.materializeOperationValue(binding.definition)) return error.DeferredGenericFunction;
         _ = evidence.definitionValue(self.graph) orelse return error.DeferredGenericFunction;
         if (self.graph.declaration(self.graph.familyDeclaration(evidence.definitionValue(self.graph).?.origin)).function_id) |function| {
             return function;
@@ -2287,6 +2308,7 @@ pub const Resolver = struct {
                 }
             }
             for (self.graph.contract_operation_bindings.items[conformance.operation_bindings.start..][0..conformance.operation_bindings.len]) |operation| {
+                if (!try self.materializeOperationValue(operation.definition)) continue :conformances;
                 if (global_types.definitionValue(self.graph, operation.definition)) |definition| {
                     if (self.graph.familyDefinition(definition.origin).kind == .function) continue;
                 } else {
@@ -3034,7 +3056,12 @@ pub const Resolver = struct {
 
     /// Name lookup retains an existing compile-time expression when the name
     /// denotes a binding. Probing a direct definition allocates no graph nodes.
-    pub fn resolveFunctionTarget(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !FunctionTarget {
+    pub fn resolveFunctionTarget(self: *Resolver, module_index: usize, reference: parameterized_storage.ContractOperation.Function, bindings: ?*generic_mod.Resolver.Bindings) !FunctionTarget {
+        if (reference == .expression) {
+            const substitutions = bindings orelse return error.DeferredGenericFunction;
+            const instantiate = self.instantiate_operation_value orelse return error.MissingOperationInstantiator;
+            return .{ .expression = try instantiate(self.function_context.?, module_index, reference.expression, substitutions) };
+        }
         if (reference == .external) {
             const external = self.modules[module_index].semantic.external_refs.items[@intFromEnum(reference.external)];
             if (external.module_path == null) {
@@ -3055,14 +3082,26 @@ pub const Resolver = struct {
         const declaration = switch (reference) {
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
             .external => |external| try self.core.resolveDeclaration(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)], &.{.function}),
+            .expression => unreachable,
         };
         return .{ .definition = .{ .origin = self.graph.familyForDeclaration(declaration) orelse return error.UnknownGlobalDeclaration } };
     }
 
     /// Publish the ordinary expression once with the selected evidence. Deferred
     /// aliases complete through their original binding, not a copied recipe.
-    fn resolveFunctionValue(self: *Resolver, module_index: usize, reference: ir.DeclarationRef) !global_sg.GlobalNodeId {
-        const target = try self.resolveFunctionTarget(module_index, reference);
+    fn resolveFunctionValue(self: *Resolver, module_index: usize, reference: parameterized_storage.ContractOperation.Function, bindings: ?*generic_mod.Resolver.Bindings, source: primitives.SourceRef) !?global_sg.GlobalNodeId {
+        if (reference == .expression) {
+            const substitutions = bindings orelse return null;
+            const node = try self.generics.recordCapturedExpression(module_index, reference.expression, null, substitutions);
+            var retained = self.graph.node(node);
+            retained.source = source;
+            try self.graph.setNode(self.allocator, node, retained);
+            return node;
+        }
+        const target = try self.resolveFunctionTarget(module_index, reference, bindings);
+        // Template validation checks member identities without publishing unused
+        // operation evidence or definition nodes. Concrete selection owns them.
+        if (bindings == null) return null;
         if (target == .expression) return target.expression;
         const definition = target.definition;
         const node: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);

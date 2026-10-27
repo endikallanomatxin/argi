@@ -3,7 +3,7 @@ const primitives = @import("primitives/schema.zig");
 const verify = @import("semantic_verify.zig");
 
 pub const Bounds = struct {
-    argument_defaults: usize = 0,
+    captured_expressions: usize = 0,
     files: usize = 0,
     declarations: usize = 0,
     type_definitions: usize = 0,
@@ -288,7 +288,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
         .virtual_call => |id| try require(verify.idFits(id, bounds.virtual_calls)),
         .code_block, .value_sequence, .replacement => |id| try require(verify.idFits(id, bounds.blocks)),
         .int_literal, .float_literal, .bool_literal, .break_statement, .continue_statement, .abort_statement => {},
-        .argument_default => |index| try require(index < bounds.argument_defaults),
+        .captured_expression => |index| try require(index < bounds.captured_expressions),
         .char_literal => |scalar| try require(scalar <= 0x10ffff and !(scalar >= 0xd800 and scalar <= 0xdfff)),
         .string_literal => |text| try require(verify.stringFits(text, bounds.strings)),
         .list_literal => |item| {

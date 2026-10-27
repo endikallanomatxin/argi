@@ -118,7 +118,7 @@ const State = struct {
             .int_literal,
             .float_literal,
             .char_literal,
-            .argument_default,
+            .captured_expression,
             .string_literal,
             .bool_literal,
             .break_statement,

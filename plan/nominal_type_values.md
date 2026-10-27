@@ -258,10 +258,16 @@ definitions. Focused validation passes 357 program tests and 43 internal tests,
 covering fixed/open signatures, partial specialization, native/VM/comptime calls,
 REPL persistence and invalid aliases.
 
+Implementation members accept specialized function expressions directly. Type
+and callable applications share input inference; `Init#(Box#(T))` can reuse
+`make_box#(T)` while `Box(value)` infers `T`. Defaults and operation values share
+captured-expression recipes, including deferred aliases and journaled completion.
+Dormant templates no longer publish unused operation-binding records.
+
 Outstanding before completion:
 
-- Generalize implementation member expressions where needed: specialized function
-  values currently require a named alias before reuse as an operation member.
+- Bind associated elements into operation-value expression scopes. A direct
+  `identity#(Result)` does not yet resolve the implementation's `.Result` member.
 - Review remaining anonymous aggregate/choice identities, contextual literals,
   associated signature properties and generic operation inference against the
   design above. Remove obsolete representations rather than keep fallbacks.

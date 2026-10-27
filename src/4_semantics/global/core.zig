@@ -25,7 +25,7 @@ pub const Stats = struct {
 };
 
 pub const Resolver = struct {
-    pub const ArgumentDefaults = struct {
+    pub const CapturedExpressions = struct {
         context: *anyopaque,
         checkpoint: *const fn (*anyopaque) @import("generic_functions.zig").Resolver.SideEffectCheckpoint,
         rollback: *const fn (*anyopaque, @import("generic_functions.zig").Resolver.SideEffectCheckpoint) void,
@@ -38,7 +38,7 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     profile_io: ?std.Io = null,
     scan_profile: ?*@import("resolution_profile.zig").Profile = null,
-    argument_defaults: ?*const ArgumentDefaults = null,
+    captured_expressions: ?*const CapturedExpressions = null,
 
     stats: Stats = .{},
     // Explicit interactive namespace; ordinary modules never acquire visibility
@@ -1746,9 +1746,9 @@ pub const Resolver = struct {
         );
     }
 
-    fn instantiateArgumentDefault(self: *Resolver, fallback: global_sg.GlobalNodeId, context: reach_context.Context) !global_sg.GlobalNodeId {
-        const defaults = self.argument_defaults orelse return error.DeferredGenericFunction;
-        return defaults.instantiate(defaults.context, self.graph.node(fallback).content.argument_default, context);
+    fn instantiateCapturedExpression(self: *Resolver, fallback: global_sg.GlobalNodeId, context: reach_context.Context) !global_sg.GlobalNodeId {
+        const defaults = self.captured_expressions orelse return error.DeferredGenericFunction;
+        return defaults.instantiate(defaults.context, self.graph.node(fallback).content.captured_expression, context);
     }
 
     fn completeAggregateValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context, depth: usize) anyerror!bool {
@@ -1814,7 +1814,7 @@ pub const Resolver = struct {
         };
         var transaction = self.graph.beginTransaction(self.allocator);
         defer transaction.deinit();
-        var effects = if (self.argument_defaults) |defaults|
+        var effects = if (self.captured_expressions) |defaults|
             defaults.checkpoint(defaults.context)
         else
             null;
@@ -1823,7 +1823,7 @@ pub const Resolver = struct {
         defer if (!published) {
             self.rollbackReachedCalls(calls);
             transaction.rollback();
-            if (effects) |checkpoint| self.argument_defaults.?.rollback(self.argument_defaults.?.context, checkpoint);
+            if (effects) |checkpoint| self.captured_expressions.?.rollback(self.captured_expressions.?.context, checkpoint);
         };
         errdefer |err| {
             if (err == error.ComptimeExecutionPending)
@@ -1844,8 +1844,8 @@ pub const Resolver = struct {
                         fallback,
                         expected.ty,
                     )
-                else if (self.graph.node(fallback).content == .argument_default)
-                    try self.instantiateArgumentDefault(fallback, if (literal.assumed_fields.len != 0) context.withAssumedFields(literal.assumed_fields) else context)
+                else if (self.graph.node(fallback).content == .captured_expression)
+                    try self.instantiateCapturedExpression(fallback, if (literal.assumed_fields.len != 0) context.withAssumedFields(literal.assumed_fields) else context)
                 else
                     fallback;
                 if (node == null and self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive)

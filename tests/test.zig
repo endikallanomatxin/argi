@@ -16043,3 +16043,30 @@ test "argi repl preserves bound operation definition values" {
     ;
     try expectReplFixture(null, commands, "_0 = 42\n_1 = 7\n");
 }
+
+test "feature_tests/contracts/350_operation_value_expressions" {
+    const path = "tests/feature_tests/contracts/350_operation_value_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+    try vmExpect(path, 0, null);
+}
+
+test "feature_tests/contracts/351X_operation_expression_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/351X_operation_expression_value", "implementation operation must be a compile-time function definition value", "without a diagnostic");
+}
+
+test "argi repl resolves operation value expressions" {
+    const commands =
+        \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
+        \\Direct#(.T: Type): Contract = (.direct_value: _)
+        \\implement Direct#(Int32) (.direct_value = identity#(Int32))
+        \\direct_value(42)
+        \\Box := #(.T: Type) (.value: T)
+        \\make_box := #(.T: Type) (.value: T) -> (.result: Box#(T)) { result = (.value = value) }
+        \\implement#(.T: Type) Init#(Box#(T)) (.init = make_box#(T))
+        \\value ::= Box(7)
+        \\value.value
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 42\n_1 = 7\n");
+}

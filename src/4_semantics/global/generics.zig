@@ -1224,9 +1224,9 @@ pub const Resolver = struct {
             .resolved => |value| value,
             .pending => |pending_id| {
                 const pending = module.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)];
-                if (pending != .resolve_expression or pending.resolve_expression.kind != .choice_literal) return try self.recordArgumentDefault(module_index, id, ty, bindings);
+                if (pending != .resolve_expression or pending.resolve_expression.kind != .choice_literal) return try self.recordCapturedExpression(module_index, id, ty, bindings);
                 const choice = pending.resolve_expression;
-                if (choice.operands.len != 0) return try self.recordArgumentDefault(module_index, id, ty, bindings);
+                if (choice.operands.len != 0) return try self.recordCapturedExpression(module_index, id, ty, bindings);
                 const name = choice.name orelse return null;
                 _ = try self.ensureGenericInstance(ty);
                 const variant = global_types.findVariant(self.graph, ty, module.text(name)) orelse return null;
@@ -1246,7 +1246,7 @@ pub const Resolver = struct {
             .bool_literal => |value| .{ .bool_literal = value },
             .char_literal => |value| .{ .char_literal = value },
             .string_literal => |value| .{ .string_literal = try self.graph.addString(self.allocator, module.text(value)) },
-            else => return try self.recordArgumentDefault(module_index, id, ty, bindings),
+            else => return try self.recordCapturedExpression(module_index, id, ty, bindings),
         };
         const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         const literal_type = if (resolved.ty) |source_type| try self.instantiateParameterizedType(module_index, source_type, bindings) else ty;
@@ -1254,18 +1254,18 @@ pub const Resolver = struct {
         return global;
     }
 
-    fn recordArgumentDefault(self: *Resolver, module_index: usize, expression: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !global_sg.GlobalNodeId {
-        const binding_start: u32 = @intCast(self.graph.argument_default_bindings.items.len);
+    pub fn recordCapturedExpression(self: *Resolver, module_index: usize, expression: ir.ParameterizedNodeId, ty: ?global_sg.GlobalTypeId, bindings: *Bindings) !global_sg.GlobalNodeId {
+        const binding_start: u32 = @intCast(self.graph.captured_expression_bindings.items.len);
         for (bindings.types, bindings.ints, 0..) |bound_type, integer, index|
-            try self.graph.argument_default_bindings.append(self.allocator, .{ .ty = bound_type, .integer = integer, .definition = if (index < bindings.definitions.len) bindings.definitions[index] else null });
-        const recipe: u32 = @intCast(self.graph.argument_defaults.items.len);
-        try self.graph.argument_defaults.append(self.allocator, .{
+            try self.graph.captured_expression_bindings.append(self.allocator, .{ .ty = bound_type, .integer = integer, .definition = if (index < bindings.definitions.len) bindings.definitions[index] else null });
+        const recipe: u32 = @intCast(self.graph.captured_expressions.items.len);
+        try self.graph.captured_expressions.append(self.allocator, .{
             .module_index = module_index,
             .expression = expression,
             .bindings = .{ .start = binding_start, .len = @intCast(bindings.types.len) },
         });
         const node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-        try self.graph.nodes.append(self.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = ty, .content = .{ .argument_default = recipe } });
+        try self.graph.nodes.append(self.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = ty, .content = .{ .captured_expression = recipe } });
         return node;
     }
 

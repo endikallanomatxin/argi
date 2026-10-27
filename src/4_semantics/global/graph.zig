@@ -193,8 +193,8 @@ pub const unresolved_type_poison_definition: GlobalTypeDefinitionId = @enumFromI
 const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
 pub const ArgumentDefaultTemporary = struct { expression: GlobalNodeId, declaration: GlobalNodeId };
-pub const ArgumentDefaultBinding = struct { ty: ?GlobalTypeId, integer: ?i64, definition: ?DefinitionValue = null };
-pub const ArgumentDefault = struct {
+pub const CapturedExpressionBinding = struct { ty: ?GlobalTypeId, integer: ?i64, definition: ?DefinitionValue = null };
+pub const CapturedExpression = struct {
     module_index: usize,
     expression: @import("../module/parameterized/ir.zig").ParameterizedNodeId,
     bindings: primitives.Range(u32),
@@ -398,9 +398,9 @@ pub const GlobalSemanticGraph = struct {
     fields: std.ArrayList(Field) = .empty,
     variants: std.ArrayList(ChoiceVariant) = .empty,
     generic_arguments: std.ArrayList(GenericArgument) = .empty,
-    argument_defaults: std.ArrayList(ArgumentDefault) = .empty,
+    captured_expressions: std.ArrayList(CapturedExpression) = .empty,
     argument_default_temporaries: std.ArrayList(ArgumentDefaultTemporary) = .empty,
-    argument_default_bindings: std.ArrayList(ArgumentDefaultBinding) = .empty,
+    captured_expression_bindings: std.ArrayList(CapturedExpressionBinding) = .empty,
     value_fields: std.ArrayList(ValueField) = .empty,
     switch_cases: std.ArrayList(SwitchCase) = .empty,
     switches: std.ArrayList(Switch) = .empty,
@@ -652,18 +652,18 @@ pub const GlobalSemanticGraph = struct {
         }
         self.safety_batches.deinit(allocator);
         inline for (.{
-            &self.modules,                      &self.module_aliases,            &self.files,                       &self.declarations,
-            &self.symbols,                      &self.symbol_declarations,       &self.types,                       &self.type_definitions,
-            &self.family_definitions,           &self.generic_instances,         &self.functions,                   &self.generic_function_instances,
-            &self.bindings,                     &self.nodes,                     &self.blocks,                      &self.fields,
-            &self.variants,                     &self.generic_arguments,         &self.value_fields,                &self.switch_cases,
-            &self.switches,                     &self.auto_deinit_fields,        &self.auto_deinits,                &self.virtual_registries,
-            &self.virtualizes,                  &self.virtual_calls,             &self.reach_segments,              &self.reach_alternatives,
-            &self.reaches,                      &self.nullable_unwraps,          &self.testing_expect_errors,       &self.error_propagations,
-            &self.error_contexts,               &self.node_refs,                 &self.type_refs,                   &self.binding_refs,
-            &self.function_refs,                &self.virtual_registry_refs,     &self.strings,                     &self.roots,
-            &self.contract_safety_conformances, &self.contract_conformances,     &self.contract_operation_bindings, &self.argument_defaults,
-            &self.argument_default_temporaries, &self.argument_default_bindings, &self.comptime_requests,           &self.block_assumptions,
+            &self.modules,                      &self.module_aliases,               &self.files,                       &self.declarations,
+            &self.symbols,                      &self.symbol_declarations,          &self.types,                       &self.type_definitions,
+            &self.family_definitions,           &self.generic_instances,            &self.functions,                   &self.generic_function_instances,
+            &self.bindings,                     &self.nodes,                        &self.blocks,                      &self.fields,
+            &self.variants,                     &self.generic_arguments,            &self.value_fields,                &self.switch_cases,
+            &self.switches,                     &self.auto_deinit_fields,           &self.auto_deinits,                &self.virtual_registries,
+            &self.virtualizes,                  &self.virtual_calls,                &self.reach_segments,              &self.reach_alternatives,
+            &self.reaches,                      &self.nullable_unwraps,             &self.testing_expect_errors,       &self.error_propagations,
+            &self.error_contexts,               &self.node_refs,                    &self.type_refs,                   &self.binding_refs,
+            &self.function_refs,                &self.virtual_registry_refs,        &self.strings,                     &self.roots,
+            &self.contract_safety_conformances, &self.contract_conformances,        &self.contract_operation_bindings, &self.captured_expressions,
+            &self.argument_default_temporaries, &self.captured_expression_bindings, &self.comptime_requests,           &self.block_assumptions,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -1275,9 +1275,9 @@ pub const GlobalSemanticGraph = struct {
             self.fields.items.len * @sizeOf(Field) +
             self.variants.items.len * @sizeOf(ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(GenericArgument) +
-            self.argument_defaults.items.len * @sizeOf(ArgumentDefault) +
+            self.captured_expressions.items.len * @sizeOf(CapturedExpression) +
             self.argument_default_temporaries.items.len * @sizeOf(ArgumentDefaultTemporary) +
-            self.argument_default_bindings.items.len * @sizeOf(ArgumentDefaultBinding) +
+            self.captured_expression_bindings.items.len * @sizeOf(CapturedExpressionBinding) +
             self.value_fields.items.len * @sizeOf(ValueField) +
             self.switch_cases.items.len * @sizeOf(SwitchCase) +
             self.switches.items.len * @sizeOf(Switch) +

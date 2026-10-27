@@ -97,8 +97,14 @@ pub const ContractOperationId = enum(u32) { _ };
 pub const ContractOperation = struct {
     instantiate_associated: bool = false,
     name: primitives.StringRange,
-    function: DeclarationRef,
+    function: Function,
     source: primitives.SourceRef,
+
+    pub const Function = union(enum) {
+        module: entities.ModuleDeclId,
+        external: entities.ExternalRefId,
+        expression: ir.ParameterizedNodeId,
+    };
 };
 pub const ContractConformance = struct {
     parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
