@@ -1754,3 +1754,48 @@ test "interactive implementation-defined operations retain selected signatures a
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("first.value")).?.value.runtime.integer);
     try session.close();
 }
+
+test "interactive Init selects target before inferring implementation parameters" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "Init#(.T: Type): Contract = (.init: _)");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions(
+        \\Point := (.value: Int32)
+        \\Other := (.value: Int32)
+        \\Provider := (.flag: Bool)
+        \\Container := #(.T: Type) (.value: T)
+        \\implement#(.T: Type) Init#(Container#(T)) (
+        \\    .init = #(.P: Type) (.provider: &P, .value: T) -> (.result: Container#(T)) {
+        \\        result = (.value = ~value)
+        \\    }
+        \\)
+        \\implement Init#(Point) (
+        \\    .init = #(.P: Type) (.provider: &P, .value: Int32 = 42) -> (.result: Point) {
+        \\        result = (.value = value)
+        \\    }
+        \\)
+        \\implement Init#(Other) (
+        \\    .init = (.value: Int32 = 7) -> (.result: Other) { result = (.value = value) }
+        \\)
+    );
+    try session.submitStatements("provider: Provider = (.flag = true)\nfirst ::= Point(.provider = &provider)");
+    try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("first.value")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("Other().value")).?.value.runtime.integer);
+    try session.submitStatements("container ::= Container#(Int32)(.provider = &provider, .value = 19)");
+    try std.testing.expectEqual(@as(u64, 19), (try session.submitInput("container.value")).?.value.runtime.integer);
+    try session.submitStatements("known ::= #run () -> (.result: Int32) { result = Other().value }");
+    try std.testing.expectEqual(@as(u64, 7), (try session.submitInput("known")).?.value.runtime.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("Point(.unknown = 1)"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(@as(u64, 9), (try session.submitInput("Point(.provider = &provider, .value = 9).value")).?.value.runtime.integer);
+    try session.close();
+}

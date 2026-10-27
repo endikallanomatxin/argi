@@ -537,3 +537,18 @@ pass: generic/captured/aliased calls with defaults and borrowed results (native,
 VM and compile time), rejection of virtual erasure, and rejection of a local
 reference escaping through the selected operation. This does not establish
 completion of the broader nominal migration.
+
+The constructor resolver now also supports a single-participant Init definition:
+known targets select evidence first and pass the user's argument literal directly
+to the implementation-owned ordinary signature. Operation parameters are inferred
+after that selection. Result guarantees for Init and Convert share one check for
+fixed and implementation-owned signatures. The bundled core and its callers still
+use the old two-participant Init pending their coordinated migration; remove that
+constructor path when partial-target inference and library migration are complete.
+The focused interactive constructor test covers independent targets, a generic
+provider, defaults and successful execution after an invalid argument submission.
+The single-participant constructor path also passes focused interactive coverage
+for captured generic targets with operation-local providers, compile-time
+construction, and rejection rollback. This is a migration step: partial target
+inference and the bundled Init definitions still use the old argument-pattern
+selection and must be replaced before this objective is complete.

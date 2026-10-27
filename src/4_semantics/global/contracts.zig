@@ -2028,6 +2028,14 @@ pub const Resolver = struct {
             else => return err,
         };
         const method = node.content.function_call.callee;
+        if (standard_contracts.operationResultFailure(self.graph, conformance, method)) |reason| {
+            self.participant_conformance_failure = .{
+                .source = source,
+                .contract_name = self.graph.familyDefinitionName(conformance.declaration),
+                .reason = reason,
+            };
+            return error.InvalidContractOperation;
+        }
         if (evidence.binding.parameter_count == 0) {
             const binding_id: global_sg.ContractOperationBindingId = @enumFromInt(conformance.operation_bindings.start + @as(u32, @intCast(operation_index)));
             try self.graph.completeOperationBinding(self.allocator, binding_id, method);
@@ -2219,7 +2227,6 @@ pub const Resolver = struct {
                 }
                 if (standard_contracts.standardDefinition(self.graph, "Init") == conformance.declaration) {
                     const required_inputs = global_types.fields(self.graph, input).?;
-                    const required_outputs = global_types.fields(self.graph, output).?;
                     const arguments = self.graph.fields.items[required_inputs.start].ty;
                     _ = try self.generics.ensureGenericInstance(arguments);
                     if (global_types.fields(self.graph, arguments) == null) {
@@ -2227,23 +2234,11 @@ pub const Resolver = struct {
                         self.participant_conformance_failure = failure;
                         return;
                     }
-                    const result = self.graph.fields.items[required_outputs.start].ty;
-                    if (!self.graph.isTypeUnresolved(result) and !global_types.resultMatchesTarget(self.graph, result, first)) {
-                        failure.reason = "Init.Result must be its participant type or one Errable containing that type";
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
                 }
-
-                if (standard_contracts.standardDefinition(self.graph, "Convert") == conformance.declaration) {
-                    const required_outputs = global_types.fields(self.graph, output).?;
-                    const result = self.graph.fields.items[required_outputs.start].ty;
-                    const target = self.graph.generic_arguments.items[conformance.participants.start + 1].value.type;
-                    if (!self.graph.isTypeUnresolved(result) and !global_types.resultMatchesTarget(self.graph, result, target)) {
-                        failure.reason = "Convert.Result must be its target participant type or one Errable containing that type";
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
+                if (standard_contracts.operationResultFailure(self.graph, conformance, selected.function)) |reason| {
+                    failure.reason = reason;
+                    self.participant_conformance_failure = failure;
+                    return;
                 }
 
                 try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source, .{ .conformance = @intCast(index), .index = @intCast(operation_index) });

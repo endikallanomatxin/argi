@@ -116,3 +116,56 @@ pub fn operatorMessage(contract: []const u8, comptime prefix: []const u8, compti
     }
     return prefix ++ "operator" ++ suffix;
 }
+
+/// Standard protocol result guarantees apply to the selected callable,
+/// whether its signature was prescribed or supplied by the implementation.
+pub fn operationResultFailure(graph: *const graph_mod.GlobalSemanticGraph, conformance: graph_mod.ContractConformance, method: graph_mod.GlobalFunctionId) ?[]const u8 {
+    const is_init = standardDefinition(graph, "Init") == conformance.declaration;
+    const is_convert = standardDefinition(graph, "Convert") == conformance.declaration;
+    if (!is_init and !is_convert) return null;
+    const reason = if (is_init)
+        "Init.Result must be its participant type or one Errable containing that type"
+    else
+        "Convert.Result must be its target participant type or one Errable containing that type";
+    const function = graph.function(method);
+    if (function.output.len != 1) return reason;
+    const target_index: u32 = if (is_init) 0 else 1;
+    if (conformance.participants.len <= target_index) return reason;
+    const target = switch (graph.generic_arguments.items[conformance.participants.start + target_index].value) {
+        .type => |ty| ty,
+        else => return reason,
+    };
+    const result = graph.fields.items[function.output.start].ty;
+    if (graph.isTypeUnresolved(result)) return null;
+    return if (@import("types.zig").resultMatchesTarget(graph, result, target)) null else reason;
+}
+
+test "standard operation results constrain implementation-owned signatures" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(allocator, "Init");
+    try graph.declarations.append(allocator, .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.modules.append(allocator, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 1 }, .is_bundled_core = true });
+    try graph.family_definitions.append(allocator, .{ .source = source, .kind = .contract, .parameter_count = 1, .declaration = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .builtin = .Bool });
+    try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
+    try graph.fields.append(allocator, .{ .name = name, .ty = @enumFromInt(0), .source = source });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } });
+    const conformance = graph_mod.ContractConformance{
+        .declaration = @enumFromInt(0),
+        .participants = .{ .start = 0, .len = 1 },
+        .associated_arguments = .{ .start = 0, .len = 0 },
+        .source = source,
+    };
+    try std.testing.expect(operationResultFailure(&graph, conformance, @enumFromInt(0)) == null);
+    graph.fields.items[0].ty = @enumFromInt(1);
+    try std.testing.expect(operationResultFailure(&graph, conformance, @enumFromInt(0)) != null);
+    graph.functions.items[0].output.len = 0;
+    try std.testing.expect(operationResultFailure(&graph, conformance, @enumFromInt(0)) != null);
+    // A same-named user contract cannot acquire core's construction semantics.
+    graph.modules.items[0].is_bundled_core = false;
+    try std.testing.expect(operationResultFailure(&graph, conformance, @enumFromInt(0)) == null);
+}

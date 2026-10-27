@@ -236,6 +236,27 @@ pub const Resolver = struct {
         defer scope.deinit();
         const declaration = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
         const contracts = self.contracts orelse return null;
+        const definition = contracts.findContractDefinition(declaration) orelse return null;
+        if (definition.definition.participants.len == 1) {
+            var deferred = false;
+            const selected = try contracts.selectConformance(declaration, &.{ty}, null, 0, &deferred);
+            if (selected == null) {
+                if (deferred) return error.DeferredContractInitializer;
+                return null;
+            }
+            const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+            try self.graph.generic_arguments.append(self.core.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = ty } });
+            const contract_type = try self.generics.?.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 1 } } });
+            const call = contracts.makeScopedOperationCall(module_index, contract_type, "init", input, reach, source) catch |err| switch (err) {
+                error.InvalidGenericCallArguments => {
+                    try self.reportConstructorError(source, "construction arguments do not match the selected Init operation signature");
+                    return error.InvalidInitializerArguments;
+                },
+                else => return err,
+            } orelse return error.DeferredContractInitializer;
+            scope.commit();
+            return call;
+        }
         const selected_arguments = try self.inferContractArguments(declaration, ty, null, input, reach, source) orelse return null;
         const arguments_type = selected_arguments.args;
         const generics = self.generics.?;
