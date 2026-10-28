@@ -1,14 +1,18 @@
-main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume writer ::= $&system.terminal&.stderr
-    assume allocator := system.page_allocator
+main := () -> (.status_code: Int32 = 1) {
+    assume ffi ::= $&ForeignFunctionInterface()
+    assume error_tracer ::= $&noop_error_tracer
+    allocator_storage ::= CAllocator(.ffi = ffi)
+    assume allocator ::= $&allocator_storage
     order ::= Int32OrderPolicy()
-    queue ::= PriorityQueue#(.t: Int32)(.order = &order, .capacity = 1)!!!
+    queue ::= unwrap_or_abort(
+        .value = PriorityQueue#(.t: Int32)(.order = &order, .capacity = 1)
+    )
     if is(.value = peek_reference(&queue).value, .variant = ..some) { abort }
     if is(.value = pop($&queue).result, .variant = ..some) { abort }
     index :: Int32 = 64
     while index > 0 {
         index = index - 1
-        push($&queue, .value = index % 16)!!!
+        unwrap_or_abort(.value = push($&queue, .value = index % 16))
     }
     index = 0
     while index < 64 {

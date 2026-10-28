@@ -1,12 +1,16 @@
-main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume writer ::= $&system.terminal&.stderr
-    assume allocator := system.page_allocator
-    map ::= HashMap#(.key: String, .value: Int32, .policy: StandardHashPolicy)(
-        .policy = StandardHashPolicy()
-    )!!!
-    key ::= format(.value = "key")!!!
-    put($&map, .key = ~key, .value = 41)!!!
-    query ::= format(.value = "key")!!!
+main := () -> (.status_code: Int32 = 1) {
+    assume ffi ::= $&ForeignFunctionInterface()
+    assume error_tracer ::= $&noop_error_tracer
+    allocator_storage ::= CAllocator(.ffi = ffi)
+    assume allocator ::= $&allocator_storage
+    map ::= unwrap_or_abort(
+        .value = HashMap#(.key: String, .value: Int32, .policy: StandardHashPolicy)(
+            .policy = StandardHashPolicy()
+        )
+    )
+    key ::= unwrap_or_abort(.value = format(.value = "key"))
+    unwrap_or_abort(.value = put($&map, .key = ~key, .value = 41))
+    query ::= unwrap_or_abort(.value = format(.value = "key"))
     match get(&map, .key = view(&query)).result {
         ..none { abort }
         ..some item { if item.value != 41 { abort } }
@@ -27,21 +31,25 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
             if view(&entry.key) != "key" or entry.value != 42 { abort }
         }
     }
-    owners ::= HashMap#(.key: Int32, .value: String, .policy: StandardHashPolicy)(
-        .policy = StandardHashPolicy()
-    )!!!
-    text ::= format(.value = "value")!!!
-    put($&owners, .key = 3, .value = ~text)!!!
+    owners ::= unwrap_or_abort(
+        .value = HashMap#(.key: Int32, .value: String, .policy: StandardHashPolicy)(
+            .policy = StandardHashPolicy()
+        )
+    )
+    text ::= unwrap_or_abort(.value = format(.value = "value"))
+    unwrap_or_abort(.value = put($&owners, .key = 3, .value = ~text))
     keys ::= to_key_iterator(.value = &owners).iterator
     if has_next(&keys).ok == false { abort }
     if next($&keys).value != 3 { abort }
     for entry in owners {
         if entry.key&!= 3 or view(entry.value) != "value" { abort }
     }
-    scalars ::= HashMap#(.key: Int32, .value: Int32, .policy: StandardHashPolicy)(
-        .policy = StandardHashPolicy()
-    )!!!
-    put($&scalars, .key = 7, .value = 9)!!!
+    scalars ::= unwrap_or_abort(
+        .value = HashMap#(.key: Int32, .value: Int32, .policy: StandardHashPolicy)(
+            .policy = StandardHashPolicy()
+        )
+    )
+    unwrap_or_abort(.value = put($&scalars, .key = 7, .value = 9))
     for entry in scalars {
         if entry.key&!= 7 or entry.value&!= 9 { abort }
     }

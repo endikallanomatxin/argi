@@ -76,6 +76,11 @@ Keep representative native/VM fixtures to check backend agreement. For example,
 choice diagnostics live in `choice_rules_test.zig`, while `types/01_choice`
 executes equality, extraction and matching on both backends. Exact CLI rendering
 and related-location checks remain separate integration cases.
+Collection fixtures `97_hash_map`, `157_unified_hash_map`,
+`165_unified_hash_set` and `166_unified_priority_queue` also execute the same
+program natively and in the VM. Their explicit CAllocator/FFI setup avoids a
+System entrypoint and preserves the existing growth, borrowing, movement,
+cleanup-count and ordering assertions without creating duplicate fixtures.
 There is no second expectation registry, compiler executable or test discovery
 mechanism. `test-programs` runs both frontend fixtures and executable fixtures.
 

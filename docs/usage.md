@@ -303,6 +303,25 @@ so `print("hola")` works directly. An ordinary `CAllocator` supplies the persist
 healthy exit and reset run their checked cleanup before releasing the context.
 Allocation uses VM regions rather than native pointers; the supported value and
 storage restrictions still apply.
+
+The allocator assumption also supplies ordinary collection constructors:
+
+```text
+>>> map ::= unwrap_or_abort(.value = HashMap#(.key: Int32, .value: Int32)())
+>>> length(&map)
+_0 = 0
+>>> unwrap_or_abort(.value = put(.self = $&map, .key = 3, .value = 42, .allocator = allocator))
+_1 = ()
+>>> get(.self = &map, .key = &3)
+_2 = ..some(.value = 42)
+```
+
+Representative native/VM comparisons cover scalar map growth and replacement,
+String keys and values, borrowed and mutable iteration, extraction, noncopyable
+set keys with cleanup counts and failed insertion, and priority queue ordering.
+These use ordinary core capabilities; general `System` entrypoints remain
+outside the `run --vm` interface.
+
 Terminal input uses lexical syntax colors; `NO_COLOR` or `TERM=dumb` disables
 colors. Continuing inside braces inserts four spaces per nesting level, and a
 closing `}` typed on the untouched indentation dedents one level. Braces in

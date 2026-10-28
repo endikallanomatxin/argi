@@ -24,27 +24,37 @@ Refusal: Type = ()
 
 implement Allocator#(Refusal) (
     .allocate = (.self: $&Refusal, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(Allocation, (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     ) { result = ..error(.reason = ..out_of_memory) }
 )
 
-main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume writer ::= $&system.terminal&.stderr
-    assume allocator := system.page_allocator
-    simple ::= HashSet#(.key: Int32)()!!!
-    insert($&simple, .key = 3)!!!
-    if insert($&simple, .key = 3)!!! { abort }
+main := () -> (.status_code: Int32 = 1) {
+    assume ffi ::= $&ForeignFunctionInterface()
+    assume error_tracer ::= $&noop_error_tracer
+    allocator_storage ::= CAllocator(.ffi = ffi)
+    assume allocator ::= $&allocator_storage
+    simple ::= unwrap_or_abort(.value = HashSet#(.key: Int32)())
+    unwrap_or_abort(.value = insert($&simple, .key = 3))
+    if unwrap_or_abort(.value = insert($&simple, .key = 3)) { abort }
     if contains(&simple, .key = &3).ok == false { abort }
     for item in simple { if item != 3 { abort } }
     for &item in simple { if item&!= 3 { abort } }
-    custom ::= HashSet#(.key: Key)(.policy = Policy())!!!
+    custom ::= unwrap_or_abort(.value = HashSet#(.key: Key)(.policy = Policy()))
     index :: Int32 = 0
     while index < 4 {
-        insert($&custom, .key = Key(.first = Tracked(.id = index), .second = Tracked(.id = 10)))!!!
+        unwrap_or_abort(
+            .value = insert(
+                $&custom, .key = Key(.first = Tracked(.id = index), .second = Tracked(.id = 10))
+            )
+        )
         index = index + 1
     }
     if drops != 0 { abort }
-    if insert($&custom, .key = Key(.first = Tracked(.id = 0), .second = Tracked(.id = 20)))!!! {
+    if unwrap_or_abort(
+        .value = insert(
+            $&custom, .key = Key(.first = Tracked(.id = 0), .second = Tracked(.id = 20))
+        )
+    ) {
         abort
     }
     if drops != 2 { abort }
@@ -61,7 +71,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     for &item in custom { if item&.second.id != 10 { abort } }
     query ::= Key(.first = Tracked(.id = 1), .second = Tracked(.id = 0))
     taken ::= extract($&custom, .key = &query).result
-    reserve($&custom, .capacity = 32)!!!
+    unwrap_or_abort(.value = reserve($&custom, .capacity = 32))
     deinit($&custom)
     if drops != 10 { abort }
     match taken {

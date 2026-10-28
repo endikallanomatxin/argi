@@ -1,5 +1,8 @@
-main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume allocator ::= system.page_allocator
+main := () -> (.status_code: Int32 = 0) {
+    assume ffi ::= $&ForeignFunctionInterface()
+    assume error_tracer ::= $&noop_error_tracer
+    allocator_storage ::= CAllocator(.ffi = ffi)
+    assume allocator ::= $&allocator_storage
     map ::= unwrap_or_abort(
         .value = HashMap#(.key: Int32, .value: Int32, .policy: StandardHashPolicy)(
             .policy = StandardHashPolicy(), .allocator = allocator

@@ -8,4 +8,5 @@ test "feature_tests/collections/97_hash_map" {
     const path = "tests/feature_tests/collections/97_hash_map";
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
+    try support.vmExpect("tests/feature_tests/collections/97_hash_map", 0, null);
 }

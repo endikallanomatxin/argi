@@ -7,4 +7,5 @@ pub const isolation: support.Isolation = .fixture;
 test "feature_tests/collections/166_unified_priority_queue" {
     try expectSuccessfulBuild("tests/feature_tests/collections/166_unified_priority_queue");
     try runExpect("tests/feature_tests/collections/166_unified_priority_queue", 0);
+    try support.vmExpect("tests/feature_tests/collections/166_unified_priority_queue", 0, null);
 }
