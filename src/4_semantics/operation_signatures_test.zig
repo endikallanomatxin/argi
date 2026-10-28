@@ -1,6 +1,40 @@
 const std = @import("std");
 const support = @import("frontend_test_support.zig");
 
+test "array view iteration supports borrowed records and enforces access modes" {
+    var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
+    defer environment.deinit();
+    _ = try environment.check(.{ .name = "borrowed_record_length", .files = &.{.{ .path = "main.rg", .code =
+        \\Spec := (.name: StringView, .dependencies: ArrayView#(StringView))
+        \\implement ImplicitlyCopyable#(Spec) ()
+        \\inspect := (.specs: ArrayView#(Spec)) -> (.found: Bool = false) {
+        \\    for spec in specs { if spec.name == "sample" { found = true } }
+        \\}
+        \\main := () -> (.status_code: Int32 = 1) {
+        \\    assume error_tracer ::= $&noop_error_tracer
+        \\    names: [1]StringView = ("other")
+        \\    specs: [1]Spec = ((.name = "sample", .dependencies = view(&names)))
+        \\    if inspect(.specs = view(&specs)).found { status_code = 0 }
+        \\}
+    }} });
+    _ = try environment.check(.{ .name = "readonly_view_mutation", .files = &.{.{ .path = "main.rg", .code =
+        \\main := () -> () {
+        \\    values: [1]Int32 = (1)
+        \\    readonly ::= view(&values)
+        \\    for $&value in readonly { value&= 2 }
+        \\}
+    }}, .diagnostic = .{ .message = "for expects a type implementing contract 'MutableReferenceIterable'" } });
+    _ = try environment.check(.{ .name = "noncopyable_view_value_iteration", .files = &.{.{ .path = "main.rg", .code =
+        \\Resource := (.value: Int32)
+        \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
+        \\main := () -> () {
+        \\    values: [1]Resource = ((.value = 1))
+        \\    readonly ::= view(&values)
+        \\    for value in readonly { }
+        \\}
+    }}, .diagnostic = .{ .message = "for expects a type implementing contract 'Iterable'" } });
+}
+
 const inputs =
     \\Inputs := #(.T: Type) (
     \\    .self: &T

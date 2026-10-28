@@ -15,12 +15,6 @@ and nominal-type migration closed; preserve their validation.
   inference. Preserve pass order, old entities completed by new information and
   nested aggregate completion; an outer type is not a completion certificate.
 - Measure invariant work in generic specialization before sharing representation.
-- Unify collection-length lookup before extending CLI relationships. Iterating
-  an `ArrayView#(CliSpec)` from an ordinary helper can select the constrained
-  ordinary `length` and reject missing `CollectionLength`, although `Indexable`
-  supplies `length`. A blanket adapter makes existing core calls ambiguous.
-  Resolve the operation-identity boundary; do not bypass iteration with private
-  layout access. Reproduce with `CliSpec` containing borrowed option-name lists.
 
 ## Safety
 

@@ -48,6 +48,12 @@ Views are library abstractions. The language has no native slice type.
 freezes their contents, or implies exclusive access. Another permitted access
 may change the values observed through an `ArrayView`.
 
+Both view types support iteration by value when their elements are implicitly
+copyable, and iteration by reference for all element types. `MutableArrayView`
+also supports iteration by mutable reference. Iterators retain the view's
+storage dependencies; they neither acquire ownership nor extend the backing
+storage's lifetime. Dynamic arrays share these view-backed cursor implementations.
+
 A safe constructor derives the extent from its source; pointer-and-length
 construction belongs to trusted code. The reference and length fields are private.
 `view(.self = &array)` derives an `ArrayView` from a fixed `[N]T`, while
