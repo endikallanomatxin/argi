@@ -165,9 +165,6 @@ pub const ChoiceConditions = @import("choice_conditions.zig").ChoiceConditions;
 /// A complete approximation under an explicitly represented conjunction.
 /// Effects are shared between guards and contain no graph binding identities.
 pub const GuardedSafetyEffects = struct {
-    /// Derived compatibility records can be refreshed after receiver mapping
-    /// without discarding independently inferred entry or joint conditions.
-    origin: enum { general, outcome_partition } = .general,
     conditions: ChoiceConditions,
     effects: *const SafetySummary,
 };
@@ -195,6 +192,18 @@ pub const SafetySummary = struct {
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
     opaque_storage_empties: []const InputPath = &.{},
     invalidated_domains: []const InputDomain = &.{},
+
+    /// A borrowed view of the current outcome effects, retaining common
+    /// provenance and obligations. No derived copy is stored or refreshed.
+    pub fn outcomeEffects(self: SafetySummary, outcome: OutcomePostStates) SafetySummary {
+        var selected = self;
+        selected.guarded_effects = &.{};
+        selected.outcome_post_states = &.{};
+        selected.input_post_states = outcome.input_post_states;
+        selected.invalidated_domains = outcome.invalidated_domains;
+        selected.opaque_storage_empties = outcome.opaque_storage_empties;
+        return selected;
+    }
 };
 
 pub const OutcomePostStates = struct {

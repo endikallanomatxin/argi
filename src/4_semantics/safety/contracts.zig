@@ -607,7 +607,7 @@ fn checkGeneralContract(contract: Contract, summary: facts.SafetySummary) ?Failu
     defer arena.deinit();
     var represented = false;
     for (summary.guarded_effects) |actual| {
-        if (actual.origin != .general or actual.conditions.impossible) continue;
+        if (actual.conditions.impossible) continue;
         represented = true;
         if (checkGeneralRegion(arena.allocator(), contract, actual.conditions, actual.effects.*) catch return .{ .kind = .missing_choice_relation }) |failure| return failure;
     }
@@ -679,6 +679,19 @@ pub fn checkGuardedRelations(required: []const Contract.Guarded, summary: facts.
             if (!relation.conditions.implies(actual.conditions)) continue;
             has_partition = true;
             if (check(relation.effects.*, actual.effects.*)) |failure| {
+                last_failure = failure;
+            } else {
+                last_failure = null;
+                break;
+            }
+        }
+        if (has_partition and last_failure == null) continue;
+        // Output partitions are authoritative compact records. Consult their
+        // current fields directly instead of retaining duplicate guarded summaries.
+        for (summary.outcome_post_states) |outcome| {
+            if (!outcome.reachable or !relation.conditions.impliesOutput(outcome.output_index, outcome.parent_variants, outcome.variant_index)) continue;
+            has_partition = true;
+            if (check(relation.effects.*, summary.outcomeEffects(outcome))) |failure| {
                 last_failure = failure;
             } else {
                 last_failure = null;
@@ -1566,4 +1579,39 @@ test "static contract checks preserve guarantees while callers retain alias obli
     effectful.storage_capability_uses = &.{.{ .target = path }};
     try std.testing.expectEqual(.unsupported_capability_effect, checkStatic(contract, effectful).?.kind);
     try std.testing.expectEqual(@as(usize, 1), summary.storage_observation_conflicts.len);
+}
+
+test "guarded contracts read normalized output partitions without derived summary copies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const conditions = try @import("choice_conditions.zig").normalize(a, &.{
+        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 1, .projections = &.{.{ .variant = 2 }}, .variant_index = 3 },
+    });
+    const required_effects: Contract = .{ .outputs = &.{}, .consumed_inputs = &.{.{ .input_index = 4 }} };
+    const required = [_]Contract.Guarded{.{ .conditions = conditions, .effects = &required_effects }};
+    var partitions = [_]facts.OutcomePostStates{.{ .output_index = 1, .parent_variants = &.{2}, .variant_index = 3, .input_post_states = &.{.{ .target = .{ .input_index = 4 }, .initializedness = .deinitialized, .ends_previous_roots = true }} }};
+    const summary: facts.SafetySummary = .{ .outcome_post_states = &partitions };
+    try std.testing.expectEqual(@as(usize, 0), summary.guarded_effects.len);
+    try std.testing.expect(checkGuardedRelations(&required, summary) == null);
+    partitions[0].input_post_states = &.{};
+    try std.testing.expectEqual(Failure.Kind.missing_consumption, checkGuardedRelations(&required, summary).?.kind);
+    partitions[0].reachable = false;
+    try std.testing.expect(checkGuardedRelations(&required, summary) == null);
+}
+
+test "independent output partitions cannot prove a joint consumption guarantee" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const conditions = try @import("choice_conditions.zig").normalize(arena.allocator(), &.{
+        .{ .subject = .output, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 1, .variant_index = 1 },
+    });
+    const required_effects: Contract = .{ .outputs = &.{}, .consumed_inputs = &.{ .{ .input_index = 0 }, .{ .input_index = 1 } } };
+    const summary: facts.SafetySummary = .{ .outcome_post_states = &.{
+        .{ .output_index = 0, .variant_index = 1, .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .deinitialized, .ends_previous_roots = true }} },
+        .{ .output_index = 1, .variant_index = 1, .input_post_states = &.{.{ .target = .{ .input_index = 1 }, .initializedness = .deinitialized, .ends_previous_roots = true }} },
+    } };
+    try std.testing.expect(checkGuardedRelations(&.{.{ .conditions = conditions, .effects = &required_effects }}, summary) != null);
 }

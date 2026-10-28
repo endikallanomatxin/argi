@@ -396,7 +396,6 @@ pub const SafetyChecker = struct {
         // general proof conversion. Raw payload views are not interchangeable
         // with complete conditional contracts.
         contract = try contracts.withOutcomeGuards(self.allocator, contract);
-        summary = try summary_engine.refreshOutcomeGuards(self.allocator, summary);
         const violation = if (dispatch == .concrete) contracts.checkStatic(contract, summary) else contracts.check(contract, summary);
         if (violation) |failure| {
             const method_name = self.graph.text(self.graph.declarationSourceName(function.declaration));
@@ -1486,7 +1485,7 @@ pub const SafetyChecker = struct {
         const call = self.next_outcome_guard;
         self.next_outcome_guard += 1;
         for (summary.guarded_effects) |guarded| {
-            if (guarded.origin != .general or guarded.conditions.impossible) continue;
+            if (guarded.conditions.impossible) continue;
             var known: std.ArrayList(facts.ChoiceCondition) = .empty;
             defer known.deinit(self.allocator);
             for (guarded.conditions.terms) |condition| {

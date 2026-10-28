@@ -305,7 +305,7 @@ pub const Infer = struct {
                 .storage = retention.storage,
                 .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) },
             });
-            const result = try summaries.withOutcomeGuards(self.allocator, facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .storage_observations = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs });
+            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .storage_observations = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs };
             try self.virtual_summaries.put(registry_id, result);
             return result;
         }
@@ -561,7 +561,6 @@ pub const Infer = struct {
         summary.required_live_inputs = try required.toOwnedSlice();
         const guards = try self.allocator.dupe(facts.GuardedSafetyEffects, summary.guarded_effects);
         for (guards) |*guard| {
-            if (guard.origin != .general) continue;
             const effects = try self.allocator.create(facts.SafetySummary);
             effects.* = guard.effects.*;
             const guarded_outputs = try self.allocator.alloc(facts.ValueEffect, effects.outputs.len);
@@ -571,8 +570,7 @@ pub const Infer = struct {
             guard.effects = effects;
         }
         summary.guarded_effects = guards;
-        // Derived outcome records must use the normalized concrete view too.
-        return try summaries.refreshOutcomeGuards(self.allocator, summary);
+        return summary;
     }
 
     fn normalizeContractPostStates(self: *Infer, function: graph_mod.Function, receiver: ?u32, post_states: []const facts.PlacePostState) ![]const facts.PlacePostState {
@@ -950,7 +948,7 @@ pub const Infer = struct {
         defer profile.accumulate(self.profile_io, start, &self.guards_ns);
         summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary, &summary.guarded_returns_complete);
         if (summary.guarded_effects.len == 0) summary.guarded_effects = try self.inferForwardedGeneralGuards(function_id, summary, &summary.guarded_returns_complete);
-        return summaries.refreshOutcomeGuards(self.allocator, summary);
+        return summary;
     }
 
     /// Forward exact outputs of one call through a straight-line wrapper.
@@ -1005,7 +1003,7 @@ pub const Infer = struct {
         for (arguments) |argument| if (!self.entryOutputExpressionSafe(argument.value)) return &.{};
         var guards: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
         for (called[0].guarded_effects) |guarded| {
-            if (guarded.origin != .general or guarded.conditions.impossible) continue;
+            if (guarded.conditions.impossible) continue;
             var terms: std.ArrayList(facts.ChoiceCondition) = .empty;
             var supported = true;
             for (guarded.conditions.terms) |condition| {

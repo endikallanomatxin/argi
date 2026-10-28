@@ -49,6 +49,32 @@ pub const ChoiceConditions = struct {
         return true;
     }
 
+    /// Match a compact nested output selector against normalized conditions
+    /// without allocating another condition set. Every enclosing tag matters.
+    pub fn impliesOutput(self: ChoiceConditions, output: u32, parents: []const u32, variant: u32) bool {
+        if (self.impossible) return true;
+        for (0..parents.len + 1) |depth| {
+            const tag = if (depth == parents.len) variant else parents[depth];
+            var found = false;
+            for (self.terms) |term| {
+                if (term.subject != .output or term.index != output or term.variant_index != tag or term.projections.len != depth) continue;
+                var matches = true;
+                for (term.projections, parents[0..depth]) |projection, parent| {
+                    if (projection != .variant or projection.variant != parent) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (matches) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+
     pub fn evaluate(condition: ChoiceConditions, known: ChoiceConditions) enum { satisfied, contradicted, unknown } {
         if (condition.impossible or known.impossible) return .contradicted;
         var missing = false;
@@ -237,4 +263,25 @@ test "choice forwarding preserves complete conjunctions and fails closed on miss
     try std.testing.expectEqual(@as(usize, 1), forwarded.terms[1].projections.len);
     try std.testing.expect((try remap(allocator, condition, mappings[0..1])) == null);
     try std.testing.expectError(error.AmbiguousChoiceMapping, remap(allocator, condition, &.{ mappings[0], mappings[0], mappings[1] }));
+}
+
+test "compact output implication matches normalized nested selector implication" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const wanted = try normalize(a, &.{.{ .subject = .output, .index = 1, .projections = &.{ .{ .variant = 2 }, .{ .variant = 3 } }, .variant_index = 4 }});
+    const cases = [_]ChoiceConditions{
+        wanted,
+        .{},
+        .{ .impossible = true },
+        try normalize(a, &.{.{ .subject = .output, .index = 1, .variant_index = 2 }}),
+        try normalize(a, &.{.{ .subject = .entry_input, .index = 1, .projections = &.{ .{ .variant = 2 }, .{ .variant = 3 } }, .variant_index = 4 }}),
+        try normalize(a, &.{.{ .subject = .output, .index = 0, .projections = &.{ .{ .variant = 2 }, .{ .variant = 3 } }, .variant_index = 4 }}),
+        try normalize(a, &.{.{ .subject = .output, .index = 1, .projections = &.{ .{ .variant = 2 }, .{ .variant = 3 } }, .variant_index = 5 }}),
+        try normalize(a, &.{ .{ .subject = .entry_input, .index = 0, .variant_index = 7 }, .{ .subject = .output, .index = 1, .projections = &.{ .{ .variant = 2 }, .{ .variant = 3 } }, .variant_index = 4 } }),
+    };
+    for (cases) |known| try std.testing.expectEqual(known.implies(wanted), known.impliesOutput(1, &.{ 2, 3 }, 4));
+    // Field projections cannot be mistaken for nested choice payloads.
+    const field = try normalize(a, &.{.{ .subject = .output, .index = 1, .projections = &.{.{ .field = 2 }}, .variant_index = 4 }});
+    try std.testing.expect(!field.impliesOutput(1, &.{2}, 4));
 }
