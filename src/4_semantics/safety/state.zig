@@ -666,6 +666,25 @@ test "Safety acquisitions on sibling branches retain distinct identities through
     try std.testing.expectEqual(.consumed, joined.capabilityState(first));
 }
 
+test "Safety capability consumption never weakens an established consumption" {
+    var state = State.init(std.testing.allocator);
+    defer state.deinit();
+    const capability = try state.establishCapability();
+    for (std.meta.tags(StorageCapabilityState)) |initial| {
+        for ([_]bool{ false, true }) |definite| {
+            state.storage_capabilities.items[@intFromEnum(capability)] = initial;
+            state.consumeCapability(capability, definite);
+            const expected: StorageCapabilityState = switch (initial) {
+                .absent, .consumed => initial,
+                else => if (definite) .consumed else .maybe_consumed,
+            };
+            try std.testing.expectEqual(expected, state.capabilityState(capability));
+        }
+    }
+    state.consumeCapability(@enumFromInt(100), true);
+    try std.testing.expectEqual(.absent, state.capabilityState(@enumFromInt(100)));
+}
+
 test "Safety capability joins preserve every present-path consumption state" {
     const tags = std.meta.tags(StorageCapabilityState);
     for (tags) |left| for (tags) |right| {

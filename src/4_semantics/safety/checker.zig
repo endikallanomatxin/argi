@@ -3760,7 +3760,7 @@ pub const SafetyChecker = struct {
         result.storage_capabilities = try capabilities.toOwnedSlice();
         for (effect.unavailable_fresh_storage) |entry| {
             const capability = try self.instantiateFreshCapability(entry.source, state, fresh_capabilities);
-            state.storage_capabilities.items[@intFromEnum(capability)] = if (entry.maybe_consumed) .maybe_consumed else .consumed;
+            state.consumeCapability(capability, !entry.maybe_consumed);
         }
 
         for (effect.input_receiver_values) |path| {
@@ -3966,7 +3966,7 @@ pub const SafetyChecker = struct {
                             break;
                         }
                     };
-                    if (!input_storage) root.state = .conditional;
+                    if (!input_storage and root.state == .alive) root.state = .conditional;
                 }
                 for (state.storage_capabilities.items[first_capability..]) |*capability| if (capability.* == .available) {
                     capability.* = .conditional;
@@ -8620,6 +8620,11 @@ test "choice outputs keep lazily materialized input storage alive" {
     defer checker.deinit();
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
+    // Other branches may already have reserved identities. Materializing this
+    // payload must not turn their absent placeholder roots into live resources.
+    var namespace: facts.Tracker.RootNamespace = .{ .next_id = 8 };
+    defer namespace.deinit(allocator);
+    state.tracker.namespace = &namespace;
     const storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
     const projections = [_]facts.Projection{.{ .field = 0 }};
     const payload = facts.ValueEffect{
@@ -8635,6 +8640,10 @@ test "choice outputs keep lazily materialized input storage alive" {
     try std.testing.expect(state.tracker.isAlive(state.storage_generations.items[0].generation));
     const owned = output.variants[0].value.owned_roots[0];
     try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(owned)].state);
+    for (state.tracker.roots.items[0..8]) |root| {
+        try std.testing.expect(!root.present);
+        try std.testing.expectEqual(.dead, root.state);
+    }
 }
 
 fn allocationPrimitiveTestGraph(allocator: std.mem.Allocator, count: u32) !graph_mod.GlobalSemanticGraph {
@@ -8904,6 +8913,26 @@ test "activating choice payloads never revives consumed storage capabilities" {
         try checker.activate_conditional_resources(&state, choice.variants[0].value.*);
         const expected: SafetyChecker.StorageCapabilityState = if (consumed) .consumed else .available;
         try std.testing.expectEqual(expected, state.storage_capabilities.items[0]);
+    }
+    // Multiple output fields can describe the same fresh capability. A later
+    // possible consumption must not weaken an already definite consumption.
+    const definite = facts.ValueEffect{
+        .fresh_storage_capabilities = &.{15},
+        .unavailable_fresh_storage = &.{.{ .source = 15 }},
+    };
+    const possible = facts.ValueEffect{
+        .fresh_storage_capabilities = &.{15},
+        .unavailable_fresh_storage = &.{.{ .source = 15, .maybe_consumed = true }},
+    };
+    inline for (.{ false, true }) |reverse| {
+        var state = SafetyChecker.FunctionState.init(allocator);
+        defer state.deinit();
+        _ = try checker.instantiateOutput(.{ .fields = &.{
+            .{ .index = 0, .value = if (reverse) &possible else &definite },
+            .{ .index = 1, .value = if (reverse) &definite else &possible },
+        } }, &.{}, &state);
+        try std.testing.expectEqual(@as(usize, 1), state.storage_capabilities.items.len);
+        try std.testing.expectEqual(.consumed, state.capabilityState(@enumFromInt(0)));
     }
 }
 
