@@ -3,7 +3,6 @@
 ## Resolution and transactions
 
 - Remove resolver state used only to communicate temporary results.
-- Clarify pass dependencies and ownership operand staging versus lowering.
 - Reduce measured redundant resolution and verification, including remaining
   binding/type sweeps. Include older entities completed by new facts.
   Do not restrict expression type propagation to execution reachability alone:
@@ -30,5 +29,6 @@ Validate with growing REPL sessions, rollback/allocation failures and native/VM
 comparisons. New Safety precision needs aliasing and duplicate-cleanup rejections.
 
 References: [performance](../docs/compiler-performance.md),
+[resolution boundaries](../docs/semantic-resolution.md),
 [Safety](../description/34_safety_model.md#precision-of-safety-effects),
 [virtual contracts](../description/134_virtual_types.md).
