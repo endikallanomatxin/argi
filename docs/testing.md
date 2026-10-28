@@ -94,6 +94,12 @@ are read-only. Captured stdout and process-local allocators do not require
 exclusive scheduling. Tests that reuse a fixture from the central orchestration
 finish in the exclusive phase before its owning worker starts. Persistent
 frontend snapshots are published atomically and may be shared across workers.
+Memory-backed stream adapters, calendar calculations and lexical path operations
+need no exclusive phase. Directory traversal over checked-in read-only fixtures
+can also run on workers; traversal tests that mutate shared paths remain exclusive.
+Arguments, environment reads, allocators, atomics and `once` capabilities belong
+to each child process. Reading clocks or waiting does not modify the system clock
+and needs no exclusive scheduling.
 
 One executable contains the complete suite. Workers are separate processes,
 since Zig's testing allocator and I/O context are global. The runner uses Zig's

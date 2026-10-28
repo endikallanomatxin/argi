@@ -2,7 +2,7 @@ const support = @import("../../../support.zig");
 const expectSuccessfulBuild = support.expectSuccessfulBuild;
 const runExpectStderr = support.runExpectStderr;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/io/17_print_error_string_view" {
     const test_path = "tests/feature_tests/io/17_print_error_string_view";
