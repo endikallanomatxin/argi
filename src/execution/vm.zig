@@ -196,6 +196,7 @@ pub const Context = struct {
     fn declareBinding(self: *Context, binding: b.SessionBinding) !void {
         if (self.bindings.contains(binding.binding)) return error.ExecutionInitializedStorage;
         try self.storage.charge(1);
+        errdefer self.storage.cells -= 1;
         try self.bindings.ensureUnusedCapacity(self.arena.allocator(), 1);
         const target = try self.storage.enterSession(1, binding.cleanup);
         self.bindings.putAssumeCapacity(binding.binding, target.frame);
@@ -818,6 +819,43 @@ test "failed context metadata publication preserves storage quota and indexes" {
     };
     try std.testing.checkAllAllocationFailures(std.testing.allocator, Probe.run, .{false});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, Probe.run, .{true});
+}
+
+test "failed session binding publication preserves storage quota and identities" {
+    const Probe = struct {
+        fn run(a: std.mem.Allocator) !void {
+            var context = Context.init(a, 100000);
+            defer context.deinit();
+            _ = try context.sessionSlots(1, &.{});
+            const cells = context.storage.cells;
+            const frames = context.storage.frames.items.len;
+            context.declareBinding(.{ .binding = @enumFromInt(0), .ty = @enumFromInt(0) }) catch |err| {
+                try std.testing.expectEqual(cells, context.storage.cells);
+                try std.testing.expectEqual(frames, context.storage.frames.items.len);
+                try std.testing.expectEqual(@as(usize, 0), context.bindings.count());
+                return err;
+            };
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Probe.run, .{});
+
+    var context = Context.init(std.testing.allocator, 3);
+    defer context.deinit();
+    _ = try context.sessionSlots(1, &.{});
+    const cells = context.storage.cells;
+    const frames = context.storage.frames.items.len;
+    try std.testing.expectError(error.ExecutionMemoryLimit, context.declareBinding(.{ .binding = @enumFromInt(0), .ty = @enumFromInt(0) }));
+    try std.testing.expectEqual(cells, context.storage.cells);
+    try std.testing.expectEqual(frames, context.storage.frames.items.len);
+    try std.testing.expectEqual(@as(usize, 0), context.bindings.count());
+    context.storage.limit = 1000;
+    const binding: b.SessionBinding = .{ .binding = @enumFromInt(0), .ty = @enumFromInt(0) };
+    try context.declareBinding(binding);
+    try std.testing.expectEqual(@as(usize, 1), context.bindings.count());
+    try std.testing.expectEqual(frames + 1, context.storage.frames.items.len);
+    const published_cells = context.storage.cells;
+    try std.testing.expectError(error.ExecutionInitializedStorage, context.declareBinding(binding));
+    try std.testing.expectEqual(published_cells, context.storage.cells);
 }
 
 test "source metadata resolution rejects invalid IDs and retains immutable text" {
