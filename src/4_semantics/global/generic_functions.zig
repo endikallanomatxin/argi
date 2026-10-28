@@ -1692,6 +1692,7 @@ pub const Resolver = struct {
         }
         const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
             error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+            error.OutOfMemory => return error.OutOfMemory,
             else => return false,
         };
         return self.core.contextualLiteralFits(value, expected);
@@ -4496,6 +4497,33 @@ pub const Resolver = struct {
         }
     };
 };
+
+test "generic literal compatibility preserves allocation errors and speculative state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn probe(a: std.mem.Allocator) !void {
+            const setup = std.testing.allocator;
+            var module: module_sg.ModuleSemanticGraph = .{};
+            defer module.deinit(setup);
+            try module.semantic.parameterized_storage.ir.types.append(setup, .{ .resolved = .{ .builtin = .UInt8 } });
+            var graph: global_sg.GlobalSemanticGraph = .{};
+            defer graph.deinit(a);
+            try graph.nodes.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .int_literal = 42 } });
+            const modules = [_]module_sg.ModuleSemanticGraph{module};
+            const offsets = [_]globalizer.Offsets{std.mem.zeroes(globalizer.Offsets)};
+            var core: core_mod.Resolver = .{ .allocator = a, .graph = &graph, .modules = &modules, .offsets = &offsets };
+            defer core.deinit();
+            var generics: generic_mod.Resolver = .{ .allocator = a, .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core };
+            defer generics.deinit();
+            var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core, .generics = &generics };
+            var bindings = try generic_mod.Resolver.Bindings.init(a, 0);
+            defer bindings.deinit(a);
+            defer std.debug.assert(graph.types.items.len == 0);
+            try std.testing.expect(try resolver.contextualParameterizedLiteralFits(0, @enumFromInt(0), &bindings, @enumFromInt(0)));
+            graph.nodes.items[0].content = .{ .int_literal = 300 };
+            try std.testing.expect(!try resolver.contextualParameterizedLiteralFits(0, @enumFromInt(0), &bindings, @enumFromInt(0)));
+        }
+    }.probe, .{});
+}
 
 test "generic function monomorphization uses stable GlobalFunctionId identity" {
     try std.testing.expect(@sizeOf(global_sg.GlobalFunctionId) == 4);

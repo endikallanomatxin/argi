@@ -156,6 +156,35 @@ test "generic constructor resolution propagates allocation failure" {
     }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
 }
 
+test "generic contextual input selection propagates allocation failure" {
+    const a = std.testing.allocator;
+    var input = try build(a, "context/main.rg",
+        \\Box := #(.T: Type) (.value: T)
+        \\read := #(.T: Type) (.value: Box#(T)) -> (.result: T) {
+        \\    result = value.value
+        \\}
+        \\borrow := #(.T: Type) (.value: &Box#(T)) -> (.result: T) {
+        \\    result = value&.value
+        \\}
+        \\main := () -> () {
+        \\    result ::= read#(.T: Bool)(.value = (.value = true))
+        \\    box: Box#(Bool) = (.value = result)
+        \\    borrowed ::= borrow(.value = &box)
+        \\}
+    );
+    defer input.deinit(a);
+    const modules = [_]module.ModuleSemanticGraph{input};
+    try std.testing.checkAllAllocationFailures(a, struct {
+        fn resolve(allocator: std.mem.Allocator, inputs: []const module.ModuleSemanticGraph) !void {
+            var session: sema.Session = undefined;
+            try session.init(allocator, inputs, .{});
+            defer session.deinit();
+            try session.advance();
+            _ = try session.completeUnit();
+        }
+    }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
+}
+
 test "generic diagnostic probes select without instantiating the chosen body" {
     const a = std.testing.allocator;
     var input = try build(a, "probe/main.rg",
