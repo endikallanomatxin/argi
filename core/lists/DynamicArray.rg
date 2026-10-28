@@ -80,8 +80,8 @@ implement#(.t: Type, .A: Type: Allocator) Init#(DynamicArray#(t), DynamicArrayIn
                 )
                 result = ..ok ~constructed
             }
-            ..error _ {
-                result = ..error(.reason = ..out_of_memory)
+            ..error ~error {
+                result = ..error ~error
             }
         }
     }
@@ -243,8 +243,8 @@ _grow_dynamic_array := #(.t: Type, .Provider: Type: Allocator) (
             )
             result = ..ok Void()
         }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
+        ..error ~error {
+            result = ..error ~error
         }
     }
 }
@@ -282,17 +282,9 @@ insert_growing := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     current_length ::= self&._length
 
     if self&._length == self&._capacity {
-        growth_result ::= _grow_dynamic_array(
+        _grow_dynamic_array(
             .allocator = allocator, .array = self, .min_capacity = [self&._length + one]
-        )
-        match growth_result {
-            ..ok _ {
-            }
-            ..error _ {
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-        }
+        )!
         current_length = self&._length
     }
 
@@ -445,17 +437,9 @@ implement#(.t: Type, .Provider: Type: Allocator#(Provider)) Resizable#(
         one :: UIntNative = 1
 
         if self&._length == self&._capacity {
-            growth_result ::= _grow_dynamic_array(
+            _grow_dynamic_array(
                 .allocator = allocator, .array = self, .min_capacity = [self&._length + one]
-            )
-            match growth_result {
-                ..ok _ {
-                }
-                ..error _ {
-                    result = ..error(.reason = ..out_of_memory)
-                    return
-                }
-            }
+            )!
         }
 
         push_assume_capacity#(.t: t)(self, .value = ~owned)

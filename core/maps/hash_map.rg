@@ -349,10 +349,10 @@ _map_put_hash_map := #(
         }
         match reserve(self, .capacity = grown, .allocator = allocator) {
             ..ok _ {}
-            ..error _ {
+            ..error ~error {
                 _hash_discard(.value = ~key, .allocator = allocator)
                 _hash_discard(.value = ~value, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
+                result = ..error ~error
                 return
             }
         }

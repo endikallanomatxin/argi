@@ -1,3 +1,17 @@
+CountingTracer := (.captures: UIntNative = 0)
+
+implement ErrorTracer#(CountingTracer) (
+    .add_context = (
+        .self: $&CountingTracer, .location: SourceLocationId, .context: StringView
+    ) -> () {
+        self&.captures = self&.captures + 1
+    }
+    .reset_context = (.self: $&CountingTracer) -> () { self&.captures = 0 }
+    .report        = (.self: $&CountingTracer, .writer: $&Virtual#(.contract: Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) { result = ..ok Void() }
+)
+
 RecordingAllocator := (
     .ffi           : $&ForeignFunctionInterface
     .fail          : Bool                       = false
@@ -17,6 +31,9 @@ implement Deinit#(Tracked) (
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
     assume writer ::= $&system.terminal&.stderr
+    tracer ::= CountingTracer()
+    trace_handle ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    assume error_tracer ::= $&trace_handle
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     queue ::= Deque#(.t: Tracked)(.capacity = 2, .allocator = $&allocator)!!!
     push_back(.self = $&queue, .value = Tracked(.id = 1), .allocator = $&allocator)!!!
@@ -24,10 +41,17 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     first ::= pop_front(.self = $&queue)!!!
     push_back(.self = $&queue, .value = Tracked(.id = 3), .allocator = $&allocator)!!!
     allocator.fail = true
+    captures_before ::= tracer.captures
+    match reserve(.self = $&queue, .capacity = 3, .allocator = $&allocator) {
+        ..ok _ { abort } ..error _ {}
+    }
+    reserve_captures ::= tracer.captures - captures_before
+    captures_before = tracer.captures
     match push_front(.self = $&queue, .value = Tracked(.id = 4), .allocator = $&allocator) {
         ..ok _ { abort }
         ..error error { if error.reason != ..out_of_memory { abort } }
     }
+    if tracer.captures != captures_before + reserve_captures { abort }
     if drops != 1 or length(.self = &queue).count != 2 or capacity(.self = &queue).count != 2 {
         abort
     }
@@ -58,7 +82,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 
 implement Allocator#(RecordingAllocator) (
     .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         if self&.fail {
             result = ..error(.reason = ..out_of_memory)

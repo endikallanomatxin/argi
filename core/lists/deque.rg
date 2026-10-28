@@ -100,8 +100,8 @@ push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     owned ::= ~value
 
     match _deque_ensure_room(self, .allocator = allocator) {
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
+        ..error ~error {
+            result = ..error ~error
             return
         }
         ..ok _ {}
@@ -121,8 +121,8 @@ push_front := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     owned ::= ~value
 
     match _deque_ensure_room(self, .allocator = allocator) {
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
+        ..error ~error {
+            result = ..error ~error
             return
         }
         ..ok _ {}
