@@ -1,5 +1,35 @@
 # Measuring compiler frontend performance
 
+## Resolution baseline after compiler consolidation
+
+Single instrumented ReleaseSafe runs on Linux x86-64 at `9ae716638`, using
+`execution-benchmark N prelude calls 1024 --resolution-profile`. No test suite
+ran concurrently. Times are cumulative command-loop measurements; initial
+prelude preparation is outside them. These are a current baseline, not a
+controlled comparison against earlier Debug measurements.
+
+| Commands | Total ms | Frontend/publication ms | Lowering ms | Verification ms | Execution ms | Retained MiB |
+|---|---:|---:|---:|---:|---:|---:|
+| 10 | 61.6 | 55.9 | 2.9 | 2.8 | 0.05 | 126.342 |
+| 100 | 626.1 | 564.3 | 30.0 | 31.4 | 0.53 | 127.687 |
+| 1,000 | 7,331.6 | 6,610.8 | 373.1 | 341.0 | 6.78 | 142.378 |
+
+The 1,000-command profile records 3,001 fixed-point rounds. Assignment
+contextualization visits 151.6 million outer entries and takes 493.6 ms without
+reporting a change: typed literals account for 278.4 ms, initializers 43.7 ms,
+and writes 171.3 ms. Binding/expression type propagation takes 332.5/307.2 ms,
+also without changes. Pending-work checkpoints take 69.8 ms; global unit
+verification takes 353.9 ms. Inclusive pass timings overlap and must not be
+added to frontend time.
+
+Frontend/publication remains the main cost. These observations support examining
+repeated contextualization and propagation before adding caches or changing the
+scheduler. They do not attribute all frontend time to those sweeps, prove a
+particular complexity bound, or measure improvement from ordered-field lookup.
+Retained memory includes the prelude (126.145 MiB before commands).
+
+Raw local logs: `.zig-cache/current-resolution-prelude-{10,100,1000}.csv`.
+
 Build the compiler and benchmark tool before measuring, with no test suite active:
 
 ```sh
