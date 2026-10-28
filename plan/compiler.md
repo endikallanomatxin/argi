@@ -15,9 +15,6 @@ and nominal-type migration closed; preserve their validation.
   inference. Preserve pass order, old entities completed by new information and
   nested aggregate completion; an outer type is not a completion certificate.
 - Measure invariant work in generic specialization before sharing representation.
-- Clarify ownership of completed module snapshots where it removes consumer
-  coupling. Preserve codec fingerprints, verification and allocation bounds;
-  arbitrary editor replacement is not append-only REPL publication.
 
 ## Safety
 

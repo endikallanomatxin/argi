@@ -18,6 +18,12 @@ CLI builds persist canonical module snapshots in `.argi-cache/frontend/`.
 and code generation still run. Measure complete CLI builds separately from the
 in-memory frontend benchmark.
 
+In-memory snapshots own their storage independently of source collection arenas.
+Compilations hold leases on immutable completed modules, so cache replacement or
+eviction does not invalidate active consumers. Releasing the last lease frees the
+snapshot arena. This lifetime model supports arbitrary source edits; it does not
+depend on append-only REPL publication.
+
 The cache build identity follows literal Zig imports from `src/main.zig` and
 hashes embedded files as data. It also includes `build.zig`, the fingerprint
 implementation and the LLVM bridge header. Unreachable source files do not affect
