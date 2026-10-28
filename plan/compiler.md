@@ -6,6 +6,8 @@
 - Clarify pass dependencies and ownership operand staging versus lowering.
 - Reduce measured redundant resolution and verification, including remaining
   binding/type sweeps. Include older entities completed by new facts.
+  Do not restrict expression type propagation to execution reachability alone:
+  ownership finalization also needs pending choice-payload write operands.
 - Investigate repeated propagation and Safety checking in the measured
   specialization workload before introducing shared semantic bodies.
 

@@ -162,6 +162,18 @@ Local logs: `.zig-cache/specialization-reuse-isolated-{1,2,3}.csv`,
 `.zig-cache/{specialization-reuse,specializations}-profile.csv` and
 `.zig-cache/{specialization-reuse,specializations}-long.csv`.
 
+An attempted extension of unit-scoped contextualization to expression type
+propagation was discarded before timing. It rebuilt sorted candidates from the
+current reachable-node set, while retaining global binding inference. Existing
+REPL tests for writes into partially initialized choice payloads then failed:
+ownership finalization reached a pointer assignment whose pointer still lacked
+a type. The sibling-cleanup exit test failed as well. Thus execution reachability
+alone is not a sufficient completion frontier for this earlier propagation pass.
+Any future work must account for pending semantic operations and ownership's
+requirements, not simply filter completed graph nodes. No candidate cache or
+reachability workaround was retained. Local reproduction output is in
+`.zig-cache/unit-propagation-tests.log`.
+
 ## Frontend workers
 
 `--frontend-jobs auto` uses half the detected logical CPU count, rounded down,
