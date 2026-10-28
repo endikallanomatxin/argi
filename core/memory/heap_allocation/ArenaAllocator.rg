@@ -35,8 +35,8 @@ ArenaAllocator := (
 )
 
 ArenaAllocatorInitArgs: Type = #(.Provider: Type: Allocator) (
-    .allocator  : $&Provider = reach allocator,
-    .block_size : UIntNative = 4096
+    .allocator  : $&Provider,
+    .block_size : UIntNative  = 4096
 )
 
 implement#(.Provider: Type: Allocator) Init#(ArenaAllocator, ArenaAllocatorInitArgs#(Provider)) (

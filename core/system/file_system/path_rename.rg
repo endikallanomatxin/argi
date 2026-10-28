@@ -6,12 +6,9 @@ PathRenaming#(.PathValue: Type): Contract = (
 
 AllocatingPathRenaming#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result : Type
-    .rename : (
-        .self      : &FileSystem,
-        .from      : PathValue,
-        .to        : PathValue,
-        .allocator : $&Provider   = reach allocator
-    ) -> (.result: Result)
+    .rename : (.self: &FileSystem, .from: PathValue, .to: PathValue, .allocator: $&Provider) -> (
+        .result : Result
+    )
 )
 
 _path_rename_c := (.self: &FileSystem, .from: &CChar, .to: &CChar) -> (

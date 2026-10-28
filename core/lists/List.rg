@@ -39,13 +39,10 @@ Removable#(.Collection: Type): Contract = (
 Resizable#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Item : Type
     Removable#(.Collection: Collection, .Item: Item)
-    .push : (.self: $&Collection, .value: Item, .allocator: $&Provider = reach allocator) -> (
+    .push : (.self: $&Collection, .value: Item, .allocator: $&Provider) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
-    .insert : (
-        .self      : $&Collection,
-        .index     : UIntNative,
-        .value     : Item,
-        .allocator : $&Provider    = reach allocator
-    ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds)))
+    .insert : (.self: $&Collection, .index: UIntNative, .value: Item, .allocator: $&Provider) -> (
+        .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
+    )
 )

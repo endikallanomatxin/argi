@@ -6,12 +6,9 @@ FileWriting#(.PathValue: Type): Contract = (
 
 AllocatingFileWriting#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result     : Type
-    .write_file : (
-        .self      : &FileSystem,
-        .path      : PathValue,
-        .text      : &String,
-        .allocator : $&Provider   = reach allocator
-    ) -> (.result: Result)
+    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String, .allocator: $&Provider) -> (
+        .result : Result
+    )
 )
 
 _path_write_file_c := (.self: &FileSystem, .path: &CChar, .text: &String) -> (

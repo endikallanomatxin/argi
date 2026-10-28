@@ -191,7 +191,7 @@ implement Init#(Directory, DirectoryInitArgs) (
 )
 
 _next_directory := #(.Provider: Type: Allocator#(Provider)) (
-    .self: $&Directory, .allocator: $&Provider = reach allocator
+    .self: $&Directory, .allocator: $&Provider
 ) -> (.result: Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)) {
     assume ffi := self&._filesystem&._ffi
     assume allocator
@@ -320,7 +320,7 @@ TemporaryDirectoryInitArgs: Type = #(.Provider: Type: Allocator) (
     .self      : &FileSystem = reach file_system,
     .parent    : StringView,
     .prefix    : StringView  = "argi-",
-    .allocator : $&Provider  = reach allocator,
+    .allocator : $&Provider,
 )
 
 implement#(.Provider: Type: Allocator) Init#(

@@ -50,7 +50,7 @@ implement Init#(CsvReader, CsvReaderInitArgs) (
 
 -- Errors are terminal, and no partially decoded record escapes.
 next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&CsvReader, .allocator: $&AllocatorType = reach allocator
+    .self: $&CsvReader, .allocator: $&AllocatorType
 ) -> (.result: Errable#(?CsvRecord, CsvReasons)) {
     assume allocator
 

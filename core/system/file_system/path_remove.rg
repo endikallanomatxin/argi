@@ -6,9 +6,7 @@ PathRemoval#(.PathValue: Type): Contract = (
 
 AllocatingPathRemoval#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result : Type
-    .remove : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider = reach allocator) -> (
-        .result : Result
-    )
+    .remove : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider) -> (.result: Result)
 )
 
 _path_remove_c := (.self: &FileSystem, .path: &CChar) -> (

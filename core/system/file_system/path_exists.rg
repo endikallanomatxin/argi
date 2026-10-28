@@ -6,9 +6,7 @@ PathExistence#(.PathValue: Type): Contract = (
 
 AllocatingPathExistence#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result : Type
-    .exists : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider = reach allocator) -> (
-        .result : Result
-    )
+    .exists : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider) -> (.result: Result)
 )
 
 _path_exists_c := (.self: &FileSystem, .path: &CChar) -> (.ok: Bool) {

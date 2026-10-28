@@ -24,7 +24,7 @@ DirectoryWalkerInitArgs: Type = #(.Provider: Type: Allocator) (
     .self          : &FileSystem = reach file_system,
     .path          : StringView,
     .maximum_depth : UIntNative  = 64,
-    .allocator     : $&Provider  = reach allocator,
+    .allocator     : $&Provider,
 )
 
 implement#(.Provider: Type: Allocator) Init#(
@@ -68,7 +68,7 @@ implement Deinit#(DirectoryWalker) (
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
 _next_directory_walker := #(.Provider: Type: Allocator#(Provider)) (
-    .self: $&DirectoryWalker, .allocator: $&Provider = reach allocator
+    .self: $&DirectoryWalker, .allocator: $&Provider
 ) -> (.result: Errable#(?WalkEntry, _FilesystemReasons)) {
     assume allocator
 

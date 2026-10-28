@@ -26,10 +26,7 @@ main := () -> (.status_code: Int32 = 1) {
     storage ::= CAllocator(.ffi = ffi)
     assume allocator ::= $&storage
     order ::= PairOrder()
-    items ::= [
-        DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 3)
-        | unwrap_or_abort(_)
-    ]
+    items ::= [DynamicArray#(.t: Pair)(.capacity = 3) | unwrap_or_abort(_)]
     push_assume_capacity(
         .self = $&items, .value = Pair(.a = Tracked(.id = 3), .b = Tracked(.id = 30))
     )

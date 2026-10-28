@@ -10,7 +10,7 @@ AllocatingFileOpening#(.PathValue: Type, .Provider: Type: Allocator#(Provider)):
         .file_system : &FileSystem,
         .path        : PathValue,
         .mode        : FileOpenMode = ..read,
-        .allocator   : $&Provider   = reach allocator
+        .allocator   : $&Provider
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory)))
 )
 
@@ -60,7 +60,7 @@ implement#(.Provider: Type: Allocator#(Provider)) AllocatingFileOpening#(StringV
         .file_system : &FileSystem,
         .path        : StringView,
         .mode        : FileOpenMode = ..read,
-        .allocator   : $&Provider   = reach allocator
+        .allocator   : $&Provider
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory))) {
         assume ffi := file_system&._ffi
         assume allocator

@@ -1,6 +1,7 @@
 join := #(.Provider: Type: Allocator) (
     .left: &StringView, .right: &StringView, .allocator: $&Provider
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume allocator
     result = ~[left + right]
 }
 

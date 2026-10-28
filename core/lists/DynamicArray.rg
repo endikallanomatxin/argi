@@ -47,7 +47,7 @@ _trusted_dynamic_array_mark_empty := #(.t: Type) (.self: $&DynamicArray#(.t: t))
 }
 
 DynamicArrayInitArgs: Type = #(.t: Type, .A: Type: Allocator) (
-    .allocator : $&A        = reach allocator,
+    .allocator : $&A,
     .capacity  : UIntNative = 0
 )
 

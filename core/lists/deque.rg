@@ -4,7 +4,7 @@ Deque := #(.t: Type) (._ring: RingBuffer#(.t: t))
 
 DequeInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
     .capacity  : UIntNative = 8,
-    .allocator : $&Provider = reach allocator
+    .allocator : $&Provider
 )
 
 implement#(.t: Type, .Provider: Type: Allocator) Init#(
@@ -35,7 +35,7 @@ implement#(.t: Type) CollectionCapacity#(Deque#(.t: t)) (
 )
 
 reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Deque#(.t: t), .capacity: UIntNative, .allocator: $&AllocatorType = reach allocator
+    .self: $&Deque#(.t: t), .capacity: UIntNative, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     if capacity <= self&._ring._capacity {
         result = ..ok Void()
@@ -102,7 +102,7 @@ _deque_ensure_room := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType
 }
 
 push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType = reach allocator
+    .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
     owned ::= ~value
@@ -123,7 +123,7 @@ push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 push_front := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType = reach allocator
+    .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
     owned ::= ~value

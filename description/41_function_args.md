@@ -62,7 +62,7 @@ copyable.
 Some named arguments may be declared as *reached arguments*:
 
 ```argi
-allocate := #(.Provider: Type: Allocator#(Provider)) (.allocator: $&Provider = reach allocator, .size: UIntNative) -> (.out: Allocation)  {
+render := (.settings: &RenderSettings = reach settings) -> () {
     ...
 }
 ```
@@ -78,7 +78,6 @@ Use `assume` for routine lexical dependencies. Use `reach` when a temporary
 dependency should propagate through intermediate functions without editing
 their signatures, for example:
 
-- `allocator`
 - `system`
 - `reader` / `writer`
 - `logger`

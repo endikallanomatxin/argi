@@ -3,8 +3,6 @@
 Prioritize real consumers; reproduce compiler gaps before adding workarounds.
 
 - Audit owning containers under structural cleanup and allocation failures.
-  Remove residual lexical `reach allocator` defaults; retain explicit arguments
-  and assumed allocator inference.
 - Audit stream adapters under allocation/native failures; compose owning lines.
 - Extend CLI argument relationships, subcommands, and typed diagnostics.
 - Audit traversal under filesystem changes and resource limits.

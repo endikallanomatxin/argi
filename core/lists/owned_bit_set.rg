@@ -4,7 +4,7 @@ BitSet := (._storage: DynamicArray#(.t: UInt8), ._count: UIntNative)
 
 BitSetInitArgs: Type = #(.Provider: Type: Allocator) (
     .count     : UIntNative,
-    .allocator : $&Provider  = reach allocator
+    .allocator : $&Provider
 )
 
 implement#(.Provider: Type: Allocator) Init#(BitSet, BitSetInitArgs#(Provider)) (

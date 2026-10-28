@@ -32,7 +32,7 @@ DynamicMatrixInitArgs: Type = #(.t: Type: Scalar, .Provider: Type: Allocator) (
     .rows      : UIntNative,
     .cols      : UIntNative,
     .values    : ArrayView#(.t: t),
-    .allocator : $&Provider         = reach allocator,
+    .allocator : $&Provider,
 )
 
 implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
@@ -101,9 +101,7 @@ _math_set_dynamic_matrix := #(.t: Type: Scalar) (
 implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
     .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left      : &DynamicMatrix#(.t: t),
-        .right     : &DynamicMatrix#(.t: t),
-        .allocator : $&Provider              = reach allocator
+        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 
@@ -130,9 +128,7 @@ implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)
 implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
     .Result   : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .multiply = #(.Provider: Type: Allocator) (
-        .left      : &DynamicMatrix#(.t: t),
-        .right     : &DynamicMatrix#(.t: t),
-        .allocator : $&Provider              = reach allocator
+        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 
@@ -206,7 +202,7 @@ DynamicVector := #(.t: Type: Scalar) (._values: DynamicArray#(.t: t))
 
 DynamicVectorInitArgs: Type = #(.t: Type: Scalar, .Provider: Type: Allocator) (
     .values    : ArrayView#(.t: t),
-    .allocator : $&Provider         = reach allocator
+    .allocator : $&Provider
 )
 
 implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
@@ -277,9 +273,7 @@ _math_dot_dynamic_vector := #(.t: Type: Scalar) (
 implement#(.t: Type: Scalar) Add#(&DynamicVector#(.t: t), &DynamicVector#(.t: t)) (
     .Result : Type = Errable#(DynamicVector#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left      : &DynamicVector#(.t: t),
-        .right     : &DynamicVector#(.t: t),
-        .allocator : $&Provider              = reach allocator
+        .left: &DynamicVector#(.t: t), .right: &DynamicVector#(.t: t), .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 

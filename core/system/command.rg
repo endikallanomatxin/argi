@@ -45,7 +45,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Al
     .source    : &t,
     .specs     : ArrayView#(.t: CliSpec),
     .start     : UIntNative               = 0,
-    .allocator : $&AllocatorType          = reach allocator
+    .allocator : $&AllocatorType
 ) -> (.result: Errable#(CliMatches, CliReasons)) {
     assume allocator
     count ::= length(&specs).count

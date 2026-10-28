@@ -13,9 +13,7 @@ VectorScaling#(.Value: Type): Contract = (
 AllocatingVectorScaling#(.Value: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Element : Type
     .Result  : Type
-    .scale   : (.self: &Value, .factor: Element, .allocator: $&Provider = reach allocator) -> (
-        .result : Result
-    )
+    .scale   : (.self: &Value, .factor: Element, .allocator: $&Provider) -> (.result: Result)
 )
 
 MatrixTransposition#(.Value: Type): Contract = (
@@ -25,7 +23,7 @@ MatrixTransposition#(.Value: Type): Contract = (
 
 AllocatingMatrixTransposition#(.Value: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result    : Type
-    .transpose : (.self: &Value, .allocator: $&Provider = reach allocator) -> (.result: Result)
+    .transpose : (.self: &Value, .allocator: $&Provider) -> (.result: Result)
 )
 
 MatrixAccess#(.Value: Type): Contract = (

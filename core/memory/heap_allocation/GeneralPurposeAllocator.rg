@@ -33,7 +33,7 @@ GeneralPurposeAllocator := (
 )
 
 GeneralPurposeAllocatorInitArgs: Type = #(.Provider: Type: Allocator) (
-    .allocator : $&Provider = reach allocator
+    .allocator : $&Provider
 )
 
 implement#(.Provider: Type: Allocator) Init#(

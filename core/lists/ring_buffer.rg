@@ -18,7 +18,7 @@ RingBuffer := #(.t: Type) (
 
 RingBufferInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
     .capacity  : UIntNative,
-    .allocator : $&Provider  = reach allocator
+    .allocator : $&Provider
 )
 
 implement#(.t: Type, .Provider: Type: Allocator) Init#(

@@ -74,7 +74,7 @@ string_with_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 StringInitArgs: Type = #(.A: Type: Allocator) (
-    .allocator : $&A        = reach allocator,
+    .allocator : $&A,
     .length    : UIntNative = 0
 )
 
@@ -506,7 +506,7 @@ concat_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 implement Add#(&String, &CChar) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &String, .right: &CChar, .allocator: $&Provider = reach allocator
+        .left: &String, .right: &CChar, .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 
@@ -522,7 +522,7 @@ implement Add#(&String, &CChar) (
 implement Add#(&String, &StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &String, .right: &StringView, .allocator: $&Provider = reach allocator
+        .left: &String, .right: &StringView, .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 
@@ -535,7 +535,7 @@ implement Add#(&String, &StringView) (
 implement Add#(&String, StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &String, .right: StringView, .allocator: $&Provider = reach allocator
+        .left: &String, .right: StringView, .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
         left_view ::= view(left)
@@ -546,7 +546,7 @@ implement Add#(&String, StringView) (
 implement Add#(&String, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &String, .right: &String, .allocator: $&Provider = reach allocator
+        .left: &String, .right: &String, .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 
@@ -560,7 +560,7 @@ implement Add#(&String, &String) (
 implement Add#(&StringView, &CChar) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &StringView, .right: &CChar, .allocator: $&Provider = reach allocator
+        .left: &StringView, .right: &CChar, .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 
@@ -575,7 +575,7 @@ implement Add#(&StringView, &CChar) (
 implement Add#(&StringView, &StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &StringView, .right: &StringView, .allocator: $&Provider = reach allocator
+        .left: &StringView, .right: &StringView, .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 
@@ -586,7 +586,7 @@ implement Add#(&StringView, &StringView) (
 implement Add#(&StringView, StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &StringView, .right: StringView, .allocator: $&Provider = reach allocator
+        .left: &StringView, .right: StringView, .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
         result = concat_views(left, &right)
@@ -596,7 +596,7 @@ implement Add#(&StringView, StringView) (
 implement Add#(&StringView, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &StringView, .right: &String, .allocator: $&Provider = reach allocator
+        .left: &StringView, .right: &String, .allocator: $&Provider
     ) -> (.result: Result) {
         assume allocator
 
@@ -653,7 +653,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider
 -- Copy before validation: allocator callbacks may mutate borrowed input bytes.
 -- Only the independent, fully validated text escapes this function.
 string_from_bytes := #(.Provider: Type: Allocator) (
-    .bytes: ArrayView#(UInt8), .allocator: $&Provider = reach allocator
+    .bytes: ArrayView#(UInt8), .allocator: $&Provider
 ) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
     assume allocator
     size ::= length(&bytes).count
@@ -664,7 +664,7 @@ string_from_bytes := #(.Provider: Type: Allocator) (
 }
 
 push_ascii := #(.Provider: Type: Allocator) (
-    .self: $&String, .byte: UInt8, .allocator: $&Provider = reach allocator
+    .self: $&String, .byte: UInt8, .allocator: $&Provider
 ) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_memory))) {
     assume allocator
     if byte >= 128 {
@@ -676,7 +676,7 @@ push_ascii := #(.Provider: Type: Allocator) (
 }
 
 push_scalar := #(.Provider: Type: Allocator) (
-    .self: $&String, .scalar: UnicodeScalar, .allocator: $&Provider = reach allocator
+    .self: $&String, .scalar: UnicodeScalar, .allocator: $&Provider
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
     encoded ::= zeroed#(.t: [4]UInt8)()
