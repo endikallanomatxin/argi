@@ -50,7 +50,7 @@ const Memory = struct {
     }
 };
 
-const Scenario = enum { update, bindings, calls, branches, resources, definitions, rejections };
+const Scenario = enum { update, bindings, calls, branches, specializations, specialization_reuse, resources, definitions, rejections };
 const Modules = enum { minimal, core, prelude };
 
 fn elapsed(io: std.Io, start: i96) u64 {
@@ -187,6 +187,20 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
         std.debug.print("# backing,{d},{d},{d},{d},{d}\n", .{ commands, counts.aggregate_cells, counts.partial_cells, counts.projection_cells, counts.virtual_bytes });
         if (session.runtime.context.state != .fresh) try reportBacking(session, commands);
     }
+    if (scenario == .specializations or scenario == .specialization_reuse) {
+        const graph = &session.compiler.semantic.relocation.graph;
+        var instances: usize = 0;
+        var statements: usize = 0;
+        for (graph.generic_function_instances.items) |instance| {
+            if (!std.mem.eql(u8, graph.familyDefinitionName(instance.parameterized_definition), "branch_workload")) continue;
+            instances += 1;
+            const body = graph.function(instance.function).body orelse return error.UnmaterializedBenchmarkBody;
+            statements += graph.blocks.items[@intFromEnum(body)].nodes.len;
+        }
+        const expected: usize = if (scenario == .specializations) commands else @intFromBool(commands != 0);
+        if (instances != expected) return error.UnexpectedBenchmarkSpecializations;
+        std.debug.print("# specializations,{d},{d},{d},{d},{d},{d}\n", .{ commands, instances, statements, graph.nodes.items.len, graph.bindings.items.len, graph.types.items.len });
+    }
     if (scenario == .branches and commands != 0) {
         const b = @import("5_codegen/bytecode/bytecode.zig");
         var program: ?*const b.Program = null;
@@ -234,10 +248,12 @@ fn reportGraphPools(session: *const interactive.Interactive, commands: usize) vo
 
 // A reusable function with local slots and conditional writes exercises real
 // verifier joins, while subsequent commands also measure verified-body reuse.
-fn branchSource(allocator: std.mem.Allocator) ![]u8 {
+fn branchSource(allocator: std.mem.Allocator, parameterized: bool) ![]u8 {
     var output: std.Io.Writer.Allocating = .init(allocator);
     defer output.deinit();
-    try output.writer.writeAll("branch_workload := (.condition: Bool) -> (.result: Int32 = 42) {\nif condition {\n");
+    try output.writer.writeAll("branch_workload := ");
+    if (parameterized) try output.writer.writeAll("#(.tag: UIntNative) ");
+    try output.writer.writeAll("(.condition: Bool) -> (.result: Int32 = 42) {\nif condition {\n");
     for (0..32) |index| try output.writer.print(
         "local_{d} :: Int32 = 42\nif condition {{ local_{d} = 1 }} else {{ local_{d} = 2 }}\nresult = local_{d}\n",
         .{ index, index, index, index },
@@ -280,8 +296,8 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
             };
         }
         if (scenario == .calls) try session.submitDefinitions("identity := (.value: Int32) -> (.result: Int32) { result = value }");
-        if (scenario == .branches) {
-            const definition = try branchSource(allocator);
+        if (scenario == .branches or scenario == .specializations or scenario == .specialization_reuse) {
+            const definition = try branchSource(allocator, scenario != .branches);
             defer allocator.free(definition);
             try session.submitDefinitions(definition);
             try session.submitStatements("condition :: Bool = true");
@@ -302,6 +318,7 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
                 .update => try allocator.dupe(u8, "value = 42"),
                 .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
                 .branches => try allocator.dupe(u8, "value = branch_workload(.condition = condition)"),
+                .specializations, .specialization_reuse => try std.fmt.allocPrint(allocator, "value = branch_workload#(.tag = {d})(.condition = condition)", .{if (scenario == .specializations) index else @as(usize, 0)}),
                 .rejections => try allocator.dupe(u8, "value = 42\nmissing_function()"),
                 .definitions => try std.fmt.allocPrint(allocator, "function_{d} := () -> (.result: Int32) {{ result = 42 }}", .{index}),
                 .bindings => try std.fmt.allocPrint(allocator, "value_{d} :: Int32 = 42", .{index}),
@@ -414,8 +431,9 @@ pub fn main(init: std.process.Init) !void {
     if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|branches|resources|definitions|rejections] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|branches|specializations|specialization_reuse|resources|definitions|rejections] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB\n", .{});
     if (resolution_profile) std.debug.print("# resolution,commands,pass,calls,pool_entries,changed_passes,inclusive_ms,fixed_point_rounds\n", .{});
+    if (scenario == .specializations or scenario == .specialization_reuse) std.debug.print("# specializations,commands,instances,body_top_level_statements,graph_nodes,graph_bindings,graph_types\n", .{});
     try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools, resolution_profile);
 }

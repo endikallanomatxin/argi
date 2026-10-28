@@ -105,6 +105,63 @@ when the import appears in a test declaration. Computed dependency paths fail
 explicitly instead of being omitted. Paths are normalized relative to the
 checkout, and traversal scratch is released after each parsed file.
 
+## Generic specialization workload
+
+The execution benchmark supports `specializations` and `specialization_reuse`.
+Both call the same parameterized function containing 32 locals and conditional
+writes. Its integer compile-time tag does not affect its body. The first scenario
+uses a different tag per command; the second always uses zero. Compare them with
+`branches` for the ordinary-function control. This is a deliberately unfavorable
+case for duplicated specialization work, not a representative application.
+
+```sh
+./zig-out/bin/execution-benchmark 100 minimal specialization_reuse 1024
+./zig-out/bin/execution-benchmark 100 minimal specializations 1024
+```
+
+Three alternating, isolated ReleaseSafe runs on Linux x86-64 after `fabe4490b`
+measured the following at 100 commands. Setup and teardown are excluded; each
+run verifies the retained value, exact instance count and zero tracked backing
+after teardown. These compare workloads, not compiler versions.
+
+| Measurement | Reuse one instance | Create 100 instances |
+|---|---:|---:|
+| Median total time | 34.0 ms | 591.4 ms |
+| Total time range | 33.8–34.1 ms | 574.1–618.6 ms |
+| Median frontend/publication | 28.3 ms | 348.4 ms |
+| Median lowering | 1.6 ms | 45.9 ms |
+| Median bytecode verification | 2.9 ms | 194.4 ms |
+| Retained backing | 1.915 MiB | 19.509 MiB |
+| Semantic graph pool payload | 0.112 MiB | 3.315 MiB |
+| Executable arenas | 0.416 MiB | 14.311 MiB |
+| Graph nodes / bindings | 966 / 36 | 46,308 / 3,402 |
+| Bodies checked / reused | 1 / 99 | 100 / 0 |
+
+`# specializations` rows report commands, matching generic instances, their
+top-level body statement count, and total graph nodes/bindings/types. Top-level
+statements do not count nested expression nodes. Existing graph-pool and phase
+profiles provide separate attribution; neither measures the fraction of a body
+that could safely be shared.
+
+In separate instrumented 100-command runs, fresh instances spent 110.2 ms in
+resolution and 252.1 ms in checking, versus 11.2/10.1 ms for reuse. Binding and
+expression propagation each visited 7.0 million entries without changes, versus
+0.22 million for reuse. Inclusive phase times overlap. The 1,000-command runs
+also completed with exactly 1,000/one instances and successful teardown; their
+timings are excluded from this controlled comparison.
+
+The evidence confirms retained per-instance semantic and executable work, and
+effective reuse of an existing instance. It does not establish that shared
+semantic subtrees would be a net improvement: fixed signatures, Safety proofs
+and bytecode remain specialization-specific. First investigate repeated global
+propagation and checking cost; require another measurement before adding a
+sharing or invalidation mechanism.
+
+Local logs: `.zig-cache/specialization-reuse-isolated-{1,2,3}.csv`,
+`.zig-cache/specializations-isolated-{1,2,3}.csv`,
+`.zig-cache/{specialization-reuse,specializations}-profile.csv` and
+`.zig-cache/{specialization-reuse,specializations}-long.csv`.
+
 ## Frontend workers
 
 `--frontend-jobs auto` uses half the detected logical CPU count, rounded down,

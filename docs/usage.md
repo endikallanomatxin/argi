@@ -392,7 +392,8 @@ bindings, and their logical `ffi` input still participates in safety checking.
 Build the developer benchmark with `zig build build-execution-benchmark
 -Doptimize=ReleaseSafe`. From the repository root, run
 `./zig-out/bin/execution-benchmark [commands=1000] [minimal|core|prelude]
-[update|bindings|calls|resources|definitions|rejections] [memory-limit-MiB=2048]`. It reports checkpoints at 10,
+[update|bindings|calls|branches|specializations|specialization_reuse|resources|definitions|rejections]
+[memory-limit-MiB=2048]`. It reports checkpoints at 10,
 100 and 1,000 commands, plus the final count. Run benchmarks separately from tests.
 
 `minimal` isolates session growth; `core` also retains a prepared bundled-core
@@ -407,6 +408,9 @@ are outside command timings; the zero-command row includes their retained memory
 Frontend/publication time is total command time minus lowering,
 verification and execution; verification includes host-binding validation.
 Function/instruction totals reveal recompilation across commands.
+`specializations` calls one branch-heavy generic body with distinct integer
+arguments; `specialization_reuse` repeatedly calls one instance. Both assert
+the expected instance count. See [specialization measurements](compiler-performance.md#generic-specialization-workload).
 Append `--graph-pools` to report the shared semantic graph columns as comment
 rows: `# graph_pool,commands,name,payload_bytes,reserved_bytes`. These rows
 exclude nested slices, lookup tables and safety arenas; they attribute flat

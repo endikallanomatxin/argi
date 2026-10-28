@@ -6,7 +6,8 @@
 - Clarify pass dependencies and ownership operand staging versus lowering.
 - Reduce measured redundant resolution and verification, including remaining
   binding/type sweeps. Include older entities completed by new facts.
-- Measure repeated work across generic specializations before sharing it.
+- Investigate repeated propagation and Safety checking in the measured
+  specialization workload before introducing shared semantic bodies.
 
 ## Safety
 
