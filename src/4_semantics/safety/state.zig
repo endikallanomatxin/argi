@@ -434,6 +434,35 @@ pub const State = struct {
         }
     }
 
+    /// Retire a lexical owner while retaining ended identities for escape checks.
+    /// Reserve before changing facts so allocation failure leaves storage live.
+    pub fn endLexicalStorage(self: *State, binding: graph_mod.GlobalBindingId) !void {
+        var count: usize = 0;
+        for (self.storage_generations.items) |entry| if (entry.storage.root == binding) {
+            count += 1;
+        };
+        try self.lexical_storage_generations.ensureUnusedCapacity(count);
+        var kept: usize = 0;
+        for (self.storage_generations.items) |entry| {
+            if (entry.storage.root == binding) {
+                if (std.mem.indexOfScalar(facts.ValidityRootId, self.lexical_storage_generations.items, entry.generation) == null)
+                    self.lexical_storage_generations.appendAssumeCapacity(entry.generation);
+                self.tracker.end(entry.generation);
+            } else {
+                self.storage_generations.items[kept] = entry;
+                kept += 1;
+            }
+        }
+        self.storage_generations.shrinkRetainingCapacity(kept);
+        kept = 0;
+        for (self.places.items) |entry| {
+            if (entry.storage.root == binding) continue;
+            self.places.items[kept] = entry;
+            kept += 1;
+        }
+        self.places.shrinkRetainingCapacity(kept);
+    }
+
     pub fn symbolicStorageContains(self: *const State, container: facts.SymbolicPointeeId, target: facts.SymbolicPointeeId) bool {
         var identity = target;
         if (identity == container) return true;
@@ -582,6 +611,43 @@ test "Safety storage replacement ends projected generations without touching sib
     try std.testing.expect(state.tracker.isAlive(live_sibling));
     try std.testing.expectEqual(@as(usize, 2), state.storage_generations.items.len);
     try std.testing.expect(state.tracker.isAlive(state.storage_generations.items[0].generation));
+}
+
+test "Safety lexical retirement preserves siblings and is unchanged on allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var state = State.init(failing.allocator());
+    defer state.deinit();
+    const owner: facts.Place = .{ .root = @enumFromInt(0) };
+    const child: facts.Place = .{ .root = owner.root, .projections = &.{.{ .field = 0 }} };
+    const sibling: facts.Place = .{ .root = @enumFromInt(1) };
+    for ([_]facts.Place{ owner, sibling, child }) |place| {
+        try state.setPlace(place, .initialized, .{});
+        try state.refreshStorageGeneration(place);
+    }
+    const old = state.storage_generations.items[0].generation;
+    const other = state.storage_generations.items[1].generation;
+    const projected = state.storage_generations.items[2].generation;
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
+    try std.testing.expectError(error.OutOfMemory, state.endLexicalStorage(owner.root));
+    try std.testing.expectEqual(@as(usize, 3), state.places.items.len);
+    try std.testing.expectEqual(@as(usize, 3), state.storage_generations.items.len);
+    try std.testing.expectEqual(@as(usize, 0), state.lexical_storage_generations.items.len);
+    for ([_]facts.ValidityRootId{ old, other, projected }) |root|
+        try std.testing.expect(state.tracker.isAlive(root));
+    failing.fail_index = std.math.maxInt(usize);
+    failing.resize_fail_index = std.math.maxInt(usize);
+    try state.endLexicalStorage(owner.root);
+    try std.testing.expect(!state.tracker.isAlive(old));
+    try std.testing.expect(!state.tracker.isAlive(projected));
+    try std.testing.expect(state.tracker.isAlive(other));
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{ old, projected }, state.lexical_storage_generations.items);
+    try std.testing.expectEqual(@as(usize, 1), state.places.items.len);
+    try std.testing.expect(state.places.items[0].storage.eql(sibling));
+    try std.testing.expectEqual(@as(usize, 1), state.storage_generations.items.len);
+    try std.testing.expect(state.storage_generations.items[0].storage.eql(sibling));
+    try state.endLexicalStorage(owner.root);
+    try std.testing.expectEqual(@as(usize, 2), state.lexical_storage_generations.items.len);
 }
 
 test "Safety failed generation renewal preserves live storage and descendants" {

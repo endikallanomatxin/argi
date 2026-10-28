@@ -6443,21 +6443,7 @@ pub const SafetyChecker = struct {
         }
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| switch (self.graph.nodes.items[@intFromEnum(node)].content) {
-            .binding_declaration => |binding| {
-                var i: usize = 0;
-                while (i < state.storage_generations.items.len) {
-                    const entry = state.storage_generations.items[i];
-                    if (entry.storage.root == binding) {
-                        try appendRootFact(&state.lexical_storage_generations, entry.generation);
-                        state.tracker.end(entry.generation);
-                        _ = state.storage_generations.orderedRemove(i);
-                    } else i += 1;
-                }
-                i = 0;
-                while (i < state.places.items.len) {
-                    if (state.places.items[i].storage.root == binding) _ = state.places.orderedRemove(i) else i += 1;
-                }
-            },
+            .binding_declaration => |binding| try state.endLexicalStorage(binding),
             else => {},
         };
     }
