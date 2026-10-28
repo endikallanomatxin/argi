@@ -222,13 +222,14 @@ pub const State = struct {
     /// slot facts, stopping at dereferences into separately referenced storage.
     pub fn setSymbolicValue(self: *State, next: SymbolicStoredValue, strong: bool, retain_empty: bool) !void {
         if (strong) {
-            var index: usize = 0;
-            while (index < self.symbolic_values.items.len) {
-                const child = self.symbolic_values.items[index].identity;
-                if (child != next.identity and self.symbolicStorageDescendsFrom(child, next.identity)) {
-                    _ = self.symbolic_values.orderedRemove(index);
-                } else index += 1;
+            var kept: usize = 0;
+            for (self.symbolic_values.items) |stored| {
+                const child = stored.identity;
+                if (child != next.identity and self.symbolicStorageDescendsFrom(child, next.identity)) continue;
+                self.symbolic_values.items[kept] = stored;
+                kept += 1;
             }
+            self.symbolic_values.shrinkRetainingCapacity(kept);
         }
         for (self.symbolic_values.items) |*stored| if (stored.identity == next.identity) {
             stored.* = next;
@@ -252,13 +253,13 @@ pub const State = struct {
         // Replacing an aggregate invalidates facts recorded for its old
         // projections. Otherwise a later read can observe stale facts from a
         // preceding iteration rather than the newly assigned aggregate.
-        var index: usize = 0;
-        while (index < self.places.items.len) {
-            const candidate = self.places.items[index].storage;
-            if (!candidate.eql(storage) and storage.isPrefixOf(candidate)) {
-                _ = self.places.orderedRemove(index);
-            } else index += 1;
+        var kept: usize = 0;
+        for (self.places.items) |entry| {
+            if (!entry.storage.eql(storage) and storage.isPrefixOf(entry.storage)) continue;
+            self.places.items[kept] = entry;
+            kept += 1;
         }
+        self.places.shrinkRetainingCapacity(kept);
         var stored = false;
         for (self.places.items) |*entry| if (entry.storage.eql(storage)) {
             entry.initializedness = initializedness;
@@ -354,21 +355,17 @@ pub const State = struct {
     }
 
     pub fn invalidateChoiceRefinements(self: *State, storage: facts.Place) void {
-        var cursor: usize = 0;
-        while (cursor < self.choice_active.items.len) {
-            if (storage.isPrefixOf(self.choice_active.items[cursor].storage)) {
-                _ = self.choice_active.orderedRemove(cursor);
-            } else {
-                cursor += 1;
+        // Stable compaction retires a whole subtree without repeatedly moving
+        // every retained sibling after each removed projection.
+        inline for (.{ "choice_active", "choice_rejected" }) |name| {
+            const entries = &@field(self, name);
+            var kept: usize = 0;
+            for (entries.items) |entry| {
+                if (storage.isPrefixOf(entry.storage)) continue;
+                entries.items[kept] = entry;
+                kept += 1;
             }
-        }
-        cursor = 0;
-        while (cursor < self.choice_rejected.items.len) {
-            if (storage.isPrefixOf(self.choice_rejected.items[cursor].storage)) {
-                _ = self.choice_rejected.orderedRemove(cursor);
-            } else {
-                cursor += 1;
-            }
+            entries.shrinkRetainingCapacity(kept);
         }
     }
 
@@ -539,6 +536,18 @@ test "Safety place replacement retires descendants and refinements while preserv
     try state.setPlace(sibling, .initialized, .{ .known_choice_variant = 3 });
     try state.setRejectedVariant(child, 4);
     try state.setRejectedVariant(sibling, 5);
+    // Interleave descendants and independent roots: retiring a subtree must
+    // preserve every surviving fact in its original order.
+    var projections: [16][1]facts.Projection = undefined;
+    for (&projections, 0..) |*path, index| {
+        path.* = .{.{ .field = @intCast(index + 1) }};
+        const descendant: facts.Place = .{ .root = parent.root, .projections = path };
+        const independent: facts.Place = .{ .root = @enumFromInt(index + 2) };
+        try state.setPlace(descendant, .initialized, .{ .known_choice_variant = 2 });
+        try state.setRejectedVariant(descendant, 4);
+        try state.setPlace(independent, .initialized, .{ .known_choice_variant = 3 });
+        try state.setRejectedVariant(independent, 5);
+    }
     try state.markMoved(parent, .{}, .{ .file_index = 0, .offset = 7 });
     try std.testing.expectEqual(null, state.findPlace(child));
     try std.testing.expectEqual(null, state.activeVariant(child));
@@ -546,6 +555,11 @@ test "Safety place replacement retires descendants and refinements while preserv
     try std.testing.expectEqual(@as(?u32, 3), state.activeVariant(sibling));
     try std.testing.expect(state.variantRejected(sibling, 5));
     try std.testing.expectEqual(@as(u32, 7), state.findPlace(parent).?.moved_at.?.offset);
+    try std.testing.expectEqual(@as(usize, 18), state.places.items.len);
+    try std.testing.expectEqual(@as(usize, 17), state.choice_active.items.len);
+    try std.testing.expectEqual(@as(usize, 17), state.choice_rejected.items.len);
+    for (state.places.items[0..17], 0..) |entry, index|
+        try std.testing.expectEqual(index + 1, @intFromEnum(entry.storage.root));
     try state.setPlace(parent, .initialized, .{ .known_choice_variant = 1 });
     try std.testing.expectEqual(null, state.findPlace(parent).?.moved_at);
     try std.testing.expectEqual(@as(?u32, 1), state.activeVariant(parent));
