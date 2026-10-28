@@ -402,6 +402,55 @@ pub const State = struct {
     pub fn variantActive(self: *State, storage: facts.Place, index: u32) bool {
         return if (self.activeVariant(storage)) |active| active == index else false;
     }
+    pub fn referenceObservationGeneration(self: *State, pointer: facts.ValueFacts) !?facts.ValidityRootId {
+        if (pointer.referenced_place) |place| return try self.storageGeneration(place);
+        if (pointer.symbolic_pointees.len == 1) {
+            for (self.symbolic_pointees.items) |entry| if (entry.identity == pointer.symbolic_pointees[0]) return entry.generation;
+        }
+        return null;
+    }
+
+    /// Observe the current incarnation without reviving historical aliases.
+    pub fn storageGeneration(self: *State, storage: facts.Place) !facts.ValidityRootId {
+        for (self.storage_generations.items) |*entry| if (entry.storage.eql(storage)) {
+            // Both paths may leave an initialized Place with different
+            // incarnations. A new borrow observes the current storage, while
+            // historical aliases keep their original, conservatively joined
+            // roots. Materialize only on demand to avoid growing loop states.
+            if (entry.needs_current_generation and self.initializednessAtPlace(storage) == .initialized) {
+                entry.generation = try self.tracker.establish(.fresh);
+                entry.needs_current_generation = false;
+            }
+            return entry.generation;
+        };
+        try self.storage_generations.ensureUnusedCapacity(1);
+        if (self.tracker.namespace) |namespace| {
+            for (namespace.initial_storage.items) |initial| if (initial.storage.eql(storage)) {
+                const index = @intFromEnum(initial.root);
+                if (index >= self.tracker.roots.items.len or !self.tracker.roots.items[index].present) {
+                    try self.tracker.materialize(initial.root);
+                }
+                if (self.tracker.isAlive(initial.root)) {
+                    self.storage_generations.appendAssumeCapacity(.{ .storage = storage, .generation = initial.root });
+                    return initial.root;
+                }
+                // An ended incarnation cannot become the initial generation
+                // again when a lexical slot is reused in a later iteration.
+                const root = try self.tracker.establish(.fresh);
+                self.storage_generations.appendAssumeCapacity(.{ .storage = storage, .generation = root });
+                return root;
+            };
+            try namespace.initial_storage.ensureUnusedCapacity(self.storage_generations.allocator, 1);
+            const root = try self.tracker.establish(.fresh);
+            namespace.initial_storage.appendAssumeCapacity(.{ .storage = storage, .root = root });
+            self.storage_generations.appendAssumeCapacity(.{ .storage = storage, .generation = root });
+            return root;
+        }
+        const root = try self.tracker.establish(.fresh);
+        self.storage_generations.appendAssumeCapacity(.{ .storage = storage, .generation = root });
+        return root;
+    }
+
     pub fn refreshStorageGeneration(self: *State, storage: facts.Place) !void {
         // Prepare all fallible storage before ending any live generation.
         try self.storage_generations.ensureUnusedCapacity(1);
@@ -697,6 +746,35 @@ fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(.initialized, state.findPlace(storage).?.initializedness);
     try std.testing.expectEqual(@as(?u32, 2), state.activeVariant(storage));
     try std.testing.expect(state.tracker.isAlive(root));
+}
+
+test "Safety storage observation publishes generations atomically" {
+    inline for (.{ false, true }) |namespaced| {
+        try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+            fn observe(a: std.mem.Allocator, shared: bool) !void {
+                var namespace: facts.Tracker.RootNamespace = .{};
+                defer namespace.deinit(a);
+                var state = State.init(a);
+                defer state.deinit();
+                if (shared) state.tracker.namespace = &namespace;
+                const storage: facts.Place = .{ .root = @enumFromInt(0) };
+                const generation = state.storageGeneration(storage) catch |err| {
+                    try std.testing.expectEqual(@as(usize, 0), state.storage_generations.items.len);
+                    try std.testing.expectEqual(@as(usize, 0), state.tracker.roots.items.len);
+                    try std.testing.expectEqual(@as(usize, 0), namespace.initial_storage.items.len);
+                    try std.testing.expectEqual(@as(u32, 0), namespace.next_id);
+                    return err;
+                };
+                try std.testing.expect(state.tracker.isAlive(generation));
+                try std.testing.expectEqual(generation, try state.storageGeneration(storage));
+                try std.testing.expectEqual(@as(usize, 1), state.storage_generations.items.len);
+                if (shared) {
+                    try std.testing.expectEqual(@as(u32, 1), namespace.next_id);
+                    try std.testing.expectEqual(generation, namespace.initial_storage.items[0].root);
+                }
+            }
+        }.observe, .{namespaced});
+    }
 }
 
 test "Safety state clones own independent tables and release every failed allocation" {

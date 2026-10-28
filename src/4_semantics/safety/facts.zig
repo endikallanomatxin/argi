@@ -254,11 +254,11 @@ pub const Tracker = struct {
                 const index = if (self.namespace) |namespace| identity: {
                     const next = namespace.next_id;
                     if (next == std.math.maxInt(u32)) return error.SafetyRootIdentityLimit;
-                    namespace.next_id += 1;
                     break :identity next;
                 } else @as(u32, @intCast(self.roots.items.len));
                 const id: ValidityRootId = @enumFromInt(index);
                 try self.materialize(id);
+                if (self.namespace) |namespace| namespace.next_id += 1;
                 break :blk id;
             },
         };
@@ -268,9 +268,10 @@ pub const Tracker = struct {
     /// a generation already observed and ended on this path.
     pub fn materialize(self: *Tracker, id: ValidityRootId) !void {
         const index = @intFromEnum(id);
+        try self.roots.ensureTotalCapacity(index + 1);
         while (self.roots.items.len <= index) {
             const absent: ValidityRootId = @enumFromInt(self.roots.items.len);
-            try self.roots.append(.{ .id = absent, .state = .dead, .present = false });
+            self.roots.appendAssumeCapacity(.{ .id = absent, .state = .dead, .present = false });
         }
         if (!self.roots.items[index].present) self.roots.items[index] = .{ .id = id };
     }
@@ -450,4 +451,19 @@ pub fn replaceValueRoots(
     }
     result.variants = variants;
     return result;
+}
+
+test "Safety root materialization does not publish partial gaps on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn materialize(a: std.mem.Allocator) !void {
+            var tracker = Tracker.init(a);
+            defer tracker.deinit();
+            tracker.materialize(@enumFromInt(67)) catch |err| {
+                try std.testing.expectEqual(@as(usize, 0), tracker.roots.items.len);
+                return err;
+            };
+            try std.testing.expect(tracker.isAlive(@enumFromInt(67)));
+            for (tracker.roots.items[0..67]) |root| try std.testing.expect(!root.present);
+        }
+    }.materialize, .{});
 }
