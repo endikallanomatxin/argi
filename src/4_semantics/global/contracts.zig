@@ -2759,7 +2759,7 @@ pub const Resolver = struct {
             else => {},
         }
         const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
-            error.ComptimeExecutionPending => return err,
+            error.ComptimeExecutionPending, error.OutOfMemory => return err,
             else => return false,
         };
         return global_types.equal(self.graph, expected, actual);
@@ -2782,7 +2782,7 @@ pub const Resolver = struct {
                 break :blk true;
             },
             .binary, .projection, .execution => (self.generics.evalInt(module_index, pattern, bindings) catch |err| switch (err) {
-                error.ComptimeExecutionPending => return err,
+                error.ComptimeExecutionPending, error.OutOfMemory => return err,
                 else => return false,
             }) == actual,
         };
@@ -3157,6 +3157,53 @@ pub const Resolver = struct {
         return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
 };
+
+test "contract pattern materialization preserves allocation and execution failures" {
+    const allocator = std.testing.allocator;
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(allocator);
+    try module.semantic.parameterized_storage.ir.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
+    try module.semantic.parameterized_storage.ir.int_expressions.append(allocator, .{ .execution = @enumFromInt(0) });
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    const offsets = [_]globalizer.Offsets{std.mem.zeroes(globalizer.Offsets)};
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.ensureTotalCapacityPrecise(allocator, 1);
+    try graph.types.append(allocator, .{ .builtin = .UInt8 });
+    var core: core_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &offsets };
+    defer core.deinit();
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    var generics: generic_mod.Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core };
+    defer generics.deinit();
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core, .generics = &generics };
+    defer resolver.deinit();
+    var bindings = try generic_mod.Resolver.Bindings.init(allocator, 0);
+    defer bindings.deinit(allocator);
+    try std.testing.expectError(error.OutOfMemory, resolver.inferConstraintTypePattern(0, @enumFromInt(0), @enumFromInt(0), &bindings));
+    try std.testing.expectEqual(@as(usize, 1), graph.types.items.len);
+    generics.allocator = allocator;
+    try std.testing.expect(!try resolver.inferConstraintTypePattern(0, @enumFromInt(0), @enumFromInt(0), &bindings));
+
+    const Evaluation = struct {
+        failure: ?anyerror = error.OutOfMemory,
+        fn evaluate(raw: *anyopaque, _: usize, _: ir.ParameterizedNodeId, _: *const generic_mod.Resolver.Bindings) anyerror!i64 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (self.failure) |err| return err;
+            return 42;
+        }
+    };
+    var execution: Evaluation = .{};
+    generics.execution_context = &execution;
+    generics.execute_integer = Evaluation.evaluate;
+    try std.testing.expectError(error.OutOfMemory, resolver.inferConstraintIntPattern(0, @enumFromInt(0), 42, &bindings));
+    execution.failure = error.ComptimeExecutionPending;
+    try std.testing.expectError(error.ComptimeExecutionPending, resolver.inferConstraintIntPattern(0, @enumFromInt(0), 42, &bindings));
+    execution.failure = error.UnboundComptimeParameter;
+    try std.testing.expect(!try resolver.inferConstraintIntPattern(0, @enumFromInt(0), 42, &bindings));
+    execution.failure = null;
+    try std.testing.expect(try resolver.inferConstraintIntPattern(0, @enumFromInt(0), 42, &bindings));
+    try std.testing.expect(!try resolver.inferConstraintIntPattern(0, @enumFromInt(0), 43, &bindings));
+}
 
 test "contract resolver keeps compile-time relation metadata outside GlobalSG" {
     try std.testing.expect(@sizeOf(Stats) <= 56);
