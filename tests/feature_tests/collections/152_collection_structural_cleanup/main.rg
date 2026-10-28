@@ -75,11 +75,30 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     if drops != 24 { abort }
     deinit(.self = $&deque)
     if drops != 26 { abort }
+    map ::= HashMap#(.key: Int32, .value: Pair)(.allocator = allocator)!!!
+    index :: Int32 = 0
+    while index < 4 {
+        put(
+            .self      = $&map
+            .key       = index
+            .value     = _pair(.id = index).value
+            .allocator = allocator
+        )!!!
+        index = index + 1
+    }
+    match put(.self = $&map, .key = 4, .value = _pair(.id = 14).value, .allocator = $&refusal) {
+        ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
+    }
+    if drops != 28 or length(.self = &map).count != 4 { abort }
+    put(.self = $&map, .key = 0, .value = _pair(.id = 15).value, .allocator = allocator)!!!
+    if drops != 30 { abort }
+    deinit(.self = $&map)
+    if drops != 38 { abort }
     status_code = 0
 }
 
 implement Allocator#(RefusingAllocator) (
     .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) { result = ..error(.reason = ..out_of_memory) }
 )

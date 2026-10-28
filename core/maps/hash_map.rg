@@ -1,11 +1,3 @@
--- Inputs rejected by insertion are destroyed through ordinary lexical cleanup.
-_hash_discard := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .value: t, .allocator: $&AllocatorType
-) -> () {
-    assume allocator
-    discarded ::= ~value
-}
-
 HashMapEntry := #(.key: Type, .value: Type) (.key: key, .value: value)
 
 implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(
@@ -311,7 +303,8 @@ _map_put_hash_map := #(
     .allocator : $&Provider
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
-    query ::= HashPolicy#(policy, key).query(&self&._policy, .key = &key)
+    incoming :: HashMapEntry#(.key: key, .value: value) = (.key = ~key, .value = ~value)
+    query ::= HashPolicy#(policy, key).query(&self&._policy, .key = &incoming.key)
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = query).hash
 
     match _hash_find(self, .key = query, .hash = digest).index {
@@ -323,12 +316,8 @@ _map_put_hash_map := #(
             previous ::= _trusted_uninit_take(
                 .allocation = $&self&._table._entries, .slot = slot
             )
-            entry :: HashMapEntry#(.key: key, .value: value) = (
-                .key   = ~key
-                .value = ~value
-            )
             _trusted_uninit_write(
-                .allocation = $&self&._table._entries, .slot = slot, .value = ~entry
+                .allocation = $&self&._table._entries, .slot = slot, .value = ~incoming
             )
             _hash_invalidate(self)
             result = ..ok Void()
@@ -342,28 +331,19 @@ _map_put_hash_map := #(
     if self&._length >= count / 2 {
         grown ::= count * 2
         if grown <= count {
-            _hash_discard(.value = ~key, .allocator = allocator)
-            _hash_discard(.value = ~value, .allocator = allocator)
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        match reserve(self, .capacity = grown, .allocator = allocator) {
-            ..ok _ {}
-            ..error ~error {
-                _hash_discard(.value = ~key, .allocator = allocator)
-                _hash_discard(.value = ~value, .allocator = allocator)
-                result = ..error ~error
-                return
-            }
-        }
+        reserve(self, .capacity = grown, .allocator = allocator)!
     }
 
     index ::= _hash_vacancy(.slots = &self&._table._slots, .hash = digest).index
     slot ::= _trusted_uninit_slot#(.t: HashMapEntry#(.key: key, .value: value))(
         .allocation = &self&._table._entries, .index = index
     )
-    entry :: HashMapEntry#(.key: key, .value: value) = (.key = ~key, .value = ~value)
-    _trusted_uninit_write(.allocation = $&self&._table._entries, .slot = slot, .value = ~entry)
+    _trusted_uninit_write(
+        .allocation = $&self&._table._entries, .slot = slot, .value = ~incoming
+    )
     _trusted_dynamic_array_set(
         .array = $&self&._table._slots
         .index = index

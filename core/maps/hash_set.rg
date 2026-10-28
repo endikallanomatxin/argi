@@ -65,14 +65,17 @@ _map_insert_hash_set := #(
 ) (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Provider) -> (
     .result : Errable#(Bool, (..out_of_memory))
 ) {
-    query ::= HashPolicy#(policy, key).query(&self&._map._policy, .key = &key)
+    assume allocator
+    incoming ::= ~key
+    query ::= HashPolicy#(policy, key).query(&self&._map._policy, .key = &incoming)
     if contains(&self&._map, .key = query).ok {
-        _hash_discard(.value = ~key, .allocator = allocator)
         result = ..ok false
         return
     }
 
-    put(.self = $&self&._map, .key = ~key, .value = _HashSetValue(), .allocator = allocator)!
+    put(
+        .self = $&self&._map, .key = ~incoming, .value = _HashSetValue(), .allocator = allocator
+    )!
 
     result = ..ok true
 }
