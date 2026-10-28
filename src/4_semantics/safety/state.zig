@@ -402,6 +402,59 @@ pub const State = struct {
     pub fn variantActive(self: *State, storage: facts.Place, index: u32) bool {
         return if (self.activeVariant(storage)) |active| active == index else false;
     }
+    // Fact slices are immutable and may be shared by branch snapshots. Reuse
+    // the old slice when possible; only a failed unpublished union is freed.
+    fn unionRoots(a: std.mem.Allocator, previous: []const facts.ValidityRootId, additions: []const facts.ValidityRootId) ![]const facts.ValidityRootId {
+        var count = previous.len;
+        for (additions, 0..) |root, index| {
+            if (std.mem.indexOfScalar(facts.ValidityRootId, previous, root) != null or
+                std.mem.indexOfScalar(facts.ValidityRootId, additions[0..index], root) != null) continue;
+            count += 1;
+        }
+        if (count == previous.len) return previous;
+        const result = try a.alloc(facts.ValidityRootId, count);
+        @memcpy(result[0..previous.len], previous);
+        var used = previous.len;
+        for (additions) |root| {
+            if (std.mem.indexOfScalar(facts.ValidityRootId, result[0..used], root) != null) continue;
+            result[used] = root;
+            used += 1;
+        }
+        return result;
+    }
+
+    pub fn mergeOpaqueStorage(self: *State, storage: facts.Place, dependencies: []const facts.ValidityRootId, owners: []const facts.ValidityRootId) !void {
+        const existing = for (self.opaque_storages.items) |*entry| {
+            if (entry.storage.eql(storage)) break entry;
+        } else @as(?*OpaqueStorage, null);
+        if (existing == null) try self.opaque_storages.ensureUnusedCapacity(1);
+        const previous: OpaqueStorage = if (existing) |entry| entry.* else .{ .storage = storage, .hidden_dependencies = &.{} };
+        const a = self.opaque_storages.allocator;
+        const hidden = try unionRoots(a, previous.hidden_dependencies, dependencies);
+        errdefer if (hidden.ptr != previous.hidden_dependencies.ptr) a.free(hidden);
+        const combined = try unionRoots(a, previous.owner_roots, owners);
+        const next: OpaqueStorage = .{ .storage = storage, .hidden_dependencies = hidden, .owner_roots = combined };
+        if (existing) |entry| entry.* = next else self.opaque_storages.appendAssumeCapacity(next);
+    }
+
+    pub fn mergeOpaqueOwnerRoots(self: *State, storage: facts.Place, roots: []const facts.ValidityRootId) !void {
+        if (roots.len == 0) return;
+        for (self.opaque_storages.items) |*entry| {
+            if (!entry.storage.eql(storage)) continue;
+            entry.owner_roots = try unionRoots(self.opaque_storages.allocator, entry.owner_roots, roots);
+            return;
+        }
+    }
+
+    pub fn markOpaqueStorageEmpty(self: *State, storage: facts.Place) void {
+        for (self.opaque_storages.items) |*entry| {
+            if (!entry.storage.eql(storage)) continue;
+            entry.hidden_dependencies = &.{};
+            entry.outcome_guard = 0;
+            return;
+        }
+    }
+
     /// Seed an unknown input referent without asserting that inputs are disjoint.
     /// Backing may be shared; each observation keeps its own value generation.
     pub fn establishSymbolicInput(self: *State, ty: graph_mod.GlobalTypeId, shared_backing: ?facts.ValidityRootId) !SymbolicPointeeState {
@@ -856,6 +909,56 @@ fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(.initialized, state.findPlace(storage).?.initializedness);
     try std.testing.expectEqual(@as(?u32, 2), state.activeVariant(storage));
     try std.testing.expect(state.tracker.isAlive(root));
+}
+
+test "Safety opaque merges publish both root sets together and reuse unchanged facts" {
+    const root0: facts.ValidityRootId = @enumFromInt(0);
+    const root1: facts.ValidityRootId = @enumFromInt(1);
+    const root2: facts.ValidityRootId = @enumFromInt(2);
+    const root3: facts.ValidityRootId = @enumFromInt(3);
+    inline for (.{ false, true }) |existing| {
+        var completed = false;
+        for (0..8) |failure_index| {
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+            const a = arena.allocator();
+            var state = State.init(a);
+            defer state.deinit();
+            const storage: facts.Place = .{ .root = @enumFromInt(0) };
+            if (existing) try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{root0}, .owner_roots = &.{root2}, .outcome_guard = 9 });
+            var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = failure_index });
+            state.opaque_storages.allocator = failing.allocator();
+            const merged = state.mergeOpaqueStorage(storage, &.{ root0, root1, root1 }, &.{ root2, root3, root3 });
+            state.opaque_storages.allocator = a;
+            if (merged) |_| {
+                const domain = state.opaque_storages.items[0];
+                try std.testing.expectEqualSlices(facts.ValidityRootId, &.{ root0, root1 }, domain.hidden_dependencies);
+                try std.testing.expectEqualSlices(facts.ValidityRootId, &.{ root2, root3 }, domain.owner_roots);
+                var unavailable = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+                state.opaque_storages.allocator = unavailable.allocator();
+                try state.mergeOpaqueStorage(storage, &.{ root1, root0 }, &.{ root3, root2 });
+                try state.mergeOpaqueOwnerRoots(storage, &.{root3});
+                state.opaque_storages.allocator = a;
+                try std.testing.expectEqual(domain.hidden_dependencies.ptr, state.opaque_storages.items[0].hidden_dependencies.ptr);
+                try std.testing.expectEqual(domain.owner_roots.ptr, state.opaque_storages.items[0].owner_roots.ptr);
+                state.markOpaqueStorageEmpty(storage);
+                try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+                try std.testing.expectEqualSlices(facts.ValidityRootId, domain.owner_roots, state.opaque_storages.items[0].owner_roots);
+                completed = true;
+                break;
+            } else |err| {
+                try std.testing.expectEqual(error.OutOfMemory, err);
+                try std.testing.expectEqual(@as(usize, @intFromBool(existing)), state.opaque_storages.items.len);
+                if (existing) {
+                    const domain = state.opaque_storages.items[0];
+                    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root0}, domain.hidden_dependencies);
+                    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root2}, domain.owner_roots);
+                    try std.testing.expectEqual(@as(u64, 9), domain.outcome_guard);
+                }
+            }
+        }
+        try std.testing.expect(completed);
+    }
 }
 
 test "Safety symbolic inputs publish identities and roots together" {

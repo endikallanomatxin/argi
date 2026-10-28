@@ -2149,7 +2149,7 @@ pub const SafetyChecker = struct {
             },
             .opaque_mark_empty => blk: {
                 if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage|
-                    self.markOpaqueStorageEmpty(state, storage);
+                    state.markOpaqueStorageEmpty(storage);
                 break :blk .{};
             },
             // Slot destruction is trusted runtime behavior. Domain emptiness is
@@ -3588,7 +3588,7 @@ pub const SafetyChecker = struct {
     ) !void {
         for (summary.opaque_storage_empties) |empty_path| {
             const storage = try self.resolveSummaryOpaqueStoragePath(empty_path, argument_ids, arguments, state) orelse continue;
-            self.markOpaqueStorageEmpty(state, storage);
+            state.markOpaqueStorageEmpty(storage);
         }
     }
 
@@ -4621,44 +4621,7 @@ pub const SafetyChecker = struct {
         var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer owners.deinit();
         if (self.valueAtPlace(state, storage)) |value| try collectOwnedRoots(value, &owners);
-        for (state.opaque_storages.items) |*opaque_storage| {
-            if (!opaque_storage.storage.eql(storage)) continue;
-            var merged = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            try merged.appendSlice(opaque_storage.hidden_dependencies);
-            for (dependencies) |dependency| try appendRootFact(&merged, dependency);
-            opaque_storage.hidden_dependencies = try merged.toOwnedSlice();
-            opaque_storage.outcome_guard = 0;
-            var combined = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            try combined.appendSlice(opaque_storage.owner_roots);
-            for (owners.items) |root| try appendRootFact(&combined, root);
-            opaque_storage.owner_roots = try combined.toOwnedSlice();
-            return;
-        }
-        var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-        for (dependencies) |dependency| try appendRootFact(&hidden, dependency);
-        try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = try hidden.toOwnedSlice(), .owner_roots = try owners.toOwnedSlice() });
-    }
-
-    fn markOpaqueStorageEmpty(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) void {
-        _ = self;
-        for (state.opaque_storages.items) |*opaque_storage| {
-            if (!opaque_storage.storage.eql(storage)) continue;
-            opaque_storage.hidden_dependencies = &.{};
-            opaque_storage.outcome_guard = 0;
-            return;
-        }
-    }
-
-    fn mergeOpaqueOwnerRoots(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, roots: []const facts.ValidityRootId) !void {
-        if (roots.len == 0) return;
-        for (state.opaque_storages.items) |*domain| {
-            if (!domain.storage.eql(storage)) continue;
-            var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            try owners.appendSlice(domain.owner_roots);
-            for (roots) |root| try appendRootFact(&owners, root);
-            domain.owner_roots = try owners.toOwnedSlice();
-            return;
-        }
+        try state.mergeOpaqueStorage(storage, dependencies, owners.items);
     }
 
     fn mergeLiveOpaqueDependencies(
@@ -6491,11 +6454,11 @@ pub const SafetyChecker = struct {
 
         for (left.opaque_storages.items) |opaque_storage| {
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
-            try self.mergeOpaqueOwnerRoots(&joined, opaque_storage.storage, opaque_storage.owner_roots);
+            try joined.mergeOpaqueOwnerRoots(opaque_storage.storage, opaque_storage.owner_roots);
         }
         for (right.opaque_storages.items) |opaque_storage| {
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
-            try self.mergeOpaqueOwnerRoots(&joined, opaque_storage.storage, opaque_storage.owner_roots);
+            try joined.mergeOpaqueOwnerRoots(opaque_storage.storage, opaque_storage.owner_roots);
         }
 
         for (joined.opaque_storages.items) |*domain| {
@@ -7019,7 +6982,7 @@ pub const SafetyChecker = struct {
                     break;
                 };
                 if (current) for (state.opaque_storages.items) |domain| if (domain.storage.eql(outcome.storage) and domain.outcome_guard == outcome.guard) {
-                    self.markOpaqueStorageEmpty(state, outcome.storage);
+                    state.markOpaqueStorageEmpty(outcome.storage);
                     break;
                 };
                 continue;
@@ -7760,7 +7723,7 @@ test "opaque primitives move ownership through domain state" {
     try std.testing.expectEqual(@as(usize, 1), moved_out.owned_roots.len);
     try std.testing.expect(state.tracker.isAlive(moved_out.owned_roots[0]));
 
-    checker.markOpaqueStorageEmpty(&state, storage);
+    state.markOpaqueStorageEmpty(storage);
     try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
 }
 
