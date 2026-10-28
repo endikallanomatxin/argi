@@ -1,5 +1,44 @@
 # Measuring compiler frontend performance
 
+## Replacing a live aggregate
+
+The `aggregates` execution scenario repeatedly assigns the result of one reused
+function to a single `[16]Int32` session binding. It creates no numbered results
+or additional user bindings. Every sample checks that the retained array has
+16 elements, all equal to 42. Use it alongside the scalar `calls` control:
+
+```sh
+./zig-out/bin/execution-benchmark 1000 minimal aggregates 1024
+./zig-out/bin/execution-benchmark 1000 minimal calls 1024
+./zig-out/bin/execution-benchmark 10000 minimal aggregates 1024
+```
+
+Isolated Linux x86-64 ReleaseSafe runs after `8613c01e3`, with no concurrent
+builds or suites:
+
+| Scenario | Commands | Total ms | Retained MiB | Runtime arena bytes | Visible aggregate cells |
+|---|---:|---:|---:|---:|---:|
+| Aggregates | 1,000 | 533.492 | 17.812 | 1,768,084 | 16 |
+| Scalar calls | 1,000 | 479.037 | 16.184 | 1,780 | 0 |
+| Aggregates | 10,000 | 34,824.530 | 182.333 | 14,057,702 | 16 |
+
+The aggregate run requests 16,033 complete aggregate cells and 17,017 partial
+storage cells at 1,000 commands; at 10,000 these become 160,033 and 170,017.
+These counters are cumulative allocation traffic, not live bytes. Visible backing
+counts inspect live frames and nested values, not all possible external roots;
+they are not a proof that the rest of the arena can be freed. Dead frame slots
+remain bounded at 1,848 bytes while identity metadata grows to 2,080,312 bytes
+at 10,000 commands. Both completed aggregate runs pass final teardown with zero
+requested bytes retained.
+
+This demonstrates immutable payload retention under replacement independently
+of growing user results. It does not establish a safe reclamation algorithm.
+Any implementation must preserve external results, references, cross-frame
+writes, partial/acquired storage and virtual descriptors. Much of the long-run
+time is frontend/publication (34,131.414 ms); payload reclamation alone would
+not address that cost. The first interrupted long run had no completion status
+and is excluded; the repeated long run completed with exit status zero.
+
 ## Repeated healthy reset cycles
 
 The `resets` scenario measures complete work/reset cycles rather than a growing

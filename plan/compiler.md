@@ -25,7 +25,9 @@
 - Track external compile-time reads in build dependencies and cache identity.
 - Separate host execution from target semantics for cross-compilation.
 - Reclaim immutable aggregate payloads using all roots: results, cross-frame
-  writes, session/acquired storage and virtual descriptors.
+  writes, session/acquired storage and virtual descriptors. The measured
+  `aggregates` workload retains 16 visible cells while its runtime arena reaches
+  14,057,702 bytes after 10,000 replacements; use it as a reclamation control.
 
 Validate with growing REPL sessions, rollback/allocation failures and native/VM
 comparisons. New Safety precision needs aliasing and duplicate-cleanup rejections.

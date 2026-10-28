@@ -50,7 +50,7 @@ const Memory = struct {
     }
 };
 
-const Scenario = enum { update, bindings, calls, branches, specializations, specialization_reuse, resources, definitions, rejections, resets };
+const Scenario = enum { update, bindings, calls, aggregates, branches, specializations, specialization_reuse, resources, definitions, rejections, resets };
 const Modules = enum { minimal, core, prelude };
 
 fn elapsed(io: std.Io, start: i96) u64 {
@@ -224,7 +224,11 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     const bindings = session.compiler.semantic.resolvers.expressions.session_bindings.items;
     const frame = session.runtime.context.bindings.get(bindings[bindings.len - 1]) orelse return error.MissingBenchmarkBinding;
     const slots = try session.runtime.context.storage.slots(frame);
-    if ((try slots.get(0)).integer != 42) return error.InvalidBenchmarkResult;
+    const retained = try slots.get(0);
+    if (scenario == .aggregates) {
+        if (retained != .array or retained.array.len != 16) return error.InvalidBenchmarkResult;
+        for (retained.array) |item| if (item != .integer or item.integer != 42) return error.InvalidBenchmarkResult;
+    } else if (retained != .integer or retained.integer != 42) return error.InvalidBenchmarkResult;
 }
 
 // Diagnostic-only attribution: count retained pool payload and reserved backing
@@ -361,7 +365,10 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
                 try session.submitDefinitions(definition);
                 try session.submitStatements("condition :: Bool = true");
             }
-            try session.submitStatements("value :: Int32 = 42");
+            if (scenario == .aggregates) {
+                try session.submitDefinitions("make_array := (.value: Int32) -> (.result: [16]Int32) { result = (value, value, value, value, value, value, value, value, value, value, value, value, value, value, value, value) }");
+                try session.submitStatements("value :: [16]Int32 = make_array(42)");
+            } else try session.submitStatements("value :: Int32 = 42");
             var scans: @import("4_semantics/global/resolution_profile.zig").Profile = .{ .io = io };
             if (resolution_profile) session.compiler.semantic.resolvers.core.scan_profile = &scans;
             session.runtime.profile_io = io;
@@ -377,6 +384,7 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
                     .resets => unreachable,
                     .update => try allocator.dupe(u8, "value = 42"),
                     .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
+                    .aggregates => try allocator.dupe(u8, "value = make_array(42)"),
                     .branches => try allocator.dupe(u8, "value = branch_workload(.condition = condition)"),
                     .specializations, .specialization_reuse => try std.fmt.allocPrint(allocator, "value = branch_workload#(.tag = {d})(.condition = condition)", .{if (scenario == .specializations) index else @as(usize, 0)}),
                     .rejections => try allocator.dupe(u8, "value = 42\nmissing_function()"),
@@ -493,7 +501,7 @@ pub fn main(init: std.process.Init) !void {
     if (scenario == .resets and resolution_profile) return error.ResetResolutionProfileUnsupported;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|branches|specializations|specialization_reuse|resources|definitions|rejections|resets] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|aggregates|branches|specializations|specialization_reuse|resources|definitions|rejections|resets] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB\n", .{});
     if (resolution_profile) std.debug.print("# resolution,commands,pass,calls,pool_entries,changed_passes,inclusive_ms,fixed_point_rounds\n", .{});
     if (scenario == .specializations or scenario == .specialization_reuse) std.debug.print("# specializations,commands,instances,body_top_level_statements,graph_nodes,graph_bindings,graph_types\n", .{});
