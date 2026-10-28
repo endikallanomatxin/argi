@@ -1844,3 +1844,39 @@ test "definition arguments infer captures without conflating concrete types or i
     try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, null), bindings.types[0]);
     try std.testing.expectEqual(@as(?i64, null), bindings.ints[0]);
 }
+
+test "core and generic reference interning preserve signature default identities" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "enabled");
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .bool_literal = true } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .bool_literal = false } },
+    });
+    try graph.fields.appendSlice(a, &.{
+        .{ .name = name, .source = source, .ty = @enumFromInt(0), .default_value = @enumFromInt(0) },
+        .{ .name = name, .source = source, .ty = @enumFromInt(0), .default_value = @enumFromInt(1) },
+    });
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Bool },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .structural = .{ .fields = .{ .start = 1, .len = 1 } } },
+    });
+    // Callable compatibility can ignore defaults. Type construction must not:
+    // specializing on either input record retains its different default value.
+    try std.testing.expect(global_types.equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+    try std.testing.expect(!global_types.identityEqual(&graph, @enumFromInt(1), @enumFromInt(2)));
+    var core: core_mod.Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinit();
+    var generics: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer generics.deinit();
+    inline for (.{ primitives.PointerMutability.read_only, primitives.PointerMutability.read_write }) |mutability| {
+        const first = try core.pointerType(@enumFromInt(1), mutability);
+        const second = try generics.internType(.{ .pointer = .{ .child = @enumFromInt(2), .mutability = mutability } });
+        try std.testing.expect(first != second);
+        try std.testing.expectEqual(second, try core.pointerType(@enumFromInt(2), mutability));
+        try std.testing.expectEqual(first, try generics.internType(.{ .pointer = .{ .child = @enumFromInt(1), .mutability = mutability } }));
+    }
+}

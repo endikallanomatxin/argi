@@ -2096,10 +2096,12 @@ pub const Resolver = struct {
             self.stats.pointer_type_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - start);
         };
         if (self.profile_io != null) self.stats.pointer_type_calls += 1;
+        // Interning preserves type identity, including defaults carried by
+        // internal signature records; callable compatibility is weaker.
         for (self.graph.types.items, 0..) |ty, raw| {
             if (self.profile_io != null) self.stats.pointer_type_candidates += 1;
             switch (ty) {
-                .pointer => |pointer| if (pointer.mutability == mutability and types.equal(self.graph, pointer.child, child))
+                .pointer => |pointer| if (pointer.mutability == mutability and types.identityEqual(self.graph, pointer.child, child))
                     return @enumFromInt(@as(u32, @intCast(raw))),
                 else => {},
             }

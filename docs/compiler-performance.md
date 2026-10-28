@@ -235,8 +235,47 @@ because later contextualization can change operand types.
 Arithmetic propagation skips coercion and representation queries when both
 operands and the result already carry the same resolved type ID. A later operand
 type change takes the ordinary path again. No worklist or completion cache is
-introduced for expressions. Timing comparisons for these subpasses remain to be
-collected without an active test suite; no speedup is claimed here.
+introduced for expressions.
+
+ReleaseSafe observations at `b2c450bd0` on Linux x86-64, using the installed
+core from the same checkout and a 1,024 MiB tracked allocation limit:
+
+| Session | Total ms at 10 / 100 / 1,000 commands | Retained MiB at 1,000 |
+|---|---:|---:|
+| Minimal calls | 4.7 / 43.5 / 499.1 | 16.194 |
+| Prelude calls | 60.6 / 605.3 / 6,941.3 | 167.735 |
+| Minimal bindings | 1.5 / 19.5 / 909.1 | 14.258 |
+| Prelude bindings | 70.1 / 720.5 / 8,626.5 | 165.784 |
+| Prelude rejections | 53.0 / 512.2 / 5,547.5 | 151.456 |
+
+These are single profiled runs, not a before/after throughput comparison. Startup
+and teardown are outside command timings. The rejected session retains 151.456
+MiB at all three milestones, has no published units and passes the benchmark's
+state-rollback and teardown-leak checks.
+
+Across 1,000 prelude calls, binding initializers cost 22.2 ms, expression
+propagation 284.2 ms and assignment contextualization 407.9 ms. Initializers
+visit 7.9 million entries without changes; they are nevertheless under 0.4% of
+frontend/publication time. A new binding worklist is not justified by this run.
+Expression and assignment work are stronger candidates, but their contextual
+types can change after initial completion. Preserve that behavior when reducing
+scans. Checkpointing costs 66.1 ms; full resolution costs 1,970.6 ms and completion
+1,191.1 ms, including 318.9 ms of graph verification. Inclusive times overlap.
+
+Growing live bindings have a different cost: in the minimal 1,000-binding run,
+checking costs 402.4 ms, including 143.2 ms for continuation fork and 215.5 ms for
+seal. Do not attribute that growth solely to semantic graph scans.
+
+Fresh one-worker CLI `build --stats --no-cache` runs also examined type interning:
+weighted regression reports 9.7 ms and 4.1 million candidates; word count reports
+19.8 ms and 8.7 million. Nominal requests account for 7.1/12.5 ms respectively.
+The candidate-by-tag counters classify the entries visited, not the requested
+type. These observations identify repeated searches; they do not establish the
+benefit of adding another persistent index. Reference interning must use identity
+rather than callable compatibility, retaining internal signature defaults.
+
+Logs: `.zig-cache/frontend-current-{minimal-calls,prelude-calls,minimal-bindings,prelude-bindings,prelude-rejections}-1000.csv`
+and `.zig-cache/frontend-current-{regression,word-count}-stats.log`.
 
 ### Execution preparation and continuation publication
 
