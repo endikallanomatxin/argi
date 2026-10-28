@@ -54,7 +54,6 @@ pub const SafetyChecker = struct {
     const state_mod = @import("state.zig");
     const FunctionState = state_mod.State;
     const StorageCapabilityState = state_mod.StorageCapabilityState;
-    const OwnershipEdge = state_mod.OwnershipEdge;
     const StorageGeneration = state_mod.StorageGeneration;
     const OpaqueStorage = state_mod.OpaqueStorage;
     const SymbolicPointeeState = state_mod.SymbolicPointeeState;
@@ -948,7 +947,6 @@ pub const SafetyChecker = struct {
                     };
                 },
             }
-            try self.validateUniqueOwnership(function, node.source, state);
             if (!state.reachable) {
                 try self.endBlockStorage(block_id, state);
                 if (loop_transfers) |transfers| {
@@ -6614,18 +6612,6 @@ pub const SafetyChecker = struct {
             }
         }
 
-        for (left.ownership_edges.items) |edge| try joined.ownership_edges.append(edge);
-        for (right.ownership_edges.items) |edge| {
-            var found = false;
-            for (joined.ownership_edges.items) |existing| {
-                if (existing.owner == edge.owner and existing.owned == edge.owned) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) try joined.ownership_edges.append(edge);
-        }
-
         try joined.storage_generations.appendSlice(left.storage_generations.items);
         for (right.storage_generations.items) |candidate| {
             var found = false;
@@ -6933,7 +6919,6 @@ pub const SafetyChecker = struct {
                 if (!logical_storage.isPrefixOf(related.storage)) continue;
                 related.value = try facts.replaceValueRoots(self.allocator, related.value, alternatives[0..alternative_count], phi);
             }
-            self.replaceOwnershipEdgeRoots(joined, alternatives[0..alternative_count], phi);
         }
         self.trimUnreferencedLoopRoots(context, joined);
     }
@@ -7027,34 +7012,6 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn replaceOwnershipEdgeRoots(
-        self: *SafetyChecker,
-        state: *FunctionState,
-        sources: []const facts.ValidityRootId,
-        replacement: facts.ValidityRootId,
-    ) void {
-        var write: usize = 0;
-        for (state.ownership_edges.items) |edge| {
-            const rewritten = OwnershipEdge{
-                .owner = if (containsRoot(sources, edge.owner)) replacement else edge.owner,
-                .owned = if (containsRoot(sources, edge.owned)) replacement else edge.owned,
-            };
-            var duplicate = false;
-            for (state.ownership_edges.items[0..write]) |existing| {
-                if (existing.owner == rewritten.owner and existing.owned == rewritten.owned) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) {
-                state.ownership_edges.items[write] = rewritten;
-                write += 1;
-            }
-        }
-        state.ownership_edges.shrinkRetainingCapacity(write);
-        _ = self;
-    }
-
     fn loopRootPhi(
         self: *SafetyChecker,
         context: *LoopJoinContext,
@@ -7146,16 +7103,6 @@ pub const SafetyChecker = struct {
         const old = target.*;
         target.* = candidate.*;
         candidate.* = old;
-    }
-
-    fn validateUniqueOwnership(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, state: *FunctionState) !void {
-        _ = function;
-        for (state.ownership_edges.items, 0..) |edge, index| for (state.ownership_edges.items[index + 1 ..]) |other| {
-            if (edge.owned == other.owned and edge.owner != other.owner) {
-                try self.report(source, "resource has multiple live owners", .{});
-                return;
-            }
-        };
     }
 
     fn refineChoice(self: *SafetyChecker, state: *FunctionState, node: graph_mod.GlobalNodeId, variant: graph_mod.GlobalVariantId, active: bool) !void {
@@ -7665,8 +7612,6 @@ fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root:
         if (storage_generation.generation == root) return true;
     for (state.opaque_storages.items) |opaque_storage|
         if (containsRoot(opaque_storage.hidden_dependencies, root)) return true;
-    for (state.ownership_edges.items) |edge|
-        if (edge.owner == root or edge.owned == root) return true;
     return false;
 }
 
@@ -7678,7 +7623,6 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.places.items.len != right.places.items.len or
         left.symbolic_pointees.items.len != right.symbolic_pointees.items.len or
         left.symbolic_values.items.len != right.symbolic_values.items.len or
-        left.ownership_edges.items.len != right.ownership_edges.items.len or
         left.storage_generations.items.len != right.storage_generations.items.len or
         left.opaque_storages.items.len != right.opaque_storages.items.len or
         left.choice_active.items.len != right.choice_active.items.len or
@@ -7712,14 +7656,6 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     for (left.places.items) |left_place| {
         const right_place = right.findPlace(left_place.storage) orelse return false;
         if (left_place.initializedness != right_place.initializedness or !std.meta.eql(left_place.moved_at, right_place.moved_at) or !valueFactsEqual(left_place.value, right_place.value)) return false;
-    }
-    for (left.ownership_edges.items) |edge| {
-        var found = false;
-        for (right.ownership_edges.items) |other| if (edge.owner == other.owner and edge.owned == other.owned) {
-            found = true;
-            break;
-        };
-        if (!found) return false;
     }
     for (left.storage_generations.items) |entry| {
         var found = false;
@@ -8161,8 +8097,6 @@ test "rich safety join preserves all compact state dimensions" {
         .value = .{ .dependencies = &.{.{ .root = right_dependency }} },
     });
 
-    try left.ownership_edges.append(.{ .owner = changing, .owned = left_dependency });
-    try right.ownership_edges.append(.{ .owner = changing, .owned = right_dependency });
     try left.storage_generations.append(.{ .storage = storage, .generation = left_dependency });
     try right.storage_generations.append(.{ .storage = storage, .generation = right_dependency });
     try left.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{left_dependency}, .owner_roots = &.{left_dependency} });
@@ -8179,7 +8113,6 @@ test "rich safety join preserves all compact state dimensions" {
     const joined_value = checker.valueAtPlace(&joined, storage).?;
     try std.testing.expect(valueDependsOnRoot(joined_value, left_dependency));
     try std.testing.expect(valueDependsOnRoot(joined_value, right_dependency));
-    try std.testing.expectEqual(@as(usize, 2), joined.ownership_edges.items.len);
     try std.testing.expectEqual(@as(usize, 1), joined.storage_generations.items.len);
     try std.testing.expectEqual(@as(usize, 1), joined.opaque_storages.items.len);
     try std.testing.expect(containsRoot(joined.opaque_storages.items[0].hidden_dependencies, left_dependency));
@@ -8248,7 +8181,6 @@ test "loop root widening is stable and preserves historical aliases" {
     entry.tracker.roots.items[@intFromEnum(old)].owned_resource = true;
     const child = try entry.tracker.establish(.fresh);
     entry.tracker.roots.items[@intFromEnum(child)].owned_resource = true;
-    try entry.ownership_edges.append(.{ .owner = old, .owned = child });
     try entry.places.append(.{ .storage = owner, .initializedness = .initialized, .value = .{
         .dependencies = &.{.{ .root = old }},
         .owned_roots = &.{old},
@@ -8262,7 +8194,6 @@ test "loop root widening is stable and preserves historical aliases" {
     iteration.tracker.end(old);
     const replacement = try iteration.tracker.establish(.fresh);
     iteration.tracker.roots.items[@intFromEnum(replacement)].owned_resource = true;
-    try iteration.ownership_edges.append(.{ .owner = replacement, .owned = child });
     iteration.getPlace(owner).?.value = .{
         .dependencies = &.{.{ .root = replacement }},
         .owned_roots = &.{replacement},
@@ -8280,9 +8211,6 @@ test "loop root widening is stable and preserves historical aliases" {
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{phi}, widened_owner.owned_roots);
     try std.testing.expect(joined.tracker.dependenciesAreAlive(widened_owner));
     try std.testing.expect(!joined.tracker.dependenciesAreAlive(joined.getPlace(alias).?.value));
-    try std.testing.expectEqual(@as(usize, 1), joined.ownership_edges.items.len);
-    try std.testing.expectEqual(phi, joined.ownership_edges.items[0].owner);
-    try std.testing.expectEqual(child, joined.ownership_edges.items[0].owned);
     const stable_root_count = joined.tracker.roots.items.len;
 
     var second_iteration = try joined.clone(allocator);
@@ -8290,7 +8218,6 @@ test "loop root widening is stable and preserves historical aliases" {
     second_iteration.tracker.end(phi);
     const second_replacement = try second_iteration.tracker.establish(.fresh);
     second_iteration.tracker.roots.items[@intFromEnum(second_replacement)].owned_resource = true;
-    try second_iteration.ownership_edges.append(.{ .owner = second_replacement, .owned = child });
     second_iteration.getPlace(owner).?.value = .{
         .dependencies = &.{.{ .root = second_replacement }},
         .owned_roots = &.{second_replacement},
@@ -8302,8 +8229,6 @@ test "loop root widening is stable and preserves historical aliases" {
     try checker.widenLoopOwnedRoots(&context, &fixed_point, &entry, &second_iteration);
     try std.testing.expectEqual(phi, fixed_point.getPlace(owner).?.value.owned_roots[0]);
     try std.testing.expectEqual(stable_root_count, fixed_point.tracker.roots.items.len);
-    try std.testing.expectEqual(@as(usize, 1), fixed_point.ownership_edges.items.len);
-    try std.testing.expectEqual(phi, fixed_point.ownership_edges.items[0].owner);
 }
 
 test "loop root widening does not hide crossed stale dependencies" {

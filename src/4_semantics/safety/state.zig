@@ -24,7 +24,6 @@ pub const StorageCapabilityState = enum {
         return if (left == right) left else .maybe_consumed;
     }
 };
-pub const OwnershipEdge = struct { owner: facts.ValidityRootId, owned: facts.ValidityRootId };
 pub const StorageGeneration = struct {
     storage: facts.Place,
     generation: facts.ValidityRootId,
@@ -78,7 +77,6 @@ pub const State = struct {
     // Ordinary scalar slots need no entry; immutable aggregates share facts.
     symbolic_values: std.array_list.Managed(SymbolicStoredValue),
     storage_capabilities: std.array_list.Managed(StorageCapabilityState),
-    ownership_edges: std.array_list.Managed(OwnershipEdge),
     storage_generations: std.array_list.Managed(StorageGeneration),
     lexical_storage_generations: std.array_list.Managed(facts.ValidityRootId),
     opaque_storages: std.array_list.Managed(OpaqueStorage),
@@ -94,7 +92,6 @@ pub const State = struct {
             .symbolic_pointees = std.array_list.Managed(SymbolicPointeeState).init(allocator),
             .symbolic_values = std.array_list.Managed(SymbolicStoredValue).init(allocator),
             .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
-            .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
             .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
             .lexical_storage_generations = std.array_list.Managed(facts.ValidityRootId).init(allocator),
             .opaque_storages = std.array_list.Managed(OpaqueStorage).init(allocator),
@@ -110,7 +107,6 @@ pub const State = struct {
         self.symbolic_pointees.deinit();
         self.symbolic_values.deinit();
         self.storage_capabilities.deinit();
-        self.ownership_edges.deinit();
         self.storage_generations.deinit();
         self.lexical_storage_generations.deinit();
         self.opaque_storages.deinit();
@@ -595,7 +591,6 @@ fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
     try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .initializedness = .initialized });
     try state.symbolic_values.append(.{ .identity = @enumFromInt(0), .value = .{} });
     try state.storage_capabilities.append(.available);
-    try state.ownership_edges.append(.{ .owner = root, .owned = root });
     try state.storage_generations.append(.{ .storage = storage, .generation = root });
     try state.lexical_storage_generations.append(root);
     try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
