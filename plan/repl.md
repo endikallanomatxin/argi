@@ -35,11 +35,12 @@ JIT and complete native-backend parity are not prerequisites.
 3. Close the failure-lifecycle matrix: rejected commands and preparation failures
    publish nothing; traps, budget exhaustion, cancellation and host callback
    failures prevent further execution until reset. Extend host-resource and
-   allocation-failure coverage through prelude preparation and execution; source
-   retention OOM and initialization traps already have acceptance coverage. Document
-   which effects
-   cannot be undone and how context-owned resources are released without user
-   cleanup. Never promise transactional rollback of execution.
+   allocation-failure coverage to the resource-bearing bundled prelude. A minimal
+   prelude already covers allocation/resize failures through preparation and
+   execution, publication boundaries, reset and retry; initialization traps are
+   covered separately. Document which effects cannot be undone and how
+   context-owned resources are released without user cleanup. Never promise
+   transactional rollback of execution.
 4. Measure 10/100/1,000-command sessions, then longer resource/definition/rejection
    workloads using the existing execution benchmark. Separate setup, frontend,
    lowering, verification and execution; report per-command latency and retained

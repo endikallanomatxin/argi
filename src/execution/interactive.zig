@@ -994,6 +994,50 @@ test "interactive failed prelude distinguishes preparation allocation failure fr
     try session.close();
 }
 
+test "interactive prelude allocation failures preserve publication and reset boundaries" {
+    var preparation_failures: usize = 0;
+    var execution_failures: usize = 0;
+    for ([_]bool{ false, true }) |resize| {
+        var offset: usize = 0;
+        while (offset < 10000) : (offset += 1) {
+            var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+            var session: Interactive = undefined;
+            try session.init(failing.allocator(), &.{}, .{ .exhaustive_function_bodies = false }, .{});
+            defer session.deinit();
+            const checkpoint = session.compiler.semantic.relocation.graph.checkpoint();
+            if (resize) failing.resize_fail_index = failing.resize_index + offset else failing.fail_index = failing.alloc_index + offset;
+            session.initializePrelude("enabled :: Bool = true") catch |err| {
+                failing.fail_index = std.math.maxInt(usize);
+                failing.resize_fail_index = std.math.maxInt(usize);
+                try std.testing.expectEqual(error.OutOfMemory, err);
+                try std.testing.expect(session.prelude == null);
+                if (session.compiler.revision == 0) {
+                    preparation_failures += 1;
+                    try std.testing.expectEqualDeep(checkpoint, session.compiler.semantic.relocation.graph.checkpoint());
+                    try std.testing.expectEqual(.fresh, session.runtime.context.state);
+                } else {
+                    execution_failures += 1;
+                    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+                    const revision = session.compiler.revision;
+                    try std.testing.expectError(error.ExecutionContextPoisoned, session.submitStatements("enabled = false"));
+                    try std.testing.expectEqual(revision, session.compiler.revision);
+                }
+                try session.reset();
+                try session.initializePrelude("enabled :: Bool = true");
+                try std.testing.expect((try session.submitInput("enabled")).?.value.runtime.boolean);
+                try session.close();
+                continue;
+            };
+            failing.fail_index = std.math.maxInt(usize);
+            failing.resize_fail_index = std.math.maxInt(usize);
+            try session.close();
+            if (!failing.has_induced_failure) break;
+        } else return error.AllocationFailureProbeLimit;
+    }
+    try std.testing.expect(preparation_failures > 0);
+    try std.testing.expect(execution_failures > 0);
+}
+
 test "interactive reset retains the new compiler when prelude execution traps" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
