@@ -2728,11 +2728,15 @@ pub const Resolver = struct {
                         return global_types.equal(self.graph, expected, actual);
                     }
                     const concrete = actual_type.generic;
-                    if (nominal.arguments.len != located.parameterized.parameters.len or concrete.arguments.len != nominal.arguments.len) return false;
+                    if (nominal.arguments.len > located.parameterized.parameters.len or concrete.arguments.len != located.parameterized.parameters.len) return false;
+                    var omitted = false;
                     for (0..located.parameterized.parameters.len) |position| {
                         const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
                         const name = self.modules[located.module_index].text(parameter.name);
-                        const wanted = self.generics.findPatternArgument(module_index, nominal.arguments, position, name) orelse return false;
+                        const wanted = self.generics.findPatternArgument(module_index, nominal.arguments, position, name) orelse {
+                            omitted = true;
+                            continue;
+                        };
                         const given = self.generics.findGlobalArgument(name, concrete.arguments, position) orelse return false;
                         if (wanted.value == .type and given.value == .type) {
                             if (!try self.inferConstraintTypePattern(module_index, wanted.value.type, given.value.type, bindings)) return false;
@@ -2740,6 +2744,7 @@ pub const Resolver = struct {
                             if (!try self.inferConstraintIntPattern(module_index, wanted.value.comptime_int, given.value.comptime_int, bindings)) return false;
                         } else return false;
                     }
+                    if (omitted) return self.generics.completedPatternMatches(module_index, pattern, bindings, actual);
                     return true;
                 },
                 else => {},

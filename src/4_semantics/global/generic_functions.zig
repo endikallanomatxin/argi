@@ -2052,16 +2052,20 @@ pub const Resolver = struct {
                     };
                     if (declaration != value.base) return false;
                     if (definition.captures.len > located.parameterized.parameters.len or
-                        generic.arguments.len != located.parameterized.parameters.len - definition.captures.len or
+                        generic.arguments.len > located.parameterized.parameters.len - definition.captures.len or
                         value.arguments.len != located.parameterized.parameters.len) return false;
                     const actual_captures = primitives.Range(global_sg.GlobalGenericArgId){ .start = value.arguments.start, .len = definition.captures.len };
                     if (!global_types.genericArgumentsEqual(self.graph, definition.captures, actual_captures)) return false;
+                    var omitted = false;
                     // Bind by declaration parameter order, regardless of the
                     // participant's positional or reordered named spelling.
                     for (definition.captures.len..located.parameterized.parameters.len) |position| {
                         const parameter = owner.semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
                         const name = owner.text(parameter.name);
-                        const argument = self.generics.findPatternArgument(module_index, generic.arguments, position - definition.captures.len, name) orelse return false;
+                        const argument = self.generics.findPatternArgument(module_index, generic.arguments, position - definition.captures.len, name) orelse {
+                            omitted = true;
+                            continue;
+                        };
                         const concrete = self.generics.findGlobalArgument(name, value.arguments, position) orelse return false;
                         switch (argument.value) {
                             .projection => |projection| if (!global_types.genericArgumentValuesEqual(self.graph, try self.generics.instantiateArgumentProjection(module_index, projection, bindings), concrete.value)) return false,
@@ -2078,6 +2082,7 @@ pub const Resolver = struct {
                             },
                         }
                     }
+                    if (omitted) return self.generics.completedPatternMatches(module_index, pattern, bindings, actual);
                     return true;
                 },
                 else => {},

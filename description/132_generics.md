@@ -217,6 +217,13 @@ Partial constructor arguments use the same Init evidence selection as complete
 and fully inferred calls. Type annotations apply defaults directly. Completed
 arguments retain declaration order and share identity with an explicit spelling.
 
+In a family application used as an input or conformance pattern, written
+arguments infer the enclosing parameters first. Omitted family arguments then
+use that family's defaults and must match the actual specialization. They are
+not wildcards: if `Box` defaults its length to 4, a pattern `Box#(T)` does not
+accept `Box#(Int32, 3)`. Defaults referring to earlier type parameters follow
+the same rule.
+
 ## Interaction with Virtual types
 
 * **Generics do not go in the vtable.** Vtable methods must be **monomorphic** after type erasure.

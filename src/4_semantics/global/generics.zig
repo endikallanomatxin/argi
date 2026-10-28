@@ -704,6 +704,17 @@ pub const Resolver = struct {
         };
     }
 
+    /// After explicit pattern arguments have inferred their bindings, omitted
+    /// family arguments use ordinary specialization defaults. Never bind those
+    /// omissions from the actual type: a default is a constraint, not a wildcard.
+    pub fn completedPatternMatches(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *Bindings, actual: global_sg.GlobalTypeId) !bool {
+        const expected = self.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.UnboundDefinitionParameter => return false,
+            else => return err,
+        };
+        return global_types.equal(self.graph, expected, actual);
+    }
+
     /// Construct a definition with contextually checked field types. Only the
     /// unpublished representation is built here; an existing identity is never
     /// rewritten to fit a new context.

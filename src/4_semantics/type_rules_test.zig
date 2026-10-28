@@ -1,6 +1,25 @@
 const checkSyntaxSource = @import("source_test_support.zig").checkSyntaxSource;
 const checkSource = @import("source_test_support.zig").checkSource;
 
+test "generic input defaults constrain omitted arguments rather than infer them" {
+    try checkSource("defaulted_integer_pattern",
+        \\Box := #(.T: Type, .n: UIntNative = 4) (.items: [n]T)
+        \\read := #(.T: Type) (.box: &Box#(T)) -> () {}
+        \\main := () -> () {
+        \\    box: Box#(Int32, 3) = (.items = (1, 2, 3))
+        \\    read(&box)
+        \\}
+    , null, "no generic function named 'read' accepts arguments", false);
+    try checkSource("defaulted_type_pattern",
+        \\Pair := #(.T: Type, .Other: Type = T) (.first: T, .second: Other)
+        \\read := #(.T: Type) (.pair: Pair#(T)) -> () {}
+        \\main := () -> () {
+        \\    pair: Pair#(Int32, Bool) = (.first = 1, .second = true)
+        \\    read(pair)
+        \\}
+    , null, "no generic function named 'read' accepts arguments", false);
+}
+
 test "type rules: 314X_generic_operation_result_mismatch" {
     try checkSource(
         "314X_generic_operation_result_mismatch",

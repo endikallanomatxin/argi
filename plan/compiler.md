@@ -2,15 +2,11 @@
 
 ## Resolution and transactions
 
-- Normalize omitted family defaults consistently in generic conformance and
-  input patterns. Reproduced: `Box := #(.T: Type, .n: UIntNative = 4)
-  (.items: [n]T)` with `implement#(.T: Type) Init#(Box#(T), BoxArgs#(T))`
-  rejects construction, while writing `Box#(T, 4)` in that implementation works.
-  Supplying both target arguments at the call does not repair the abbreviated
-  implementation. Check pattern arity guards in contracts and generic input
-  inference; infer supplied arguments before applying ordinary family defaults,
-  without inferring omitted defaults from the actual type or constructor Result.
-  Extend to dependent and staged defaults after the literal control works.
+- Preserve suspended compile-time requests through constructor/default pattern
+  selection. Literal integer defaults and dependent type defaults now match;
+  a default computed by `#run` still rejects the reproduced Init case. Retain
+  only genuinely pending recipes across nested rollback, without provisional IDs
+  or output-based inference. Validate deferred retries and rejected candidates.
 - Remove resolver state used only to communicate temporary results.
 - Reduce measured redundant resolution and verification, including remaining
   binding/type sweeps. Include older entities completed by new facts.
