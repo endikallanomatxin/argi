@@ -75,6 +75,7 @@ comptime {
     _ = @import("0_commands/repl_highlight.zig");
     _ = @import("4_semantics/entry_interface.zig");
     _ = @import("5_codegen/bytecode/verify.zig");
+    _ = @import("5_codegen/bytecode/lower.zig");
     _ = @import("0_commands/repl.zig");
     _ = @import("0_commands/execution_options.zig");
     _ = @import("0_commands/execution_interrupt.zig");

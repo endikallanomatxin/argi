@@ -1425,7 +1425,10 @@ const FunctionLower = struct {
                     return self.parent.reject(node.source, "cast outside checked acquired reference establishment");
                 const needs_cleanup = self.parent.cleanup_types[@intFromEnum(target.pointer.child)];
                 if (needs_cleanup and self.allocation_receipt == null) return self.parent.reject(node.source, "acquired reference requiring a prepared allocation receipt");
-                const layout = (if (self.allocation_receipt != null) @import("numeric_layout.zig").compileAcquired(self.parent.allocator, self.parent.graph, target.pointer.child) else @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child)) catch return self.parent.reject(node.source, "acquired reference to unsupported storage representation");
+                const layout = (if (self.allocation_receipt != null) @import("numeric_layout.zig").compileAcquired(self.parent.allocator, self.parent.graph, target.pointer.child) else @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, target.pointer.child)) catch |err| switch (err) {
+                    error.UnsupportedNumericLayout => return self.parent.reject(node.source, "acquired reference to unsupported storage representation"),
+                    else => return err,
+                };
                 const instruction = try self.parent.allocator.create(b.AcquiredReference);
                 instruction.* = .{ .dst = dst, .address = source_slot, .layout = layout, .permission = target.pointer.mutability, .endian = self.parent.graph.target.stdTarget().cpu.arch.endian() };
                 if (self.allocation_receipt) |receipt| {
@@ -1539,3 +1542,51 @@ const FunctionLower = struct {
         return dst;
     }
 };
+
+test "acquired reference lowering preserves layout allocation errors" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UIntNative },
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+    });
+    const source: p.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 0 } },
+        .{ .source = source, .ty = @enumFromInt(2), .content = .{ .explicit_cast = .{ .target_type = @enumFromInt(2), .value = @enumFromInt(0) } } },
+    });
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var failing = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+    var lower: Lower = .{ .allocator = failing.allocator(), .graph = &graph, .cleanup_bindings = &.{}, .cleanup_types = &.{ false, false, false }, .bool_type = null, .mode = .runtime };
+    var function: FunctionLower = .{ .parent = &lower, .safety_primitive = .establish_inherited_reference, .precomputed = &.{.{ .node = @enumFromInt(0), .slot = 0 }} };
+    // Reserve the value slots independently: the failure must occur while
+    // building the physical layout, rather than during slot allocation.
+    try function.slots.ensureTotalCapacity(arena.allocator(), 8);
+    function.slots.appendAssumeCapacity(@enumFromInt(0));
+    try std.testing.expectError(error.OutOfMemory, function.expression(@enumFromInt(1)));
+    try std.testing.expectEqualStrings("", lower.unsupported);
+
+    // Receipt-backed acquisition uses a different layout compiler, but must
+    // preserve the same infrastructure error before inspecting the receipt.
+    function.slots.items.len = 1;
+    function.allocation_receipt = 0;
+    var receipt_failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+    lower.allocator = receipt_failure.allocator();
+    try std.testing.expectError(error.OutOfMemory, function.expression(@enumFromInt(1)));
+    try std.testing.expectEqualStrings("", lower.unsupported);
+
+    function.slots.items.len = 1;
+    function.allocation_receipt = null;
+    lower.allocator = arena.allocator();
+    _ = try function.expression(@enumFromInt(1));
+    try std.testing.expectEqual(@as(usize, 1), function.code.items[0].op.acquired_reference.layout.size);
+
+    // Nested reference storage remains unsupported without a receipt layout;
+    // this semantic rejection must still retain the useful diagnostic.
+    graph.types.items[1] = .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } };
+    try std.testing.expectError(error.UnsupportedExecution, function.expression(@enumFromInt(1)));
+    try std.testing.expectEqualStrings("acquired reference to unsupported storage representation", lower.unsupported);
+}
