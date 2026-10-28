@@ -51,6 +51,17 @@ pub const SymbolicPointeeState = struct {
     // value incarnation. Neither identity asserts disjointness of inputs.
     backing: ?facts.ValidityRootId = null,
     generation: ?facts.ValidityRootId = null,
+
+    pub fn join(self: SymbolicPointeeState, other: ?SymbolicPointeeState) SymbolicPointeeState {
+        var result = self;
+        if (other) |opposite| {
+            std.debug.assert(self.identity == opposite.identity);
+            if (self.initializedness != opposite.initializedness) result.initializedness = .maybe_initialized;
+            if (self.backing != opposite.backing) result.backing = null;
+            if (self.generation != opposite.generation) result.generation = null;
+        } else result.initializedness = .maybe_initialized;
+        return result;
+    }
 };
 
 pub const SymbolicStoredValue = struct {
@@ -179,6 +190,61 @@ pub const State = struct {
         const entry = &self.storage_capabilities.items[index];
         if (entry.* != .absent and entry.* != .consumed)
             entry.* = if (definite) .consumed else .maybe_consumed;
+    }
+
+    pub fn symbolicPointee(self: *const State, identity: facts.SymbolicPointeeId) ?SymbolicPointeeState {
+        for (self.symbolic_pointees.items) |entry| if (entry.identity == identity) return entry;
+        return null;
+    }
+
+    pub fn setSymbolicInitializedness(self: *State, identity: facts.SymbolicPointeeId, initializedness: value_state.Initializedness) void {
+        for (self.symbolic_pointees.items) |*entry| if (entry.identity == identity) {
+            // Availability alone never renews a reference's observed incarnation.
+            entry.initializedness = initializedness;
+            return;
+        };
+    }
+
+    pub fn initializeLiveSymbolicTargets(self: *State, pointer: facts.ValueFacts) void {
+        for (pointer.symbolic_pointees) |identity| {
+            const entry = self.symbolicPointee(identity) orelse continue;
+            if (entry.generation) |generation| if (self.tracker.isAlive(generation))
+                self.setSymbolicInitializedness(identity, .initialized);
+        }
+    }
+
+    pub fn exactSymbolicValue(self: *const State, identity: facts.SymbolicPointeeId) ?SymbolicStoredValue {
+        for (self.symbolic_values.items) |stored| if (stored.identity == identity) return stored;
+        return null;
+    }
+
+    /// The checker prepares weak-write merges. Strong writes retire descendant
+    /// slot facts, stopping at dereferences into separately referenced storage.
+    pub fn setSymbolicValue(self: *State, next: SymbolicStoredValue, strong: bool, retain_empty: bool) !void {
+        if (strong) {
+            var index: usize = 0;
+            while (index < self.symbolic_values.items.len) {
+                const child = self.symbolic_values.items[index].identity;
+                if (child != next.identity and self.symbolicStorageDescendsFrom(child, next.identity)) {
+                    _ = self.symbolic_values.orderedRemove(index);
+                } else index += 1;
+            }
+        }
+        for (self.symbolic_values.items) |*stored| if (stored.identity == next.identity) {
+            stored.* = next;
+            return;
+        };
+        if (retain_empty or !facts.isEmptyValue(next.value)) try self.symbolic_values.append(next);
+    }
+
+    pub fn joinSymbolicPointees(self: *State, left: *const State, right: *const State) !void {
+        std.debug.assert(self.symbolic_pointees.items.len == 0);
+        for (left.symbolic_pointees.items) |entry|
+            try self.symbolic_pointees.append(entry.join(right.symbolicPointee(entry.identity) orelse right.initialProjectedPointee(entry.identity)));
+        for (right.symbolic_pointees.items) |entry| {
+            if (left.symbolicPointee(entry.identity) != null) continue;
+            try self.symbolic_pointees.append(entry.join(left.initialProjectedPointee(entry.identity)));
+        }
     }
 
     pub fn setPlace(self: *State, storage: facts.Place, initializedness: value_state.Initializedness, value: facts.ValueFacts) !void {
@@ -372,6 +438,95 @@ pub const State = struct {
             return;
         }
     }
+
+    pub fn symbolicStorageContains(self: *const State, container: facts.SymbolicPointeeId, target: facts.SymbolicPointeeId) bool {
+        var identity = target;
+        if (identity == container) return true;
+        const namespace = self.tracker.namespace orelse return false;
+        while (true) {
+            identity = for (namespace.projected_storage.items) |entry| {
+                if (entry.identity == identity) {
+                    if (entry.projection == .dereference) return false;
+                    break entry.parent;
+                }
+            } else return false;
+            if (identity == container) return true;
+        }
+    }
+
+    pub fn symbolicStorageMayOverlap(self: *const State, left: facts.SymbolicPointeeId, right: facts.SymbolicPointeeId) bool {
+        if (self.symbolicStorageContains(left, right) or self.symbolicStorageContains(right, left)) return true;
+        const namespace = self.tracker.namespace orelse return false;
+        for (namespace.projected_storage.items) |a| {
+            if (a.identity != left or a.projection == .dereference) continue;
+            for (namespace.projected_storage.items) |b| {
+                if (b.identity != right or b.projection == .dereference) continue;
+                if (a.parent == b.parent and a.parent_generation == b.parent_generation) {
+                    if (a.projection == .dynamic_index or b.projection == .dynamic_index) return true;
+                    return a.projection.eql(b.projection);
+                }
+                // Descendants of the same possibly overlapping element retain
+                // that uncertainty; distinct fixed siblings remain separate.
+                return self.symbolicStorageMayOverlap(a.parent, b.parent);
+            }
+            return self.symbolicStorageMayOverlap(a.parent, right);
+        }
+        for (namespace.projected_storage.items) |b| {
+            if (b.identity == right and b.projection != .dereference)
+                return self.symbolicStorageMayOverlap(left, b.parent);
+        }
+        return false;
+    }
+
+    pub fn symbolicStorageDescendsFrom(self: *const State, child: facts.SymbolicPointeeId, parent: facts.SymbolicPointeeId) bool {
+        return child != parent and self.symbolicStorageContains(parent, child);
+    }
+
+    pub fn initialProjectedPointee(self: *const State, identity: facts.SymbolicPointeeId) ?SymbolicPointeeState {
+        const namespace = self.tracker.namespace orelse return null;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.identity != identity) continue;
+            const parent = for (self.symbolic_pointees.items) |entry| {
+                if (entry.identity == projected.parent) break entry;
+            } else self.initialProjectedPointee(projected.parent) orelse return null;
+            if (parent.generation == projected.parent_generation and parent.initializedness == .initialized)
+                return .{ .identity = identity, .ty = projected.ty, .initializedness = .initialized, .backing = projected.backing, .generation = projected.generation };
+        }
+        return null;
+    }
+
+    pub fn symbolicVariant(self: *const State, identity: facts.SymbolicPointeeId) ?u32 {
+        for (self.symbolic_values.items) |stored| if (stored.identity == identity) return stored.value.known_choice_variant;
+        return null;
+    }
+
+    pub fn renewSymbolicAccess(self: *State, pointer: facts.ValueFacts) !?facts.ValueFacts {
+        // A join of possible targets cannot establish one definite destination.
+        if (pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
+        const identity = pointer.symbolic_pointees[0];
+        for (self.symbolic_pointees.items, 0..) |entry, index| {
+            if (entry.identity != identity or entry.initializedness != .deinitialized) continue;
+            const backing = entry.backing orelse return null;
+            const previous = entry.generation orelse return null;
+            if (!self.tracker.isAlive(backing)) return null;
+            for (pointer.dependencies) |dependency| {
+                if (dependency.root != previous and !self.tracker.isAlive(dependency.root)) return null;
+            }
+            // Only an access observing the consumed incarnation can initialize
+            // it. An alias from an older replacement cannot become current.
+            var observes = false;
+            for (pointer.dependencies) |dependency| if (dependency.root == previous) {
+                observes = true;
+                break;
+            };
+            if (!observes) return null;
+            const generation = try self.tracker.establish(.fresh);
+            const renewed = try facts.replaceValueRoots(self.tracker.allocator, pointer, &.{previous}, generation);
+            self.symbolic_pointees.items[index].generation = generation;
+            return renewed;
+        }
+        return null;
+    }
 };
 
 test "Safety place replacement retires descendants and refinements while preserving siblings" {
@@ -516,4 +671,75 @@ test "Safety capability allocation failure preserves namespace and exhaustion ca
     state.tracker.namespace = &namespace;
     try std.testing.expectError(error.SafetyCapabilityIdentityLimit, state.establishCapability());
     try std.testing.expectEqual(@as(usize, 0), state.storage_capabilities.items.len);
+}
+
+test "Safety symbolic joins separate initialization backing and observed generation" {
+    const initializations = std.meta.tags(value_state.Initializedness);
+    for (initializations) |left_init| for (initializations) |right_init| {
+        const left = SymbolicPointeeState{ .identity = @enumFromInt(0), .initializedness = left_init, .backing = @enumFromInt(1), .generation = @enumFromInt(2) };
+        var right = left;
+        right.initializedness = right_init;
+        const joined = left.join(right);
+        try std.testing.expectEqualDeep(joined, right.join(left));
+        try std.testing.expectEqual(if (left_init == right_init) left_init else .maybe_initialized, joined.initializedness);
+        try std.testing.expectEqual(left.backing, joined.backing);
+        try std.testing.expectEqual(left.generation, joined.generation);
+        right.generation = @enumFromInt(3);
+        try std.testing.expectEqual(null, left.join(right).generation);
+        try std.testing.expectEqual(left.backing, left.join(right).backing);
+        right.backing = @enumFromInt(4);
+        try std.testing.expectEqual(null, left.join(right).backing);
+        try std.testing.expectEqualDeep(left.join(right), right.join(left));
+        try std.testing.expectEqual(.maybe_initialized, left.join(null).initializedness);
+    };
+}
+
+test "Safety symbolic strong writes retire slots but preserve dereferenced storage and tag refinements" {
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(std.testing.allocator);
+    var state = State.init(std.testing.allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const parent: facts.SymbolicPointeeId = @enumFromInt(0);
+    const field: facts.SymbolicPointeeId = @enumFromInt(1);
+    const referent: facts.SymbolicPointeeId = @enumFromInt(2);
+    const sibling: facts.SymbolicPointeeId = @enumFromInt(3);
+    const root: facts.ValidityRootId = @enumFromInt(0);
+    try namespace.projected_storage.appendSlice(std.testing.allocator, &.{
+        .{ .parent = parent, .parent_generation = root, .projection = .{ .field = 0 }, .identity = field, .backing = root, .generation = root },
+        .{ .parent = field, .parent_generation = root, .projection = .dereference, .identity = referent, .backing = root, .generation = root },
+    });
+    for ([_]facts.SymbolicPointeeId{ parent, field, referent, sibling }) |identity|
+        try state.setSymbolicValue(.{ .identity = identity, .value = .{ .known_choice_variant = 1 } }, false, true);
+    // A tag proof does not replace payload fields or the storage they reference.
+    try state.setSymbolicValue(.{ .identity = parent, .value = .{ .known_choice_variant = 2 } }, false, true);
+    try std.testing.expectEqual(@as(?u32, 1), state.symbolicVariant(field));
+    try state.setSymbolicValue(.{ .identity = parent, .value = .{} }, true, true);
+    try std.testing.expectEqual(null, state.exactSymbolicValue(field));
+    try std.testing.expectEqual(@as(?u32, 1), state.symbolicVariant(referent));
+    try std.testing.expectEqual(@as(?u32, 1), state.symbolicVariant(sibling));
+    try std.testing.expect(state.exactSymbolicValue(parent) != null);
+    // Empty explicit facts remain authoritative even after another strong write.
+    try state.setSymbolicValue(.{ .identity = parent, .value = .{} }, true, false);
+    try std.testing.expect(state.exactSymbolicValue(parent) != null);
+}
+
+test "Safety symbolic initialization alone cannot renew a historical reference" {
+    var state = State.init(std.testing.allocator);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const old = try state.tracker.establish(.fresh);
+    const current = try state.tracker.establish(.fresh);
+    const identity: facts.SymbolicPointeeId = @enumFromInt(0);
+    try state.symbolic_pointees.append(.{ .identity = identity, .initializedness = .deinitialized, .backing = backing, .generation = current });
+    state.tracker.end(old);
+    const historical: facts.ValueFacts = .{ .symbolic_pointees = &.{identity}, .dependencies = &.{ .{ .root = backing }, .{ .root = old } } };
+    try std.testing.expect(try state.renewSymbolicAccess(historical) == null);
+    state.setSymbolicInitializedness(identity, .initialized);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(historical));
+    state.tracker.end(current);
+    state.setSymbolicInitializedness(identity, .deinitialized);
+    state.initializeLiveSymbolicTargets(.{ .symbolic_pointees = &.{identity} });
+    try std.testing.expectEqual(.deinitialized, state.symbolicPointee(identity).?.initializedness);
+    try std.testing.expect(!state.tracker.isAlive(old));
 }

@@ -409,3 +409,45 @@ test "safety root identity exhaustion cannot wrap into retained roots" {
     try std.testing.expectEqual(std.math.maxInt(u32), namespace.next_id);
     try std.testing.expectEqual(@as(usize, 0), tracker.roots.items.len);
 }
+
+/// Immutable fact fragments borrow the caller's proof allocation region.
+pub fn replaceValueRoots(
+    allocator: std.mem.Allocator,
+    value: ValueFacts,
+    sources: []const ValidityRootId,
+    replacement: ValidityRootId,
+) !ValueFacts {
+    var result = value;
+    var dependencies = std.array_list.Managed(ValidityDependency).init(allocator);
+    for (value.dependencies) |dependency| {
+        const next = if (std.mem.indexOfScalar(ValidityRootId, sources, dependency.root) != null) replacement else dependency.root;
+        var present = false;
+        for (dependencies.items) |entry| if (entry.root == next) {
+            present = true;
+            break;
+        };
+        if (!present) try dependencies.append(.{ .root = next });
+    }
+    result.dependencies = try dependencies.toOwnedSlice();
+    var owned_roots = std.array_list.Managed(ValidityRootId).init(allocator);
+    for (value.owned_roots) |root| {
+        const next = if (std.mem.indexOfScalar(ValidityRootId, sources, root) != null) replacement else root;
+        if (std.mem.indexOfScalar(ValidityRootId, owned_roots.items, next) == null) try owned_roots.append(next);
+    }
+    result.owned_roots = try owned_roots.toOwnedSlice();
+    const fields = try allocator.alloc(FieldFacts, value.fields.len);
+    for (value.fields, 0..) |field, index| {
+        const stored = try allocator.create(ValueFacts);
+        stored.* = try replaceValueRoots(allocator, field.value.*, sources, replacement);
+        fields[index] = .{ .index = field.index, .value = stored };
+    }
+    result.fields = fields;
+    const variants = try allocator.alloc(VariantFacts, value.variants.len);
+    for (value.variants, 0..) |variant, index| {
+        const stored = try allocator.create(ValueFacts);
+        stored.* = try replaceValueRoots(allocator, variant.value.*, sources, replacement);
+        variants[index] = .{ .index = variant.index, .value = stored };
+    }
+    result.variants = variants;
+    return result;
+}
