@@ -209,6 +209,7 @@ pub const Tracker = struct {
     pub const RootNamespace = struct {
         next_id: u32 = 0,
         next_symbolic_id: u32 = 0,
+        next_capability_id: u32 = 0,
         projected_storage: std.ArrayList(struct {
             parent: SymbolicPointeeId,
             parent_generation: ValidityRootId,
@@ -368,6 +369,7 @@ fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
     defer original.deinit(a);
     try original.initial_storage.append(a, .{ .storage = .{ .root = @enumFromInt(3) }, .root = @enumFromInt(1) });
     original.next_symbolic_id = 4;
+    original.next_capability_id = 7;
     try original.projected_storage.append(a, .{
         .parent = @enumFromInt(0),
         .parent_generation = @enumFromInt(1),
@@ -385,8 +387,10 @@ fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
     candidate.initial_storage.items[0].root = @enumFromInt(2);
     candidate.projected_storage.items[0].projection = .{ .variant = 2 };
     candidate.next_symbolic_id = 5;
+    candidate.next_capability_id = 8;
     try std.testing.expect(original.projected_storage.items[0].projection.eql(.{ .field = 0 }));
     try std.testing.expectEqual(@as(u32, 4), original.next_symbolic_id);
+    try std.testing.expectEqual(@as(u32, 7), original.next_capability_id);
     try std.testing.expectEqual(@as(u32, 2), original.next_id);
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(original.initial_storage.items[0].root));
     try std.testing.expectEqual(@as(u32, 3), candidate.next_id);

@@ -2082,8 +2082,7 @@ pub const SafetyChecker = struct {
         return switch (primitive_transfer.forPrimitive(primitive).value) {
             .empty => .{},
             .raw_storage => blk: {
-                const id: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
-                try state.storage_capabilities.append(.available);
+                const id = try state.establishCapability();
                 break :blk .{ .foreign_storage = true, .storage_capabilities = try self.oneCapability(id) };
             },
             .inherited_reference, .inherited_storage => blk: {
@@ -2154,8 +2153,7 @@ pub const SafetyChecker = struct {
 
     fn require_available_storage_capabilities(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, maximum: u2, state: *FunctionState) !void {
         for (value.storage_capabilities) |capability| {
-            const raw = @intFromEnum(capability);
-            if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available) {
+            if (state.capabilityState(capability) != .available) {
                 try self.report(source, "physical storage capability has already been consumed", .{});
             } else if (maximum > 1) {
                 try self.report(source, "function may consume the same physical storage capability more than once", .{});
@@ -2167,8 +2165,7 @@ pub const SafetyChecker = struct {
         _ = self;
         if (maximum == 0) return;
         for (value.storage_capabilities) |capability| {
-            const entry = &state.storage_capabilities.items[@intFromEnum(capability)];
-            if (entry.* != .consumed) entry.* = if (minimum == 0) .maybe_consumed else .consumed;
+            state.consumeCapability(capability, minimum != 0);
         }
     }
 
@@ -4025,8 +4022,7 @@ pub const SafetyChecker = struct {
     ) !facts.StorageCapabilityId {
         _ = self;
         if (fresh.get(source)) |capability| return capability;
-        const capability: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
-        try state.storage_capabilities.append(.available);
+        const capability = try state.establishCapability();
         try fresh.put(source, capability);
         return capability;
     }
@@ -6684,18 +6680,7 @@ pub const SafetyChecker = struct {
             if (!found) try joined.symbolic_values.append(try self.joinSymbolicStoredValue(stored, try self.symbolicValueAt(left, stored.identity)));
         }
 
-        const capability_count = @max(left.storage_capabilities.items.len, right.storage_capabilities.items.len);
-        for (0..capability_count) |index| {
-            const left_state: StorageCapabilityState = if (index < left.storage_capabilities.items.len)
-                left.storage_capabilities.items[index]
-            else
-                .consumed;
-            const right_state: StorageCapabilityState = if (index < right.storage_capabilities.items.len)
-                right.storage_capabilities.items[index]
-            else
-                .consumed;
-            try joined.storage_capabilities.append(if (left_state == right_state) left_state else .maybe_consumed);
-        }
+        try joined.joinCapabilities(left, right);
 
         for (left.places.items) |left_place| {
             var merged = left_place;
@@ -10686,4 +10671,64 @@ test "child explicit anchors do not become intrinsic aggregate anchors" {
     const anchored = try checker.instantiateOutput(explicitly_anchored, &.{}, &state);
     try std.testing.expect(anchored.explicit_dependency);
     try std.testing.expect(anchored.fields[0].value.explicit_dependency);
+}
+
+test "Safety continuation capability namespaces isolate rejected candidates" {
+    var retained: SafetyChecker.ContinuationState = undefined;
+    retained.init(std.testing.allocator);
+    defer retained.deinit();
+    const original = try retained.state.establishCapability();
+    var rejected: SafetyChecker.ContinuationState = undefined;
+    try retained.fork(&rejected, std.testing.allocator);
+    defer rejected.deinit();
+    const provisional = try rejected.state.establishCapability();
+    rejected.state.consumeCapability(original, true);
+    try std.testing.expectEqual(.available, retained.state.capabilityState(original));
+    try std.testing.expectEqual(.absent, retained.state.capabilityState(provisional));
+    var accepted: SafetyChecker.ContinuationState = undefined;
+    try retained.fork(&accepted, std.testing.allocator);
+    defer accepted.deinit();
+    const published = try accepted.state.establishCapability();
+    // Candidates have separate identity spaces; only one will be published.
+    try std.testing.expectEqual(provisional, published);
+    try std.testing.expectEqual(retained.namespace.next_capability_id + 1, accepted.namespace.next_capability_id);
+    var branch = try accepted.state.clone(std.testing.allocator);
+    defer branch.deinit();
+    const branch_capability = try branch.establishCapability();
+    const continuation_capability = try accepted.state.establishCapability();
+    try std.testing.expect(branch_capability != continuation_capability);
+    try std.testing.expectEqual(.absent, accepted.state.capabilityState(branch_capability));
+}
+
+test "Safety primitive and summary acquisitions stay distinct across concrete branch joins" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var initial = SafetyChecker.FunctionState.init(a);
+    defer initial.deinit();
+    initial.tracker.namespace = &namespace;
+    var left = try initial.clone(a);
+    defer left.deinit();
+    var right = try initial.clone(a);
+    defer right.deinit();
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const first = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .raw_allocated_storage, &.{}, &.{}, &left, source);
+    var fresh = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(a);
+    defer fresh.deinit();
+    const effect: facts.FreshEffectSource = 17;
+    const second = try checker.instantiateFreshCapability(effect, &right, &fresh);
+    try std.testing.expectEqual(second, try checker.instantiateFreshCapability(effect, &right, &fresh));
+    try std.testing.expect(first.storage_capabilities[0] != second);
+    left.consumeCapability(first.storage_capabilities[0], true);
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    try std.testing.expectEqual(.consumed, joined.capabilityState(first.storage_capabilities[0]));
+    try std.testing.expectEqual(.available, joined.capabilityState(second));
+    try checker.activate_conditional_capabilities(&joined, first);
+    try std.testing.expectEqual(.consumed, joined.capabilityState(first.storage_capabilities[0]));
 }

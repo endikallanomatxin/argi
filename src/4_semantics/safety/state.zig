@@ -9,7 +9,21 @@ const primitives = @import("../primitives/schema.zig");
 const value_state = @import("value_state.zig");
 const fact_snapshot = @import("fact_snapshot.zig");
 
-pub const StorageCapabilityState = enum { available, conditional, maybe_consumed, consumed };
+pub const StorageCapabilityState = enum {
+    absent,
+    available,
+    conditional,
+    maybe_consumed,
+    consumed,
+
+    pub fn join(left: StorageCapabilityState, right: StorageCapabilityState) StorageCapabilityState {
+        // A path where the acquisition never happened says nothing about its
+        // consumption. In particular, absence must not revive consumed storage.
+        if (left == .absent) return right;
+        if (right == .absent) return left;
+        return if (left == right) left else .maybe_consumed;
+    }
+};
 pub const OwnershipEdge = struct { owner: facts.ValidityRootId, owned: facts.ValidityRootId };
 pub const StorageGeneration = struct {
     storage: facts.Place,
@@ -52,8 +66,6 @@ pub const State = struct {
     // Sparse value facts are separate from slot identity and initialization.
     // Ordinary scalar slots need no entry; immutable aggregates share facts.
     symbolic_values: std.array_list.Managed(SymbolicStoredValue),
-    // TODO: Give branch-created acquisition capabilities distinct shared
-    // identities as well; validity roots already use the joint namespace.
     storage_capabilities: std.array_list.Managed(StorageCapabilityState),
     ownership_edges: std.array_list.Managed(OwnershipEdge),
     storage_generations: std.array_list.Managed(StorageGeneration),
@@ -133,6 +145,40 @@ pub const State = struct {
             if (comptime std.mem.eql(u8, field.name, "tracker") or std.mem.eql(u8, field.name, "reachable")) continue;
             @field(self, field.name).allocator = allocator;
         }
+    }
+
+    pub fn establishCapability(self: *State) !facts.StorageCapabilityId {
+        const index = if (self.tracker.namespace) |namespace| namespace.next_capability_id else self.storage_capabilities.items.len;
+        if (index >= std.math.maxInt(u32)) return error.SafetyCapabilityIdentityLimit;
+        try self.storage_capabilities.ensureTotalCapacity(index + 1);
+        while (self.storage_capabilities.items.len <= index)
+            self.storage_capabilities.appendAssumeCapacity(.absent);
+        self.storage_capabilities.items[index] = .available;
+        if (self.tracker.namespace) |namespace| namespace.next_capability_id += 1;
+        return @enumFromInt(index);
+    }
+
+    pub fn capabilityState(self: *const State, id: facts.StorageCapabilityId) StorageCapabilityState {
+        const index = @intFromEnum(id);
+        return if (index < self.storage_capabilities.items.len) self.storage_capabilities.items[index] else .absent;
+    }
+
+    pub fn joinCapabilities(self: *State, left: *const State, right: *const State) !void {
+        std.debug.assert(self.storage_capabilities.items.len == 0);
+        const count = @max(left.storage_capabilities.items.len, right.storage_capabilities.items.len);
+        try self.storage_capabilities.ensureTotalCapacity(count);
+        for (0..count) |index| {
+            const id: facts.StorageCapabilityId = @enumFromInt(index);
+            self.storage_capabilities.appendAssumeCapacity(.join(left.capabilityState(id), right.capabilityState(id)));
+        }
+    }
+
+    pub fn consumeCapability(self: *State, id: facts.StorageCapabilityId, definite: bool) void {
+        const index = @intFromEnum(id);
+        if (index >= self.storage_capabilities.items.len) return;
+        const entry = &self.storage_capabilities.items[index];
+        if (entry.* != .absent and entry.* != .consumed)
+            entry.* = if (definite) .consumed else .maybe_consumed;
     }
 
     pub fn setPlace(self: *State, storage: facts.Place, initializedness: value_state.Initializedness, value: facts.ValueFacts) !void {
@@ -402,4 +448,72 @@ fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
 
 test "Safety state clones own independent tables and release every failed allocation" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneAllocationFailures, .{});
+}
+
+test "Safety acquisitions on sibling branches retain distinct identities through joins" {
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(std.testing.allocator);
+    var initial = State.init(std.testing.allocator);
+    defer initial.deinit();
+    initial.tracker.namespace = &namespace;
+    const shared = try initial.establishCapability();
+    var left = try initial.clone(std.testing.allocator);
+    defer left.deinit();
+    var right = try initial.clone(std.testing.allocator);
+    defer right.deinit();
+    const first = try left.establishCapability();
+    const second = try right.establishCapability();
+    try std.testing.expect(first != second);
+    try std.testing.expectEqual(.absent, right.capabilityState(first));
+    try std.testing.expectEqual(.absent, left.capabilityState(second));
+    left.consumeCapability(first, true);
+    right.consumeCapability(shared, false);
+    var joined = State.init(std.testing.allocator);
+    defer joined.deinit();
+    try joined.joinCapabilities(&left, &right);
+    try std.testing.expectEqual(.consumed, joined.capabilityState(first));
+    try std.testing.expectEqual(.available, joined.capabilityState(second));
+    try std.testing.expectEqual(.maybe_consumed, joined.capabilityState(shared));
+    joined.consumeCapability(second, true);
+    try std.testing.expectEqual(.consumed, joined.capabilityState(second));
+    try std.testing.expectEqual(.consumed, joined.capabilityState(first));
+}
+
+test "Safety capability joins preserve every present-path consumption state" {
+    const tags = std.meta.tags(StorageCapabilityState);
+    for (tags) |left| for (tags) |right| {
+        const result = StorageCapabilityState.join(left, right);
+        try std.testing.expectEqual(result, StorageCapabilityState.join(right, left));
+        try std.testing.expectEqual(left, StorageCapabilityState.join(left, left));
+        if (left == .absent) {
+            try std.testing.expectEqual(right, result);
+        } else if (right == .absent or left == right) {
+            try std.testing.expectEqual(left, result);
+        } else try std.testing.expectEqual(.maybe_consumed, result);
+    };
+}
+
+fn capabilityAllocationFailure(allocator: std.mem.Allocator) !void {
+    var namespace: facts.Tracker.RootNamespace = .{ .next_capability_id = 3 };
+    var state = State.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const id = state.establishCapability() catch |err| {
+        try std.testing.expectEqual(@as(u32, 3), namespace.next_capability_id);
+        try std.testing.expectEqual(@as(usize, 0), state.storage_capabilities.items.len);
+        return err;
+    };
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(id));
+    try std.testing.expectEqual(@as(u32, 4), namespace.next_capability_id);
+    for (state.storage_capabilities.items[0..3]) |entry| try std.testing.expectEqual(.absent, entry);
+}
+
+test "Safety capability allocation failure preserves namespace and exhaustion cannot wrap" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, capabilityAllocationFailure, .{});
+    var namespace: facts.Tracker.RootNamespace = .{ .next_capability_id = std.math.maxInt(u32) };
+    var state = State.init(std.testing.allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    try std.testing.expectError(error.SafetyCapabilityIdentityLimit, state.establishCapability());
+    try std.testing.expectEqual(@as(usize, 0), state.storage_capabilities.items.len);
 }
