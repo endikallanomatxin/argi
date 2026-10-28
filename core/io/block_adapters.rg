@@ -19,19 +19,11 @@ _writer_block := #(.t: Type: Writer#(t)) (.self: $&t, .buffer: ArrayView#(.t: UI
 }
 
 implement BlockReader#(File) (
-    .read_block = (.self: $&File, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result : Errable#(UIntNative, (..stream_read_failed))
-    ) {
-        result = read(self, .buffer = buffer)
-    }
+    .read_block = _read_file
 )
 
 implement BlockReader#(ProcessStream) (
-    .read_block = (.self: $&ProcessStream, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result : Errable#(UIntNative, (..stream_read_failed))
-    ) {
-        result = read(self, .buffer = buffer)
-    }
+    .read_block = _reader_block
 )
 
 implement BlockWriter#(ProcessStream) (

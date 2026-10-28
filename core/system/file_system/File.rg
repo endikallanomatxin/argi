@@ -217,7 +217,7 @@ _read_file := (.self: $&File, .buffer: MutableArrayView#(.t: UInt8)) -> (
     result = ..ok read_count
 }
 
-_file_write := (.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
+_file_write_block := (.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
 ) {
     assume ffi := self&._ffi
@@ -228,9 +228,9 @@ _file_write := (.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
     }
 
     stream ::= file_stream_pointer(self).stream
-    wrote ::= fwrite_from(.buffer = value, .stream = stream).count
+    wrote ::= fwrite_from(.buffer = buffer, .stream = stream).count
 
-    if wrote < length(&value).count {
+    if wrote < length(&buffer).count {
         if ferror(.stream = stream).status != 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
@@ -240,34 +240,19 @@ _file_write := (.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
     result = ..ok wrote
 }
 
+_file_write := (.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+) {
+    result = _file_write_block(self, .buffer = as_readonly(&value).view)
+}
+
 implement WriteValue#(File, MutableArrayView#(.t: UInt8)) (
     .Result      : Type = Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     .write_value = _file_write
 )
 
 implement BlockWriter#(File) (
-    .write_block = (.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
-        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
-    ) {
-        assume ffi := self&._ffi
-
-        if self&.stream_address == 0 {
-            result = ..error(.reason = ..stream_write_failed)
-            return
-        }
-
-        stream ::= file_stream_pointer(self).stream
-        count ::= fwrite_from(.buffer = buffer, .stream = stream).count
-
-        if count < length(&buffer).count {
-            if ferror(.stream = stream).status != 0 {
-                result = ..error(.reason = ..stream_write_failed)
-                return
-            }
-        }
-
-        result = ..ok count
-    }
+    .write_block = _file_write_block
 )
 
 implement Writer#(File) (
