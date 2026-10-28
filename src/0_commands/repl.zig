@@ -251,18 +251,24 @@ fn printValue(output: *std.Io.Writer, graph: *const @import("../4_semantics/glob
                 }
                 const types = @import("../4_semantics/global/types.zig");
                 const element_ty = if (item == .array) types.arrayElement(graph, ty).? else graph.fields.items[types.fields(graph, ty).?.start + index].ty;
+                if (item == .record) {
+                    const field = graph.fields.items[types.fields(graph, ty).?.start + index];
+                    const name = graph.text(field.name);
+                    if (name.len != 0) try output.print(".{s} = ", .{name});
+                }
                 try printValue(output, graph, element_ty, element, depth + 1);
             }
             try output.writeByte(if (item == .record) ')' else ']');
         },
         .choice => |choice| {
-            try output.print("<variant {d}", .{choice.variant});
+            const variants = @import("../4_semantics/global/types.zig").variants(graph, ty).?;
+            const selected = graph.variants.items[variants.start + choice.variant];
+            try output.print("..{s}", .{graph.text(selected.name)});
             if (choice.payload) |payload| {
-                try output.writeAll(": ");
-                const variants = @import("../4_semantics/global/types.zig").variants(graph, ty).?;
-                try printValue(output, graph, graph.variants.items[variants.start + choice.variant].payload_type.?, payload.*, depth + 1);
+                if (payload.* != .record) try output.writeByte('(');
+                try printValue(output, graph, selected.payload_type.?, payload.*, depth + 1);
+                if (payload.* != .record) try output.writeByte(')');
             }
-            try output.writeByte('>');
         },
     }
 }
@@ -322,7 +328,49 @@ test "REPL integer presentation uses slot and aggregate field types" {
     var output = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer output.deinit();
     try interact(&session, &input, &output.writer, false, false, null);
-    try std.testing.expectEqualStrings("_0 = -1\n_1 = 18446744073709551615\n_2 = (-1, 18446744073709551615)\n", output.written());
+    try std.testing.expectEqualStrings("_0 = -1\n_1 = 18446744073709551615\n_2 = (.small = -1, .large = 18446744073709551615)\n", output.written());
+}
+
+test "REPL presentation names nested variants and fields without reading references" {
+    var session: interactive.Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    var input = std.Io.Reader.fixed(
+        "State := (..ready(.count: UInt8), ..empty)\n" ++
+            "state :: State = ..ready(.count = 7)\n" ++
+            "state\n" ++
+            "state = ..empty\nstate\n" ++
+            "number :: Int32 = 42\n" ++
+            "record :: (.state: State, .numbers: [2]Int32, .link: &Int32) = (.state = state, .numbers = (1, 2), .link = &number)\n" ++
+            "record\n:quit\n",
+    );
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try interact(&session, &input, &output.writer, false, false, null);
+    try std.testing.expectEqualStrings(
+        "_0 = ..ready(.count = 7)\n_1 = ..empty\n" ++
+            "_2 = (.state = ..empty, .numbers = [1, 2], .link = <reference>)\n",
+        output.written(),
+    );
+}
+
+test "REPL aggregate presentation remains bounded" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 33 } },
+    });
+    const elements = [_]value.Value{.{ .integer = 7 }} ** 33;
+    var output = std.Io.Writer.Allocating.init(a);
+    defer output.deinit();
+    try printValue(&output.writer, &graph, @enumFromInt(1), .{ .array = &elements }, 0);
+    try std.testing.expectEqual(@as(usize, 32), std.mem.count(u8, output.written(), "7"));
+    try std.testing.expect(std.mem.endsWith(u8, output.written(), ", ...]"));
+    output.clearRetainingCapacity();
+    try printValue(&output.writer, &graph, @enumFromInt(1), .{ .array = &elements }, 16);
+    try std.testing.expectEqualStrings("...", output.written());
 }
 
 test "REPL transport requires reset after a runtime trap" {

@@ -359,9 +359,9 @@ selection leaves the accepted session unchanged.
 Expressions create constant numbered bindings (`_0`, `_1`, ...), skipping names
 already in use. Results, owners and loans remain in the session until reset or
 exit; presentation does not copy owners or dereference references. Aggregate
-presentation is bounded, StringView results display quoted text, other references
-are shown as `<reference>`, and choices use
-variant indexes. Type results remain compiler constants, display their type names
+presentation is bounded, records show field names, and choices show variant
+names with their payloads. StringView results display quoted text; other references
+are shown as `<reference>`. Type results remain compiler constants, display their type names
 and can be reused in queries such as `size_of(.type = _0)`. Neither their storage
 nor their identity is materialized in the VM. This is an initial value display, not the text-formatting API.
 

@@ -18,8 +18,8 @@ JIT and complete native-backend parity are not prerequisites.
 - The semantic graph is shared, not copied per command. Frame identities,
   acquisition tombstones, executable metadata and some immutable value storage
   remain retained until reset. Numbered results intentionally retain their values.
-- Value display is bounded but basic: references are opaque and choices display
-  ordinals. Terminal editing lacks full Unicode display-width handling.
+- Value display is bounded, with named fields/variants and opaque references.
+  Terminal editing lacks full Unicode display-width handling.
 
 ## Work and exit criteria
 
@@ -44,9 +44,10 @@ JIT and complete native-backend parity are not prerequisites.
    memory, distinguishing live results from reclaimable storage. Establish
    reproducible budgets from these measurements, including repeated reset cycles.
    Coordinate reclamation with [compiler follow-ups](compiler.md).
-5. Improve named variant/record presentation and ordinary terminal editing without
-   dereferencing or copying owners for display. Verify Unicode cursor/rendering,
-   multiline input, history, Ctrl-C/EOF and piped input. Keep real-terminal
+5. Complete Unicode display-width handling without changing submitted source.
+   Preserve bounded presentation without dereferencing or copying owners. Verify
+   Unicode cursor/rendering, multiline input, history, Ctrl-C/EOF and piped input.
+   Keep real-terminal
    tests alongside transport tests and document platform coverage.
 
 Before removing the label, publish the supported subset, failure/reset contract
