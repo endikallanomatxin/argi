@@ -97,13 +97,20 @@ main := () -> (.status_code: Int32 = 1) {
         )
         | unwrap_or_abort(_)
     ]
-    match push(
-        .self      = $&bounded
-        .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
-        .allocator = $&refusal
-    ) {
-        ..ok _ { abort }
-        ..error error { if error.reason != ..out_of_memory { abort } }
+    match peek_reference(.self = &bounded).value {
+        ..none { abort }
+        ..some held {
+            match push(
+                .self      = $&bounded
+                .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
+                .allocator = $&refusal
+            ) {
+                ..ok _ { abort }
+                ..error error {
+                    if error.reason != ..out_of_memory or held.value&.a.id != 4 { abort }
+                }
+            }
+        }
     }
     if drops != 14 or length(.self = &bounded).count != 1 { abort }
     match peek_reference(.self = &bounded).value {

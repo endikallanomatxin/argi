@@ -49,3 +49,71 @@ test "real core environment accepts explicit allocator dependencies and selected
     });
     _ = try environment.checkModule(std.testing.allocator, "tests/feature_tests/execution/110X_computed_import_cycle", .{ .message = "import cycle detected after compile-time selection" });
 }
+
+const partitioned_outcome_prefix =
+    \\Owner := (.value: Int32)
+    \\Outcome := (..changed, ..unchanged)
+    \\implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () {})
+;
+const partitioned_outcome_body =
+    \\mutate := (.self: $&Owner, .fail: Bool) -> (.result: Outcome) {
+    \\    if fail {
+    \\        result = ..unchanged
+    \\    } else {
+    \\        deinit(.self = self)
+    \\        self&= (.value = 2)
+    \\        result = ..changed
+    \\    }
+;
+const partitioned_outcome_main =
+    \\main := () -> (.status_code: Int32 = 0) {
+    \\    owner :: Owner = (.value = 1)
+    \\    observed ::= &owner
+    \\    match mutate(.self = $&owner, .fail = true) {
+;
+
+test "outcome partitions preserve unchanged exits without reviving changed storage" {
+    var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
+    defer environment.deinit();
+    const good = partitioned_outcome_prefix ++ "\n" ++ partitioned_outcome_body ++ "\n}\n" ++ partitioned_outcome_main ++
+        \\        ..changed {}
+        \\        ..unchanged { status_code = observed&.value }
+        \\    }
+        \\}
+    ;
+    _ = try environment.check(.{ .name = "outcome_partition_preserved", .files = &.{.{ .path = "main.rg", .code = good }} });
+    const changed = partitioned_outcome_prefix ++ "\n" ++ partitioned_outcome_body ++ "\n}\n" ++ partitioned_outcome_main ++
+        \\        ..changed { status_code = observed&.value }
+        \\        ..unchanged {}
+        \\    }
+        \\}
+    ;
+    _ = try environment.check(.{ .name = "outcome_partition_changed", .files = &.{.{ .path = "main.rg", .code = changed }}, .diagnostic = .{ .message = "reference depends on a root that has ended", .file = "main.rg" } });
+    const overwritten = partitioned_outcome_prefix ++ "\n" ++ partitioned_outcome_body ++ "\n    result = ..unchanged\n}\n" ++ partitioned_outcome_main ++
+        \\        ..changed {}
+        \\        ..unchanged { status_code = observed&.value }
+        \\    }
+        \\}
+    ;
+    _ = try environment.check(.{ .name = "outcome_partition_overwritten", .files = &.{.{ .path = "main.rg", .code = overwritten }}, .diagnostic = .{ .message = "reference depends on a root that has ended", .file = "main.rg" } });
+    const historical = partitioned_outcome_prefix ++ "\n" ++ partitioned_outcome_body ++ "\n}\n" ++
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    owner :: Owner = (.value = 1)
+        \\    observed ::= &owner
+        \\    deinit(.self = $&owner)
+        \\    owner = (.value = 3)
+        \\    match mutate(.self = $&owner, .fail = true) {
+        \\        ..changed {}
+        \\        ..unchanged { status_code = observed&.value }
+        \\    }
+        \\}
+    ;
+    _ = try environment.check(.{ .name = "outcome_partition_historical", .files = &.{.{ .path = "main.rg", .code = historical }}, .diagnostic = .{ .message = "reference depends on a root that has ended", .file = "main.rg" } });
+    const indirect = partitioned_outcome_prefix ++ "\n" ++ partitioned_outcome_body ++ "\n    selected ::= $&result\n    selected&= ..unchanged\n}\n" ++ partitioned_outcome_main ++
+        \\        ..changed {}
+        \\        ..unchanged { status_code = observed&.value }
+        \\    }
+        \\}
+    ;
+    _ = try environment.check(.{ .name = "outcome_partition_indirect", .files = &.{.{ .path = "main.rg", .code = indirect }}, .diagnostic = .{ .message = "reference depends on a root that has ended", .file = "main.rg" } });
+}

@@ -7,13 +7,9 @@ Prioritize a concrete core consumer before extending syntax or proofs.
 - Extend joint conditional generation, consumption, relocation and cleanup beyond
   the existing single-result proof rules. Require exact caller storage identities;
   dependency permissions alone cannot establish ownership or occupancy.
-- Preserve correlations through branch-assigned/rewritten outputs, intermediate
-  effects and nontrivial cleanup where every selected exit proves them. Concrete
-  consumer: retain a `PriorityQueue.peek_reference` borrow in the error branch of
-  a refused `push`, then retry growth (extend `collections/149_owned_ordering`).
-  The current analysis applies `ensure_capacity` may-effects before splitting
-  propagation exits. Refine effects at the original call; never restore a caller
-  snapshot across later writes or cleanup.
+- Extend conditional whole-storage transitions through stored call results,
+  indirect output writes and loops rewriting discriminants. Retain intervening
+  writes and cleanup; never restore an older caller snapshot when a tag is tested.
 - Support conditional hidden retention/replacement, grouped opaque mappings and
   selectors through arbitrary output fields.
 - Extend ownership transitions through erased receivers when their concrete

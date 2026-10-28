@@ -807,6 +807,10 @@ pub const Infer = struct {
                     self.domain_invalidations.clearRetainingCapacity();
                     var outcome_flow = InputPostStateFlow.init(self.allocator);
                     defer outcome_flow.deinit();
+                    if (self.graph.binding(self.selected_outcome.?.binding).initialization) |initialization| {
+                        const known = try self.knownOutcome(try self.inferExpression(function_id, initialization), selector.parent_variants);
+                        outcome_flow.outcome = self.classifyOutcome(known.variant, known.mismatch);
+                    }
                     var outcome_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
                     defer if (outcome_exits) |*exits| exits.deinit();
                     try self.inferInputPostStates(function_id, function.body.?, &outcome_flow, &outcome_exits);
@@ -2007,28 +2011,50 @@ pub const Infer = struct {
         effect: facts.ValueEffect,
     };
 
+    // Each inference run observes one output selector. Three classes suffice;
+    // independent outputs never form a Cartesian product of branch states.
+    const OutcomeClass = enum { unknown, selected, other };
+
     const InputPostStateFlow = struct {
         states: std.array_list.Managed(facts.PlacePostState),
         reachable: bool = true,
-        outcome_variant: ?u32 = null,
-        outcome_parent_mismatch: bool = false,
+        outcome: OutcomeClass = .unknown,
         domains: std.array_list.Managed(facts.InputDomain),
+        // Leaves have no alternatives. The parent retains a conservative union
+        // for loop widening; sequential statements visit each leaf separately.
+        alternatives: std.array_list.Managed(InputPostStateFlow),
 
         fn init(allocator: std.mem.Allocator) InputPostStateFlow {
-            return .{ .states = std.array_list.Managed(facts.PlacePostState).init(allocator), .domains = std.array_list.Managed(facts.InputDomain).init(allocator) };
+            return .{ .states = .init(allocator), .domains = .init(allocator), .alternatives = .init(allocator) };
         }
 
         fn deinit(self: *InputPostStateFlow) void {
             self.states.deinit();
             self.domains.deinit();
+            for (self.alternatives.items) |*branch| branch.deinit();
+            self.alternatives.deinit();
         }
 
         fn clone(self: *const InputPostStateFlow, allocator: std.mem.Allocator) !InputPostStateFlow {
-            var states = std.array_list.Managed(facts.PlacePostState).init(allocator);
-            try states.appendSlice(self.states.items);
-            var domains = std.array_list.Managed(facts.InputDomain).init(allocator);
-            try domains.appendSlice(self.domains.items);
-            return .{ .states = states, .domains = domains, .reachable = self.reachable, .outcome_variant = self.outcome_variant, .outcome_parent_mismatch = self.outcome_parent_mismatch };
+            var result = InputPostStateFlow.init(allocator);
+            errdefer result.deinit();
+            try result.states.appendSlice(self.states.items);
+            try result.domains.appendSlice(self.domains.items);
+            result.reachable = self.reachable;
+            result.outcome = self.outcome;
+            for (self.alternatives.items) |*branch| {
+                var retained = try branch.clone(allocator);
+                result.alternatives.append(retained) catch |err| {
+                    retained.deinit();
+                    return err;
+                };
+            }
+            return result;
+        }
+
+        fn collapse(self: *InputPostStateFlow) void {
+            for (self.alternatives.items) |*branch| branch.deinit();
+            self.alternatives.clearRetainingCapacity();
         }
     };
 
@@ -2075,11 +2101,37 @@ pub const Infer = struct {
         if (flow.reachable) if (block.ret_val) |value| {
             const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
             if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, value) == null)
-                try self.inferInputPostStatesExpression(function_id, value, &flow.states, exits);
+                try self.inferInputPostStatesNode(function_id, value, flow, exits);
         };
     }
 
-    fn inferInputPostStatesNode(
+    fn classifyOutcome(self: *const Infer, variant: ?u32, mismatch: bool) OutcomeClass {
+        const selected = self.selected_outcome orelse return .unknown;
+        if (mismatch) return .other;
+        return if (variant) |tag| if (tag == selected.variant_index) .selected else .other else .unknown;
+    }
+
+    fn inferInputPostStatesNode(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *InputPostStateFlow, exits: *?std.array_list.Managed(facts.PlacePostState)) anyerror!void {
+        if (!flow.reachable) return;
+        if (flow.alternatives.items.len == 0) {
+            const previous_sink = self.post_domain_sink;
+            self.post_domain_sink = &flow.domains;
+            defer self.post_domain_sink = previous_sink;
+            return self.inferInputPostStatesLeaf(function, node, flow, exits);
+        }
+        var joined = InputPostStateFlow.init(self.allocator);
+        defer joined.deinit();
+        joined.reachable = false;
+        for (flow.alternatives.items) |*alternative| {
+            var branch = try alternative.clone(self.allocator);
+            defer branch.deinit();
+            try self.inferInputPostStatesNode(function, node, &branch, exits);
+            try self.joinInputPostStateFallthrough(&joined, &joined, &branch);
+        }
+        std.mem.swap(InputPostStateFlow, flow, &joined);
+    }
+
+    fn inferInputPostStatesLeaf(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
         node_id: graph_mod.GlobalNodeId,
@@ -2095,6 +2147,7 @@ pub const Infer = struct {
                     try self.inferInputPostStatesExpression(function_id, initialization, states, exits);
             },
             .assignment => |assignment| {
+                if (try self.inferOutputCallAssignment(function_id, assignment.binding, assignment.value, flow, exits)) return;
                 const previous_forwarded = self.forwarded_outcome;
                 const previous_leaf = self.forwarded_leaf_selected;
                 defer self.forwarded_outcome = previous_forwarded;
@@ -2105,10 +2158,9 @@ pub const Infer = struct {
                 if (self.selected_outcome) |selected| if (self.outputIndex(function_id, assignment.binding)) |index| {
                     if (index == selected.output_index) {
                         const known = try self.knownOutcome(try self.inferExpression(function_id, assignment.value), selected.parent_variants);
-                        flow.outcome_parent_mismatch = known.mismatch;
                         const origin = try self.expressionForwardOrigin(assignment.value);
                         const selected_origin = if (self.selected_forward) |forwarded| if (origin) |actual| actual.call == forwarded.call and actual.output_index == forwarded.selector.output_index else false else false;
-                        flow.outcome_variant = if (selected_origin and self.selected_forward_applied and !known.mismatch) selected.variant_index else known.variant;
+                        flow.outcome = if (selected_origin and self.selected_forward_applied and !known.mismatch) .selected else self.classifyOutcome(known.variant, known.mismatch);
                     }
                 };
             },
@@ -2207,13 +2259,13 @@ pub const Infer = struct {
                 try self.joinInputPostStates(states, states, &body_flow.states);
                 for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
                 for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
-                flow.outcome_variant = null;
-                flow.outcome_parent_mismatch = false;
+                if (!self.selectedOutputUnchangedByLoops()) flow.outcome = .unknown;
             },
             .for_statement => |statement| {
                 if (statement.init) |initialization|
                     try self.inferInputPostStatesNode(function_id, initialization, flow, exits);
                 if (!flow.reachable) return;
+                flow.collapse();
                 var loop_observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
                 defer loop_observations.deinit();
                 const parent_observations = self.observation_sink;
@@ -2244,8 +2296,7 @@ pub const Infer = struct {
                 try self.joinInputPostStates(states, states, &body_flow.states);
                 for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
                 for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
-                flow.outcome_variant = null;
-                flow.outcome_parent_mismatch = false;
+                if (!self.selectedOutputUnchangedByLoops()) flow.outcome = .unknown;
             },
             .switch_statement => |switch_id| {
                 const statement = self.graph.switches.items[@intFromEnum(switch_id)];
@@ -2485,24 +2536,11 @@ pub const Infer = struct {
             },
             .error_propagation => |propagation_id| {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
-                try self.inferInputPostStatesExpression(function_id, propagation.errable_value, states, exits);
-                var error_flow = InputPostStateFlow.init(self.allocator);
-                defer error_flow.deinit();
-                try error_flow.states.appendSlice(states.items);
-                if (self.post_domain_sink) |sink| try error_flow.domains.appendSlice(sink.items);
-                try self.inferInputPostStatesRange(function_id, propagation.cleanup_nodes, &error_flow, exits);
-                if (error_flow.reachable) try self.recordOutcomeExit(exits, &error_flow);
+                try self.inferPropagationPostStates(function_id, propagation, null, states, exits);
             },
             .error_context => |context_id| {
                 const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
-                try self.inferInputPostStatesExpression(function_id, context.errable_value, states, exits);
-                var error_flow = InputPostStateFlow.init(self.allocator);
-                defer error_flow.deinit();
-                try error_flow.states.appendSlice(states.items);
-                if (self.post_domain_sink) |sink| try error_flow.domains.appendSlice(sink.items);
-                try self.inferInputPostStatesExpression(function_id, context.context, &error_flow.states, exits);
-                try self.inferInputPostStatesRange(function_id, context.cleanup_nodes, &error_flow, exits);
-                if (error_flow.reachable) try self.recordOutcomeExit(exits, &error_flow);
+                try self.inferPropagationPostStates(function_id, context, context.context, states, exits);
             },
             .function_call => |call| {
                 const forwarded = self.forwarded_outcome;
@@ -2556,6 +2594,109 @@ pub const Infer = struct {
             },
             else => {},
         };
+    }
+
+    // An assignment can be overwritten later. Keep both selected and other
+    // callee outcomes here, rather than assuming that this is the final write.
+    fn inferOutputCallAssignment(self: *Infer, function: graph_mod.GlobalFunctionId, binding: graph_mod.GlobalBindingId, value: graph_mod.GlobalNodeId, flow: *InputPostStateFlow, exits: *?std.array_list.Managed(facts.PlacePostState)) anyerror!bool {
+        const selected = self.selected_outcome orelse return false;
+        if (binding != selected.binding or selected.parent_variants.len != 0 or self.addressed_outputs.contains(binding)) return false;
+        const variants = types.variants(self.graph, self.graph.binding(binding).ty) orelse return false;
+        if (!try self.prepareOutcomeCall(function, value, &flow.states, exits)) return false;
+        var joined = InputPostStateFlow.init(self.allocator);
+        defer joined.deinit();
+        joined.reachable = false;
+        for ([_]OutcomeClass{ .selected, .other }) |outcome| {
+            if (outcome == .other and variants.len <= 1) continue;
+            var branch = try flow.clone(self.allocator);
+            defer branch.deinit();
+            branch.outcome = outcome;
+            const previous_sink = self.post_domain_sink;
+            self.post_domain_sink = &branch.domains;
+            defer self.post_domain_sink = previous_sink;
+            // The complement keeps conservative effects. There is no need to
+            // enumerate all unrelated variants to retain a sound alternative.
+            try self.applySelectedCallPostStates(function, value, if (outcome == .selected) selected.variant_index else null, &branch.states);
+            try self.joinInputPostStateFallthrough(&joined, &joined, &branch);
+        }
+        std.mem.swap(InputPostStateFlow, flow, &joined);
+        return true;
+    }
+
+    fn selectedOutputUnchangedByLoops(self: *const Infer) bool {
+        const selected = self.selected_outcome orelse return false;
+        const activation = self.cleanup orelse return false;
+        for (activation.output_bindings, 0..) |binding, index|
+            if (binding == selected.binding) return !activation.loop_assigned[index];
+        return false;
+    }
+
+    // Arguments execute before the result discriminant is known. Analyze them
+    // once, then apply the selected callee effects independently to both exits.
+    // Previously evaluated results retain their conservative effects; observing
+    // their tag here never restores a pre-call caller snapshot.
+    fn prepareOutcomeCall(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, states: *std.array_list.Managed(facts.PlacePostState), exits: *?std.array_list.Managed(facts.PlacePostState)) anyerror!bool {
+        switch (self.graph.node(node).content) {
+            .function_call => |call| {
+                if (self.graph.function(call.callee).output.len != 1) return false;
+                if (call.callee_value) |value| try self.inferInputPostStatesExpression(function, value, states, exits);
+                try self.inferInputPostStatesExpression(function, call.input, states, exits);
+            },
+            .virtual_call => |id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                const contract = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract orelse return false;
+                if (contract.output_count != 1) return false;
+                try self.inferInputPostStatesExpression(function, call.handle, states, exits);
+                try self.inferInputPostStatesExpression(function, call.input, states, exits);
+            },
+            else => return false,
+        }
+        return true;
+    }
+
+    fn applySelectedCallPostStates(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, variant: ?u32, states: *std.array_list.Managed(facts.PlacePostState)) !void {
+        const previous = self.forwarded_outcome;
+        const previous_leaf = self.forwarded_leaf_selected;
+        defer self.forwarded_outcome = previous;
+        defer self.forwarded_leaf_selected = previous_leaf;
+        self.forwarded_outcome = if (variant) |tag| .{ .output_index = 0, .variant_index = tag } else null;
+        switch (self.graph.node(node).content) {
+            .function_call => |call| try self.applyInputPostStatesFromFunctionCall(function, call.callee, call.input, states),
+            .virtual_call => |id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                if (try self.virtualSummary(call.safety_methods)) |summary|
+                    try self.applyInputPostStatesFromSummary(function, summary, call.input, states, null);
+            },
+            else => unreachable,
+        }
+    }
+
+    fn inferPropagationPostStates(self: *Infer, function: graph_mod.GlobalFunctionId, propagation: anytype, context: ?graph_mod.GlobalNodeId, states: *std.array_list.Managed(facts.PlacePostState), exits: *?std.array_list.Managed(facts.PlacePostState)) anyerror!void {
+        const source_type = self.graph.node(propagation.errable_value).ty orelse return error.InvalidErrorPropagation;
+        const ok = self.variantIndex(source_type, propagation.ok_variant) orelse return error.InvalidErrorPropagation;
+        const failed = self.variantIndex(source_type, propagation.error_variant) orelse return error.InvalidErrorPropagation;
+        const direct = try self.prepareOutcomeCall(function, propagation.errable_value, states, exits);
+        if (!direct) try self.inferInputPostStatesExpression(function, propagation.errable_value, states, exits);
+        var error_flow = InputPostStateFlow.init(self.allocator);
+        defer error_flow.deinit();
+        try error_flow.states.appendSlice(states.items);
+        if (self.post_domain_sink) |sink| try error_flow.domains.appendSlice(sink.items);
+        if (self.selected_outcome) |selected| {
+            // Propagation returns the function's single Errable output. Other
+            // selectors cannot inherit a tag just because its spelling agrees.
+            if (self.graph.function(function).output.len == 1 and selected.output_index == 0 and selected.parent_variants.len == 0)
+                error_flow.outcome = self.classifyOutcome(self.variantIndex(propagation.propagated_errable_type, propagation.propagated_error_variant), false);
+        }
+        {
+            const previous_sink = self.post_domain_sink;
+            self.post_domain_sink = &error_flow.domains;
+            defer self.post_domain_sink = previous_sink;
+            if (direct) try self.applySelectedCallPostStates(function, propagation.errable_value, failed, &error_flow.states);
+            if (context) |value| try self.inferInputPostStatesExpression(function, value, &error_flow.states, exits);
+            try self.inferInputPostStatesRange(function, propagation.cleanup_nodes, &error_flow, exits);
+        }
+        if (error_flow.reachable) try self.recordOutcomeExit(exits, &error_flow);
+        if (direct) try self.applySelectedCallPostStates(function, propagation.errable_value, ok, states);
     }
 
     fn inferConditionalInputPostStatesExpression(
@@ -3045,7 +3186,48 @@ pub const Infer = struct {
         try destination.appendSlice(joined.items);
     }
 
-    fn joinInputPostStateFallthrough(
+    fn appendPostStatePartition(self: *Infer, partitions: *std.array_list.Managed(InputPostStateFlow), flow: *const InputPostStateFlow) anyerror!void {
+        if (!flow.reachable) return;
+        if (flow.alternatives.items.len != 0) {
+            for (flow.alternatives.items) |*branch| try self.appendPostStatePartition(partitions, branch);
+            return;
+        }
+        for (partitions.items) |*existing| if (existing.outcome == flow.outcome) {
+            try self.joinInputPostStateCommon(existing, existing, flow);
+            return;
+        };
+        std.debug.assert(partitions.items.len < 3);
+        var retained = try flow.clone(self.allocator);
+        partitions.append(retained) catch |err| {
+            retained.deinit();
+            return err;
+        };
+    }
+
+    fn joinInputPostStateFallthrough(self: *Infer, destination: *InputPostStateFlow, left: *const InputPostStateFlow, right: *const InputPostStateFlow) anyerror!void {
+        var joined = InputPostStateFlow.init(self.allocator);
+        defer joined.deinit();
+        if (self.selected_outcome != null and !self.addressed_outputs.contains(self.selected_outcome.?.binding)) {
+            try self.appendPostStatePartition(&joined.alternatives, left);
+            try self.appendPostStatePartition(&joined.alternatives, right);
+            if (joined.alternatives.items.len == 1) {
+                var only = joined.alternatives.pop().?;
+                std.mem.swap(InputPostStateFlow, &joined, &only);
+                only.deinit();
+            } else {
+                joined.reachable = joined.alternatives.items.len != 0;
+                for (joined.alternatives.items, 0..) |*branch, index| {
+                    if (index == 0) try joined.states.appendSlice(branch.states.items) else try self.joinInputPostStates(&joined.states, &joined.states, &branch.states);
+                    for (branch.domains.items) |domain| try appendDomain(&joined.domains, domain);
+                }
+            }
+        } else {
+            try self.joinInputPostStateCommon(&joined, left, right);
+        }
+        std.mem.swap(InputPostStateFlow, destination, &joined);
+    }
+
+    fn joinInputPostStateCommon(
         self: *Infer,
         destination: *InputPostStateFlow,
         left: *const InputPostStateFlow,
@@ -3067,8 +3249,7 @@ pub const Infer = struct {
             destination.domains.clearRetainingCapacity();
             try destination.domains.appendSlice(domains.items);
             destination.reachable = true;
-            destination.outcome_variant = if (left.outcome_variant == right.outcome_variant) left.outcome_variant else null;
-            destination.outcome_parent_mismatch = left.outcome_parent_mismatch and right.outcome_parent_mismatch;
+            destination.outcome = if (left.outcome == right.outcome) left.outcome else .unknown;
         }
     }
 
@@ -3083,23 +3264,16 @@ pub const Infer = struct {
             current.deinit();
             current.* = combined;
         } else {
-            joined.* = try branch.clone(self.allocator);
+            const retained = try branch.clone(self.allocator);
+            joined.* = retained;
         }
     }
 
-    fn copyInputPostStateFlow(
-        self: *Infer,
-        destination: *InputPostStateFlow,
-        source: *const InputPostStateFlow,
-    ) !void {
-        _ = self;
-        destination.states.clearRetainingCapacity();
-        try destination.states.appendSlice(source.states.items);
-        destination.domains.clearRetainingCapacity();
-        try destination.domains.appendSlice(source.domains.items);
-        destination.reachable = source.reachable;
-        destination.outcome_variant = source.outcome_variant;
-        destination.outcome_parent_mismatch = source.outcome_parent_mismatch;
+    fn copyInputPostStateFlow(self: *Infer, destination: *InputPostStateFlow, source: *const InputPostStateFlow) !void {
+        if (destination == source) return;
+        var retained = try source.clone(self.allocator);
+        std.mem.swap(InputPostStateFlow, destination, &retained);
+        retained.deinit();
     }
 
     fn markAddressedOutput(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId) anyerror!void {
@@ -3113,15 +3287,14 @@ pub const Infer = struct {
         }
     }
 
-    fn recordOutcomeExit(self: *Infer, exits: *?std.array_list.Managed(facts.PlacePostState), flow: *const InputPostStateFlow) !void {
+    fn recordOutcomeExit(self: *Infer, exits: *?std.array_list.Managed(facts.PlacePostState), flow: *const InputPostStateFlow) anyerror!void {
+        if (!flow.reachable) return;
+        if (flow.alternatives.items.len != 0) {
+            for (flow.alternatives.items) |*branch| try self.recordOutcomeExit(exits, branch);
+            return;
+        }
         if (self.selected_outcome) |selected| {
-            // Once an output slot is exposed through a reference, an alias may
-            // change its tag. Keep every exit in that selector's may-effects
-            // until indirect writes have a branch-local discriminant model.
-            if (!self.addressed_outputs.contains(selected.binding)) {
-                if (flow.outcome_parent_mismatch) return;
-                if (flow.outcome_variant) |variant| if (variant != selected.variant_index) return;
-            }
+            if (!self.addressed_outputs.contains(selected.binding) and flow.outcome == .other) return;
         }
         for (flow.domains.items) |domain| try appendDomain(&self.domain_invalidations, domain);
         try self.recordInputPostStateExit(exits, &flow.states);
@@ -6688,4 +6861,29 @@ fn capabilityFlowCloneFailures(allocator: std.mem.Allocator) !void {
 
 test "capability flow cloning preserves initialized maps on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, capabilityFlowCloneFailures, .{});
+}
+
+fn clonePartitionedPostFlow(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var source = Infer.InputPostStateFlow.init(a);
+    defer source.deinit();
+    try source.states.append(.{ .target = .{ .input_index = 0 }, .initializedness = .initialized });
+    try source.alternatives.ensureTotalCapacity(2);
+    var selected = Infer.InputPostStateFlow.init(a);
+    selected.outcome = .selected;
+    source.alternatives.appendAssumeCapacity(selected);
+    var other = Infer.InputPostStateFlow.init(a);
+    other.outcome = .other;
+    source.alternatives.appendAssumeCapacity(other);
+    try source.alternatives.items[0].states.append(.{ .target = .{ .input_index = 0 }, .initializedness = .initialized });
+    try source.alternatives.items[1].domains.append(.{ .path = .{ .input_index = 1 }, .domain_index = 0 });
+    var copied = try source.clone(allocator);
+    defer copied.deinit();
+    try std.testing.expectEqual(@as(usize, 2), copied.alternatives.items.len);
+    copied.alternatives.items[0].states.clearRetainingCapacity();
+    try std.testing.expectEqual(@as(usize, 1), source.alternatives.items[0].states.items.len);
+}
+
+test "outcome partitions clone independently under allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, clonePartitionedPostFlow, .{});
 }

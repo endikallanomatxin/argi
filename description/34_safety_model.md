@@ -399,8 +399,16 @@ conservatively rather than gaining a guarantee that needs both results.
 > dependencies once all output terms from the same call are known. Copies retain
 > correlation; overwritten values and independent calls do not. Straight-line
 > wrappers can forward the exact outputs of one call while preserving their
-> input/output coordinates. Reassignment, unknown control flow, additional
-> effects and nontrivial cleanup keep the unconditional summary.
+> input/output coordinates. Joint dependency guards still require a complete
+> proof through subsequent writes, control flow and cleanup.
+> Post-state inference keeps at most three partitions for one selected output:
+> matching, nonmatching and unknown. Branch-assigned outputs, default tags and
+> direct error propagation retain their effects through later statements;
+> output replacement merges prior histories instead of erasing their effects.
+> An exhaustive match on a direct ordinary call evaluates arguments once and
+> applies call effects within each branch. Whole-storage transitions through
+> stored results, indirect output writes and loops rewriting discriminants keep
+> conservative effects. A result test never restores an older caller snapshot.
 > General guards carry complete effect records. Payload refinement changes
 > dependencies only; it never creates ownership, acquisition receipts or a new
 > storage generation. Generation and opaque-state refinement retain the existing

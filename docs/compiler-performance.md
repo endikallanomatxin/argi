@@ -625,3 +625,11 @@ memory remains 144.075 MiB, with the same function/instruction counts. The small
 total-time difference is insufficient to claim a general throughput improvement;
 the concrete result is removal of the repeated validation pass and its temporary
 substitution environments. Log: `.zig-cache/generic-constraints-once-profile.csv`.
+
+The partitioned post-state control completes 1,000 prelude calls in 6,452.4 ms
+and retains 144.075 MiB, with unchanged function/instruction counts. A separate
+100-resource run completes in 970.9 ms, retaining 142.771 MiB and 100 live
+acquisitions. These profiled controls exclude startup and are not an A/B speedup
+claim. Logs: `.zig-cache/partitioned-post-profile.csv` and
+`.zig-cache/partitioned-post-resources.csv`. Post-state joins retain at most three
+classes per selected output; distinct output selectors are analyzed independently.

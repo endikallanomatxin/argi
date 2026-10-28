@@ -970,24 +970,52 @@ pub const SafetyChecker = struct {
     ) !void {
         const sw = self.graph.switches.items[@intFromEnum(switch_id)];
         const source = self.graph.node(sw.expression);
-        const captured = try self.evaluateAccess(function, sw.expression, state);
-        // Binding reads also retain their explicit-dependency checks and
-        // active-tag refinement. Address capture itself has no read effects.
-        const choice = if (source.content == .binding_use)
-            try self.evaluate(function, sw.expression, state)
-        else
-            try self.readEvaluatedAccess(function, source.source, source.ty, captured, state);
+        var captured: EvaluatedAccess = .{};
+        var choice: facts.ValueFacts = .{};
+        var prepared: ?PreparedCallArguments = null;
+        defer if (prepared) |arguments| self.allocator.free(arguments.values);
+        var call_state: ?FunctionState = null;
+        defer if (call_state) |*candidate| candidate.deinit();
+        const split_call = source.content == .function_call and sw.exhaustive and sw.default_block == null and blk: {
+            const callee = self.graph.function(source.content.function_call.callee);
+            break :blk callee.body != null and callee.safety_primitive == .none and callee.output.len == 1;
+        };
+        if (split_call) {
+            // Fork at the call itself, after evaluating its inputs once. No
+            // effects of this call have been applied to the parent state yet.
+            const candidate = try self.cloneState(state);
+            call_state = candidate;
+            const diagnostic_count = self.diagnostics.list.items.len;
+            const call = source.content.function_call;
+            if (call.callee_value) |value| _ = try self.evaluate(function, value, &call_state.?);
+            prepared = try self.prepareCallArguments(function, call, &call_state.?);
+            if (self.diagnostics.list.items.len != diagnostic_count) return;
+            if (self.collect_stats) self.stats.calls += 1;
+        } else {
+            captured = try self.evaluateAccess(function, sw.expression, state);
+            // Binding reads retain dependency checks and active-tag refinement.
+            choice = if (source.content == .binding_use)
+                try self.evaluate(function, sw.expression, state)
+            else
+                try self.readEvaluatedAccess(function, source.source, source.ty, captured, state);
+        }
         var joined: ?FunctionState = null;
         defer if (joined) |*value| value.deinit();
         for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
-            var branch = try self.cloneState(state);
+            var branch = try self.cloneState(if (call_state) |*candidate| candidate else state);
             defer branch.deinit();
             const wanted = variantIndex(self.graph, source.ty.?, case.variant) orelse 0;
+            const diagnostic_count = self.diagnostics.list.items.len;
+            const branch_choice = if (prepared) |arguments|
+                (try self.applyFunctionSummaryWithOutcome(self.graph.node(source.content.function_call.input).source, sw.expression, source.content.function_call.callee, arguments.nodes, arguments.values, &branch, wanted)) orelse facts.ValueFacts{}
+            else
+                choice;
+            if (prepared != null and self.diagnostics.list.items.len != diagnostic_count) return;
             try self.refineChoiceStorage(&branch, sw.expression, source.ty.?, wanted, true, captured.storage);
             if (captured.storage == null) if (captured.pointer) |pointer|
                 try self.setSymbolicVariant(&branch, pointer, wanted);
             var payload: facts.ValueFacts = .{};
-            for (choice.variants) |variant| if (variant.index == wanted) {
+            for (branch_choice.variants) |variant| if (variant.index == wanted) {
                 payload = variant.value.*;
                 break;
             };
@@ -1336,14 +1364,13 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn evaluateCallCandidate(
-        self: *SafetyChecker,
-        caller: graph_mod.GlobalFunctionId,
-        call_node: ?graph_mod.GlobalNodeId,
-        call: anytype,
-        state: *FunctionState,
-    ) !facts.ValueFacts {
-        const callee = self.graph.functions.items[@intFromEnum(call.callee)];
+    const PreparedCallArguments = struct {
+        nodes: []const graph_mod.GlobalValueFieldId,
+        values: []facts.ValueFacts,
+    };
+
+    fn prepareCallArguments(self: *SafetyChecker, caller: graph_mod.GlobalFunctionId, call: anytype, state: *FunctionState) !PreparedCallArguments {
+        const callee = self.graph.function(call.callee);
         var argument_nodes: []const graph_mod.GlobalValueFieldId = &.{};
         const input_node = self.graph.nodes.items[@intFromEnum(call.input)];
         if (input_node.content == .struct_value_literal) {
@@ -1352,7 +1379,7 @@ pub const SafetyChecker = struct {
         }
 
         var values = try self.allocator.alloc(facts.ValueFacts, argument_nodes.len);
-        defer self.allocator.free(values);
+        errdefer self.allocator.free(values);
         for (argument_nodes, 0..) |field_id, index| {
             const field = self.graph.value_fields.items[@intFromEnum(field_id)];
             const summary = if (self.active_summaries) |engine| engine.summaryFor(call.callee) else null;
@@ -1363,6 +1390,23 @@ pub const SafetyChecker = struct {
             else
                 try self.evaluate(caller, field.value, state);
         }
+
+        return .{ .nodes = argument_nodes, .values = values };
+    }
+
+    fn evaluateCallCandidate(
+        self: *SafetyChecker,
+        caller: graph_mod.GlobalFunctionId,
+        call_node: ?graph_mod.GlobalNodeId,
+        call: anytype,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        const callee = self.graph.function(call.callee);
+        const prepared = try self.prepareCallArguments(caller, call, state);
+        defer self.allocator.free(prepared.values);
+        const argument_nodes = prepared.nodes;
+        const values = prepared.values;
+        const input_node = self.graph.node(call.input);
 
         if (callee.flags.has_foreign_capability) {
             const summary = (self.active_summaries orelse return error.MissingSafetySummary).summaryFor(call.callee) orelse return error.MissingSafetySummary;
@@ -1398,6 +1442,19 @@ pub const SafetyChecker = struct {
         values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !?facts.ValueFacts {
+        return self.applyFunctionSummaryWithOutcome(source, call_node, callee, argument_nodes, values, state, null);
+    }
+
+    fn applyFunctionSummaryWithOutcome(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        call_node: ?graph_mod.GlobalNodeId,
+        callee: graph_mod.GlobalFunctionId,
+        argument_nodes: []const graph_mod.GlobalValueFieldId,
+        values: []const facts.ValueFacts,
+        state: *FunctionState,
+        outcome: ?u32,
+    ) !?facts.ValueFacts {
         const engine = self.active_summaries orelse return null;
         const summary = try self.selectEntryGuardedSummary(engine.summaryFor(callee) orelse return null, values, state);
         var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
@@ -1409,7 +1466,16 @@ pub const SafetyChecker = struct {
         if (!try self.validateConsumedInputAliasing(source, summary, argument_nodes, values, state)) return facts.ValueFacts{};
         if (call_node) |node| try self.recordFunctionCallAutoDeinit(node, summary, argument_nodes, values, state);
         const prepared = try self.prepareGeneralValueGuards(summary, values, state);
-        const result = try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
+        var effects = summary;
+        if (outcome) |wanted| for (summary.outcome_post_states) |selected| {
+            if (selected.output_index != 0 or selected.parent_variants.len != 0 or selected.variant_index != wanted) continue;
+            effects.input_post_states = selected.input_post_states;
+            effects.invalidated_domains = selected.invalidated_domains;
+            effects.opaque_storage_empties = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.opaque_storage_empties, selected.opaque_storage_empties });
+            effects.outcome_post_states = &.{};
+            break;
+        };
+        const result = try self.applyOutcomeSummary(source, effects, argument_nodes, values, state);
         return try self.attachGeneralValueGuards(summary, prepared, result);
     }
 
