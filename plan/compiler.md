@@ -27,8 +27,6 @@ and nominal-type migration closed; preserve their validation.
 - Review declaration-side outcome translation against inferred effects, payload
   permissions, input guarantees and domain normalization. Compact output
   partitions still serve cleanup, forwarding and unreachable outcomes.
-- Index already-checked Deinit evidence without starting resolution from Safety
-  or codegen. Preserve caller visibility and declaration-order selection.
 - Extend conditional generation, consumption, relocation and cleanup for concrete
   consumers. Preserve exact caller storage identities; permissions alone do not
   establish ownership or occupancy.

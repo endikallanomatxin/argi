@@ -231,30 +231,22 @@ pub fn nullableChild(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.
     return field.ty;
 }
 
-/// Destructors receive an address of the owned value. A reference itself is
-/// never the value whose lifetime that destructor closes.
-pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {
-    if (graph.semanticType(ty) == .pointer) return null;
-    const contract = standard_contracts.standardDefinition(graph, "Deinit") orelse return null;
+/// A cleanup obligation comes from materialized Deinit evidence, independently
+/// of storage acquisition. This is an existence query, not operation selection;
+/// it must neither resolve new evidence nor rank caller-specific implementations.
+/// A reference is never the owned value whose lifetime a destructor closes.
+pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    if (graph.semanticType(ty) == .pointer) return false;
+    const contract = standard_contracts.standardDefinition(graph, "Deinit") orelse return false;
     var operations = contract_evidence.materializedOperations(graph, contract);
-    var found: ?graph_mod.GlobalFunctionId = null;
     while (operations.next()) |selected| {
         const id = selected.materializedFunction() orelse continue;
         const function = graph.function(id);
         if (!function.flags.is_deinit or function.input.len == 0) continue;
         const participant = selected.participant(graph, 0) orelse continue;
-        if (!equal(graph, participant, ty)) continue;
-        // Preserve declaration-order selection when the same evidence is reached
-        // through several caller contexts.
-        if (found == null or @intFromEnum(id) < @intFromEnum(found.?)) found = id;
+        if (equal(graph, participant, ty)) return true;
     }
-    return found;
-}
-
-/// A cleanup obligation comes from selected Deinit evidence, independently
-/// of storage acquisition.
-pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
-    return deinitFunction(graph, ty) != null;
+    return false;
 }
 
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {
@@ -628,7 +620,7 @@ test "cleanup queries require selected Deinit evidence" {
         .implementation_source = source,
         .name = name,
         .definition = @enumFromInt(0),
-        .materialized_function = @enumFromInt(0),
+        .materialized_function = null,
     });
     try graph.contract_conformances.append(allocator, .{
         .declaration = @enumFromInt(0),
@@ -637,6 +629,14 @@ test "cleanup queries require selected Deinit evidence" {
         .operation_bindings = .{ .start = 0, .len = 1 },
         .source = source,
     });
+    try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
+    var transaction = graph.beginTransaction(allocator);
+    defer transaction.deinit();
+    try graph.completeOperationBinding(allocator, @enumFromInt(0), @enumFromInt(0));
+    try std.testing.expect(hasDestructor(&graph, @enumFromInt(0)));
+    transaction.rollback();
+    try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
+    try graph.completeOperationBinding(allocator, @enumFromInt(0), @enumFromInt(0));
     try std.testing.expect(hasDestructor(&graph, @enumFromInt(0)));
     try std.testing.expect(!hasDestructor(&graph, @enumFromInt(1)));
 }

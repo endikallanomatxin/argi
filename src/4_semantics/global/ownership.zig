@@ -1417,7 +1417,7 @@ pub const Resolver = struct {
     }
 
     fn triviallyCopyable(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
-        if (global_types.deinitFunction(self.graph, ty) != null) return false;
+        if (global_types.hasDestructor(self.graph, ty)) return false;
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
             .builtin, .definition, .pointer, .virtual => true,
             .array => |array| self.triviallyCopyable(array.element),
