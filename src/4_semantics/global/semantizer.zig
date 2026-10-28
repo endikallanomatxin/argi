@@ -1293,7 +1293,6 @@ pub const Session = struct {
         self.resolvers.generics.commitCaches();
         self.resolvers.contracts.commitCaches();
         self.resolvers.staged_execution.commitState();
-        self.resolvers.ownership.commitReplacements();
         self.resolution.commitCompletions(self.allocator);
     }
 

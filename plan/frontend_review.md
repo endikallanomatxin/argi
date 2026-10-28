@@ -7,9 +7,9 @@ Measurements and commands: [compiler performance](../docs/compiler-performance.m
   entities completed by a new transaction. Current measurements favor expression
   propagation and assignment contextualization over a binding-inference worklist.
   Growing live bindings also spend significant time copying continuation facts.
-- Audit persistent resolver state: keep scratch work local and reduce what needs
-  rollback. Pending-queue copying is not a demonstrated bottleneck in measured
-  sessions; avoid replacing it with a more complex transaction mechanism.
+- Audit remaining persistent lookup and diagnostic state: keep scratch work local
+  and reduce what needs rollback. Pending-queue copying is not a demonstrated
+  bottleneck in measured sessions; avoid a more complex transaction mechanism.
 - Clarify pass prerequisites and produced facts. Review ownership operand staging
   against shared lowering without duplicating evaluation or cleanup.
 - Measure invariant work in generic specialization before sharing representation.

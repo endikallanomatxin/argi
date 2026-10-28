@@ -296,8 +296,6 @@ pub const Context = struct {
         try self.ownership.deferred.appendSlice(allocator, source.ownership.deferred.items);
         try self.ownership.auto_nodes.appendSlice(allocator, source.ownership.auto_nodes.items);
         try self.ownership.continuation_bindings.appendSlice(allocator, source.ownership.continuation_bindings.items);
-        self.ownership.replacement_candidates = try source.ownership.replacement_candidates.clone(allocator);
-        try self.ownership.replacement_rewrites.appendSlice(allocator, source.ownership.replacement_rewrites.items);
         self.ownership.denied_copy = source.ownership.denied_copy;
         self.ownership.empty_block = source.ownership.empty_block;
         self.ownership.continuation_function = source.ownership.continuation_function;
@@ -463,7 +461,6 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     try source.core.reached_calls.append(a, .{ .callee = @enumFromInt(2), .input = @enumFromInt(3), .owner = null, .skip_receiver = false, .visible = visible });
     try source.ownership.deferred.append(a, .{ .marker = @enumFromInt(4), .value = @enumFromInt(5) });
     try source.ownership.auto_nodes.append(a, .{ .binding = @enumFromInt(1), .node = @enumFromInt(6) });
-    try source.ownership.replacement_candidates.put(a, @enumFromInt(6), {});
     try source.generics.pointer_types.put(a, .{ .child = @enumFromInt(0), .mutability = .read_only }, @enumFromInt(1));
     const group = try source.contracts.implementation_templates.getOrPut(a, .{ .declaration = @enumFromInt(7), .arity = 1 });
     group.value_ptr.* = .{};
@@ -488,7 +485,6 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     candidate.core.session_namespace.?.declarations.clearRetainingCapacity();
     candidate.ownership.deferred.clearRetainingCapacity();
     candidate.ownership.auto_nodes.clearRetainingCapacity();
-    _ = candidate.ownership.replacement_candidates.remove(@enumFromInt(6));
     candidate.generics.pointer_types.clearRetainingCapacity();
     candidate.contracts.implementation_templates.getPtr(.{ .declaration = @enumFromInt(7), .arity = 1 }).?.entries.clearRetainingCapacity();
     execution.Scheduler.rollback(&candidate.staged_execution, 0);
@@ -497,7 +493,6 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(usize, 1), namespace.declarations.items.len);
     try std.testing.expectEqual(@as(usize, 1), source.ownership.deferred.items.len);
     try std.testing.expectEqual(@as(usize, 1), source.ownership.auto_nodes.items.len);
-    try std.testing.expect(source.ownership.replacement_candidates.contains(@enumFromInt(6)));
     try std.testing.expectEqual(@as(usize, 1), source.generics.pointer_types.count());
     try std.testing.expectEqual(@as(usize, 1), source.contracts.implementation_templates.get(.{ .declaration = @enumFromInt(7), .arity = 1 }).?.entries.items.len);
     try std.testing.expectEqual(@as(usize, 1), source.staged_execution.requests.items.len);

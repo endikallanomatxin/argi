@@ -38,7 +38,6 @@ pub const Resolver = struct {
         deferred: usize,
         defers: u32,
         auto_nodes: usize,
-        replacements: usize,
         empty_block: ?global_sg.GlobalBlockId,
     };
 
@@ -51,8 +50,6 @@ pub const Resolver = struct {
     deferred: std.ArrayList(Deferred) = .empty,
     denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
-    replacement_candidates: std.AutoHashMapUnmanaged(global_sg.GlobalNodeId, void) = .empty,
-    replacement_rewrites: std.ArrayList(global_sg.GlobalNodeId) = .empty,
 
     empty_block: ?global_sg.GlobalBlockId = null,
     // Only the designated command's direct declarations have session duration.
@@ -75,8 +72,6 @@ pub const Resolver = struct {
         self.deferred.deinit(self.allocator);
         self.auto_nodes.deinit(self.allocator);
         self.continuation_bindings.deinit(self.allocator);
-        self.replacement_candidates.deinit(self.allocator);
-        self.replacement_rewrites.deinit(self.allocator);
     }
 
     pub fn tryResolve(
@@ -117,8 +112,8 @@ pub const Resolver = struct {
         defer activation_arena.deinit();
         var activation = try cleanup_activation.collect(activation_arena.allocator(), self.graph, function_id);
         defer activation.deinit();
-        var replacements = activation.replacements.keyIterator();
-        while (replacements.next()) |node| try self.markReplacement(node.*);
+        // Replacement classification belongs to this body. Borrow it throughout
+        // recursive finalization; no selected node needs a retained resolver mark.
         var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer visible.deinit(self.allocator);
         if (self.continuation_function == function_id)
@@ -137,7 +132,7 @@ pub const Resolver = struct {
         var defers: std.ArrayList(global_sg.GlobalNodeId) = .empty;
         defer defers.deinit(self.allocator);
         const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
-        try self.finalizeBlock(body, &active, &defers, &visible, &.{}, function_id, @intCast(@intFromEnum(module)), null);
+        try self.finalizeBlock(body, &active, &defers, &visible, &.{}, function_id, @intCast(@intFromEnum(module)), null, &activation.replacements);
         return true;
     }
 
@@ -277,29 +272,15 @@ pub const Resolver = struct {
 
     pub fn parameterizedCheckpoint(context: *anyopaque) ParameterizedCheckpoint {
         const self: *Resolver = @ptrCast(@alignCast(context));
-        return .{ .deferred = self.deferred.items.len, .defers = self.stats.defers, .auto_nodes = self.auto_nodes.items.len, .replacements = self.replacement_rewrites.items.len, .empty_block = self.empty_block };
+        return .{ .deferred = self.deferred.items.len, .defers = self.stats.defers, .auto_nodes = self.auto_nodes.items.len, .empty_block = self.empty_block };
     }
 
     pub fn rollbackParameterizedCheckpoint(context: *anyopaque, saved: ParameterizedCheckpoint) void {
         const self: *Resolver = @ptrCast(@alignCast(context));
         self.deferred.shrinkRetainingCapacity(saved.deferred);
         self.auto_nodes.shrinkRetainingCapacity(saved.auto_nodes);
-        while (self.replacement_rewrites.items.len > saved.replacements)
-            std.debug.assert(self.replacement_candidates.remove(self.replacement_rewrites.pop().?));
         self.empty_block = saved.empty_block;
         self.stats.defers = saved.defers;
-    }
-
-    fn markReplacement(self: *Resolver, node: global_sg.GlobalNodeId) !void {
-        if (self.replacement_candidates.contains(node)) return;
-        try self.replacement_rewrites.ensureUnusedCapacity(self.allocator, 1);
-        try self.replacement_candidates.put(self.allocator, node, {});
-        self.replacement_rewrites.appendAssumeCapacity(node);
-    }
-
-    pub fn commitReplacements(self: *Resolver) void {
-        self.replacement_rewrites.deinit(self.allocator);
-        self.replacement_rewrites = .empty;
     }
 
     fn registerDefer(self: *Resolver, marker: global_sg.GlobalNodeId, deferred_value: global_sg.GlobalNodeId) !void {
@@ -631,6 +612,7 @@ pub const Resolver = struct {
         owner_function: global_sg.GlobalFunctionId,
         module_index: usize,
         loop_cleanup: ?LoopCleanup,
+        replacements: *const std.AutoHashMap(global_sg.GlobalNodeId, void),
     ) anyerror!void {
         _ = try self.stageCompound(node_id);
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
@@ -649,21 +631,21 @@ pub const Resolver = struct {
                 var nested_visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
                 defer nested_visible.deinit(self.allocator);
                 try nested_visible.appendSlice(self.allocator, visible);
-                try self.finalizeBlock(block, &nested_active, &nested_defers, &nested_visible, &.{}, owner_function, module_index, loop_cleanup);
+                try self.finalizeBlock(block, &nested_active, &nested_defers, &nested_visible, &.{}, owner_function, module_index, loop_cleanup, replacements);
             },
             .return_statement => |ret| if (ret.expression) |value|
-                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup),
-            .if_statement => |statement| try self.finalizeExpressionCleanup(statement.condition, active, defers, visible, owner_function, module_index, loop_cleanup),
-            .while_statement => |statement| try self.finalizeExpressionCleanup(statement.condition, active, defers, visible, owner_function, module_index, loop_cleanup),
-            .switch_statement => |id| try self.finalizeExpressionCleanup(self.graph.switches.items[@intFromEnum(id)].expression, active, defers, visible, owner_function, module_index, loop_cleanup),
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
+            .if_statement => |statement| try self.finalizeExpressionCleanup(statement.condition, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
+            .while_statement => |statement| try self.finalizeExpressionCleanup(statement.condition, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
+            .switch_statement => |id| try self.finalizeExpressionCleanup(self.graph.switches.items[@intFromEnum(id)].expression, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
             .binding_declaration => |binding| {
                 const record = self.graph.bindings.items[@intFromEnum(binding)];
                 if (!record.deferred_initialization) if (record.initialization) |initialization|
-                    try self.finalizeExpressionCleanup(initialization, active, defers, visible, owner_function, module_index, loop_cleanup);
+                    try self.finalizeExpressionCleanup(initialization, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .error_propagation => |propagation_id| {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
-                try self.finalizeExpressionCleanup(propagation.errable_value, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(propagation.errable_value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                 const cleanup = try self.appendCleanup(active, defers);
                 var updated = propagation;
                 updated.cleanup_nodes = cleanup;
@@ -671,27 +653,27 @@ pub const Resolver = struct {
             },
             .error_context => |context_id| {
                 const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
-                try self.finalizeExpressionCleanup(context.errable_value, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(context.context, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(context.errable_value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(context.context, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                 const cleanup = try self.appendCleanup(active, defers);
                 var updated = context;
                 updated.cleanup_nodes = cleanup;
                 try self.graph.setErrorContext(self.allocator, context_id, updated);
             },
-            .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index, loop_cleanup),
+            .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
             .assignment => |assignment| {
-                const value = try self.bindingReplacement(node_id, assignment.binding, assignment.value, visible, owner_function, module_index);
+                const value = try self.bindingReplacement(replacements.contains(node_id), assignment.binding, assignment.value, visible, owner_function, module_index);
                 {
                     var updated = self.graph.node(node_id);
                     updated.content.assignment.value = value;
                     try self.graph.setNode(self.allocator, node_id, updated);
                 }
-                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                 if (value != assignment.value) try self.wrapReplacement(node_id);
             },
             .function_call => |call| {
-                if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index, loop_cleanup);
+                if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .virtualize => |virtualize_id| try self.finalizeExpressionCleanup(
                 self.graph.virtualizes.items[@intFromEnum(virtualize_id)].value,
@@ -701,42 +683,43 @@ pub const Resolver = struct {
                 owner_function,
                 module_index,
                 loop_cleanup,
+                replacements,
             ),
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
-                try self.finalizeExpressionCleanup(call.handle, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(call.handle, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .struct_value_literal => |literal| {
                 const fields = try self.allocator.dupe(global_sg.ValueField, self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]);
                 defer self.allocator.free(fields);
                 for (fields) |field|
-                    try self.finalizeExpressionCleanup(field.value, active, defers, visible, owner_function, module_index, loop_cleanup);
+                    try self.finalizeExpressionCleanup(field.value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .list_literal => |literal| {
                 const elements = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]);
                 defer self.allocator.free(elements);
                 for (elements) |element|
-                    try self.finalizeExpressionCleanup(element, active, defers, visible, owner_function, module_index, loop_cleanup);
+                    try self.finalizeExpressionCleanup(element, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .array_literal => |literal| {
                 const elements = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]);
                 defer self.allocator.free(elements);
                 for (elements) |element|
-                    try self.finalizeExpressionCleanup(element, active, defers, visible, owner_function, module_index, loop_cleanup);
+                    try self.finalizeExpressionCleanup(element, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .choice_literal => |literal| if (literal.payload) |payload|
-                try self.finalizeExpressionCleanup(payload, active, defers, visible, owner_function, module_index, loop_cleanup),
-            .struct_field_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers, visible, owner_function, module_index, loop_cleanup),
-            .choice_payload_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers, visible, owner_function, module_index, loop_cleanup),
+                try self.finalizeExpressionCleanup(payload, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
+            .struct_field_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
+            .choice_payload_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
             .nullable_unwrap_or => |unwrap_id| {
                 const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
-                try self.finalizeExpressionCleanup(unwrap.nullable_value, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(unwrap.fallback_value, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(unwrap.nullable_value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(unwrap.fallback_value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .array_index => |access| {
-                try self.finalizeExpressionCleanup(access.array_ptr, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(access.index, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(access.array_ptr, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(access.index, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .array_store => |store| {
                 // An indexed destination is an evaluated reference, not a
@@ -752,21 +735,20 @@ pub const Resolver = struct {
                 const pointer = try self.appendNode(source, try self.core.pointerType(store.element_type, .read_write), .{ .address_of = element });
                 const pointer_type = self.graph.node(pointer).ty.?;
                 const target = try self.appendNode(source, store.element_type, .{ .dereference = .{ .pointer = pointer, .pointer_type = pointer_type, .ty = store.element_type } });
-                try self.markReplacement(node_id);
-                const value = try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
+                const value = try self.indirectReplacement(true, target, store.value, visible, owner_function, module_index);
                 if (value != store.value) {
                     try self.graph.setNodeContent(self.allocator, node_id, .{ .pointer_assignment = .{ .pointer = pointer, .value = value, .cleanup_target = target } });
-                    try self.finalizeExpressionCleanup(pointer, active, defers, visible, owner_function, module_index, loop_cleanup);
-                    try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup);
+                    try self.finalizeExpressionCleanup(pointer, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                    try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                     try self.wrapReplacement(node_id);
                 } else {
-                    try self.finalizeExpressionCleanup(store.array_ptr, active, defers, visible, owner_function, module_index, loop_cleanup);
-                    try self.finalizeExpressionCleanup(store.index, active, defers, visible, owner_function, module_index, loop_cleanup);
-                    try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index, loop_cleanup);
+                    try self.finalizeExpressionCleanup(store.array_ptr, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                    try self.finalizeExpressionCleanup(store.index, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                    try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                 }
             },
             .struct_field_store => |store| {
-                try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                 const parent = try self.lexicalAddressTarget(store.struct_ptr, visible);
                 {
                     const base = parent orelse try self.appendNode(self.graph.node(node_id).source, store.struct_type, .{ .dereference = .{ .pointer = store.struct_ptr, .pointer_type = self.graph.node(store.struct_ptr).ty.?, .ty = store.struct_type } });
@@ -783,32 +765,32 @@ pub const Resolver = struct {
                         try self.graph.setNode(self.allocator, node_id, updated);
                     }
                     const value = if (parent != null)
-                        try self.projectedReplacement(node_id, target, store.value, visible, owner_function, module_index)
+                        try self.projectedReplacement(replacements.contains(node_id), target, store.value, visible, owner_function, module_index)
                     else
-                        try self.indirectReplacement(node_id, target, store.value, visible, owner_function, module_index);
+                        try self.indirectReplacement(replacements.contains(node_id), target, store.value, visible, owner_function, module_index);
                     {
                         var updated = self.graph.node(node_id);
                         updated.content.struct_field_store.value = value;
                         try self.graph.setNode(self.allocator, node_id, updated);
                     }
-                    try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup);
+                    try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                     if (value != store.value) try self.wrapReplacement(node_id);
                 }
             },
             .binary_operation => |operation| {
-                try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(operation.right, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(operation.right, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .comparison => |comparison| {
-                try self.finalizeExpressionCleanup(comparison.left, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(comparison.right, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(comparison.left, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(comparison.right, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .logical_operation => |operation| {
-                try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(operation.right, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(operation.right, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             .pointer_assignment => |assignment| {
-                try self.finalizeExpressionCleanup(assignment.pointer, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(assignment.pointer, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                 const lexical = try self.lexicalAddressTarget(assignment.pointer, visible);
                 const child = self.graph.semanticType(self.graph.node(assignment.pointer).ty.?).pointer.child;
                 const target = lexical orelse try self.appendNode(self.graph.node(node_id).source, child, .{ .dereference = .{ .pointer = assignment.pointer, .pointer_type = self.graph.node(assignment.pointer).ty.?, .ty = child } });
@@ -818,24 +800,24 @@ pub const Resolver = struct {
                     try self.graph.setNode(self.allocator, node_id, updated);
                 }
                 const value = if (lexical != null)
-                    try self.projectedReplacement(node_id, target, assignment.value, visible, owner_function, module_index)
+                    try self.projectedReplacement(replacements.contains(node_id), target, assignment.value, visible, owner_function, module_index)
                 else
-                    try self.indirectReplacement(node_id, target, assignment.value, visible, owner_function, module_index);
+                    try self.indirectReplacement(replacements.contains(node_id), target, assignment.value, visible, owner_function, module_index);
                 {
                     var updated = self.graph.node(node_id);
                     updated.content.pointer_assignment.value = value;
                     try self.graph.setNode(self.allocator, node_id, updated);
                 }
-                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
                 if (value != assignment.value) try self.wrapReplacement(node_id);
             },
-            .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers, visible, owner_function, module_index, loop_cleanup),
+            .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
 
             .testing_expect_error => |expect_id| {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
-                try self.finalizeExpressionCleanup(expect.expected_reason, active, defers, visible, owner_function, module_index, loop_cleanup);
-                try self.finalizeExpressionCleanup(expect.actual_result, active, defers, visible, owner_function, module_index, loop_cleanup);
-                if (expect.test_fail_input) |input| try self.finalizeExpressionCleanup(input, active, defers, visible, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(expect.expected_reason, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                try self.finalizeExpressionCleanup(expect.actual_result, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
+                if (expect.test_fail_input) |input| try self.finalizeExpressionCleanup(input, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
             },
             else => {},
         }
@@ -847,14 +829,14 @@ pub const Resolver = struct {
     /// to every consumer rather than being invented by either backend.
     fn bindingReplacement(
         self: *Resolver,
-        node_id: global_sg.GlobalNodeId,
+        needed: bool,
         binding: global_sg.GlobalBindingId,
         value: global_sg.GlobalNodeId,
         visible: []const global_sg.GlobalBindingId,
         owner_function: global_sg.GlobalFunctionId,
         module_index: usize,
     ) !global_sg.GlobalNodeId {
-        if (!self.replacement_candidates.contains(node_id)) return value;
+        if (!needed) return value;
         try self.prepareAutoDeinit(binding, reach_context.Context.fromGlobal(visible, owner_function), module_index);
         const original_cleanup = self.autoDeinitNode(binding) orelse return value;
         // Each replacement has its own activation identity. An output's first
@@ -894,14 +876,14 @@ pub const Resolver = struct {
 
     fn projectedReplacement(
         self: *Resolver,
-        node_id: global_sg.GlobalNodeId,
+        needed: bool,
         target: global_sg.GlobalNodeId,
         value: global_sg.GlobalNodeId,
         visible: []const global_sg.GlobalBindingId,
         owner_function: global_sg.GlobalFunctionId,
         module_index: usize,
     ) !global_sg.GlobalNodeId {
-        if (!self.replacement_candidates.contains(node_id)) return value;
+        if (!needed) return value;
         const binding = lexical_storage.root(self.graph, target) orelse return value;
         // Module-level storage has no lexical cleanup activation.
         if (std.mem.indexOfScalar(global_sg.GlobalBindingId, visible, binding) == null) return value;
@@ -921,8 +903,8 @@ pub const Resolver = struct {
         return self.replacementValue(value, ty, cleanup);
     }
 
-    fn indirectReplacement(self: *Resolver, node_id: global_sg.GlobalNodeId, target: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId, visible: []const global_sg.GlobalBindingId, owner_function: global_sg.GlobalFunctionId, module_index: usize) !global_sg.GlobalNodeId {
-        if (!self.replacement_candidates.contains(node_id)) return value;
+    fn indirectReplacement(self: *Resolver, needed: bool, target: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId, visible: []const global_sg.GlobalBindingId, owner_function: global_sg.GlobalFunctionId, module_index: usize) !global_sg.GlobalNodeId {
+        if (!needed) return value;
         const ty = self.graph.node(target).ty orelse return value;
         const plan = try self.buildAutoDeinit(.{ .indirect = target }, target, ty, reach_context.Context.fromGlobal(visible, owner_function), module_index) orelse return value;
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);
@@ -971,6 +953,7 @@ pub const Resolver = struct {
         owner_function: global_sg.GlobalFunctionId,
         module_index: usize,
         loop_cleanup: ?LoopCleanup,
+        replacements: *const std.AutoHashMap(global_sg.GlobalNodeId, void),
     ) anyerror!void {
         const original = self.graph.blocks.items[@intFromEnum(block_id)];
         var active: std.ArrayList(global_sg.GlobalBindingId) = .empty;
@@ -1015,12 +998,12 @@ pub const Resolver = struct {
             try rebuilt.append(self.allocator, node_id);
             const content = self.graph.node(node_id).content;
             if (content != .code_block and content != .value_sequence and content != .replacement)
-                try self.finalizeExpressionCleanup(node_id, active.items, defers.items, visible.items, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(node_id, active.items, defers.items, visible.items, owner_function, module_index, loop_cleanup, replacements);
             const node = self.graph.node(node_id);
             if (self.deferValue(node_id)) |deferred_value| {
                 // The marker is a no-op, but the deferred body still owns
                 // branch-local bindings and nested deferred actions.
-                try self.finalizeExpressionCleanup(deferred_value, active.items, defers.items, visible.items, owner_function, module_index, loop_cleanup);
+                try self.finalizeExpressionCleanup(deferred_value, active.items, defers.items, visible.items, owner_function, module_index, loop_cleanup, replacements);
                 try defers.append(self.allocator, deferred_value);
                 continue;
             }
@@ -1042,15 +1025,15 @@ pub const Resolver = struct {
                     updated.content.return_statement.cleanup = cleanup;
                     try self.graph.setNode(self.allocator, node_id, updated);
                 },
-                .code_block, .value_sequence => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index, loop_cleanup),
+                .code_block, .value_sequence => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index, loop_cleanup, replacements),
                 .if_statement => |statement| {
-                    try self.finalizeBlock(statement.then_block, &active, &defers, &visible, &.{}, owner_function, module_index, loop_cleanup);
+                    try self.finalizeBlock(statement.then_block, &active, &defers, &visible, &.{}, owner_function, module_index, loop_cleanup, replacements);
                     if (statement.else_block) |child|
-                        try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index, loop_cleanup);
+                        try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index, loop_cleanup, replacements);
                 },
                 .while_statement, .for_statement => {
                     const body = if (node.content == .while_statement) node.content.while_statement.body else node.content.for_statement.body;
-                    try self.finalizeBlock(body, &active, &defers, &visible, &.{}, owner_function, module_index, .{ .active = active.items.len, .defers = defers.items.len });
+                    try self.finalizeBlock(body, &active, &defers, &visible, &.{}, owner_function, module_index, .{ .active = active.items.len, .defers = defers.items.len }, replacements);
                 },
                 .break_statement, .continue_statement => {
                     if (loop_cleanup) |base| {
@@ -1071,10 +1054,10 @@ pub const Resolver = struct {
                             if (case.payload_binding) |*binding| binding[0..1] else &.{}
                         else
                             &.{};
-                        try self.finalizeBlock(case.body, &active, &defers, &visible, bindings, owner_function, module_index, loop_cleanup);
+                        try self.finalizeBlock(case.body, &active, &defers, &visible, bindings, owner_function, module_index, loop_cleanup, replacements);
                     }
                     if (sw.default_block) |child|
-                        try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index, loop_cleanup);
+                        try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index, loop_cleanup, replacements);
                 },
                 else => {},
             }
@@ -1599,7 +1582,9 @@ test "error propagation cleanup captures active lexical obligations" {
     };
     defer resolver.deinit();
 
-    try resolver.finalizeExpressionCleanup(assignment_node, &.{}, &.{deferred_node}, &.{}, @enumFromInt(0), 0, null);
+    var replacements = std.AutoHashMap(global_sg.GlobalNodeId, void).init(allocator);
+    defer replacements.deinit();
+    try resolver.finalizeExpressionCleanup(assignment_node, &.{}, &.{deferred_node}, &.{}, @enumFromInt(0), 0, null, &replacements);
     const cleanup = graph.error_propagations.items[0].cleanup_nodes;
     try std.testing.expectEqual(@as(u32, 1), cleanup.len);
     try std.testing.expectEqual(deferred_node, graph.node_refs.items[cleanup.start]);
@@ -1632,12 +1617,10 @@ test "parameterized defer checkpoint restores resolver side effects" {
     try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(3), .value = @enumFromInt(4) });
     resolver.stats.defers = 2;
     resolver.empty_block = @enumFromInt(8);
-    try resolver.markReplacement(@enumFromInt(33));
     try resolver.auto_nodes.append(allocator, .{ .binding = @enumFromInt(0), .node = @enumFromInt(34) });
     Resolver.rollbackParameterizedCheckpoint(&resolver, saved);
     try std.testing.expectEqual(@as(global_sg.GlobalBlockId, @enumFromInt(7)), resolver.empty_block.?);
     try std.testing.expectEqual(@as(usize, 0), resolver.auto_nodes.items.len);
-    try std.testing.expect(!resolver.replacement_candidates.contains(@enumFromInt(33)));
 
     try std.testing.expectEqual(@as(usize, 1), resolver.deferred.items.len);
     try std.testing.expectEqual(@as(u32, 1), resolver.stats.defers);
