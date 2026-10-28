@@ -718,12 +718,19 @@ a collector or a second ownership model:
 |---|---|
 | Call input and nested-result envelopes | One reusable execution buffer; its live capacity is charged and released on exit |
 | Captured write destinations | Active frame; freed on return or trap |
-| Partial call cells and tables | Active frame; complete materialized values remain independently owned by the value arena |
+| Partial initialization cells and tables | Mutable storage bookkeeping; cells are freed when a complete slot replaces them, call tables on return, session tables on reset |
 | Frame/region identity pools and lookup indexes | Context owner's allocator; old resized backing and teardown allocations can be reclaimed |
 | Public results, immutable aggregates, projections and virtual descriptors | Value arena; continue to survive until context reset |
 
 IDs and their meanings do not change when pool backing moves. Dead frame IDs
 remain dead; reusing buffers does not reuse identities or transfer cleanup flags.
+Partial initialization uses the same allocation/release path for call and session
+storage. Complete materialized values remain independent arena-owned snapshots.
+Publishing a complete session value goes through the ordinary slot write, removing
+its previous partial representation only after copying and validation succeed.
+This prevents indirect reads from observing stale partial cells after publication;
+allocation failures preserve the old cells and their quota. It does not reclaim
+immutable snapshots or change public result lifetimes.
 The VM reserves its frame-stack capacity before constructing a frame, so failure
 to append cannot strand separately allocated captures. Failure/trap paths retire
 all active frames without running additional language cleanup.

@@ -57,7 +57,7 @@ pub const Slots = struct {
         if (index >= values.len) return error.ExecutionInvalidReference;
         values[index] = value;
         if (self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.fetchRemove(index)) |entry|
-            self.storage.discardPartial(self.frame, entry.value);
+            self.storage.discardPartial(entry.value);
     }
 
     fn cells(self: Slots) ![]?b.Value {
@@ -427,7 +427,9 @@ pub const Storage = struct {
         const charge_count = if (layout.nodes.len == 0) 0 else layout.nodes[0].span;
         try self.charge(charge_count);
         errdefer self.cells -= charge_count;
-        const a = if (self.frames.items[@intFromEnum(frame)].duration == .call) self.bookkeeping_allocator orelse self.allocator else self.allocator;
+        // Occupancy cells never escape. Materialization allocates independent
+        // immutable snapshots, so session storage can release these cells too.
+        const a = self.bookkeepingAllocator();
         const record = try partial.Storage.init(a, layout);
         errdefer a.free(record.values);
         try self.frames.items[@intFromEnum(frame)].partial_storage.put(self.bookkeepingAllocator(), root, record);
@@ -596,7 +598,7 @@ pub const Storage = struct {
         if (try self.cleanupRootActive(target.frame, index)) return error.ExecutionPendingCleanup;
         try self.validateSessionValues((&value)[0..1], 0);
         const retained = try self.cloneValues((&value)[0..1]);
-        values[index] = retained[0];
+        try target.put(index, retained[0]);
     }
 
     fn validateSessionValues(self: *Storage, values: []const b.Value, depth: usize) anyerror!void {
@@ -762,18 +764,17 @@ pub const Storage = struct {
         self.frames.appendAssumeCapacity(.{ .values = buffers.values, .cleanup = cleanup, .cleanup_flags = buffers.flags });
         return id;
     }
-    fn discardPartial(self: *Storage, id: v.FrameId, record: partial.Storage) void {
-        if (self.frames.items[@intFromEnum(id)].duration != .call) return;
+    fn discardPartial(self: *Storage, record: partial.Storage) void {
         const a = self.bookkeeping_allocator orelse return;
         self.cells -= record.values.len;
         a.free(record.values);
     }
 
-    fn clearCallScratch(self: *Storage, id: v.FrameId) void {
+    fn clearPartialStorage(self: *Storage, id: v.FrameId) void {
         const a = self.bookkeeping_allocator orelse return;
         const frame = &self.frames.items[@intFromEnum(id)];
         var records = frame.partial_storage.valueIterator();
-        while (records.next()) |record| self.discardPartial(id, record.*);
+        while (records.next()) |record| self.discardPartial(record.*);
         frame.partial_storage.deinit(a);
         frame.partial_storage = .empty;
     }
@@ -782,9 +783,7 @@ pub const Storage = struct {
     /// neither runs language cleanup nor releases receipts through user code.
     pub fn deinitBookkeeping(self: *Storage) void {
         const a = self.bookkeeping_allocator orelse return;
-        for (self.frames.items, 0..) |*frame, index| {
-            if (frame.duration == .call) self.clearCallScratch(@enumFromInt(index)) else frame.partial_storage.deinit(a);
-        }
+        for (self.frames.items, 0..) |_, index| self.clearPartialStorage(@enumFromInt(index));
         self.frames.deinit(a);
         self.reusable_frames.deinit(a);
         self.acquisitions.entries.deinit(a);
@@ -798,7 +797,7 @@ pub const Storage = struct {
         std.debug.assert(frame.duration == .call);
         if (!frame.alive) return;
         frame.alive = false;
-        self.clearCallScratch(id);
+        self.clearPartialStorage(id);
         const bin = self.reusable_frames.getPtr(.{ .values = frame.values.len, .flags = frame.cleanup_flags.len }).?;
         frame.reusable_next = bin.*;
         bin.* = id;
@@ -2785,13 +2784,13 @@ test "session publication preflights reused backing with its actual retained cha
     try std.testing.expectError(error.ExecutionMemoryLimit, storage.enter(0));
 }
 
-fn callPartialScratchFailures(a: std.mem.Allocator) !void {
+fn partialScratchFailures(a: std.mem.Allocator, session: bool) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var storage = try Storage.init(arena.allocator(), 1000);
     storage.bookkeeping_allocator = a;
     defer storage.deinitBookkeeping();
-    const frame = try storage.enter(1);
+    const frame = if (session) (try storage.enterSession(1, &.{})).frame else try storage.enter(1);
     const layout: partial.Layout = .{ .nodes = &.{ .{ .kind = .record, .first = 1, .count = 2, .span = 3 }, .{ .offset = 1 }, .{ .offset = 2 } } };
     try storage.prepareStorage(frame, 0, layout);
     const record = storage.frames.items[@intFromEnum(frame)].partial_storage.getPtr(0).?;
@@ -2800,21 +2799,44 @@ fn callPartialScratchFailures(a: std.mem.Allocator) !void {
     const slots_ = try storage.slots(frame);
     const snapshot = try slots_.get(0);
     const charged = storage.cells;
-    try slots_.put(0, snapshot);
-    try std.testing.expectEqual(charged - 3, storage.cells);
+    if (session) {
+        storage.initializeSession(slots_, 0, .{ .record = &.{ .{ .integer = 77 }, .{ .integer = 7 } } }) catch |err| {
+            try std.testing.expectEqual(charged, storage.cells);
+            try std.testing.expectEqual(@as(u32, 1), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+            try std.testing.expectEqual(@as(u64, 42), (try storage.read(.{ .context = storage.context, .frame = frame, .root = 0, .path = &.{.{ .field = 0 }}, .mutability = .read_only })).integer);
+            return err;
+        };
+    } else try slots_.put(0, snapshot);
+    // Session publication owns a deep copy of the three-cell complete value.
+    try std.testing.expectEqual(charged - 3 + @as(usize, if (session) 3 else 0), storage.cells);
     try std.testing.expectEqual(@as(u32, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
     try storage.prepareStorage(try storage.enter(1), 0, layout);
-    storage.leave(frame);
-    try std.testing.expectEqual(@as(u32, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.capacity());
+    if (!session) {
+        storage.leave(frame);
+        try std.testing.expectEqual(@as(u32, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.capacity());
+        try std.testing.expectError(error.ExecutionDeadReference, slots_.get(0));
+    } else {
+        // A reference names session storage, not its replaceable scratch buffer.
+        const reference: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{.{ .field = 0 }}, .mutability = .read_write };
+        try std.testing.expectEqual(@as(u64, 77), (try storage.read(reference)).integer);
+        try std.testing.expectEqual(@as(u64, 77), (try slots_.get(0)).record[0].integer);
+        try storage.store(reference, .{ .integer = 99 });
+        try std.testing.expectEqual(@as(u64, 99), (try storage.read(reference)).integer);
+        _ = try storage.resetStorage(frame, 0, layout);
+    }
     try std.testing.expectEqual(@as(u64, 42), snapshot.record[0].integer);
     try std.testing.expectEqual(@as(u64, 7), snapshot.record[1].integer);
-    try std.testing.expectError(error.ExecutionDeadReference, slots_.get(0));
 }
 
 test "call partial scratch releases backing while materialized values survive" {
-    try callPartialScratchFailures(std.testing.allocator);
+    try partialScratchFailures(std.testing.allocator, false);
 }
 
 test "call partial scratch releases every failed allocation and unpublished frame" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, callPartialScratchFailures, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, partialScratchFailures, .{false});
+}
+
+test "session partial scratch releases backing without invalidating snapshots or references" {
+    try partialScratchFailures(std.testing.allocator, true);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, partialScratchFailures, .{true});
 }
