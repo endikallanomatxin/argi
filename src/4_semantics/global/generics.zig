@@ -52,12 +52,13 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     stats: Stats = .{},
     comptime_failure: ?ComptimeFailure = null,
+    // Borrowed only for an active materialization; never retained by a session.
+    argument_diagnostic: ?*?ArgumentFailure = null,
     execution_context: ?*anyopaque = null,
     checkpoint_execution: ?*const fn (*anyopaque) usize = null,
     rollback_execution: ?*const fn (*anyopaque, usize) void = null,
     execute_integer: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!i64 = null,
     execute_boolean: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!bool = null,
-    argument_failure: ?struct { declaration: global_sg.GlobalFamilyDefinitionId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
     value_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GenericArgument.Value = null,
@@ -136,10 +137,19 @@ pub const Resolver = struct {
         }
     };
 
+    pub const ArgumentFailure = struct {
+        declaration: global_sg.GlobalFamilyDefinitionId,
+        ty: global_sg.GlobalTypeId,
+        reason: []const u8,
+    };
+
     /// Retry the unresolved candidates in discovery order. The caller owns
     /// this scratch list and discards it if resolution fails or rolls back.
-    pub fn materializePendingTypes(self: *Resolver, pending: *PendingTypes) !bool {
-        self.argument_failure = null;
+    pub fn materializePendingTypes(self: *Resolver, pending: *PendingTypes, failure: ?*?ArgumentFailure) !bool {
+        const previous = self.argument_diagnostic;
+        self.argument_diagnostic = failure;
+        defer self.argument_diagnostic = previous;
+        if (failure) |out| out.* = null;
         var changed = false;
         const measurement = if (self.core.scan_profile) |profile| profile.begin(.generic_types) else null;
         defer if (measurement) |m| m.finish(changed);
@@ -174,8 +184,11 @@ pub const Resolver = struct {
         return changed;
     }
 
-    pub fn materializeKnownTypes(self: *Resolver) !bool {
-        self.argument_failure = null;
+    pub fn materializeKnownTypes(self: *Resolver, failure: ?*?ArgumentFailure) !bool {
+        const previous = self.argument_diagnostic;
+        self.argument_diagnostic = failure;
+        defer self.argument_diagnostic = previous;
+        if (failure) |out| out.* = null;
         var changed = false;
         const measurement = if (self.core.scan_profile) |profile| profile.begin(.generic_types) else null;
         defer if (measurement) |m| m.finish(changed);
@@ -342,7 +355,7 @@ pub const Resolver = struct {
                 error.GenericArgumentKindMismatch => "generic argument kind does not match its parameter",
                 else => return err,
             };
-            self.argument_failure = .{ .declaration = identity.base, .ty = ty, .reason = reason };
+            if (self.argument_diagnostic) |out| out.* = .{ .declaration = identity.base, .ty = ty, .reason = reason };
             return err;
         };
         const module = &self.modules[located.module_index];
@@ -1689,26 +1702,26 @@ test "pending generic types revisit old holes and discover appended types" {
     defer resolver.deinit();
     var pending: Resolver.PendingTypes = .{};
     defer pending.deinit(a);
-    try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+    try std.testing.expect(!try resolver.materializePendingTypes(&pending, null));
     try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);
     // No defining module yet: keep the old generic candidate rather than
     // treating a false materialization result as completion.
     try graph.family_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .type, .parameter_count = 0 });
     try graph.resolveType(a, @enumFromInt(0), .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } });
-    try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+    try std.testing.expect(!try resolver.materializePendingTypes(&pending, null));
     try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);
     try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(0), .shape = .{ .alias = @enumFromInt(1) } });
     try graph.types.append(a, .{ .builtin = .Int32 });
     try graph.markTypeUnresolved(a, @enumFromInt(1));
-    try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+    try std.testing.expect(!try resolver.materializePendingTypes(&pending, null));
     try std.testing.expectEqualSlices(global_sg.GlobalTypeId, &.{@enumFromInt(1)}, pending.items.items);
     try graph.resolveType(a, @enumFromInt(1), .{ .builtin = .Int32 });
-    try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+    try std.testing.expect(!try resolver.materializePendingTypes(&pending, null));
     try std.testing.expectEqual(@as(usize, 0), pending.items.items.len);
     // A completed pool needs no worklist allocation, including setup calls.
     var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
     resolver.allocator = failing.allocator();
-    try std.testing.expect(!try resolver.materializeKnownTypes());
+    try std.testing.expect(!try resolver.materializeKnownTypes(null));
 }
 
 test "pending generic work is discarded across rollback and allocation failure" {
@@ -1725,7 +1738,7 @@ test "pending generic work is discarded across rollback and allocation failure" 
             defer resolver.deinit();
             var pending: Resolver.PendingTypes = .{};
             defer pending.deinit(allocator);
-            try std.testing.expect(!try resolver.materializePendingTypes(&pending));
+            try std.testing.expect(!try resolver.materializePendingTypes(&pending, null));
             try std.testing.expectEqualSlices(global_sg.GlobalTypeId, &.{@enumFromInt(0)}, pending.items.items);
         }
     }.collect, .{&graph});

@@ -41,7 +41,6 @@ pub const Context = struct {
         expression_continuation: ?global_sg.GlobalFunctionId,
         ownership_continuation: ?global_sg.GlobalFunctionId,
         denied_copy: @FieldType(ownership_mod.Resolver, "denied_copy"),
-        argument_failure: @FieldType(generic_mod.Resolver, "argument_failure"),
         virtual_failure: @FieldType(contract_mod.Resolver, "virtual_signature_failure"),
         foreach_failure: @FieldType(control_mod.Resolver, "for_each_failure"),
         diagnostics: ?*diagnostics_mod.Diagnostics,
@@ -204,7 +203,6 @@ pub const Context = struct {
             .expression_continuation = self.expressions.continuation_function,
             .ownership_continuation = self.ownership.continuation_function,
             .denied_copy = self.ownership.denied_copy,
-            .argument_failure = self.generics.argument_failure,
             .virtual_failure = self.contracts.virtual_signature_failure,
             .foreach_failure = self.control.for_each_failure,
             .diagnostics = self.constructors.diagnostics,
@@ -238,7 +236,6 @@ pub const Context = struct {
         self.expressions.continuation_function = saved.expression_continuation;
         self.ownership.continuation_function = saved.ownership_continuation;
         self.ownership.denied_copy = saved.denied_copy;
-        self.generics.argument_failure = saved.argument_failure;
         self.contracts.virtual_signature_failure = saved.virtual_failure;
         self.control.restoreForEachFailure(saved.foreach_failure);
         self.constructors.diagnostics = saved.diagnostics;
@@ -275,7 +272,6 @@ pub const Context = struct {
         self.generics.pointer_types = try source.generics.pointer_types.clone(allocator);
         self.generics.generic_types = try source.generics.generic_types.clone(allocator);
         self.generics.comptime_failure = source.generics.comptime_failure;
-        self.generics.argument_failure = source.generics.argument_failure;
         self.contracts.constraint_declarations = try source.contracts.constraint_declarations.clone(allocator);
         self.contracts.resolved_contract_refs = try source.contracts.resolved_contract_refs.clone(allocator);
         var templates = source.contracts.implementation_templates.iterator();

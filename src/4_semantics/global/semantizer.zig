@@ -615,8 +615,9 @@ pub const Session = struct {
         };
         profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.associated_types)]);
         setup_start = profileTimestamp(options.profile_io);
-        _ = generics.materializeKnownTypes() catch |err| {
-            try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, generics);
+        var argument_failure: ?generic_mod.Resolver.ArgumentFailure = null;
+        _ = generics.materializeKnownTypes(&argument_failure) catch |err| {
+            try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, generics, argument_failure);
             try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
             try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
             return err;
@@ -769,7 +770,7 @@ pub const Session = struct {
         try contracts.prepareParticipantConformances();
         try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
         try contracts.resolveAssociatedTypes();
-        _ = try generics.materializeKnownTypes();
+        _ = try generics.materializeKnownTypes(null);
         _ = try self.resolvers.control.materializeSugarTypes();
         try self.resolution.appendModules(allocator, modules, self.relocation.offsets.items);
         if (self.options.profile_io != null) {
@@ -1432,9 +1433,10 @@ fn advanceResolution(
             if (try core.materializeAddresses()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_addresses_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (generics.materializePendingTypes(&pending_types) catch |err| {
+            var argument_failure: ?generic_mod.Resolver.ArgumentFailure = null;
+            if (generics.materializePendingTypes(&pending_types, &argument_failure) catch |err| {
                 try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
-                try reportGenericArgumentFailure(graph, options.diagnostics, generics);
+                try reportGenericArgumentFailure(graph, options.diagnostics, generics, argument_failure);
                 try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             }) changed = true;
@@ -4086,9 +4088,9 @@ fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, 
     }
 }
 
-fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
+fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver, optional: ?generic_mod.Resolver.ArgumentFailure) !void {
     const sink = diagnostics orelse return;
-    const failure = generics.argument_failure orelse return;
+    const failure = optional orelse return;
     const declaration = graph.familyDefinition(failure.declaration);
     var source = declaration.source;
     // External type holes retain the application's location in ModuleSG.

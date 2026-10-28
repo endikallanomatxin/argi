@@ -1436,13 +1436,14 @@ pub const Resolver = struct {
         const caches = self.checkpointResolution();
         const type_caches = self.generics.checkpointCaches();
         const comptime_failure = self.generics.comptime_failure;
-        const argument_failure = self.generics.argument_failure;
+        const argument_diagnostic = self.generics.argument_diagnostic;
+        self.generics.argument_diagnostic = null;
         defer {
             checkpoint.rollback();
             self.rollbackResolution(caches);
             self.generics.rollbackCaches(type_caches);
             self.generics.comptime_failure = comptime_failure;
-            self.generics.argument_failure = argument_failure;
+            self.generics.argument_diagnostic = argument_diagnostic;
         }
         const module = &self.modules[located.module_index];
         const storage = &module.semantic.parameterized_storage;

@@ -1506,10 +1506,11 @@ pub const Resolver = struct {
 
     fn explicitOrdinaryApplicable(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, reach: ReachInferenceContext) !OrdinaryApplicability {
         var speculation = self.beginSpeculation();
-        const argument_failure = self.generics.argument_failure;
+        const diagnostic = self.generics.argument_diagnostic;
+        self.generics.argument_diagnostic = null;
         defer {
             speculation.deinit();
-            self.generics.argument_failure = argument_failure;
+            self.generics.argument_diagnostic = diagnostic;
         }
         const selected = self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, reach, false, null) catch |err| return switch (err) {
             error.ComptimeExecutionPending => pending: {
@@ -1526,10 +1527,11 @@ pub const Resolver = struct {
 
     fn implicitOrdinaryApplicableFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, module_filter: ?global_sg.GlobalModuleId) !OrdinaryApplicability {
         var speculation = self.beginSpeculation();
-        const argument_failure = self.generics.argument_failure;
+        const diagnostic = self.generics.argument_diagnostic;
+        self.generics.argument_diagnostic = null;
         defer {
             speculation.deinit();
-            self.generics.argument_failure = argument_failure;
+            self.generics.argument_diagnostic = diagnostic;
         }
         const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null, null) catch |err| {
             return switch (err) {

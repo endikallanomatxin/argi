@@ -1596,6 +1596,16 @@ test "type rules: types/283X_positional_type_excess" {
         "too many generic arguments",
         false,
     );
+    try checkSource(
+        "types/nested_positional_type_excess",
+        \\Pair := #(.left: Type, .right: Type) (.left: left, .right: right)
+        \\Outer := #(.T: Type) (.value: Pair#(T, Bool, UInt8))
+        \\main := () -> () { value: Outer#(Int32) }
+    ,
+        null,
+        "too many generic arguments",
+        false,
+    );
 }
 
 test "type rules: types/284X_positional_type_missing" {
