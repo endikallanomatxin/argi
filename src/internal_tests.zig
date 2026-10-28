@@ -170,6 +170,7 @@ comptime {
     _ = global_semantizer;
     _ = global_safety_facts;
     _ = @import("4_semantics/safety/place.zig");
+    _ = @import("4_semantics/safety/state.zig");
     _ = global_safety_checker;
     _ = safety_lexical_forwarding;
     _ = foreign_result;

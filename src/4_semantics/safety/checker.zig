@@ -5561,7 +5561,7 @@ pub const SafetyChecker = struct {
                 if (state.variantRejected(storage, @intCast(index))) continue;
                 var branch = try self.cloneState(state);
                 defer branch.deinit();
-                branch.setActiveVariant(storage, @intCast(index));
+                try branch.setActiveVariant(storage, @intCast(index));
                 const payload_storage = try self.project(storage, .{ .variant = @intCast(index) });
                 if (self.valueAtPlace(&branch, payload_storage)) |payload|
                     try self.activate_conditional_resources(&branch, payload);
@@ -7177,12 +7177,12 @@ pub const SafetyChecker = struct {
                     break;
                 };
             state.clearRejectedVariant(target, index);
-            state.setActiveVariant(target, index);
+            try state.setActiveVariant(target, index);
             return;
         }
 
         state.clearActiveVariant(target, index);
-        state.setRejectedVariant(target, index);
+        try state.setRejectedVariant(target, index);
 
         // Once every other variant has been rejected, the remaining one is
         // proven active. Temporary expressions only retain positive proofs;
@@ -7200,7 +7200,7 @@ pub const SafetyChecker = struct {
                 try self.activate_conditional_resources(state, payload.value.*);
                 break;
             };
-            state.setActiveVariant(target, only);
+            try state.setActiveVariant(target, only);
         }
     }
 

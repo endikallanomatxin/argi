@@ -279,7 +279,7 @@ pub const State = struct {
         value: facts.ValueFacts,
     ) !void {
         if (value.known_choice_variant) |variant_index|
-            self.setActiveVariant(storage, variant_index);
+            try self.setActiveVariant(storage, variant_index);
         for (value.fields) |field|
             try self.recordKnownChoiceVariants(
                 try self.project(storage, .{ .field = field.index }),
@@ -292,13 +292,13 @@ pub const State = struct {
         return null;
     }
 
-    pub fn setActiveVariant(self: *State, storage: facts.Place, index: u32) void {
+    pub fn setActiveVariant(self: *State, storage: facts.Place, index: u32) !void {
         for (self.choice_active.items) |*entry| if (entry.storage.eql(storage)) {
             entry.variant_index = index;
             self.clearRejectedVariant(storage, index);
             return;
         };
-        self.choice_active.append(.{ .storage = storage, .variant_index = index }) catch {};
+        try self.choice_active.append(.{ .storage = storage, .variant_index = index });
         self.clearRejectedVariant(storage, index);
     }
 
@@ -329,10 +329,10 @@ pub const State = struct {
         return false;
     }
 
-    pub fn setRejectedVariant(self: *State, storage: facts.Place, index: u32) void {
+    pub fn setRejectedVariant(self: *State, storage: facts.Place, index: u32) !void {
         for (self.choice_rejected.items) |entry|
             if (entry.storage.eql(storage) and entry.variant_index == index) return;
-        self.choice_rejected.append(.{ .storage = storage, .variant_index = index }) catch {};
+        try self.choice_rejected.append(.{ .storage = storage, .variant_index = index });
     }
 
     pub fn clearRejectedVariant(self: *State, storage: facts.Place, index: u32) void {
@@ -537,8 +537,8 @@ test "Safety place replacement retires descendants and refinements while preserv
     const sibling: facts.Place = .{ .root = @enumFromInt(1) };
     try state.setPlace(child, .initialized, .{ .known_choice_variant = 2 });
     try state.setPlace(sibling, .initialized, .{ .known_choice_variant = 3 });
-    state.setRejectedVariant(child, 4);
-    state.setRejectedVariant(sibling, 5);
+    try state.setRejectedVariant(child, 4);
+    try state.setRejectedVariant(sibling, 5);
     try state.markMoved(parent, .{}, .{ .file_index = 0, .offset = 7 });
     try std.testing.expectEqual(null, state.findPlace(child));
     try std.testing.expectEqual(null, state.activeVariant(child));
@@ -585,8 +585,8 @@ fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
     try state.storage_generations.append(.{ .storage = storage, .generation = root });
     try state.lexical_storage_generations.append(root);
     try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
-    state.setActiveVariant(storage, 2);
-    state.setRejectedVariant(storage, 3);
+    try state.setActiveVariant(storage, 2);
+    try state.setRejectedVariant(storage, 3);
     try state.setTemporaryActiveVariant(@enumFromInt(0), 2);
     state.reachable = false;
     var copied = try state.clone(allocator);
@@ -594,7 +594,7 @@ fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(state.elementCount(), copied.elementCount());
     try std.testing.expect(!copied.reachable);
     copied.getPlace(storage).?.initializedness = .moved;
-    copied.setActiveVariant(storage, 4);
+    try copied.setActiveVariant(storage, 4);
     copied.tracker.end(root);
     try std.testing.expectEqual(.initialized, state.findPlace(storage).?.initializedness);
     try std.testing.expectEqual(@as(?u32, 2), state.activeVariant(storage));
@@ -742,4 +742,27 @@ test "Safety symbolic initialization alone cannot renew a historical reference" 
     state.initializeLiveSymbolicTargets(.{ .symbolic_pointees = &.{identity} });
     try std.testing.expectEqual(.deinitialized, state.symbolicPointee(identity).?.initializedness);
     try std.testing.expect(!state.tracker.isAlive(old));
+}
+
+test "Safety choice refinements propagate allocation failure without discarding prior facts" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var state = State.init(failing.allocator());
+    defer state.deinit();
+    const storage: facts.Place = .{ .root = @enumFromInt(0) };
+    try std.testing.expectError(error.OutOfMemory, state.setActiveVariant(storage, 1));
+    try std.testing.expectError(error.OutOfMemory, state.setRejectedVariant(storage, 2));
+    try std.testing.expectEqual(@as(usize, 0), state.choice_active.items.len);
+    try std.testing.expectEqual(@as(usize, 0), state.choice_rejected.items.len);
+
+    // Updating an existing positive proof and removing its rejection allocate
+    // nothing, even when the backing allocator cannot provide more storage.
+    state.choice_active.allocator = std.testing.allocator;
+    state.choice_rejected.allocator = std.testing.allocator;
+    try state.setActiveVariant(storage, 1);
+    try state.setRejectedVariant(storage, 2);
+    state.choice_active.allocator = failing.allocator();
+    state.choice_rejected.allocator = failing.allocator();
+    try state.setActiveVariant(storage, 2);
+    try std.testing.expectEqual(@as(u32, 2), state.choice_active.items[0].variant_index);
+    try std.testing.expect(!state.variantRejected(storage, 2));
 }
