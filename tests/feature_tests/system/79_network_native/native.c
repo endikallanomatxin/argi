@@ -1,6 +1,7 @@
 #include "../../../../core/platforms/shared/network.h"
 #include <stdlib.h>
 #include <string.h>
+#include "connect_interrupts.h"
 
 static int probe_family(int family) {
     const char *host = family == 1 ? "127.0.0.1" : "::1";
@@ -58,6 +59,9 @@ int32_t argi_network_probe(void) {
     if (_argi_network_resolve(invalid, 3, 0, 1, 0, 0, &addresses) != -2 || addresses) result = 21;
     if (!result) result = probe_family(1);
     if (!result) result = probe_family(2);
+#ifndef _WIN32
+    if (!result) result = probe_connect_interrupts();
+#endif
     _argi_network_deinit();
     return result;
 }

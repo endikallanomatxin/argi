@@ -2,7 +2,8 @@
 
 Prioritize real consumers; reproduce compiler gaps before adding workarounds.
 
-- Validate interrupted I/O and Windows-native flush/close failures.
+- Validate interrupted stdio/socket transfers and Windows-native flush/close
+  failures.
 - Extend CLI argument relationships, subcommands, and typed diagnostics.
 - Audit traversal under filesystem changes and resource limits.
 - Extend math and timezone-aware date formats.

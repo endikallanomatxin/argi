@@ -76,6 +76,9 @@ handle or native allocation is a safe reference or an allocation receipt.
 `set_timeout(.self, .milliseconds)` configures native receive/send timeouts for a
 connection or UDP socket. Zero restores blocking operation without a timeout.
 These timeouts do not bound DNS resolution, connection establishment, or accept.
+On POSIX, an interrupted connection waits for completion and checks the socket
+error rather than submitting a second connection request. Interruptions while
+waiting do not restart that request.
 Resolution, opening, accepting, reads, writes, options, and close have distinct
 error reasons; argument, allocation, oversized-datagram, and truncation failures
 remain distinguishable. The baseline does not expose platform errno values.
