@@ -2336,9 +2336,10 @@ pub const Resolver = struct {
         // Context supplies identity before missing-field diagnostics run. The
         // shared record-literal publication check rejects incomplete values;
         // contextual tagging alone does not establish initialization.
+        const ordered = @import("record_literals.zig").fieldsInDeclarationOrder(self.graph, literal, expected_fields);
         for (0..expected_fields.len) |offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
-            const actual = self.callArgument(literal, offset, expected.name) orelse continue;
+            const actual = if (ordered) self.graph.value_fields.items[literal.fields.start + offset].value else self.callArgument(literal, offset, expected.name) orelse continue;
             _ = try self.coerceContextualValue(actual, expected.ty);
         }
         _ = try self.normalizeNamedStructLiteral(node, target);
@@ -2404,8 +2405,9 @@ pub const Resolver = struct {
                 }
                 if (!nested) break :blk false;
                 const fields = types.fields(self.graph, target) orelse break :blk false;
+                const ordered = @import("record_literals.zig").fieldsInDeclarationOrder(self.graph, literal, fields);
                 for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-                    const child = self.callArgument(literal, index, field.name) orelse continue;
+                    const child = if (ordered) self.graph.value_fields.items[literal.fields.start + index].value else self.callArgument(literal, index, field.name) orelse continue;
                     if (self.contextualAggregateNeedsCompletion(child, field.ty)) break :blk true;
                 }
                 break :blk false;
@@ -2630,6 +2632,43 @@ fn pathEndsWith(path: []const u8, suffix: []const u8) bool {
     if (!std.mem.endsWith(u8, path, suffix) or path.len <= suffix.len) return false;
     const boundary = path[path.len - suffix.len - 1];
     return boundary == '/' or boundary == '\\';
+}
+
+test "ordered record lookup agrees with supplied-field matching for every spelling" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const names = [_]primitives.StringRange{
+        try graph.addString(a, ""),
+        try graph.addString(a, "first"),
+        try graph.addString(a, "second"),
+    };
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.fields.appendSlice(a, &.{
+        .{ .name = names[1], .ty = @enumFromInt(0), .source = source },
+        .{ .name = names[2], .ty = @enumFromInt(0), .source = source },
+    });
+    try graph.value_fields.appendSlice(a, &.{
+        .{ .name = names[0], .value = @enumFromInt(10) },
+        .{ .name = names[0], .value = @enumFromInt(11) },
+    });
+    const records = @import("record_literals.zig");
+    var proofs: usize = 0;
+    for (names) |first| for (names) |second| for (0..3) |prefix| {
+        graph.value_fields.items[0].name = first;
+        graph.value_fields.items[1].name = second;
+        const literal: @FieldType(global_sg.Node.Content, "struct_value_literal") = .{
+            .fields = .{ .start = 0, .len = 2 },
+            .dispatch_prefix_positional_count = @intCast(prefix),
+        };
+        if (!records.fieldsInDeclarationOrder(&graph, literal, .{ .start = 0, .len = 2 })) continue;
+        proofs += 1;
+        for (0..2) |index| try std.testing.expectEqual(
+            graph.value_fields.items[index].value,
+            records.suppliedField(&graph, literal, index, graph.text(names[index + 1])).?,
+        );
+    };
+    try std.testing.expect(proofs > 0);
 }
 
 test "call input matching distinguishes deferred arguments from mismatches" {

@@ -4,6 +4,17 @@ const global_types = @import("types.zig");
 const reachability = @import("reachability.zig");
 const diag = @import("../../1_base/diagnostic.zig");
 
+/// A complete literal in declaration order needs no repeated name searches.
+/// This proof borrows ranges only; callers must recompute it after rewrites.
+pub fn fieldsInDeclarationOrder(graph: *const g.GlobalSemanticGraph, literal: anytype, expected: g.FieldRange) bool {
+    if (literal.fields.len != expected.len) return false;
+    for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
+        if (index < literal.dispatch_prefix_positional_count or graph.text(field.name).len == 0) continue;
+        if (!std.mem.eql(u8, graph.text(field.name), graph.text(graph.fields.items[expected.start + index].name))) return false;
+    }
+    return true;
+}
+
 // Written record fields share positional/name matching with call inputs.
 // Lexical assumptions are handled separately: they are not stored fields.
 pub fn suppliedField(graph: *const g.GlobalSemanticGraph, literal: anytype, expected_offset: usize, expected_name: []const u8) ?g.GlobalNodeId {
@@ -74,9 +85,11 @@ fn missingInLiteral(graph: *const g.GlobalSemanticGraph, id: g.GlobalNodeId, ty:
     // Union fields are overlapping alternatives, not independent obligations.
     if (global_types.isCUnion(graph, ty)) return null;
     const fields = global_types.fields(graph, ty) orelse return null;
+    const ordered = fieldsInDeclarationOrder(graph, literal, fields);
     for (graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-        if (suppliedField(graph, literal, index, graph.text(field.name))) |child| {
-            if (missingInLiteral(graph, child, field.ty, depth + 1)) |failure| return failure;
+        const child = if (ordered) graph.value_fields.items[literal.fields.start + index].value else suppliedField(graph, literal, index, graph.text(field.name));
+        if (child) |value| {
+            if (missingInLiteral(graph, value, field.ty, depth + 1)) |failure| return failure;
         } else if (field.default_value == null) {
             return .{ .node = id, .field = @enumFromInt(fields.start + @as(u32, @intCast(index))) };
         }
