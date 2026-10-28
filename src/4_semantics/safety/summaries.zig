@@ -82,9 +82,20 @@ pub const Engine = struct {
         if (self.summaries.get(function)) |previous| {
             if (summaryEql(previous, summary)) return false;
         }
+        // A published approximation must never lose its observer notifications.
+        // Reserve both queue tables before changing the summary itself.
+        const callers = self.dependents.get(function);
+        if (callers) |list| {
+            var pending: usize = 0;
+            for (list.items) |caller| if (!self.dirty.contains(caller)) {
+                pending += 1;
+            };
+            try self.worklist.ensureUnusedCapacity(pending);
+            try self.dirty.ensureUnusedCapacity(@intCast(pending));
+        }
         try self.summaries.put(function, summary);
-        if (self.dependents.get(function)) |callers| {
-            for (callers.items) |caller| try self.markDirty(caller);
+        if (callers) |list| {
+            for (list.items) |caller| try self.markDirty(caller);
         }
         return true;
     }
@@ -100,8 +111,9 @@ pub const Engine = struct {
 
     fn markDirty(self: *Engine, function: graph.GlobalFunctionId) !void {
         if (self.dirty.contains(function)) return;
+        try self.worklist.ensureUnusedCapacity(1);
         try self.dirty.put(function, {});
-        try self.worklist.append(function);
+        self.worklist.appendAssumeCapacity(function);
     }
 
     pub fn addDependency(self: *Engine, dependent: graph.GlobalFunctionId, dependency: graph.GlobalFunctionId) !void {
@@ -446,4 +458,53 @@ test "outcome effect views retain common obligations and current normalized fiel
     try std.testing.expectEqual(@as(usize, 0), after.guarded_effects.len);
     try std.testing.expectEqual(@as(usize, 1), summary.input_post_states.len);
     try std.testing.expect(summary.guarded_effects[0].effects == &independent);
+}
+
+test "summary work publication remains retryable after allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn seed(a: std.mem.Allocator) !void {
+            var engine = Engine.init(a);
+            defer engine.deinit();
+            const function: graph.GlobalFunctionId = @enumFromInt(0);
+            engine.seed(&.{function}) catch |err| {
+                try std.testing.expectEqual(@as(usize, 0), engine.dirty.count());
+                try std.testing.expect(engine.nextDirty() == null);
+                return err;
+            };
+            try std.testing.expectEqual(function, engine.nextDirty().?);
+            try std.testing.expect(engine.nextDirty() == null);
+        }
+    }.seed, .{});
+}
+
+test "summary changes publish every observer or preserve the old approximation" {
+    inline for (.{ false, true }) |existing| {
+        try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+            fn update(a: std.mem.Allocator, retained: bool) !void {
+                var engine = Engine.init(a);
+                defer engine.deinit();
+                const callee: graph.GlobalFunctionId = @enumFromInt(0);
+                const first: graph.GlobalFunctionId = @enumFromInt(1);
+                const second: graph.GlobalFunctionId = @enumFromInt(2);
+                try engine.addDependency(first, callee);
+                try engine.addDependency(second, callee);
+                if (retained) try engine.ensureEmpty(callee);
+                const changed: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 0 }} };
+                _ = engine.updateSummary(callee, changed) catch |err| {
+                    if (retained) {
+                        try std.testing.expect(summaryEql(.{}, engine.summaries.get(callee).?));
+                    } else try std.testing.expect(engine.summaries.get(callee) == null);
+                    try std.testing.expectEqual(@as(usize, 0), engine.dirty.count());
+                    try std.testing.expect(engine.nextDirty() == null);
+                    return err;
+                };
+                try std.testing.expect(summaryEql(changed, engine.summaries.get(callee).?));
+                try std.testing.expectEqual(first, engine.nextDirty().?);
+                try std.testing.expectEqual(second, engine.nextDirty().?);
+                try std.testing.expect(engine.nextDirty() == null);
+                try std.testing.expect(!try engine.updateSummary(callee, changed));
+                try std.testing.expect(engine.nextDirty() == null);
+            }
+        }.update, .{existing});
+    }
 }
