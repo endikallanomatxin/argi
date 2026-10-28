@@ -905,7 +905,7 @@ pub const Resolver = struct {
             // Reject unrelated nominal references before instantiating their
             // constraints; an inapplicable identity must not emit type diagnostics.
             if (self.graph.node(value).ty) |actual|
-                if (self.definiteNominalReferenceMismatch(module_index, field.ty, actual)) return false;
+                if (try self.definiteNominalReferenceMismatch(module_index, field.ty, actual)) return false;
             if (allow_contextual_concrete) {
                 if (try self.contextualParameterizedLiteralFits(module_index, field.ty, bindings, value)) continue;
             }
@@ -1005,6 +1005,7 @@ pub const Resolver = struct {
                         bindings,
                     ) catch |err| switch (err) {
                         error.ConflictingGenericArgument => return false,
+                        error.OutOfMemory, error.ComptimeExecutionPending => return err,
                         else => continue,
                     };
                     if (matched) {
@@ -1703,7 +1704,7 @@ pub const Resolver = struct {
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
         actual: global_sg.GlobalTypeId,
-    ) bool {
+    ) !bool {
         if (self.graph.isTypeUnresolved(actual)) return false;
         const actual_pointer = switch (self.graph.types.items[@intFromEnum(actual)]) {
             .pointer => |pointer| pointer,
@@ -1727,7 +1728,10 @@ pub const Resolver = struct {
         const expected_base: Base = switch (storage.types.items[@intFromEnum(expected_pointer.child)]) {
             .resolved => |ty| switch (ty) {
                 .nominal => |definition| .{ .nominal = globalizer.globalTypeDefinition(self.offsets[module_index], definition) },
-                .generic => |generic| .{ .family = self.generics.resolveParameterizedFamily(module_index, generic.base) catch return false },
+                .generic => |generic| .{ .family = self.generics.resolveParameterizedFamily(module_index, generic.base) catch |err| switch (err) {
+                    error.OutOfMemory => return err,
+                    else => return false,
+                } },
                 else => return false,
             },
             else => return false,
@@ -2011,9 +2015,10 @@ pub const Resolver = struct {
                     };
                     if (pointer.mutability == .read_write and value.mutability != .read_write) return false;
                     if (try self.inferInputType(module_index, pointer.child, value.child, bindings)) return true;
-                    if (self.definiteNominalReferenceMismatch(module_index, pattern, actual)) return false;
+                    if (try self.definiteNominalReferenceMismatch(module_index, pattern, actual)) return false;
                     const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
                         error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+                        error.OutOfMemory => return error.OutOfMemory,
                         else => return false,
                     };
                     if (self.core.valueTypesCompatible(actual, expected)) return true;
@@ -2081,6 +2086,7 @@ pub const Resolver = struct {
         }
         const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
             error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+            error.OutOfMemory => return error.OutOfMemory,
             else => return false,
         };
         return global_types.equal(self.graph, expected, actual);
@@ -2108,6 +2114,7 @@ pub const Resolver = struct {
             // regular evaluator validates the dependent value.
             .binary, .projection, .execution => (self.generics.evalInt(module_index, expression, bindings) catch |err| switch (err) {
                 error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
+                error.OutOfMemory => return error.OutOfMemory,
                 else => return false,
             }) == actual,
         };
@@ -4523,6 +4530,128 @@ test "generic literal compatibility preserves allocation errors and speculative 
             try std.testing.expect(!try resolver.contextualParameterizedLiteralFits(0, @enumFromInt(0), &bindings, @enumFromInt(0)));
         }
     }.probe, .{});
+}
+
+test "generic input matching propagates allocation errors in concrete pointer and reached inputs" {
+    const Probe = struct {
+        fn run(pointer: bool, reached: bool) !void {
+            const setup = std.testing.allocator;
+            var module: module_sg.ModuleSemanticGraph = .{};
+            defer module.deinit(setup);
+            const storage = &module.semantic.parameterized_storage.ir;
+            try storage.types.append(setup, .{ .resolved = .{ .builtin = .Int32 } });
+            if (pointer) try storage.types.append(setup, .{ .resolved = .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } });
+            var graph: global_sg.GlobalSemanticGraph = .{};
+            defer graph.deinit(setup);
+            try graph.types.ensureTotalCapacityPrecise(setup, if (pointer) 3 else 1);
+            try graph.types.append(setup, .{ .builtin = .UInt8 });
+            if (pointer) {
+                try graph.types.append(setup, .{ .builtin = .Int32 });
+                try graph.types.append(setup, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+            }
+            if (reached) {
+                const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+                const name = try @import("../primitives/strings.zig").append(&module.strings, setup, "provider");
+                try storage.nodes.append(setup, .{ .resolved = .{ .source = source, .ty = null, .content = .{ .reach_directive = @enumFromInt(0) } } });
+                try storage.reach_segments.append(setup, name);
+                try storage.reach_alternatives.append(setup, .{ .segments = .{ .start = 0, .len = 1 } });
+                try storage.reaches.append(setup, .{ .alternatives = .{ .start = 0, .len = 1 } });
+                try storage.fields.append(setup, .{ .name = name, .ty = @enumFromInt(0), .source = source, .default_value = @enumFromInt(0) });
+                try storage.types.append(setup, .{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } } });
+                try graph.nodes.append(setup, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } } });
+                try graph.bindings.append(setup, .{ .name = try graph.addString(setup, "provider"), .source = source, .ty = @enumFromInt(0), .initialization = null, .mutability = .constant });
+            }
+            const modules = [_]module_sg.ModuleSemanticGraph{module};
+            const offsets = [_]globalizer.Offsets{std.mem.zeroes(globalizer.Offsets)};
+            var core: core_mod.Resolver = .{ .allocator = setup, .graph = &graph, .modules = &modules, .offsets = &offsets };
+            defer core.deinit();
+            var generics: generic_mod.Resolver = .{ .allocator = setup, .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core };
+            defer generics.deinit();
+            // Disposable cache allocation may legitimately fail. Reserve it
+            // separately to inject failures only in semantic materialization.
+            try generics.pointer_types.put(setup, .{ .child = @enumFromInt(0), .mutability = .read_only }, @enumFromInt(0));
+            generics.pointer_types.rollback(0);
+            var resolver: Resolver = .{ .allocator = setup, .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core, .generics = &generics };
+            var bindings = try generic_mod.Resolver.Bindings.init(setup, 0);
+            defer bindings.deinit(setup);
+            const pattern: ir.ParameterizedTypeId = @enumFromInt(@as(u32, if (pointer) 1 else 0));
+            const actual: global_sg.GlobalTypeId = @enumFromInt(@as(u32, if (pointer) 2 else 0));
+            var failing = std.testing.FailingAllocator.init(setup, .{ .fail_index = 0 });
+            generics.allocator = failing.allocator();
+            if (reached) {
+                try std.testing.expectError(error.OutOfMemory, resolver.inferBindingsFromReachDefaults(0, @enumFromInt(1), @enumFromInt(0), &bindings, ReachInferenceContext.fromGlobal(&.{@enumFromInt(0)}, null)));
+                return;
+            }
+            try std.testing.expectError(error.OutOfMemory, resolver.inferInputType(0, pattern, actual, &bindings));
+            generics.allocator = setup;
+            try std.testing.expect(!try resolver.inferInputType(0, pattern, actual, &bindings));
+        }
+    };
+    try Probe.run(false, false);
+    try Probe.run(true, false);
+    try Probe.run(false, true);
+}
+
+test "nominal reference prefilter preserves allocation errors resolving external families" {
+    const allocator = std.testing.allocator;
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(allocator);
+    const name = try @import("../primitives/strings.zig").append(&module.strings, allocator, "Family");
+    try module.semantic.external_refs.append(allocator, .{ .kind = .type, .module_path = null, .name = name, .source = .{ .file_index = 0, .offset = 0 } });
+    const storage = &module.semantic.parameterized_storage.ir;
+    try storage.declarations.append(allocator, .{ .target = .{ .external = @enumFromInt(0) } });
+    try storage.types.append(allocator, .{ .resolved = .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } } });
+    try storage.types.append(allocator, .{ .resolved = .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } });
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .nominal = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    const global_name = try graph.addString(allocator, "Family");
+    try graph.declarations.append(allocator, .{ .kind = .type, .name = global_name, .source = .{ .file_index = 0, .offset = 0 } });
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    const offsets = [_]globalizer.Offsets{std.mem.zeroes(globalizer.Offsets)};
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    var core: core_mod.Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &modules, .offsets = &offsets };
+    defer core.deinit();
+    var generics: generic_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core };
+    defer generics.deinit();
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core, .generics = &generics };
+    try std.testing.expectError(error.OutOfMemory, resolver.definiteNominalReferenceMismatch(0, @enumFromInt(1), @enumFromInt(1)));
+}
+
+test "generic integer matching preserves staged execution failures and pending work" {
+    const Execution = struct {
+        result: union(enum) { value: i64, failure: anyerror },
+
+        fn evaluate(raw: *anyopaque, _: usize, _: ir.ParameterizedNodeId, _: *const generic_mod.Resolver.Bindings) anyerror!i64 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            return switch (self.result) {
+                .value => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+    const allocator = std.testing.allocator;
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(allocator);
+    try module.semantic.parameterized_storage.ir.int_expressions.append(allocator, .{ .execution = @enumFromInt(0) });
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var core: core_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{} };
+    var execution: Execution = .{ .result = .{ .failure = error.OutOfMemory } };
+    var generics: generic_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{}, .core = &core, .execution_context = &execution, .execute_integer = Execution.evaluate };
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{}, .core = &core, .generics = &generics };
+    var bindings = try generic_mod.Resolver.Bindings.init(allocator, 0);
+    defer bindings.deinit(allocator);
+    try std.testing.expectError(error.OutOfMemory, resolver.inferIntExpression(0, @enumFromInt(0), 42, &bindings));
+    execution.result = .{ .failure = error.ComptimeExecutionPending };
+    try std.testing.expectError(error.ComptimeExecutionPending, resolver.inferIntExpression(0, @enumFromInt(0), 42, &bindings));
+    execution.result = .{ .failure = error.UnboundComptimeParameter };
+    try std.testing.expect(!try resolver.inferIntExpression(0, @enumFromInt(0), 42, &bindings));
+    execution.result = .{ .value = 42 };
+    try std.testing.expect(try resolver.inferIntExpression(0, @enumFromInt(0), 42, &bindings));
+    try std.testing.expect(!try resolver.inferIntExpression(0, @enumFromInt(0), 43, &bindings));
 }
 
 test "generic function monomorphization uses stable GlobalFunctionId identity" {
