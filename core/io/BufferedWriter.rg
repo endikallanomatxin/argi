@@ -39,26 +39,26 @@ buffered_writer_flush := #(.base_type: Type: Writer#(base_type)) (
     while i < self&.length {
         remaining ::= self&.length - i
         view ::= unwrap_or_abort(.value = slice(&self&.buffer, .start = i, .count = remaining))
-        wrote ::= write(self&.base, .value = view)
-        if is(.value = wrote, .variant = ..error) {
-            self&.length = 0
-            result = ..error(.reason = wrote ..error.reason)
-            return
+        match write(self&.base, .value = view) {
+            ..error ~error {
+                self&.length = 0
+                result = ..error ~error
+                return
+            }
+            ..ok count {
+                if count == 0 or count > remaining {
+                    self&.length = 0
+                    result = ..error(.reason = ..stream_write_failed)
+                    return
+                }
+                i = i + count
+            }
         }
-        count ::= wrote ..ok
-        if count == 0 or count > remaining {
-            self&.length = 0
-            result = ..error(.reason = ..stream_write_failed)
-            return
-        }
-        i = i + count
     }
 
-    flushed ::= Writer#().flush(.self = self&.base)
-
-    if is(.value = flushed, .variant = ..error) {
+    Writer#().flush(.self = self&.base) handle error {
         self&.length = 0
-        result = ..error(.reason = flushed ..error.reason)
+        result = ..error ~error
         return
     }
 

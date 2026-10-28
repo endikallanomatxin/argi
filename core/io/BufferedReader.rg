@@ -40,7 +40,7 @@ implement#(.base_type: Type: Reader#(base_type)) Reader#(BufferedReader#(.base_t
         }
 
         match read(self&.base, .buffer = self&.buffer) {
-            ..error _ { result = ..error(.reason = ..stream_read_failed) }
+            ..error ~error { result = ..error ~error }
             ..ok count {
                 if count > capacity { abort }
                 self&.start = 0
