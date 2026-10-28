@@ -100,6 +100,7 @@ comptime {
     _ = @import("4_semantics/source_rules_test.zig");
     _ = @import("4_semantics/other_rules_test.zig");
     _ = @import("4_semantics/frontend_environment_test.zig");
+    _ = @import("4_semantics/operation_signatures_test.zig");
     _ = @import("4_semantics/choice_rules_test.zig");
     _ = source_files;
     _ = @import("1_base/conditional_source.zig");

@@ -746,6 +746,26 @@ pub const Resolver = struct {
         return true;
     }
 
+    const RequiredSignature = struct { input: global_sg.GlobalTypeId, output: global_sg.GlobalTypeId };
+
+    /// A suspended signature is not a failed candidate. Definite errors and
+    /// missing bindings remain distinct errors for the caller's selection policy.
+    fn instantiateSignatureType(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings) !?global_sg.GlobalTypeId {
+        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending, error.DeferredGenericFunction, error.UnresolvedAssociatedType => return null,
+            else => return err,
+        };
+        return if (contract_projections.typeSelectionReady(self, ty, 0)) ty else null;
+    }
+
+    fn instantiateRequiredSignature(self: *Resolver, module_index: usize, requirement: parameterized_storage.ContractRequirement, bindings: *generic_mod.Resolver.Bindings) !?RequiredSignature {
+        const signature = requirement.signature orelse return error.InvalidContractOperation;
+        return .{
+            .input = try self.instantiateSignatureType(module_index, signature.input, bindings) orelse return null,
+            .output = try self.instantiateSignatureType(module_index, signature.output, bindings) orelse return null,
+        };
+    }
+
     fn requirementInstanceForContractUse(
         self: *Resolver,
         contract_use: ContractUse,
@@ -754,7 +774,7 @@ pub const Resolver = struct {
         requirement: parameterized_storage.ContractRequirement,
         method_index: u32,
     ) !?RequirementInstance {
-        const signature = requirement.signature orelse return null;
+        if (requirement.signature == null) return null;
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
@@ -763,12 +783,8 @@ pub const Resolver = struct {
         // uses the erased receiver identity.
         if (located.definition.participants.len != 1) return null;
         bindings.types[located.definition.participants.start] = self_type;
-        return .{
-            .declaration = contract_use.declaration,
-            .method_index = method_index,
-            .input = try self.generics.instantiateParameterizedType(located.module_index, signature.input, &bindings),
-            .output = try self.generics.instantiateParameterizedType(located.module_index, signature.output, &bindings),
-        };
+        const signature = try self.instantiateRequiredSignature(located.module_index, requirement, &bindings) orelse return null;
+        return .{ .declaration = contract_use.declaration, .method_index = method_index, .input = signature.input, .output = signature.output };
     }
 
     pub fn findContractDefinition(self: *const Resolver, definition: global_sg.GlobalFamilyDefinitionId) ?LocatedContractDefinition {
@@ -1555,8 +1571,20 @@ pub const Resolver = struct {
                 return null;
             }
         }
-        const required = self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings) catch |err| {
-            if (err == error.OutOfMemory) return err;
+        const required = (self.instantiateSignatureType(located.module_index, requirement.signature.?.input, &bindings) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.UnboundDefinitionParameter => return null,
+            else => {
+                failure.* = .{
+                    .source = self.sourceFor(located.module_index, requirement.source),
+                    .contract_name = self.graph.familyDefinitionName(declaration),
+                    .operation = module.text(requirement.name),
+                    .reason = if (self.generics.comptime_failure) |diagnostic| diagnostic.reason else @errorName(err),
+                };
+                return null;
+            },
+        }) orelse {
+            deferred.* = true;
             return null;
         };
         switch (try self.core.matchCallInputWithReach(global_types.fields(self.graph, required) orelse return error.InvalidContractRequirementInput, input, context)) {
@@ -1615,7 +1643,7 @@ pub const Resolver = struct {
             const interface = self.contractUse(participants[0]) orelse return null;
             if (!self.bindContractUseArguments(interface, located, &bindings)) return null;
             bindings.types[located.definition.participants.start] = participants[0];
-            const required = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
+            const required = try self.instantiateSignatureType(located.module_index, requirement.signature.?.input, &bindings) orelse return null;
             if (!try self.core.completeRecordFieldsWithContext(global_types.fields(self.graph, required).?, input, context)) return null;
         }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
@@ -1727,8 +1755,9 @@ pub const Resolver = struct {
             const infer = self.infer_operation_parameters orelse return error.MissingOperationInstantiator;
             if (!try infer(self.function_context.?, located.module_index, requirement, input, &bindings, context)) return null;
         }
-        const required_type = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
-        const required_output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
+        const required = try self.instantiateRequiredSignature(located.module_index, requirement, &bindings) orelse return null;
+        const required_type = required.input;
+        const required_output = required.output;
         const method = if (requirement.parameters.len == 0)
             self.resolveOperationBinding(conformance, method_index) catch |err| switch (err) {
                 error.DeferredGenericFunction, error.ComptimeExecutionPending => return null,
@@ -2179,8 +2208,9 @@ pub const Resolver = struct {
         try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, &bindings);
         try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, &bindings);
         const requirement = storage.contract_requirements.items[located.definition.requirements.start + index];
-        const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
-        const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
+        const required = try self.instantiateRequiredSignature(located.module_index, requirement, &bindings) orelse return error.DeferredGenericFunction;
+        const input = required.input;
+        const output = required.output;
         if (!binding.instantiate_associated) {
             const instantiate_alias = self.instantiate_alias orelse return error.MissingOperationInstantiator;
             return instantiate_alias(self.function_context.?, evidence.definitionValue(self.graph) orelse return error.DeferredGenericFunction, input) catch |err| {
@@ -2332,8 +2362,9 @@ pub const Resolver = struct {
             for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, operation_index| {
                 const name = self.modules[located.module_index].text(requirement.name);
                 if (requirement.parameters.len != 0 or requirement.signature == null) continue;
-                const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.input, &bindings);
-                const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.signature.?.output, &bindings);
+                const required = try self.instantiateRequiredSignature(located.module_index, requirement, &bindings) orelse continue :conformances;
+                const input = required.input;
+                const output = required.output;
                 if (global_types.fields(self.graph, input) == null) {
                     failure.operation = name;
                     failure.reason = "contract operation input must be a record type";

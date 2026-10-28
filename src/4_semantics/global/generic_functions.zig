@@ -677,7 +677,7 @@ pub const Resolver = struct {
             phase_start = self.profileTimestamp();
             applicability_start = phase_start;
             applicability_active = true;
-            switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+            switch (try self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                 .no_match => {
                     if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
                     continue;
@@ -1416,19 +1416,22 @@ pub const Resolver = struct {
         const contracts = self.nested_call_context orelse return null;
         var candidates = try contracts.specializedOperationCandidatesFiltered(module_index, name, input, reach, module_filter, arguments);
         defer candidates.deinit(self.allocator);
-        if (candidates.failure) |failure| {
-            contracts.participant_conformance_failure = failure;
-            return error.InvalidContractConformance;
-        }
         const ordinary: core_mod.Resolver.FunctionMatch = if (arguments.len == 0) try self.core.matchFunctionNamedWithReach(module_index, name, module_filter, input, reach) else .no_match;
         if (candidates.items.items.len == 0) {
-            if (ordinary == .function) {
+            if (candidates.deferred) return error.DeferredOperationIdentity;
+            if (ordinary == .function or candidates.failure != null) {
                 const generic = if (arguments.len == 0) try self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, module_filter) else try self.explicitOrdinaryApplicable(module_index, reference.?, arguments, input, reach);
-                if (generic == .ambiguous or (generic == .applicable and generic.applicable != self.graph.functions.items[@intFromEnum(ordinary.function)].declaration)) {
+                if (generic == .ambiguous or (ordinary == .function and generic == .applicable and generic.applicable != self.graph.functions.items[@intFromEnum(ordinary.function)].declaration)) {
                     contracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the function explicitly" };
                     return error.AmbiguousOperationIdentity;
                 }
                 if (generic == .deferred) return error.DeferredOperationIdentity;
+                if (ordinary == .no_match and generic == .missing) {
+                    if (candidates.failure) |failure| {
+                        contracts.participant_conformance_failure = failure;
+                        return error.InvalidContractConformance;
+                    }
+                }
             }
             return null;
         }
@@ -1630,7 +1633,7 @@ pub const Resolver = struct {
             phase_start = self.profileTimestamp();
             applicability_start = phase_start;
             applicability_active = true;
-            switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+            switch (try self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                 .no_match => continue,
                 .deferred => {
                     saw_deferred = true;
@@ -1748,7 +1751,7 @@ pub const Resolver = struct {
         // A bound can fail on a candidate whose other arguments do not fit.
         // Only explain constraints for otherwise compatible signatures, using
         // the same matcher as function applicability rather than a second rule set.
-        switch (self.matchParameterizedInput(module_index, pattern, bindings, input)) {
+        switch (try self.matchParameterizedInput(module_index, pattern, bindings, input)) {
             .applicable => {},
             else => return,
         }
@@ -1860,18 +1863,28 @@ pub const Resolver = struct {
         return false;
     }
 
-    fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.RecordMatch {
+    fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) !core_mod.Resolver.RecordMatch {
         var speculation = self.beginSpeculation();
         const saved_stats = self.generics.stats;
         defer {
             speculation.deinit();
             self.generics.stats = saved_stats;
         }
-        // TODO: Classify definite instantiation errors separately from missing
-        // bindings without publishing diagnostics from losing identities.
-        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| {
-            if (err == error.ComptimeExecutionPending) speculation.retainPendingExecution();
-            return .deferred;
+        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| return switch (err) {
+            error.OutOfMemory => err,
+            error.ComptimeExecutionPending => pending: {
+                speculation.retainPendingExecution();
+                break :pending .deferred;
+            },
+            error.DeferredGenericFunction,
+            error.UnresolvedAssociatedType,
+            error.UnboundGenericTypeParameter,
+            error.UnboundComptimeParameter,
+            error.UnboundDefinitionParameter,
+            => .deferred,
+            // A failed candidate is not unfinished work. Speculation restores
+            // its diagnostics before another operation identity is considered.
+            else => .no_match,
         };
         const fields = global_types.fields(self.graph, ty) orelse return if (self.unresolvedSignature(ty) == .deferred) .deferred else .no_match;
         return self.core.matchCallInput(fields, input);
