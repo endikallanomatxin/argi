@@ -10,8 +10,6 @@
 
 ## Safety
 
-- Share declaration-to-summary lowering for virtual effects where rules coincide;
-  keep conformance promises separate from inferred evidence.
 - Extend conditional storage effects through stored results, indirect outputs
   and loops, preserving intervening writes and exact caller identities.
 - Extend hidden retention/replacement and grouped opaque mappings through output

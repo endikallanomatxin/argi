@@ -187,147 +187,84 @@ pub const Infer = struct {
         try self.engine.observeVirtual(registry_id);
         if (self.virtual_summaries.get(registry_id)) |summary| return summary;
         const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
-        if (registry.contract_input_count) |input_count| {
-            const declared = registry.safety_contract orelse return error.MissingVirtualSafetyContract;
-            // This summary depends on the declaration and fixed signature only.
-            // Concrete summaries are read separately for conformance after the
-            // fixed point. Only an explicit referent clause can select an input's
-            // storage; dependency permissions alone never establish aliases.
-            const contract = try @import("contracts.zig").fromDeclaration(self.allocator, declared);
-            if (contract.general_conditions) {
-                const result = try self.generalVirtualSummary(registry_id, contract);
-                try self.virtual_summaries.put(registry_id, result);
-                return result;
-            }
-            const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
-            for (contract.outputs, outputs, 0..) |allowed, *output, index| {
-                if (registry.contract_output_type) |ty| {
-                    const fields = types.fields(self.graph, ty) orelse return error.InvalidContractOutput;
-                    const field = self.graph.fields.items[fields.start + index];
-                    output.* = try @import("contract_outputs.zig").build(self.allocator, self.graph, field.ty, allowed, @as(usize, @truncate(std.hash.Wyhash.hash(@intFromEnum(registry_id), std.mem.asBytes(&index)))));
-                } else {
-                    const dependencies = try self.allocator.alloc(facts.InputDependency, allowed.dependencies.len);
-                    for (allowed.dependencies, dependencies) |path, *dependency| dependency.* = .{
-                        .path = path,
-                        .validity_only = if (allowed.referent) |referent| path.input_index != referent.input_index else true,
-                    };
-                    output.* = .{ .input_dependencies = dependencies, .input_domains = allowed.domains, .opaque_storage_dependencies = allowed.storage_sources, .explicit_dependency = dependencies.len != 0 or allowed.domains.len != 0 };
-                }
-            }
-            for (outputs) |*output| output.* = try self.bindVirtualReceiverValues(output.*, registry.receiver_input_index);
-            var required_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
-            for (0..input_count) |index| {
-                var destination = false;
-                for (contract.relocations) |relocation| if (relocation.destination.input_index == index) {
-                    destination = true;
-                    break;
-                };
-                for (contract.outcomes) |outcome| for (outcome.effects.relocations) |relocation| {
-                    if (relocation.destination.input_index == index) destination = true;
-                };
-                if (!destination) try required_inputs.append(.{ .input_index = @intCast(index) });
-            }
-            const required = try required_inputs.toOwnedSlice();
-            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len + contract.consumed_inputs.len + contract.relocations.len * 2 + contract.retained_inputs.len);
-            for (contract.invalidates, post_states[0..contract.invalidates.len]) |path, *post_state| post_state.* = .{
-                .target = path,
-                .initializedness = .initialized,
-                .refreshes_storage_generation = true,
+        if (registry.contract_input_count == null) return error.MissingVirtualSafetyContract;
+        const declared = registry.safety_contract orelse return error.MissingVirtualSafetyContract;
+        // Only the declaration and fixed signature determine virtual effects.
+        // Concrete bodies are checked separately for conformance.
+        const contract = try contracts.fromDeclaration(self.allocator, declared);
+        const result = if (contract.general_conditions)
+            try self.generalVirtualSummary(registry_id, contract)
+        else
+            try self.outcomeVirtualSummary(registry_id, contract);
+        try self.virtual_summaries.put(registry_id, result);
+        return result;
+    }
+
+    fn outcomeVirtualSummary(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId, contract: contracts.Contract) !facts.SafetySummary {
+        const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
+        var result = try self.contractEffects(registry_id, contract);
+        if (contract.outcomes.len == 0) return result;
+        const outputs = result.outputs;
+        var conditional = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
+        // Every variant gets a record, including preservation alternatives.
+        // Effect guards describe inputs independently of output payload facts.
+        var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+        defer wanted.deinit();
+        for (contract.outcomes) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
+        for (outputs, 0..) |_, output_index| {
+            var guarded_generation = false;
+            for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0 or outcome.effects.relocations.len != 0 or outcome.effects.emptied_inputs.len != 0)) {
+                guarded_generation = true;
+                break;
             };
-            for (contract.consumed_inputs, post_states[contract.invalidates.len..][0..contract.consumed_inputs.len]) |path, *post_state| post_state.* = .{
-                .target = path,
-                .initializedness = .deinitialized,
-                .ends_previous_roots = true,
-            };
-            for (contract.relocations, 0..) |relocation, index| {
-                const offset = contract.invalidates.len + contract.consumed_inputs.len + index * 2;
-                post_states[offset] = .{ .target = relocation.source, .initializedness = .moved };
-                post_states[offset + 1] = .{
-                    .target = relocation.destination,
-                    .initializedness = .initialized,
-                    .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) },
-                    .requires_available_destination = true,
-                    .refreshes_storage_generation = true,
-                };
+            if (!guarded_generation) continue;
+            const output_ty = registry.contract_output_type orelse continue;
+            const fields = types.fields(self.graph, output_ty) orelse continue;
+            const ty = self.graph.fields.items[fields.start + @as(u32, @intCast(output_index))].ty;
+            for (try outcome_selectors.partition(self.allocator, self.graph, @intCast(output_index), ty, wanted.items)) |selector| {
+                const effects = contracts.effectsForSelector(contract, selector);
+                var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+                try self.appendContractPostStates(&states, effects);
+                try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains, .opaque_storage_empties = effects.emptied_inputs });
             }
-            for (contract.retained_inputs, post_states[contract.invalidates.len + contract.consumed_inputs.len + contract.relocations.len * 2 ..]) |retention, *post| post.* = .{
-                .target = retention.input,
-                .initializedness = .initialized,
-                .opaque_ownership = .conditional,
-                .opaque_storage = retention.storage,
-            };
-            const invalidated_domains = try self.allocator.alloc(facts.InputDomain, declared.invalidated_domains.len);
-            for (declared.invalidated_domains, invalidated_domains) |domain, *effect| effect.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
-            var conditional = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
-            // Every variant gets a record, including preservation alternatives.
-            // Effect guards describe inputs independently of output payload facts.
-            var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
-            defer wanted.deinit();
-            for (contract.outcomes) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
-            for (outputs, 0..) |_, output_index| {
-                var guarded_generation = false;
-                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0 or outcome.effects.relocations.len != 0 or outcome.effects.emptied_inputs.len != 0)) {
-                    guarded_generation = true;
-                    break;
-                };
-                if (!guarded_generation) continue;
-                const output_ty = registry.contract_output_type orelse continue;
-                const fields = types.fields(self.graph, output_ty) orelse continue;
-                const ty = self.graph.fields.items[fields.start + @as(u32, @intCast(output_index))].ty;
-                for (try outcome_selectors.partition(self.allocator, self.graph, @intCast(output_index), ty, wanted.items)) |selector| {
-                    const effects = contracts.effectsForSelector(contract, selector);
-                    var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-                    for (effects.invalidates) |path| try states.append(.{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
-                    for (effects.consumed_inputs) |path| try states.append(.{ .target = path, .initializedness = .deinitialized, .ends_previous_roots = true });
-                    for (effects.relocations) |relocation| {
-                        try states.append(.{ .target = relocation.source, .initializedness = .moved });
-                        try states.append(.{ .target = relocation.destination, .initializedness = .initialized, .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) }, .requires_available_destination = true, .refreshes_storage_generation = true });
-                    }
-                    try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains, .opaque_storage_empties = effects.emptied_inputs });
-                }
-            }
-            var fallback_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-            try fallback_states.appendSlice(post_states);
-            var fallback_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
-            try fallback_domains.appendSlice(invalidated_domains);
-            for (conditional.items) |outcome| {
-                for (outcome.input_post_states) |post| {
-                    if (self.findInputPostState(fallback_states.items, post.target) == null) {
-                        var fallback = post;
-                        if (fallback.initializedness == .deinitialized or fallback.initializedness == .moved or fallback.requires_available_destination) fallback.initializedness = .maybe_initialized;
-                        try fallback_states.append(fallback);
-                    }
-                }
-                for (outcome.invalidated_domains) |domain| try appendDomain(&fallback_domains, domain);
-            }
-            var retained = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
-            for (contract.retained_inputs) |retention| try retained.append(.{
-                .storage = retention.storage,
-                .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) },
-            });
-            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .storage_observations = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs };
-            try self.virtual_summaries.put(registry_id, result);
-            return result;
         }
-        return error.MissingVirtualSafetyContract;
+        var fallback_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        try fallback_states.appendSlice(result.input_post_states);
+        var fallback_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        try fallback_domains.appendSlice(result.invalidated_domains);
+        for (conditional.items) |outcome| {
+            for (outcome.input_post_states) |post| {
+                if (self.findInputPostState(fallback_states.items, post.target) == null) {
+                    var fallback = post;
+                    if (fallback.initializedness == .deinitialized or fallback.initializedness == .moved or fallback.requires_available_destination) fallback.initializedness = .maybe_initialized;
+                    try fallback_states.append(fallback);
+                }
+            }
+            for (outcome.invalidated_domains) |domain| try appendDomain(&fallback_domains, domain);
+        }
+        result.input_post_states = try fallback_states.toOwnedSlice();
+        result.invalidated_domains = try fallback_domains.toOwnedSlice();
+        result.outcome_post_states = try conditional.toOwnedSlice();
+        return result;
     }
 
     fn generalVirtualSummary(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId, contract: contracts.Contract) !facts.SafetySummary {
-        var result = try self.generalContractEffects(registry_id, try contracts.possibleEffects(self.allocator, contract));
+        var result = try self.contractEffects(registry_id, try contracts.possibleEffects(self.allocator, contract));
         const guarded = try self.allocator.alloc(facts.GuardedSafetyEffects, contract.guarded_effects.len);
         for (contract.guarded_effects, guarded) |clause, *target| {
             const effects = try self.allocator.create(facts.SafetySummary);
-            effects.* = try self.generalContractEffects(registry_id, try contracts.effectsUnderConditions(self.allocator, contract, clause.conditions));
+            effects.* = try self.contractEffects(registry_id, try contracts.effectsUnderConditions(self.allocator, contract, clause.conditions));
             target.* = .{ .conditions = clause.conditions, .effects = effects };
         }
         result.guarded_effects = guarded;
         return result;
     }
 
-    fn generalContractEffects(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId, contract: contracts.Contract) !facts.SafetySummary {
+    fn contractEffects(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId, contract: contracts.Contract) !facts.SafetySummary {
         const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
         const output_ty = registry.contract_output_type orelse return error.InvalidContractOutput;
         const fields = types.fields(self.graph, output_ty) orelse return error.InvalidContractOutput;
+        if (fields.len != contract.outputs.len) return error.InvalidContractOutput;
         const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
         for (contract.outputs, outputs, 0..) |allowed, *output, index| {
             output.* = try @import("contract_outputs.zig").build(self.allocator, self.graph, self.graph.fields.items[fields.start + index].ty, allowed, @as(usize, @truncate(std.hash.Wyhash.hash(@intFromEnum(registry_id), std.mem.asBytes(&index)))));
@@ -340,22 +277,29 @@ pub const Infer = struct {
                 destination = true;
                 break;
             };
+            for (contract.outcomes) |outcome| for (outcome.effects.relocations) |relocation| {
+                if (relocation.destination.input_index == index) destination = true;
+            };
             if (!destination) try required.append(self.allocator, .{ .input_index = @intCast(index) });
         }
-        var states: std.ArrayList(facts.PlacePostState) = .empty;
-        for (contract.invalidates) |path| try states.append(self.allocator, .{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
-        for (contract.consumed_inputs) |path| try states.append(self.allocator, .{ .target = path, .initializedness = .deinitialized, .ends_previous_roots = true });
-        for (contract.relocations) |relocation| {
-            try states.append(self.allocator, .{ .target = relocation.source, .initializedness = .moved });
-            try states.append(self.allocator, .{ .target = relocation.destination, .initializedness = .initialized, .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) }, .requires_available_destination = true, .refreshes_storage_generation = true });
-        }
+        var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        try self.appendContractPostStates(&states, contract);
         var retained: std.ArrayList(facts.OpaqueStorageEffect) = .empty;
         for (contract.retained_inputs) |retention| {
-            try states.append(self.allocator, .{ .target = retention.input, .initializedness = .initialized, .opaque_ownership = .conditional, .opaque_storage = retention.storage });
+            try states.append(.{ .target = retention.input, .initializedness = .initialized, .opaque_ownership = .conditional, .opaque_storage = retention.storage });
             try retained.append(self.allocator, .{ .storage = retention.storage, .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) } });
         }
         const required_paths = try required.toOwnedSlice(self.allocator);
-        return .{ .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(self.allocator), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
+        return .{ .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
+    }
+
+    fn appendContractPostStates(self: *Infer, states: *std.array_list.Managed(facts.PlacePostState), contract: contracts.Contract) !void {
+        for (contract.invalidates) |path| try states.append(.{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
+        for (contract.consumed_inputs) |path| try states.append(.{ .target = path, .initializedness = .deinitialized, .ends_previous_roots = true });
+        for (contract.relocations) |relocation| {
+            try states.append(.{ .target = relocation.source, .initializedness = .moved });
+            try states.append(.{ .target = relocation.destination, .initializedness = .initialized, .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) }, .requires_available_destination = true, .refreshes_storage_generation = true });
+        }
     }
 
     fn requestContractSelectors(self: *Infer, method: graph_mod.GlobalFunctionId, declared: primitives.MethodSafetyContract) !void {
@@ -6668,26 +6612,63 @@ test "virtual safety contract scalar summaries require no concrete implementatio
     defer engine.deinit();
     var infer = Infer.init(allocator, &graph, &engine);
     defer infer.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(allocator, &.{ .{ .builtin = .Int32 }, .{ .nominal = @enumFromInt(0) }, .{ .nominal = @enumFromInt(1) } });
+    try graph.fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    try graph.type_definitions.appendSlice(allocator, &.{
+        .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } },
+        .{ .source = source, .struct_fields = .{ .start = 0, .len = 0 } },
+    });
     try graph.virtual_registries.append(allocator, .{
         .receiver_input_index = 1,
         .contract_input_count = 2,
         .safety_contract = .{ .output_count = 1, .source = .{ .file_index = 0, .offset = 0 }, .dependencies = &.{.{ .output_index = 0, .input_index = 1 }} },
     });
+    try std.testing.expectError(error.InvalidContractOutput, infer.virtualSummary(@enumFromInt(0)));
+    graph.virtual_registries.items[0].contract_output_type = @enumFromInt(2);
+    try std.testing.expectError(error.InvalidContractOutput, infer.virtualSummary(@enumFromInt(0)));
+    graph.virtual_registries.items[0].contract_output_type = @enumFromInt(1);
     const first = (try infer.virtualSummary(@enumFromInt(0))).?;
     try std.testing.expectEqual(@as(usize, 2), first.required_live_inputs.len);
     try std.testing.expectEqual(@as(u32, 1), first.outputs[0].input_receiver_values[0].input_index);
     try std.testing.expectEqual(@as(usize, 0), first.outputs[0].input_dependencies.len);
+    graph.virtual_registries.items[0].safety_contract.?.general_conditions = true;
+    infer.virtual_summaries.clearRetainingCapacity();
+    const general = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expect(summaries.summaryEql(first, general));
     var declaration = graph.virtual_registries.items[0].safety_contract.?;
     declaration.output_count = 0;
+    declaration.general_conditions = false;
     declaration.dependencies = &.{};
     declaration.invalidates = &.{0};
     graph.virtual_registries.items[0].safety_contract = declaration;
+    graph.virtual_registries.items[0].contract_output_type = @enumFromInt(2);
     infer.virtual_summaries.clearRetainingCapacity();
     const invalidating = (try infer.virtualSummary(@enumFromInt(0))).?;
     try std.testing.expectEqual(@as(usize, 1), invalidating.input_post_states.len);
     try std.testing.expectEqual(@as(u32, 0), invalidating.input_post_states[0].target.input_index);
     try std.testing.expect(invalidating.input_post_states[0].refreshes_storage_generation);
     try std.testing.expect(!invalidating.input_post_states[0].ends_previous_roots);
+    graph.virtual_registries.items[0].safety_contract.?.general_conditions = true;
+    infer.virtual_summaries.clearRetainingCapacity();
+    try std.testing.expect(summaries.summaryEql(invalidating, (try infer.virtualSummary(@enumFromInt(0))).?));
+
+    // Both selector forms lower the same unconditional storage guarantees.
+    declaration.consumed_inputs = &.{2};
+    declaration.relocations = &.{.{ .destination = 4, .source = 3 }};
+    declaration.retained_inputs = &.{.{ .storage = .{ .input_index = 6 }, .input = 5 }};
+    declaration.invalidated_domains = &.{.{ .input_index = 6, .domain_index = 0 }};
+    declaration.emptied_inputs = &.{.{ .input_index = 6 }};
+    graph.virtual_registries.items[0].contract_input_count = 7;
+    graph.virtual_registries.items[0].safety_contract = declaration;
+    infer.virtual_summaries.clearRetainingCapacity();
+    const transitions = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expectEqual(@as(usize, 5), transitions.input_post_states.len);
+    try std.testing.expectEqual(@as(usize, 6), transitions.required_live_inputs.len);
+    try std.testing.expectEqual(@as(usize, 1), transitions.opaque_storage_effects.len);
+    graph.virtual_registries.items[0].safety_contract.?.general_conditions = true;
+    infer.virtual_summaries.clearRetainingCapacity();
+    try std.testing.expect(summaries.summaryEql(transitions, (try infer.virtualSummary(@enumFromInt(0))).?));
 }
 
 test "validity-only transfer retains loaded input anchor paths" {
