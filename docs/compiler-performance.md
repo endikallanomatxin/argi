@@ -577,3 +577,36 @@ allocation failures leave no unpublished frame/capture backing behind.
 Logs: `.zig-cache/runtime-transfers-{before,after}-*-release.csv`,
 `.zig-cache/runtime-transfers-throughput-*.csv`, and
 `.zig-cache/runtime-transfers-final-{internal,programs}.log`.
+
+### Current prelude control
+
+A fresh ReleaseSafe profile at `55680d64f` (Linux x86-64, current installed
+core, 1,024 MiB tracked allocation limit) gives these cumulative command times:
+
+| Session | Total ms at 10 / 100 / 1,000 commands | Retained MiB at 1,000 |
+|---|---:|---:|
+| Prelude calls | 61.2 / 600.9 / 7,148.5 | 144.075 |
+| Prelude bindings | 59.8 / 595.6 / 6,985.8 | 142.134 |
+
+These are individual instrumented observations, not a throughput A/B comparison.
+Startup and teardown are excluded. The initial retained state is about 127.8 MiB
+in both scenarios; command growth must be distinguished from that baseline.
+
+For 1,000 calls, assignment contextualization visits 155.6 million outer entries
+without reporting changes and takes 464.6 ms. Binding type materialization takes
+321.9 ms and expression propagation takes 297.5 ms. Resolution as a whole takes
+2,073.3 ms; frontend/publication takes 6,451.9 ms. Inclusive phase times overlap
+and must not be summed. Repeated scans remain a useful target, but their visit
+counts alone do not justify replacing the resolver or adding completion caches.
+
+With 1,000 live bindings, continuation fork/seal take 116.8/189.9 ms cumulatively.
+They remain more expensive than the call control, but do not dominate this
+prelude workload. Use these controls alongside minimal sessions before changing
+continuation state or work scheduling.
+
+Logs: `.zig-cache/frontend-current-prelude-profile.log` (100-call control),
+`.zig-cache/frontend-current-prelude-1000.csv`, and
+`.zig-cache/frontend-current-bindings-1000.csv`. Reproduce with
+`zig build benchmark-execution -Doptimize=ReleaseSafe -j16 -- 1000 prelude calls 1024 --resolution-profile`
+and substitute `bindings` for the second scenario. Benchmark rows are written to
+stderr; redirect that stream when collecting a report.
