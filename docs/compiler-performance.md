@@ -1,5 +1,49 @@
 # Measuring compiler frontend performance
 
+## Repeated healthy reset cycles
+
+The `resets` scenario measures complete work/reset cycles rather than a growing
+command history. Run with no concurrent suites or benchmarks:
+
+```sh
+./zig-out/bin/execution-benchmark 1000 minimal resets 512
+./zig-out/bin/execution-benchmark 1000 prelude resets 1024
+```
+
+Each cycle defines a function, retains a value and a reference, evaluates two
+numbered results across a rejected command, then resets. Prelude cycles also
+retain a String owner. Rejection must preserve the graph checkpoint and revision;
+reset must restore pool lengths, source-module count and result numbering.
+Arena addresses are not compared across reset because their owners are replaced.
+The existing teardown check requires zero retained requested bytes after closing
+and releasing the whole benchmark.
+
+`# resets` rows report cumulative workload time, its frontend/lowering/verification/
+execution breakdown, separate reset time, initial/post-reset requested bytes,
+post-reset minimum/maximum and whole-run peak. Setup and the first baseline reset
+are outside timings; reset time includes cleanup and prelude reconstruction.
+Requested backing bytes include retained prepared core data and arena capacity;
+they are not RSS. `--graph-pools` describes the final reset state;
+`--resolution-profile` is unsupported for this scenario.
+
+Single ReleaseSafe runs on Linux x86-64, with no concurrent suite or benchmark:
+
+| Mode | Cycles | Work ms | Reset ms | Post-reset bytes | Peak bytes |
+|---|---:|---:|---:|---:|---:|
+| Minimal | 10 | 16.5 | 4.3 | 8,576 | 124,693 |
+| Minimal | 100 | 163.6 | 39.2 | 8,576 | 124,693 |
+| Minimal | 1000 | 748.9 | 146.5 | 8,576 | 124,693 |
+| Prelude | 10 | 518.6 | 1,108.9 | 132,275,309 | 138,282,362 |
+| Prelude | 100 | 5,278.1 | 11,476.5 | 132,275,309 | 138,282,362 |
+| Prelude | 1000 | 53,508.3 | 117,485.9 | 132,275,309 | 138,282,362 |
+
+Every observed post-reset value, including the minimum and maximum over all
+1,000 cycles, equals its baseline: 8,576 bytes minimal and 132,275,309 bytes with
+prelude. Both runs pass the teardown check. A 10-cycle core-only control also
+returns to its 125,606,880-byte baseline, and the ordinary calls control passes.
+These are lifecycle and retention baselines, not a before/after speed comparison
+or evidence about poisoned resets, allocation failures, or unbounded workloads.
+
 ## Resolution baseline after compiler consolidation
 
 Single instrumented ReleaseSafe runs on Linux x86-64 at `9ae716638`, using

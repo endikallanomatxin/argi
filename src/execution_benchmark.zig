@@ -50,7 +50,7 @@ const Memory = struct {
     }
 };
 
-const Scenario = enum { update, bindings, calls, branches, specializations, specialization_reuse, resources, definitions, rejections };
+const Scenario = enum { update, bindings, calls, branches, specializations, specialization_reuse, resources, definitions, rejections, resets };
 const Modules = enum { minimal, core, prelude };
 
 fn elapsed(io: std.Io, start: i96) u64 {
@@ -262,6 +262,61 @@ fn branchSource(allocator: std.mem.Allocator, parameterized: bool) ![]u8 {
     return output.toOwnedSlice();
 }
 
+fn benchmarkResetCycles(session: *interactive.Interactive, memory: *Memory, io: std.Io, modules: Modules, count: usize) !void {
+    // Establish a post-reset baseline: initial preparation and retained core
+    // snapshots are deliberately outside the repeated-cycle measurements.
+    try session.reset();
+    const baseline = session.compiler.semantic.relocation.graph.checkpoint();
+    const source_modules = session.sources.modules.items.len;
+    const baseline_bytes = memory.live;
+    var minimum_bytes = baseline_bytes;
+    var maximum_bytes = baseline_bytes;
+    var work_ns: u64 = 0;
+    var reset_ns: u64 = 0;
+    var lowering_ns: u64 = 0;
+    var verification_ns: u64 = 0;
+    var execution_ns: u64 = 0;
+    std.debug.print("# resets,modules,cycles,work_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,reset_ms,baseline_bytes,post_reset_bytes,min_post_reset_bytes,max_post_reset_bytes,peak_bytes\n", .{});
+    for (1..count + 1) |index| {
+        session.runtime.profile_io = io;
+        session.runtime.stats = .{};
+        const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+        try session.submitDefinitions("identity := (.value: Int32) -> (.result: Int32) { result = value }");
+        try session.submitStatements("value :: Int32 = 42\nreference ::= &value");
+        if (modules == .prelude)
+            try session.submitStatements("text ::= unwrap_or_abort(.value = String(.length = 64))");
+        const result = (try session.submitInput("identity(.value = reference&)")) orelse return error.MissingBenchmarkResult;
+        if (result.value != .runtime or result.value.runtime != .integer or result.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
+        const revision = session.compiler.revision;
+        const checkpoint = session.compiler.semantic.relocation.graph.checkpoint();
+        session.submitStatements("missing_function()") catch |err| {
+            if (err != error.Reported) return err;
+        };
+        if (revision != session.compiler.revision or !std.meta.eql(checkpoint, session.compiler.semantic.relocation.graph.checkpoint())) return error.RejectedSubmissionChangedState;
+        // Rejection must leave earlier values usable, not merely preserve IDs.
+        const recovered = (try session.submitInput("identity(.value = reference&)")) orelse return error.MissingBenchmarkResult;
+        if (recovered.value != .runtime or recovered.value.runtime != .integer or recovered.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
+        work_ns += elapsed(io, start);
+        lowering_ns += session.runtime.stats.lowering_ns;
+        verification_ns += session.runtime.stats.verification_ns;
+        execution_ns += session.runtime.stats.execution_ns;
+        const reset_start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+        try session.reset();
+        reset_ns += elapsed(io, reset_start);
+        const current = session.compiler.semantic.relocation.graph.checkpoint();
+        // Across reset, compare retained pool lengths, not checkpoint arena
+        // pointers: the previous compilation and its arenas have been freed.
+        if (session.result_sequence != 0 or session.sources.modules.items.len != source_modules or
+            !std.meta.eql(baseline.pool_lengths, current.pool_lengths)) return error.ResetRetainedSubmissionState;
+        minimum_bytes = @min(minimum_bytes, memory.live);
+        maximum_bytes = @max(maximum_bytes, memory.live);
+        if (index == 10 or index == 100 or index == 1000 or index == count) {
+            const backend_ns = lowering_ns + verification_ns + execution_ns;
+            std.debug.print("# resets,{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d}\n", .{ @tagName(modules), index, ms(work_ns), ms(work_ns -| backend_ns), ms(lowering_ns), ms(verification_ns), ms(execution_ns), ms(reset_ns), baseline_bytes, memory.live, minimum_bytes, maximum_bytes, memory.peak });
+        }
+    }
+}
+
 fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize, graph_pools: bool, resolution_profile: bool) !void {
     var memory: Memory = .{ .child = backing_allocator, .limit = limit };
     const allocator = memory.allocator();
@@ -295,69 +350,75 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
                 return err;
             };
         }
-        if (scenario == .calls) try session.submitDefinitions("identity := (.value: Int32) -> (.result: Int32) { result = value }");
-        if (scenario == .branches or scenario == .specializations or scenario == .specialization_reuse) {
-            const definition = try branchSource(allocator, scenario != .branches);
-            defer allocator.free(definition);
-            try session.submitDefinitions(definition);
-            try session.submitStatements("condition :: Bool = true");
-        }
-        try session.submitStatements("value :: Int32 = 42");
-        var scans: @import("4_semantics/global/resolution_profile.zig").Profile = .{ .io = io };
-        if (resolution_profile) session.compiler.semantic.resolvers.core.scan_profile = &scans;
-        session.runtime.profile_io = io;
-        session.runtime.stats = .{};
-        session.compiler.summary_evaluations = 0;
-        session.compiler.summary_reuses = 0;
-        session.compiler.bodies_checked = 0;
-        session.compiler.bodies_reused = 0;
-        var total_ns: u64 = 0;
-        try report(&session, &memory, scenario, modules, 0, total_ns);
-        for (1..count + 1) |index| {
-            const source = switch (scenario) {
-                .update => try allocator.dupe(u8, "value = 42"),
-                .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
-                .branches => try allocator.dupe(u8, "value = branch_workload(.condition = condition)"),
-                .specializations, .specialization_reuse => try std.fmt.allocPrint(allocator, "value = branch_workload#(.tag = {d})(.condition = condition)", .{if (scenario == .specializations) index else @as(usize, 0)}),
-                .rejections => try allocator.dupe(u8, "value = 42\nmissing_function()"),
-                .definitions => try std.fmt.allocPrint(allocator, "function_{d} := () -> (.result: Int32) {{ result = 42 }}", .{index}),
-                .bindings => try std.fmt.allocPrint(allocator, "value_{d} :: Int32 = 42", .{index}),
-                .resources => try std.fmt.allocPrint(allocator, "text_{d} ::= unwrap_or_abort(.value = String(.length = 32))\nvalue_{d} :: Int32 = 42", .{ index, index }),
-            };
-            defer allocator.free(source);
-            const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
-            const submitted = if (scenario == .rejections) rejected: {
-                const revision = session.compiler.revision;
-                const saved = session.compiler.semantic.relocation.graph.checkpoint();
-                session.submitStatements(source) catch |err| {
-                    if (err != error.Reported) return err;
-                    if (revision != session.compiler.revision or !std.meta.eql(saved, session.compiler.semantic.relocation.graph.checkpoint())) return error.RejectedSubmissionChangedState;
-                    break :rejected;
+        if (scenario == .resets) {
+            try benchmarkResetCycles(&session, &memory, io, modules, count);
+            if (graph_pools) reportGraphPools(&session, count);
+        } else {
+            if (scenario == .calls) try session.submitDefinitions("identity := (.value: Int32) -> (.result: Int32) { result = value }");
+            if (scenario == .branches or scenario == .specializations or scenario == .specialization_reuse) {
+                const definition = try branchSource(allocator, scenario != .branches);
+                defer allocator.free(definition);
+                try session.submitDefinitions(definition);
+                try session.submitStatements("condition :: Bool = true");
+            }
+            try session.submitStatements("value :: Int32 = 42");
+            var scans: @import("4_semantics/global/resolution_profile.zig").Profile = .{ .io = io };
+            if (resolution_profile) session.compiler.semantic.resolvers.core.scan_profile = &scans;
+            session.runtime.profile_io = io;
+            session.runtime.stats = .{};
+            session.compiler.summary_evaluations = 0;
+            session.compiler.summary_reuses = 0;
+            session.compiler.bodies_checked = 0;
+            session.compiler.bodies_reused = 0;
+            var total_ns: u64 = 0;
+            try report(&session, &memory, scenario, modules, 0, total_ns);
+            for (1..count + 1) |index| {
+                const source = switch (scenario) {
+                    .resets => unreachable,
+                    .update => try allocator.dupe(u8, "value = 42"),
+                    .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
+                    .branches => try allocator.dupe(u8, "value = branch_workload(.condition = condition)"),
+                    .specializations, .specialization_reuse => try std.fmt.allocPrint(allocator, "value = branch_workload#(.tag = {d})(.condition = condition)", .{if (scenario == .specializations) index else @as(usize, 0)}),
+                    .rejections => try allocator.dupe(u8, "value = 42\nmissing_function()"),
+                    .definitions => try std.fmt.allocPrint(allocator, "function_{d} := () -> (.result: Int32) {{ result = 42 }}", .{index}),
+                    .bindings => try std.fmt.allocPrint(allocator, "value_{d} :: Int32 = 42", .{index}),
+                    .resources => try std.fmt.allocPrint(allocator, "text_{d} ::= unwrap_or_abort(.value = String(.length = 32))\nvalue_{d} :: Int32 = 42", .{ index, index }),
                 };
-                return error.RejectedSubmissionAccepted;
-            } else if (scenario == .definitions) session.submitDefinitions(source) else session.submitStatements(source);
-            submitted catch |err| {
-                std.debug.print("Stopped after {d} commands: {s}; retained {d:.3} MiB, peak {d:.3} MiB\n", .{ index - 1, @errorName(err), mib(memory.live), mib(memory.peak) });
-                try session.diagnostics.dump();
-                return err;
-            };
-            total_ns += elapsed(io, start);
-            if (index == 10 or index == 100 or index == 1000 or index == count) {
-                try report(&session, &memory, scenario, modules, index, total_ns);
-                if (resolution_profile) {
-                    for (std.enums.values(@import("4_semantics/global/resolution_profile.zig").Pass), scans.entries) |pass, entry| {
-                        std.debug.print("# resolution,{d},{s},{d},{d},{d},{d:.3},{d}\n", .{ index, @tagName(pass), entry.calls, entry.visits, entry.changed, ms(entry.ns), scans.rounds });
+                defer allocator.free(source);
+                const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+                const submitted = if (scenario == .rejections) rejected: {
+                    const revision = session.compiler.revision;
+                    const saved = session.compiler.semantic.relocation.graph.checkpoint();
+                    session.submitStatements(source) catch |err| {
+                        if (err != error.Reported) return err;
+                        if (revision != session.compiler.revision or !std.meta.eql(saved, session.compiler.semantic.relocation.graph.checkpoint())) return error.RejectedSubmissionChangedState;
+                        break :rejected;
+                    };
+                    return error.RejectedSubmissionAccepted;
+                } else if (scenario == .definitions) session.submitDefinitions(source) else session.submitStatements(source);
+                submitted catch |err| {
+                    std.debug.print("Stopped after {d} commands: {s}; retained {d:.3} MiB, peak {d:.3} MiB\n", .{ index - 1, @errorName(err), mib(memory.live), mib(memory.peak) });
+                    try session.diagnostics.dump();
+                    return err;
+                };
+                total_ns += elapsed(io, start);
+                if (index == 10 or index == 100 or index == 1000 or index == count) {
+                    try report(&session, &memory, scenario, modules, index, total_ns);
+                    if (resolution_profile) {
+                        for (std.enums.values(@import("4_semantics/global/resolution_profile.zig").Pass), scans.entries) |pass, entry| {
+                            std.debug.print("# resolution,{d},{s},{d},{d},{d},{d:.3},{d}\n", .{ index, @tagName(pass), entry.calls, entry.visits, entry.changed, ms(entry.ns), scans.rounds });
+                        }
                     }
                 }
             }
+            if (scenario == .definitions) {
+                const call = try std.fmt.allocPrint(allocator, "function_{d}()", .{count});
+                defer allocator.free(call);
+                const result = (try session.submitInput(call)) orelse return error.MissingBenchmarkResult;
+                if (result.value != .runtime or result.value.runtime != .integer or result.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
+            }
+            if (graph_pools) reportGraphPools(&session, count);
         }
-        if (scenario == .definitions) {
-            const call = try std.fmt.allocPrint(allocator, "function_{d}()", .{count});
-            defer allocator.free(call);
-            const result = (try session.submitInput(call)) orelse return error.MissingBenchmarkResult;
-            if (result.value != .runtime or result.value.runtime != .integer or result.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
-        }
-        if (graph_pools) reportGraphPools(&session, count);
         // Snapshot before cleanup; include neither reset nor teardown in timings.
         try session.close();
     }
@@ -429,9 +490,10 @@ pub fn main(init: std.process.Init) !void {
     const modules = if (args.len >= 3) std.meta.stringToEnum(Modules, args[2]) orelse return error.InvalidArguments else .minimal;
     const scenario = if (args.len >= 4) std.meta.stringToEnum(Scenario, args[3]) orelse return error.InvalidArguments else .update;
     if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
+    if (scenario == .resets and resolution_profile) return error.ResetResolutionProfileUnsupported;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|branches|specializations|specialization_reuse|resources|definitions|rejections] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|branches|specializations|specialization_reuse|resources|definitions|rejections|resets] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB\n", .{});
     if (resolution_profile) std.debug.print("# resolution,commands,pass,calls,pool_entries,changed_passes,inclusive_ms,fixed_point_rounds\n", .{});
     if (scenario == .specializations or scenario == .specialization_reuse) std.debug.print("# specializations,commands,instances,body_top_level_statements,graph_nodes,graph_bindings,graph_types\n", .{});

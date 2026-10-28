@@ -43,7 +43,7 @@ JIT and complete native-backend parity are not prerequisites.
    workloads using the existing execution benchmark. Separate setup, frontend,
    lowering, verification and execution; report per-command latency and retained
    memory, distinguishing live results from reclaimable storage. Establish
-   reproducible budgets from these measurements, including repeated reset cycles.
+   reproducible budgets from these measurements.
    Coordinate reclamation with [compiler follow-ups](compiler.md).
 5. Complete Unicode display-width handling without changing submitted source.
    Preserve bounded presentation without dereferencing or copying owners. Verify
