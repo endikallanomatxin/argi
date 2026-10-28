@@ -1264,7 +1264,10 @@ pub const Resolver = struct {
                 located.parameterized.parameters,
                 identity.arguments,
                 &bindings,
-            ) catch continue;
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => continue,
+            };
 
             for (located.parameterized.parameters.start..located.parameterized.parameters.start + located.parameterized.parameters.len) |raw| {
                 const parameter = storage.comptime_parameters.items[raw];
@@ -3211,6 +3214,12 @@ test "unconstrained generic types need no constraint substitutions" {
     var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core, .generics = &generics };
     defer resolver.deinit();
     try std.testing.expectEqual(null, try resolver.findGenericTypeConstraintFailure());
+    // Constraint substitution allocates even when the participant itself is
+    // already concrete. A failed substitution is not evidence of conformance.
+    module.semantic.parameterized_storage.comptime_parameters.items[0].constraint = @enumFromInt(0);
+    resolver.allocator = allocator;
+    core.allocator = allocator;
+    try std.testing.expectError(error.OutOfMemory, resolver.findGenericTypeConstraintFailure());
 }
 
 fn extendTemplateIndex(allocator: std.mem.Allocator) !void {
