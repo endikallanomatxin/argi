@@ -46,10 +46,12 @@ pub const SelectionProfile = struct {
 
 const ReachInferenceContext = reach_context_mod.Context;
 
+/// A diagnostic result owns its rendered name, independent of speculative IDs.
+/// The caller releases actual_name with the resolver's allocator.
 pub const ConstraintFailure = struct {
     function: global_sg.GlobalDeclId,
     contract_decl: global_sg.GlobalFamilyDefinitionId,
-    actual: global_sg.GlobalTypeId,
+    actual_name: []const u8,
     parameter_name: []const u8,
 };
 
@@ -71,7 +73,7 @@ pub const Resolver = struct {
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
     ownership_checkpoint: ?*const fn (*anyopaque) @import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
     rollback_ownership: ?*const fn (*anyopaque, @import("ownership.zig").Resolver.ParameterizedCheckpoint) void = null,
-    constraint_diagnostics: ?*std.ArrayList(ConstraintFailure) = null,
+    constraint_diagnostic: ?*?ConstraintFailure = null,
     reach_diagnostics: ?*std.array_list.Managed(u8) = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
@@ -1325,7 +1327,7 @@ pub const Resolver = struct {
                 const constraint_ok = try contracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
 
                 if (!constraint_ok) {
-                    if (self.constraint_diagnostics != null and
+                    if (self.constraint_diagnostic != null and
                         try contracts.constraintArgumentsKnown(module_index, constraint_id, bindings)) failure = .{
                         .contract_decl = try contracts.constraintDefinition(module_index, constraint_id),
                         .actual = concrete,
@@ -1749,7 +1751,8 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         rejected: ?ConstraintCheck.Failure,
     ) !void {
-        const failures = self.constraint_diagnostics orelse return;
+        const diagnostic = self.constraint_diagnostic orelse return;
+        if (diagnostic.* != null) return;
         const failure = rejected orelse return;
         // A bound can fail on a candidate whose other arguments do not fit.
         // Only explain constraints for otherwise compatible signatures, using
@@ -1758,67 +1761,75 @@ pub const Resolver = struct {
             .applicable => {},
             else => return,
         }
-        try failures.append(self.allocator, .{
+        var name = std.array_list.Managed(u8).init(self.allocator);
+        defer name.deinit();
+        // Associated-parameter inference can create temporary types. Capture the
+        // first explanation now, before later candidate work or rollback.
+        try @import("type_names.zig").appendTypeName(&name, self.graph, failure.actual);
+        const text = try name.toOwnedSlice();
+        diagnostic.* = .{
             .function = declaration,
             .contract_decl = failure.contract_decl,
-            .actual = failure.actual,
+            .actual_name = text,
             .parameter_name = failure.parameter_name,
-        });
+        };
     }
 
     /// Diagnostic probes use normal selection and roll back its graph and
     /// ownership effects. Bounds and unavailable reach defaults are explanations
     /// only; discard them when another visible identity accepts the call.
-    pub fn collectGenericCallFailures(
+    pub fn probeGenericCallFailure(
         self: *Resolver,
         current_module: usize,
         module: *const module_sg.ModuleSemanticGraph,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         reach: ReachInferenceContext,
-        failures: *std.ArrayList(ConstraintFailure),
         missing_reach: *std.array_list.Managed(u8),
-        actual_name: *std.array_list.Managed(u8),
-        append_type_name: *const fn (*std.array_list.Managed(u8), *const global_sg.GlobalSemanticGraph, global_sg.GlobalTypeId) anyerror!void,
-    ) !void {
+    ) !?ConstraintFailure {
         var speculation = self.beginSpeculation();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
-        const saved_diagnostics = self.constraint_diagnostics;
+        const saved_diagnostics = self.constraint_diagnostic;
         const saved_reach_diagnostics = self.reach_diagnostics;
         defer {
             speculation.deinit();
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
-            self.constraint_diagnostics = saved_diagnostics;
+            self.constraint_diagnostic = saved_diagnostics;
             self.reach_diagnostics = saved_reach_diagnostics;
         }
-        failures.clearRetainingCapacity();
-        self.constraint_diagnostics = failures;
+        var failure: ?ConstraintFailure = null;
+        errdefer if (failure) |value| self.allocator.free(value.actual_name);
+        self.constraint_diagnostic = &failure;
         missing_reach.clearRetainingCapacity();
         self.reach_diagnostics = missing_reach;
         // TODO: Preserve selected-body instantiation failures separately from
         // selection failures, so rejected bounds do not hide a nested error.
         const selected = selection: {
             if (try self.generics.resolveCallArguments(current_module, reference)) |relocated| {
-                _ = self.resolveExplicitGenericFunction(current_module, module, reference, relocated, input, reach) catch break :selection false;
+                _ = self.resolveExplicitGenericFunction(current_module, module, reference, relocated, input, reach) catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    break :selection false;
+                };
             } else {
-                _ = self.resolveImplicitGenericFunction(current_module, module, reference, input, reach) catch break :selection false;
+                _ = self.resolveImplicitGenericFunction(current_module, module, reference, input, reach) catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    break :selection false;
+                };
             }
             break :selection true;
         };
         if (selected) {
             // A successful selection is not a constraint error even if other
             // candidates failed their bounds.
-            failures.clearRetainingCapacity();
+            if (failure) |value| self.allocator.free(value.actual_name);
             missing_reach.clearRetainingCapacity();
-        } else if (failures.items.len != 0) {
-            // Associated-parameter inference may create temporary types. Render
-            // their name before rollback rather than expose their IDs afterward.
-            try append_type_name(actual_name, self.graph, failures.items[0].actual);
+            return null;
         }
+        return failure;
     }
 
     /// Re-run implicit generic selection transactionally for diagnostics and

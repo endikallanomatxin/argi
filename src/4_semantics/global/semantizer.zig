@@ -3501,31 +3501,23 @@ fn diagnoseUnresolvedCall(
                 if (contextual_matches < 2) continue;
             }
 
-            var constraint_failures: std.ArrayList(generic_functions_mod.ConstraintFailure) = .empty;
-            defer constraint_failures.deinit(allocator);
-            var constraint_actual_name = std.array_list.Managed(u8).init(allocator);
-            defer constraint_actual_name.deinit();
             var missing_generic_reach = std.array_list.Managed(u8).init(allocator);
             defer missing_generic_reach.deinit();
-            try generic_functions.collectGenericCallFailures(
+            if (try generic_functions.probeGenericCallFailure(
                 module_index,
                 module,
                 reference,
                 input_id,
                 reach_context.Context.fromModule(module, offsets[module_index], call.visible_bindings, call.owner_function),
-                &constraint_failures,
                 &missing_generic_reach,
-                &constraint_actual_name,
-                appendTypeName,
-            );
-            if (constraint_failures.items.len != 0) {
-                const failure = constraint_failures.items[0];
+            )) |failure| {
+                defer allocator.free(failure.actual_name);
                 try diagnostics.add(
                     diagnosticLocation(graph, diagnostics, source),
                     .semantic,
                     "type '{s}' does not satisfy contract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
                     .{
-                        constraint_actual_name.items,
+                        failure.actual_name,
                         graph.familyDefinitionName(failure.contract_decl),
                         failure.parameter_name,
                         graph.text(graph.declaration(failure.function).name),
