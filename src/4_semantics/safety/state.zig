@@ -403,27 +403,29 @@ pub const State = struct {
         return if (self.activeVariant(storage)) |active| active == index else false;
     }
     pub fn refreshStorageGeneration(self: *State, storage: facts.Place) !void {
-        var index: usize = 0;
+        // Prepare all fallible storage before ending any live generation.
+        try self.storage_generations.ensureUnusedCapacity(1);
+        const generation = try self.tracker.establish(.fresh);
+        var kept: usize = 0;
         var replaced = false;
-        while (index < self.storage_generations.items.len) {
-            const entry = self.storage_generations.items[index];
+        for (self.storage_generations.items) |entry| {
             if (!storage.isPrefixOf(entry.storage)) {
-                index += 1;
+                self.storage_generations.items[kept] = entry;
+                kept += 1;
                 continue;
             }
             self.tracker.end(entry.generation);
             if (entry.storage.eql(storage)) {
-                self.storage_generations.items[index].generation = try self.tracker.establish(.fresh);
-                self.storage_generations.items[index].needs_current_generation = false;
+                self.storage_generations.items[kept] = .{ .storage = storage, .generation = generation };
                 replaced = true;
-                index += 1;
-            } else {
-                _ = self.storage_generations.orderedRemove(index);
+                kept += 1;
             }
         }
+        self.storage_generations.shrinkRetainingCapacity(kept);
         if (!replaced)
-            try self.storage_generations.append(.{ .storage = storage, .generation = try self.tracker.establish(.fresh) });
+            self.storage_generations.appendAssumeCapacity(.{ .storage = storage, .generation = generation });
     }
+
     pub fn beginLexicalStorage(self: *State, storage: facts.Place) !void {
         for (self.storage_generations.items) |entry| {
             if (!storage.isPrefixOf(entry.storage)) continue;
@@ -580,6 +582,27 @@ test "Safety storage replacement ends projected generations without touching sib
     try std.testing.expect(state.tracker.isAlive(live_sibling));
     try std.testing.expectEqual(@as(usize, 2), state.storage_generations.items.len);
     try std.testing.expect(state.tracker.isAlive(state.storage_generations.items[0].generation));
+}
+
+test "Safety failed generation renewal preserves live storage and descendants" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var state = State.init(failing.allocator());
+    defer state.deinit();
+    const parent: facts.Place = .{ .root = @enumFromInt(0) };
+    const child: facts.Place = .{ .root = parent.root, .projections = &.{.{ .field = 0 }} };
+    try state.refreshStorageGeneration(parent);
+    try state.refreshStorageGeneration(child);
+    const previous = try std.testing.allocator.dupe(StorageGeneration, state.storage_generations.items);
+    defer std.testing.allocator.free(previous);
+    // Force the new root to allocate while the destination table has room.
+    try state.storage_generations.ensureUnusedCapacity(1);
+    while (state.tracker.roots.items.len < state.tracker.roots.capacity)
+        _ = try state.tracker.establish(.fresh);
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
+    try std.testing.expectError(error.OutOfMemory, state.refreshStorageGeneration(parent));
+    try std.testing.expectEqualDeep(previous, state.storage_generations.items);
+    for (previous) |entry| try std.testing.expect(state.tracker.isAlive(entry.generation));
 }
 
 fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
