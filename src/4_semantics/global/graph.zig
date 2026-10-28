@@ -169,6 +169,8 @@ pub const Symbol = struct {
 /// Cold identity for a concrete generic function. Runtime call dispatch uses
 /// only `GlobalFunctionId`; this record prevents distinct comptime instances
 /// with identical runtime signatures from being merged accidentally.
+/// Published only after argument binding and constraint validation. Completing a
+/// deferred body cannot change these arguments or repeat conformance selection.
 pub const GenericFunctionInstance = struct {
     function: GlobalFunctionId,
     parameterized_definition: GlobalFamilyDefinitionId,

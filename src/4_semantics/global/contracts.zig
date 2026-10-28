@@ -2852,38 +2852,6 @@ pub const Resolver = struct {
         return false;
     }
 
-    pub fn validateGenericFunctionInstances(self: *Resolver) !void {
-        const measurement = if (self.core.scan_profile) |profile| profile.begin(.generic_function_constraints) else null;
-        defer if (measurement) |m| m.finish(false);
-        for (self.graph.generic_function_instances.items) |instance| {
-            const owner = self.graph.moduleForFamilyDefinition(instance.parameterized_definition) orelse return error.InvalidGenericFunctionOwner;
-            const module_index: usize = @intFromEnum(owner);
-            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_definition) orelse {
-                continue;
-            };
-            const module = &self.modules[module_index];
-            const parameters = module.semantic.parameterized_storage.comptime_parameters.items[parameterized.parameters.start..][0..parameterized.parameters.len];
-            // Argument matching already checked this instance's inputs. Only
-            // explicit constraints need a substitution environment here.
-            const constrained = for (parameters) |parameter| {
-                if (parameter.constraint != null) break true;
-            } else false;
-            if (!constrained) continue;
-            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
-            defer bindings.deinit(self.allocator);
-            try self.generics.bindGlobalArguments(module_index, parameterized.parameters, instance.arguments, &bindings);
-
-            for (0..parameterized.parameters.len) |offset| {
-                const param_raw = parameterized.parameters.start + @as(u32, @intCast(offset));
-                const parameter = module.semantic.parameterized_storage.comptime_parameters.items[param_raw];
-                const constraint_id = parameter.constraint orelse continue;
-                const concrete = bindings.types[param_raw] orelse return error.ContractConstraintRequiresTypeParameter;
-                const satisfied = try self.inferConstraintBindings(module_index, constraint_id, concrete, &bindings);
-                if (!satisfied) return error.GenericContractConstraintNotSatisfied;
-            }
-        }
-    }
-
     /// Complete each erased signature from its contract declaration. Concrete
     /// methods belong to selected handles; they do not alter virtual effects.
     pub fn closeVirtualMethodRegistries(self: *Resolver) !void {
@@ -3170,15 +3138,6 @@ pub const Resolver = struct {
     pub fn sourceFor(self: *const Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
         return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
-
-    fn findFunctionParameterized(self: *Resolver, module_index: usize, definition: global_sg.GlobalFamilyDefinitionId) ?parameterized_storage.ParameterizedFunction {
-        const family = self.graph.familyDefinition(definition);
-        if (family.kind != .function) return null;
-        const index = family.template_index orelse return null;
-        const storage = &self.modules[module_index].semantic.parameterized_storage;
-        if (index >= storage.parameterized_functions.items.len) return null;
-        return storage.parameterized_functions.items[index];
-    }
 };
 
 test "contract resolver keeps compile-time relation metadata outside GlobalSG" {
@@ -3219,32 +3178,19 @@ test "closed symbolic patterns compare without substitutions or graph mutation" 
     try std.testing.expectEqual(@as(usize, 2), graph.types.items.len);
 }
 
-test "unconstrained generic types and functions need no constraint substitutions" {
+test "unconstrained generic types need no constraint substitutions" {
     const allocator = std.testing.allocator;
     var module: module_sg.ModuleSemanticGraph = .{};
     defer module.deinit(allocator);
     try module.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .type });
     try module.semantic.parameterized_storage.parameterized_types.append(allocator, .{ .declaration = @enumFromInt(0), .parameters = .{ .start = 0, .len = 1 }, .body = @enumFromInt(0) });
-    try module.semantic.parameterized_storage.parameterized_functions.append(allocator, .{
-        .declaration = @enumFromInt(0),
-        .parameters = .{ .start = 0, .len = 1 },
-        .input = @enumFromInt(0),
-        .output = @enumFromInt(0),
-        .body = null,
-    });
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
     try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 1 }, .declarations = .{ .start = 0, .len = 1 } });
     try graph.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .type, .parameter_count = 1, .template_index = 0 });
-    try graph.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .function, .parameter_count = 1, .template_index = 0 });
     try graph.types.append(allocator, .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } } });
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.generic_arguments.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } });
-    try graph.generic_function_instances.append(allocator, .{
-        .function = @enumFromInt(0),
-        .parameterized_definition = @enumFromInt(1),
-        .arguments = .{ .start = 0, .len = 1 },
-    });
     const modules = [_]module_sg.ModuleSemanticGraph{module};
     const offsets = [_]globalizer.Offsets{std.mem.zeroes(globalizer.Offsets)};
     var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
@@ -3255,7 +3201,6 @@ test "unconstrained generic types and functions need no constraint substitutions
     var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &modules, .offsets = &offsets, .core = &core, .generics = &generics };
     defer resolver.deinit();
     try std.testing.expectEqual(null, try resolver.findGenericTypeConstraintFailure());
-    try resolver.validateGenericFunctionInstances();
 }
 
 fn extendTemplateIndex(allocator: std.mem.Allocator) !void {

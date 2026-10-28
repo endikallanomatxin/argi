@@ -610,3 +610,18 @@ Logs: `.zig-cache/frontend-current-prelude-profile.log` (100-call control),
 `zig build benchmark-execution -Doptimize=ReleaseSafe -j16 -- 1000 prelude calls 1024 --resolution-profile`
 and substitute `bindings` for the second scenario. Benchmark rows are written to
 stderr; redirect that stream when collecting a report.
+
+Generic function constraints are now checked before an instance is published,
+through the same instantiation path used by ordinary and selected contract
+operations. Unit completion no longer reconstructs substitutions and reselects
+those constraints for every historical instance. Deferred body materialization
+keeps its already validated arguments. No validation frontier, extra cache or
+transaction state is needed; the `generic_function_constraints` profile phase
+in the measurements above describes the removed completion pass.
+
+The post-removal 1,000-call control takes 7,092.2 ms overall and 1,010.2 ms
+in completion, versus 7,148.5/1,224.6 ms in the preceding control. Retained
+memory remains 144.075 MiB, with the same function/instruction counts. The small
+total-time difference is insufficient to claim a general throughput improvement;
+the concrete result is removal of the repeated validation pass and its temporary
+substitution environments. Log: `.zig-cache/generic-constraints-once-profile.csv`.

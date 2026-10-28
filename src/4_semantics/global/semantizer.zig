@@ -1002,7 +1002,6 @@ pub const Session = struct {
         const dispatch = &resolvers.dispatch;
         const ownership = &resolvers.ownership;
         const staged_execution = &resolvers.staged_execution;
-        try contracts.validateGenericFunctionInstances();
         {
             const annotations = if (core.scan_profile) |profile| profile.begin(.choice_annotations) else null;
             defer if (annotations) |m| m.finish(false);
