@@ -2399,6 +2399,16 @@ pub const Resolver = struct {
         };
     }
 
+    // Contextualization is shared by standalone typed literals, binding
+    // initializers and writes. A typed aggregate can still contain pending
+    // children; conversely, a complete value must not keep the fixed point live.
+    fn materializeValueContext(self: *Resolver, value: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) !bool {
+        const current = self.graph.node(value).ty;
+        if (current != null and (types.equal(self.graph, current.?, expected) or !self.contextualLiteralFits(value, expected)) and
+            !self.contextualAggregateNeedsCompletion(value, expected)) return false;
+        return self.coerceContextualValue(value, expected);
+    }
+
     pub fn materializeAssignmentValues(self: *Resolver) !bool {
         var changed = false;
         const measurement = if (self.scan_profile) |profile| profile.begin(.assignment_values) else null;
@@ -2412,18 +2422,15 @@ pub const Resolver = struct {
             const node = self.graph.nodes.items[index];
             if (node.content != .struct_value_literal) continue;
             const target = node.ty orelse continue;
-            if (try self.normalizeNamedStructLiteral(@enumFromInt(index), target)) changed = true;
+            const id: global_sg.GlobalNodeId = @enumFromInt(index);
+            if (try self.normalizeNamedStructLiteral(id, target)) changed = true;
+            if (try self.materializeValueContext(id, target)) changed = true;
         }
         for (self.graph.bindings.items, 0..) |binding, raw| {
             if (measurement) |m| m.visit(1);
             if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
             const initialization = binding.initialization orelse continue;
-            const current = self.graph.node(initialization).ty;
-            if (current == null or (!types.equal(self.graph, current.?, binding.ty) and self.contextualLiteralFits(initialization, binding.ty)) or
-                self.contextualAggregateNeedsCompletion(initialization, binding.ty))
-                if (try self.coerceContextualValue(initialization, binding.ty)) {
-                    changed = true;
-                };
+            if (try self.materializeValueContext(initialization, binding.ty)) changed = true;
         }
         for (self.graph.nodes.items) |node| {
             if (measurement) |m| m.visit(1);
@@ -2435,24 +2442,13 @@ pub const Resolver = struct {
                         .pointer => |item| item,
                         else => continue,
                     };
-                    const current = self.graph.node(value.value).ty;
-                    if (current == null or (!types.equal(self.graph, current.?, pointer.child) and self.contextualLiteralFits(value.value, pointer.child)) or
-                        self.contextualAggregateNeedsCompletion(value.value, pointer.child))
-                        if (try self.coerceContextualValue(value.value, pointer.child)) {
-                            changed = true;
-                        };
+                    if (try self.materializeValueContext(value.value, pointer.child)) changed = true;
                     continue;
                 },
                 else => continue,
             };
             if (self.graph.isBindingTypeUnresolved(assignment.binding)) continue;
-            const current = self.graph.node(assignment.value).ty;
-            const expected = self.graph.binding(assignment.binding).ty;
-            if (current != null and (types.equal(self.graph, current.?, expected) or !self.contextualLiteralFits(assignment.value, expected)) and
-                !self.contextualAggregateNeedsCompletion(assignment.value, expected)) continue;
-            // Assignment destinations supply the contextual shape of anonymous
-            // aggregates before summary inference and codegen consume them.
-            if (try self.coerceContextualValue(assignment.value, self.graph.binding(assignment.binding).ty)) changed = true;
+            if (try self.materializeValueContext(assignment.value, self.graph.binding(assignment.binding).ty)) changed = true;
         }
         return changed;
     }
@@ -2998,4 +2994,46 @@ test "definition lookup filters requested kinds before resolving ambiguity" {
     const reference: module_entities.ExternalRef = .{ .kind = .type, .module_path = null, .name = local_name, .source = source };
     try std.testing.expectEqual(@as(?global_sg.GlobalFamilyDefinitionId, null), try resolver.resolveDefinitionReference(0, reference, &.{.type}));
     try std.testing.expectError(error.AmbiguousGlobalDeclaration, resolver.resolveDefinitionReference(0, reference, &.{.function}));
+}
+
+test "typed record literals complete nested lists after operand types resolve" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "bytes");
+    try graph.fields.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(1) });
+    try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt8 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 1 } },
+        .{ .nominal = @enumFromInt(0) },
+        .{ .builtin = .Bool },
+    });
+    try graph.bindings.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(0), .mutability = .constant });
+    try graph.node_refs.append(a, @enumFromInt(0));
+    try graph.value_fields.append(a, .{ .name = name, .value = @enumFromInt(1) });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = null, .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = null, .content = .{ .list_literal = .{ .elements = .{ .start = 0, .len = 1 } } } },
+        .{ .source = source, .ty = @enumFromInt(2), .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } },
+    });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer resolver.deinit();
+    try std.testing.expect(!try resolver.materializeAssignmentValues());
+    try std.testing.expect(try resolver.materializeBindingTypes());
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    try std.testing.expect(try resolver.materializeAssignmentValues());
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(1)), graph.node(@enumFromInt(1)).ty);
+    try std.testing.expect(graph.node(@enumFromInt(1)).content == .array_literal);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(2)), graph.node(@enumFromInt(2)).ty);
+    try std.testing.expect(!try resolver.materializeAssignmentValues());
+    transaction.rollback();
+    try std.testing.expect(graph.node(@enumFromInt(1)).content == .list_literal);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, null), graph.node(@enumFromInt(1)).ty);
+    // A resolved but incompatible operand must not acquire the array context.
+    try graph.setNodeType(a, @enumFromInt(0), @enumFromInt(3));
+    try std.testing.expect(!try resolver.materializeAssignmentValues());
+    try std.testing.expect(graph.node(@enumFromInt(1)).content == .list_literal);
 }

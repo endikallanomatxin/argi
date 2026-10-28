@@ -238,7 +238,11 @@ The binding-type profile now separates `binding_initializers` from
 `expression_types`. Their visits sum to the existing `binding_types` counter;
 its time includes both. Initializers are still inferred before the expression
 sweep, and expressions retain node order. Already typed expressions are revisited
-because later contextualization can change operand types.
+because later contextualization can change operand types. Independently typed
+record literals, binding initializers and writes share one completion rule.
+Nested lists are retried when their operands become compatible, even if their
+parent record already has its nominal type; complete values stop reporting
+changes. The assignment sweep follows expression propagation for this reason.
 
 Arithmetic propagation skips coercion and representation queries when both
 operands and the result already carry the same resolved type ID. A later operand
