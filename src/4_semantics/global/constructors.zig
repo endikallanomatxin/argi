@@ -235,8 +235,14 @@ pub const Resolver = struct {
         defer scope.deinit();
         const declaration = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
         if (self.contracts == null) return null;
-        const selected = try self.inferConstructorArguments(declaration, .{ .known = ty }, input, reach, source) orelse return null;
-        const call = try self.selectedInitializer(module_index, declaration, selected, input, reach, source);
+        const selected = self.inferConstructorArguments(declaration, .{ .known = ty }, input, reach, source) catch |err| {
+            if (err == error.ComptimeExecutionPending) scope.retainPendingExecution();
+            return err;
+        } orelse return null;
+        const call = self.selectedInitializer(module_index, declaration, selected, input, reach, source) catch |err| {
+            if (err == error.ComptimeExecutionPending) scope.retainPendingExecution();
+            return err;
+        };
         scope.commit();
         return call;
     }
@@ -344,11 +350,14 @@ pub const Resolver = struct {
                 .generic => |identity| if (identity.base == declaration_id) {
                     _ = generics.ensureGenericInstance(expected) catch |err| switch (err) {
                         error.OutOfMemory => return err,
+                        error.ComptimeExecutionPending => {
+                            scope.retainPendingExecution();
+                            return .deferred;
+                        },
                         else => return .deferred,
                     };
                     if (self.contractInitializer(module_index, expected, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
-                        if (err == error.DeferredContractInitializer) return .deferred;
-                        return err;
+                        return deferredInitializer(&scope, err);
                     }) |call| {
                         try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), call);
                         self.core.stats.calls += 1;
@@ -363,13 +372,11 @@ pub const Resolver = struct {
         if (standard_contracts.standardDefinition(self.graph, "Init")) |identity| {
             const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
             if (self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = .{ .start = 0, .len = 0 } } }, input, reach, self.graph.node(input).source) catch |err| {
-                if (err == error.DeferredContractInitializer) return .deferred;
-                return err;
+                return deferredInitializer(&scope, err);
             }) |selection| {
-                _ = try generics.ensureGenericInstance(selection.target);
+                _ = generics.ensureGenericInstance(selection.target) catch |err| return deferredInitializer(&scope, err);
                 const call = self.selectedInitializer(module_index, identity, selection, input, reach, self.graph.node(input).source) catch |err| {
-                    if (err == error.DeferredContractInitializer) return .deferred;
-                    return err;
+                    return deferredInitializer(&scope, err);
                 };
                 if (call) |node| {
                     try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), node);
@@ -419,11 +426,10 @@ pub const Resolver = struct {
                     const input = globalizer.globalNode(o, value.input);
                     const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
                     const selection = self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = arguments } }, input, reach, self.graph.node(input).source) catch |err| {
-                        if (err == error.DeferredContractInitializer) return .deferred;
-                        return err;
+                        return deferredInitializer(&scope, err);
                     };
                     if (selection) |selected| {
-                        if (try self.selectedInitializer(module_index, identity, selected, input, reach, self.graph.node(input).source)) |call| {
+                        if (self.selectedInitializer(module_index, identity, selected, input, reach, self.graph.node(input).source) catch |err| return deferredInitializer(&scope, err)) |call| {
                             try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), call);
                             scope.commit();
                             self.core.stats.calls += 1;
@@ -439,13 +445,13 @@ pub const Resolver = struct {
         } });
         _ = generics.ensureGenericInstance(ty) catch |err| switch (err) {
             error.OutOfMemory, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
+            error.ComptimeExecutionPending => return deferredInitializer(&scope, err),
             else => return .deferred,
         };
 
         const input = globalizer.globalNode(o, value.input);
         if (self.contractInitializer(module_index, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
-            if (err == error.DeferredContractInitializer) return .deferred;
-            return err;
+            return deferredInitializer(&scope, err);
         }) |call| {
             var selected = call;
             selected.source = .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset };
@@ -458,6 +464,20 @@ pub const Resolver = struct {
         const result = try self.writeStructuralConstruction(module_index, o, value, reference, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function));
         if (result == .resolved) scope.commit();
         return result;
+    }
+
+    // Keep only the independent request recipe when a constructor is waiting
+    // for compile-time execution. Its graph and other speculative effects still
+    // roll back; ordinary losing candidates retain nothing.
+    fn deferredInitializer(scope: *generic_functions_mod.Resolver.Speculation, err: anyerror) anyerror!resolution.Result {
+        switch (err) {
+            error.ComptimeExecutionPending => {
+                scope.retainPendingExecution();
+                return .deferred;
+            },
+            error.DeferredContractInitializer => return .deferred,
+            else => return err,
+        }
     }
 
     fn reportConstructorError(self: *Resolver, source: primitives.SourceRef, message: []const u8) !void {

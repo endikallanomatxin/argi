@@ -223,6 +223,9 @@ use that family's defaults and must match the actual specialization. They are
 not wildcards: if `Box` defaults its length to 4, a pattern `Box#(T)` does not
 accept `Box#(Int32, 3)`. Defaults referring to earlier type parameters follow
 the same rule.
+Defaults evaluated through `#run` can suspend constructor selection until their
+compile-time dependencies are ready. Retrying selection preserves the ordinary
+default and nominal identity rules; the expected result never supplies bindings.
 
 ## Interaction with Virtual types
 

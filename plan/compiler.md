@@ -2,11 +2,6 @@
 
 ## Resolution and transactions
 
-- Preserve suspended compile-time requests through constructor/default pattern
-  selection. Literal integer defaults and dependent type defaults now match;
-  a default computed by `#run` still rejects the reproduced Init case. Retain
-  only genuinely pending recipes across nested rollback, without provisional IDs
-  or output-based inference. Validate deferred retries and rejected candidates.
 - Remove resolver state used only to communicate temporary results.
 - Reduce measured redundant resolution and verification, including remaining
   binding/type sweeps. Include older entities completed by new facts.
