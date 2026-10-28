@@ -663,3 +663,15 @@ subphase clocks and counters mean it is not directly comparable to the older
 142.410 MiB. Literal and write scans are stronger investigation targets than
 initializer contexts in this workload. No worklist or completion cache was
 introduced. Log: `.zig-cache/context-phases-prelude-profile.log`.
+
+Scalar-only record completion now rejects the need for recursive shape work
+before matching every expected field by name/position. The filter inspects
+written and assumed children afresh each sweep, so later aggregate completion
+is still visible. Incomplete records also skip the reordering-only pass;
+lexical default completion remains unchanged.
+A follow-up 1,000-command control measured 264.5 ms typed-literal work and
+465.0 ms assignment contextualization, versus 310.3/527.8 ms in the preceding
+single sample. Retained memory remained 142.410 MiB. This is directional
+single-run evidence, not a controlled throughput comparison. Outer scan counts
+are unchanged; no cache, frontier or rollback state was added.
+Log: `.zig-cache/scalar-record-completion-profile.log`.

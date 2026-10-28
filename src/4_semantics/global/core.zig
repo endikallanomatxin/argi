@@ -2349,8 +2349,10 @@ pub const Resolver = struct {
     fn normalizeNamedStructLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) anyerror!bool {
         const literal = self.graph.node(node).content.struct_value_literal;
         const expected_fields = types.fields(self.graph, target) orelse return false;
-        if (literal.fields.len > expected_fields.len) return false;
-        var ordered = literal.fields.len == expected_fields.len;
+        // Defaults need lexical context and are handled by completeRecordValue.
+        // This operation only reorders an already complete supplied field set.
+        if (literal.fields.len != expected_fields.len) return false;
+        var ordered = true;
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
             const expected = self.graph.fields.items[expected_fields.start + offset];
             if (!std.mem.eql(u8, self.graph.text(field.name), self.graph.text(expected.name))) {
@@ -2359,10 +2361,6 @@ pub const Resolver = struct {
             }
         }
         if (ordered) return false;
-        // Defaults need the caller's lexical capabilities. Context-free type
-        // coercion only orders complete records; completeRecordValue performs
-        // missing-field completion with its checked reach context.
-        if (literal.fields.len != expected_fields.len) return false;
         var values: std.ArrayList(global_sg.ValueField) = .empty;
         defer values.deinit(self.allocator);
         for (self.graph.fields.items[expected_fields.start..][0..expected_fields.len]) |expected| {
@@ -2388,6 +2386,23 @@ pub const Resolver = struct {
         return switch (self.graph.node(node).content) {
             .list_literal => |literal| self.contextualListLiteralFits(literal, target),
             .struct_value_literal => |literal| blk: {
+                // Only aggregate children can need shape completion. Scalar
+                // records need no name/position matching on every fixed-point
+                // sweep; that matching would otherwise be quadratic in fields.
+                var nested = false;
+                for ([_]@TypeOf(literal.fields){ literal.fields, literal.assumed_fields }) |range| {
+                    for (self.graph.value_fields.items[range.start..][0..range.len]) |field| {
+                        switch (self.graph.node(field.value).content) {
+                            .list_literal, .struct_value_literal => {
+                                nested = true;
+                                break;
+                            },
+                            else => {},
+                        }
+                    }
+                    if (nested) break;
+                }
+                if (!nested) break :blk false;
                 const fields = types.fields(self.graph, target) orelse break :blk false;
                 for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
                     const child = self.callArgument(literal, index, field.name) orelse continue;
