@@ -77,6 +77,11 @@ native progress. Buffered adapters forward the underlying error, including its
 original tracer. Stream errors and unrepresentable totals are reported through
 an `Errable`; failure may follow consumed input and already written output.
 
+For File streams, a native stdio read error, including an interruption reported
+by stdio, becomes `stream_read_failed`, not EOF or a successful zero-byte read.
+BufferedReader preserves that error. This boundary does not automatically retry
+the interrupted operation; the File remains open and can still be closed once.
+
 ## Bounded consumption
 
 `copy_stream_limited(.reader, .writer, .buffer, .limit)` copies at most `limit`
