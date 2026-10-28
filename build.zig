@@ -351,32 +351,12 @@ fn linkLlvm(module: *std.Build.Module, libs_str: []const u8) void {
 // paths and content, not mtimes or the checkout location, for the build identity.
 fn compilerFingerprint(b: *std.Build) ![32]u8 {
     const io = b.graph.io;
-    var dir = try std.Io.Dir.cwd().openDir(io, b.pathFromRoot("src"), .{ .iterate = true });
-    defer dir.close(io);
-    var walker = try dir.walk(b.allocator);
-    defer walker.deinit();
-    var paths: std.ArrayList([]const u8) = .empty;
-    while (try walker.next(io)) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.path, ".zig") and !std.mem.endsWith(u8, entry.path, ".rg")) continue;
-        try paths.append(b.allocator, try b.allocator.dupe(u8, entry.path));
-    }
-    std.mem.sort([]const u8, paths.items, {}, struct {
-        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
-            return std.mem.lessThan(u8, lhs, rhs);
-        }
-    }.lessThan);
-    var hash = std.crypto.hash.Blake3.init(.{});
-    for (paths.items) |path| {
-        const contents = try dir.readFileAlloc(io, path, b.allocator, .limited(16 * 1024 * 1024));
-        const length: u64 = @intCast(path.len);
-        hash.update(std.mem.asBytes(&length));
-        hash.update(path);
-        const content_length: u64 = @intCast(contents.len);
-        hash.update(std.mem.asBytes(&content_length));
-        hash.update(contents);
-    }
-    var fingerprint: [32]u8 = undefined;
-    hash.final(&fingerprint);
-    return fingerprint;
+    var root = try std.Io.Dir.cwd().openDir(io, b.pathFromRoot("."), .{});
+    defer root.close(io);
+    return @import("src/compiler_fingerprint.zig").compute(b.allocator, io, root, &.{
+        .{ .path = "src/main.zig" },
+        .{ .path = "build.zig", .source = false },
+        .{ .path = "src/compiler_fingerprint.zig", .source = false },
+        .{ .path = "src/5_codegen/llvm/llvm-c.h", .source = false },
+    });
 }

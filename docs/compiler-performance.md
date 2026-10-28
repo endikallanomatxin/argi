@@ -18,6 +18,14 @@ CLI builds persist canonical module snapshots in `.argi-cache/frontend/`.
 and code generation still run. Measure complete CLI builds separately from the
 in-memory frontend benchmark.
 
+The cache build identity follows literal Zig imports from `src/main.zig` and
+hashes embedded files as data. It also includes `build.zig`, the fingerprint
+implementation and the LLVM bridge header. Unreachable source files do not affect
+that identity; imported files remain included regardless of their names, even
+when the import appears in a test declaration. Computed dependency paths fail
+explicitly instead of being omitted. Paths are normalized relative to the
+checkout, and traversal scratch is released after each parsed file.
+
 ## Frontend workers
 
 `--frontend-jobs auto` uses half the detected logical CPU count, rounded down,
