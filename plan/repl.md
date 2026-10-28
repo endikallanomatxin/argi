@@ -34,8 +34,9 @@ JIT and complete native-backend parity are not prerequisites.
    and new code units; retain internal tests for exhaustive local rules.
 3. Close the failure-lifecycle matrix: rejected commands and allocation failures
    publish nothing; traps, budget exhaustion, cancellation and host callback
-   failures prevent further execution until reset. Check host-owned resources,
-   stale references and reset/exit failures explicitly. Document which effects
+   failures prevent further execution until reset. Extend host-resource and
+   allocation-failure coverage, including failed prelude initialization. Document
+   which effects
    cannot be undone and how context-owned resources are released without user
    cleanup. Never promise transactional rollback of execution.
 4. Measure 10/100/1,000-command sessions, then longer resource/definition/rejection

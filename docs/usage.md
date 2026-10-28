@@ -378,7 +378,11 @@ and exits. Preparation failures publish no state and subsequent input can retry.
 Diagnostics for wrapped statements and expression results point to the submitted
 text. Unsupported bytecode operations report their source location.
 A runtime trap retains any writes already executed and poisons the session; use
-`:reset` before continuing. Trapped code cannot be safely unwound. The checked
+`:reset` before continuing. Trapped code cannot be safely unwound. Cleanup used
+by reset and exit follows the same boundary: failure to prepare it
+preserves live owners and permits retry, without accumulating rejected sources.
+A trap during cleanup requires another reset, which releases context-owned
+memory without retrying user destructors or undoing external effects. The checked
 prelude installs only the capabilities described above; `System` and unrestricted
 native calls remain unavailable. Foreign declarations require explicit host
 bindings, and their logical `ffi` input still participates in safety checking.

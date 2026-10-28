@@ -243,12 +243,14 @@ pub const Interactive = struct {
     }
 
     pub fn close(self: *Interactive) !void {
-        try self.beginSubmission();
-        defer self.endSubmission();
         try self.cleanup();
         self.closed = true;
     }
     fn cleanup(self: *Interactive) !void {
+        // Exit preparation publishes sources only when its checked command is
+        // accepted. Reset and close must discard rejected batches identically.
+        try self.beginSubmission();
+        defer self.endSubmission();
         const command = try self.sources.loadCommand(&self.diagnostics, "");
         const prefix = try self.sources.appendModuleViews(self.compiler.semantic.modules, command.module);
         const base = self.compiler.semantic.relocation.graph.functions.items.len;
@@ -463,6 +465,75 @@ test "interactive expression owners retain cleanup until checked exit" {
     try std.testing.expect(flags[cleanup[0].offset]);
     try session.close();
     try std.testing.expectEqual(.fresh, session.runtime.context.state);
+}
+
+test "interactive rejected reset cleanup reclaims unpublished source batches" {
+    const a = std.testing.allocator;
+    var sources = submissions.Sources.init(a);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
+        "ForeignFunctionInterface: Type = ()\n" ++
+        "host_drop() -> (): ExternFunction");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(a, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("Resource: Type = ()");
+    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .ffi: $&ForeignFunctionInterface = reach ffi) -> () { host_drop(.ffi = ffi) })");
+    try session.submitStatements("permission :: ForeignFunctionInterface = ()\nassume ffi ::= $&permission\nresource :: Resource = ()");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.reset());
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expect(session.runtime.context.state != .poisoned);
+    const modules = session.sources.modules.items.len;
+    const files = session.diagnostics.source_files.len;
+    const arenas = session.sources.retained_arenas.items.len;
+    for (0..16) |attempt| {
+        if (attempt == 1) {
+            try std.testing.expectError(error.Reported, session.close());
+        } else try std.testing.expectError(error.Reported, session.reset());
+        try std.testing.expect(!session.closed);
+        try std.testing.expectEqual(revision, session.compiler.revision);
+        try std.testing.expectEqual(modules, session.sources.modules.items.len);
+        try std.testing.expectEqual(files, session.diagnostics.source_files.len);
+        try std.testing.expectEqual(arenas, session.sources.retained_arenas.items.len);
+    }
+    const Host = struct {
+        calls: usize = 0,
+        fail: bool = false,
+        fn drop(data: ?*anyopaque, _: []const i128, _: []i128) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(data.?));
+            self.calls += 1;
+            if (self.fail) return error.TestCleanupFailure;
+        }
+    };
+    var state: Host = .{};
+    const bindings = [_]@import("host.zig").Binding{.{ .symbol = "host_drop", .inputs = &.{}, .outputs = &.{}, .data = &state, .call = Host.drop }};
+    session.runtime.context.host_bindings = &bindings;
+    try session.reset();
+    try std.testing.expectEqual(@as(usize, 1), state.calls);
+    try std.testing.expectEqual(@as(usize, 0), session.sources.modules.items.len);
+
+    // A failure after cleanup begins has different semantics: the completed
+    // host effect stays visible, and reset must never run that destructor twice.
+    try session.submit("Resource: Type = ()");
+    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .ffi: $&ForeignFunctionInterface = reach ffi) -> () { host_drop(.ffi = ffi) })");
+    try session.submitStatements("permission :: ForeignFunctionInterface = ()\nassume ffi ::= $&permission\nresource :: Resource = ()");
+    const region = try session.runtime.context.acquireRegion(8, 1);
+    state.fail = true;
+    try std.testing.expectError(error.TestCleanupFailure, session.reset());
+    try std.testing.expectEqual(@as(usize, 2), state.calls);
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try std.testing.expectError(error.ExecutionContextPoisoned, session.close());
+    try std.testing.expectError(error.ExecutionContextPoisoned, session.submitStatements(""));
+    try session.reset();
+    try std.testing.expectEqual(@as(usize, 2), state.calls);
+    var byte: [1]u8 = undefined;
+    try std.testing.expectError(error.ExecutionForeignReference, session.runtime.context.readRegion(region, 0, &byte));
+    try session.close();
 }
 
 test "interactive submissions share staged run and conditional execution" {
