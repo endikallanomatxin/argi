@@ -1525,7 +1525,7 @@ fn diagnoseInvalidMatchPayloadCopies(
         if (reachable) |set| if (!set.containsBinding(binding_id)) continue;
         const binding = graph.binding(binding_id);
         if (std.mem.eql(u8, graph.text(binding.name), "_")) continue;
-        if (graph.isTypeUnresolved(binding.ty) or ownership.canImplicitlyCopy(binding.ty)) continue;
+        if (graph.isTypeUnresolved(binding.ty) or try ownership.canImplicitlyCopy(binding.ty)) continue;
         if (diagnostics) |sink| {
             var type_name = std.array_list.Managed(u8).init(allocator);
             defer type_name.deinit();
@@ -3729,7 +3729,7 @@ fn diagnoseUnresolvedCall(
                         other_mismatch = true;
                         continue;
                     };
-                    if (contracts.concreteImplements(actual_concrete, expected_contract_type)) {
+                    if (try contracts.concreteImplements(actual_concrete, expected_contract_type)) {
                         other_mismatch = true;
                         continue;
                     }

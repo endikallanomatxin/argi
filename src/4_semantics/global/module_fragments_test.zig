@@ -52,6 +52,74 @@ test "qualified binding resolution propagates allocation failure" {
     }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
 }
 
+test "implicit copy permission queries propagate allocation failure" {
+    const a = std.testing.allocator;
+    var input = try build(a, "copy/main.rg",
+        \\ImplicitlyCopyable#(.Value: Type): Contract = ()
+        \\InfalliblyCopyable#(.Value: Type): Contract = ()
+        \\FalliblyCopyable#(.Value: Type, .Provider: Type): Contract = ()
+        \\Value := (.flag: Bool)
+        \\implement ImplicitlyCopyable#(Value) ()
+        \\main := () -> () {
+        \\    original: Value = (.flag = true)
+        \\    duplicate ::= original
+        \\}
+    );
+    defer input.deinit(a);
+    const modules = [_]module.ModuleSemanticGraph{input};
+    try std.testing.checkAllAllocationFailures(a, struct {
+        fn resolve(allocator: std.mem.Allocator, inputs: []const module.ModuleSemanticGraph) !void {
+            var session: sema.Session = undefined;
+            try session.init(allocator, inputs, .{});
+            defer session.deinit();
+            try session.advance();
+            _ = try session.completeUnit();
+            const graph = &session.relocation.graph;
+            const value_type = for (graph.declarations.items) |declaration| {
+                if (std.mem.eql(u8, graph.text(declaration.name), "Value")) break declaration.type_id.?;
+            } else return error.MissingValueType;
+            // Copy checks also run after declaration additions invalidate the
+            // lazy name index. Rebuild it through the actual permission query.
+            graph.discardIndexedTail(allocator, graph.lookup.indexed_functions, 0);
+            try std.testing.expect(try session.resolvers.ownership.canImplicitlyCopy(value_type));
+        }
+    }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
+}
+
+test "virtual associated contract resolution propagates allocation failure" {
+    const a = std.testing.allocator;
+    var input = try build(a, "virtual/main.rg",
+        \\Source#(.Participant: Type): Contract = (
+        \\    .Item: Type
+        \\    .read: (.self: &Participant) -> (.value: Item) where {}
+        \\)
+        \\Cell := (.flag: Bool)
+        \\implement Source#(Cell) (
+        \\    .Item: Type = Bool
+        \\    .read = (.self: &Cell) -> (.value: Bool) { value = self&.flag }
+        \\)
+        \\read_source := (.source: &Virtual#(Source#(Bool))) -> (.value: Bool) {
+        \\    value = read(source)
+        \\}
+        \\main := () -> () {
+        \\    cell: Cell = (.flag = true)
+        \\    source ::= to_virtual#(Source#(Bool))(&cell)
+        \\    value ::= read_source(&source)
+        \\}
+    );
+    defer input.deinit(a);
+    const modules = [_]module.ModuleSemanticGraph{input};
+    try std.testing.checkAllAllocationFailures(a, struct {
+        fn resolve(allocator: std.mem.Allocator, inputs: []const module.ModuleSemanticGraph) !void {
+            var session: sema.Session = undefined;
+            try session.init(allocator, inputs, .{});
+            defer session.deinit();
+            try session.advance();
+            _ = try session.completeUnit();
+        }
+    }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
+}
+
 test "generic constructor resolution propagates allocation failure" {
     const a = std.testing.allocator;
     var input = try build(a, "constructor/main.rg",

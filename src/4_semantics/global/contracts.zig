@@ -472,13 +472,16 @@ pub const Resolver = struct {
         return self.contractDefinitionFromType(ty);
     }
 
-    pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, contract_type: global_sg.GlobalTypeId) bool {
+    pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, contract_type: global_sg.GlobalTypeId) !bool {
         const declaration = switch (self.graph.types.items[@intFromEnum(contract_type)]) {
             .definition => |value| value,
             else => return false,
         };
         if (self.findContractDefinition(declaration) == null) return false;
-        return self.implements(concrete, declaration) catch false;
+        return self.implements(concrete, declaration) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => false,
+        };
     }
 
     fn associatedArgumentsMatch(self: *Resolver, located: LocatedContractDefinition, bindings: *const generic_mod.Resolver.Bindings, expected: primitives.Range(global_sg.GlobalGenericArgId)) !bool {
@@ -486,7 +489,10 @@ pub const Resolver = struct {
         if (expected.len == 0) return true;
         var wanted = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer wanted.deinit(self.allocator);
-        self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, expected, &wanted) catch return false;
+        self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, expected, &wanted) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return false,
+        };
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (located.definition.parameters.start..located.definition.parameters.start + located.definition.parameters.len) |raw| {
             switch (storage.comptime_parameters.items[raw].kind) {
@@ -598,7 +604,7 @@ pub const Resolver = struct {
             if (expected_associations) |expected| {
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
-                if (!self.bindContractUseArguments(contract_use, located, &bindings) or !try self.associatedArgumentsMatch(located, &bindings, expected)) {
+                if (!try self.bindContractUseArguments(contract_use, located, &bindings) or !try self.associatedArgumentsMatch(located, &bindings, expected)) {
                     self.participant_conformance_failure = .{
                         .source = source,
                         .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
@@ -687,10 +693,13 @@ pub const Resolver = struct {
         contract_use: ContractUse,
         located: LocatedContractDefinition,
         bindings: *generic_mod.Resolver.Bindings,
-    ) bool {
+    ) !bool {
         if (located.definition.participants.len != 1) return false;
         if (contract_use.arguments.len != located.definition.parameters.len) return false;
-        self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, contract_use.arguments, bindings) catch return false;
+        self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, contract_use.arguments, bindings) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return false,
+        };
         return true;
     }
 
@@ -778,7 +787,7 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        if (!self.bindContractUseArguments(contract_use, located, &bindings)) return null;
+        if (!try self.bindContractUseArguments(contract_use, located, &bindings)) return null;
         // The unary participant is hidden by this handle; its fixed signature
         // uses the erased receiver identity.
         if (located.definition.participants.len != 1) return null;
@@ -1494,7 +1503,7 @@ pub const Resolver = struct {
                         if (child == .virtual) {
                             const use = self.contractUse(child.virtual) orelse return null;
                             if (use.declaration == declaration) {
-                                if (!self.bindContractUseArguments(use, located, &bindings)) return null;
+                                if (!try self.bindContractUseArguments(use, located, &bindings)) return null;
                                 bindings.types[located.definition.participants.start] = child.virtual;
                                 virtual = true;
                                 continue;
@@ -1523,7 +1532,7 @@ pub const Resolver = struct {
                     if (child == .virtual) {
                         const use = self.contractUse(child.virtual) orelse continue;
                         if (use.declaration == declaration) {
-                            if (!self.bindContractUseArguments(use, located, &bindings)) continue;
+                            if (!try self.bindContractUseArguments(use, located, &bindings)) continue;
                             bindings.types[located.definition.participants.start] = child.virtual;
                             virtual = true;
                             continue;
@@ -1642,7 +1651,7 @@ pub const Resolver = struct {
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
             const interface = self.contractUse(participants[0]) orelse return null;
-            if (!self.bindContractUseArguments(interface, located, &bindings)) return null;
+            if (!try self.bindContractUseArguments(interface, located, &bindings)) return null;
             bindings.types[located.definition.participants.start] = participants[0];
             const required = try self.instantiateSignatureType(located.module_index, requirement.signature.?.input, &bindings) orelse return null;
             if (!try self.core.completeRecordFieldsWithContext(global_types.fields(self.graph, required).?, input, context)) return null;

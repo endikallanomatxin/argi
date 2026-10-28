@@ -304,7 +304,7 @@ pub const Resolver = struct {
             try self.graph.setNode(self.allocator, target, self.graph.nodes.items[@intFromEnum(source)]);
             return true;
         }
-        if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) {
+        if (try self.implementsNamedContract(ty, "ImplicitlyCopyable")) {
             const original = self.graph.nodes.items[@intFromEnum(source)];
             try self.graph.setNode(self.allocator, target, original);
             self.stats.copies += 1;
@@ -312,7 +312,7 @@ pub const Resolver = struct {
         }
         // An explicit copy contract does not grant permission to insert that
         // operation implicitly. This also keeps fallible copy results visible.
-        if (self.hasExplicitCopyCapability(ty) or !self.triviallyCopyable(ty)) {
+        if (try self.hasExplicitCopyCapability(ty) or !self.triviallyCopyable(ty)) {
             // A binding use can still carry a temporal move error that Safety
             // must diagnose before the copy permission. Other expressions may
             // be part of call/initializer matching, where failure here
@@ -345,24 +345,30 @@ pub const Resolver = struct {
     /// Whether the language may duplicate a value without an explicit `copy`
     /// operation. Match value payloads use this permission even though they do
     /// not pass through a lowered `resolve_copy` node.
-    pub fn canImplicitlyCopy(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
-        if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) return true;
-        if (self.hasExplicitCopyCapability(ty)) return false;
+    pub fn canImplicitlyCopy(self: *Resolver, ty: global_sg.GlobalTypeId) !bool {
+        if (try self.implementsNamedContract(ty, "ImplicitlyCopyable")) return true;
+        if (try self.hasExplicitCopyCapability(ty)) return false;
         return self.triviallyCopyable(ty);
     }
 
-    fn hasExplicitCopyCapability(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
-        if (self.implementsNamedContract(ty, "InfalliblyCopyable")) return true;
+    fn hasExplicitCopyCapability(self: *Resolver, ty: global_sg.GlobalTypeId) !bool {
+        if (try self.implementsNamedContract(ty, "InfalliblyCopyable")) return true;
         const dispatch = self.dispatch orelse return false;
-        return dispatch.contracts.mayImplementFirstParticipant("FalliblyCopyable", ty) catch true;
+        return dispatch.contracts.mayImplementFirstParticipant("FalliblyCopyable", ty) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => true,
+        };
     }
 
-    fn implementsNamedContract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
+    fn implementsNamedContract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) !bool {
         const dispatch = self.dispatch orelse return false;
-        const declarations = self.graph.declarationsNamed(self.allocator, name) catch return false;
+        const declarations = try self.graph.declarationsNamed(self.allocator, name);
         for (declarations) |contract_decl| {
             if (self.graph.declaration(contract_decl).kind != .contract_type) continue;
-            if (dispatch.contracts.implements(concrete, self.graph.familyForDeclaration(contract_decl) orelse continue) catch false) return true;
+            if (dispatch.contracts.implements(concrete, self.graph.familyForDeclaration(contract_decl) orelse continue) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => false,
+            }) return true;
         }
         return false;
     }
