@@ -38,9 +38,22 @@ CliReasons: Type = (
     ..out_of_memory
 )
 
+_valid_cli_option_name := (.name: StringView) -> (.ok: Bool = true) {
+    index :: UIntNative = 0
+    while index < byte_length(&name).count {
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &name, .index = index))
+        if byte <= 32 or byte == 127 or byte == 61 {
+            ok = false
+            return
+        }
+        index = index + 1
+    }
+}
+
 -- Specs and results borrow their text. Callers retain both the argument source
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
+-- Names exclude ASCII controls, spaces and '='. Defaults require value options.
 parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType)) (
     .source    : &t,
     .specs     : ArrayView#(.t: CliSpec),
@@ -57,14 +70,21 @@ parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Al
             result = ..error(.reason = ..invalid_cli_schema)
             return
         }
-        cursor :: UIntNative = 0
-        while cursor < spec.name._length {
-            byte ::= unwrap_or_abort(.value = bytes_get(.view = &spec.name, .index = cursor))
-            if byte == 61 or byte == 32 or byte == 0 {
-                result = ..error(.reason = ..invalid_cli_schema)
-                return
+        if [
+            _valid_cli_option_name(.name = spec.name).ok == false
+            or _valid_cli_option_name(.name = spec.short_name).ok == false
+        ] {
+            result = ..error(.reason = ..invalid_cli_schema)
+            return
+        }
+        if spec.value_name._length == 0 {
+            match spec.default_value {
+                ..none {}
+                ..some _ {
+                    result = ..error(.reason = ..invalid_cli_schema)
+                    return
+                }
             }
-            cursor = cursor + 1
         }
         previous :: UIntNative = 0
         while previous < index {

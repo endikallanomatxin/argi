@@ -42,5 +42,18 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     match parse_cli#(.t: CliArgumentViews)(
         .source = &duplicate_source, .specs = view(.self = &specs), .allocator = allocator
     ) { ..ok ~_ { abort } ..error&err { if [err&.reason != ..duplicate_option] { abort } } }
+    invalid :: [4]CliSpec = (
+        CliSpec(.name = "bad\tname"),
+        CliSpec(.name = "bad\nname"),
+        CliSpec(.name = "alias", .short_name = "="),
+        CliSpec(.name = "flag", .default_value = ..some(.value = "true"))
+    )
+    for spec in invalid {
+        schema :: [1]CliSpec = (spec)
+        match parse_cli(.source = &empty_source, .specs = view(&schema), .allocator = allocator) {
+            ..ok ~_ { abort }
+            ..error error { if error.reason != ..invalid_cli_schema { abort } }
+        }
+    }
     status_code = 0
 }
