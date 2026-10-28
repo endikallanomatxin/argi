@@ -81,6 +81,10 @@ For File streams, a native stdio read error, including an interruption reported
 by stdio, becomes `stream_read_failed`, not EOF or a successful zero-byte read.
 BufferedReader preserves that error. This boundary does not automatically retry
 the interrupted operation; the File remains open and can still be closed once.
+Interrupted native stdio writes and flushes similarly report
+`stream_write_failed` and `stream_flush_failed`. BufferedWriter discards its
+pending bytes after such a failure instead of replaying uncertain progress
+during cleanup. Closing still releases the File even if native close fails.
 
 ## Bounded consumption
 

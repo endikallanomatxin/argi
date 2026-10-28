@@ -10,6 +10,14 @@ interrupted_closes() -> (.count: UIntNative): CFunction(
     .symbol = "argi_test_interrupted_closes"
 )
 
+interrupted_output(.buffered: Int32) -> (.address: UIntNative): CFunction(
+    .symbol = "argi_test_interrupted_output"
+)
+
+interrupted_writes() -> (.count: UIntNative): CFunction(
+    .symbol = "argi_test_interrupted_writes"
+)
+
 main := (.system: System) -> () {
     assume ffi := system.ffi
     first ::= failed_stream().address
@@ -74,6 +82,62 @@ main := (.system: System) -> () {
         if interrupted_reads().count == 0 or interrupted_closes().count != 0 { abort }
         unwrap_or_abort(.value = close(.self = $&input))
         unwrap_or_abort(.value = close(.self = $&input))
+        if interrupted_closes().count != 1 { abort }
+        mode = mode + 1
+    }
+
+    mode = 0
+    while mode < 4 {
+        native_buffering :: Int32 = 0
+        if mode == 2 { native_buffering = 1 }
+        address ::= interrupted_output(.buffered = native_buffering).address
+        if address == 0 { abort }
+        output ::= file_from_stream(.stream_address = address, .should_close = true)
+        bytes: [2]UInt8 = (65, 66)
+        if mode == 0 {
+            match Writer#().write_byte(.self = $&output, .byte = 65) {
+                ..ok _ { abort }
+                ..error error { if error.reason != ..stream_write_failed { abort } }
+            }
+        } else if mode == 1 {
+            match BlockWriter#().write_block(.self = $&output, .buffer = view(&bytes)) {
+                ..ok _ { abort }
+                ..error error { if error.reason != ..stream_write_failed { abort } }
+            }
+        } else if mode == 2 {
+            written ::= unwrap_or_abort(
+                .value = BlockWriter#().write_block(.self = $&output, .buffer = view(&bytes))
+            )
+            if written != 2 or interrupted_writes().count != 0 { abort }
+            match Writer#().flush(.self = $&output) {
+                ..ok _ { abort }
+                ..error error { if error.reason != ..stream_flush_failed { abort } }
+            }
+        } else {
+            attempts :: UIntNative = 0
+            {
+                storage: [1]UInt8 = (0)
+                writer ::= BufferedWriter(.base = $&output, .buffer = view($&storage))
+                match Writer#().write_byte(.self = $&writer, .byte = 65) {
+                    ..ok _ { abort }
+                    ..error error { if error.reason != ..stream_write_failed { abort } }
+                }
+                if writer.length != 0 { abort }
+                attempts = interrupted_writes().count
+            }
+            -- Cleanup must not replay the adapter's failed pending write.
+            if interrupted_writes().count != attempts { abort }
+        }
+        if interrupted_writes().count == 0 or interrupted_closes().count != 0 { abort }
+        if is_open(.self = &output).ok == false { abort }
+        -- Native close can itself report a pending-output failure; it still
+        -- releases the FILE and must not be attempted again.
+        match close(.self = $&output) {
+            ..ok _ {}
+            ..error error { if error.reason != ..stream_close_failed { abort } }
+        }
+        if is_open(.self = &output).ok or interrupted_closes().count != 1 { abort }
+        unwrap_or_abort(.value = close(.self = $&output))
         if interrupted_closes().count != 1 { abort }
         mode = mode + 1
     }
