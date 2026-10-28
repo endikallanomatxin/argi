@@ -651,3 +651,15 @@ The profile does not yet separate those three responsibilities, so instrument
 that boundary before choosing a worklist or adding retained completion state.
 Logs: `.zig-cache/frontend-post-cleanup-profile.log` and
 `.zig-cache/frontend-post-cleanup-1000-profile.log`.
+
+
+The contextualization profile now separates `typed_literal_contexts`,
+`initializer_contexts` and `write_contexts` beneath `assignment_values`.
+A 1,000-command ReleaseSafe prelude control measured respectively
+310.3 / 42.8 / 174.4 ms, with 71.7 / 7.8 / 71.7 million outer entries and
+no changes. The enclosing 527.8 ms includes profiling overhead; the new
+subphase clocks and counters mean it is not directly comparable to the older
+469.3 ms measurement. Total command time was 6,926.3 ms and retained memory
+142.410 MiB. Literal and write scans are stronger investigation targets than
+initializer contexts in this workload. No worklist or completion cache was
+introduced. Log: `.zig-cache/context-phases-prelude-profile.log`.

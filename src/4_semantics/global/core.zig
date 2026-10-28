@@ -2409,9 +2409,21 @@ pub const Resolver = struct {
         return self.coerceContextualValue(value, expected);
     }
 
+    // Keep this order: record normalization can expose initializer context,
+    // and writes may consume types completed by either preceding phase.
     pub fn materializeAssignmentValues(self: *Resolver) !bool {
         var changed = false;
         const measurement = if (self.scan_profile) |profile| profile.begin(.assignment_values) else null;
+        defer if (measurement) |m| m.finish(changed);
+        if (try self.materializeTypedLiterals(measurement)) changed = true;
+        if (try self.materializeInitializerValues(measurement)) changed = true;
+        if (try self.materializeWriteValues(measurement)) changed = true;
+        return changed;
+    }
+
+    fn materializeTypedLiterals(self: *Resolver, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
+        var changed = false;
+        const measurement = if (self.scan_profile) |profile| profile.begin(.typed_literal_contexts) else null;
         defer if (measurement) |m| m.finish(changed);
         // Specialized generic bodies can already carry their contextual type.
         // Normalize their literals too, even without an assignment type change.
@@ -2419,6 +2431,7 @@ pub const Resolver = struct {
         var index: usize = 0;
         while (index < count) : (index += 1) {
             if (measurement) |m| m.visit(1);
+            if (parent) |m| m.visit(1);
             const node = self.graph.nodes.items[index];
             if (node.content != .struct_value_literal) continue;
             const target = node.ty orelse continue;
@@ -2426,14 +2439,30 @@ pub const Resolver = struct {
             if (try self.normalizeNamedStructLiteral(id, target)) changed = true;
             if (try self.materializeValueContext(id, target)) changed = true;
         }
+        return changed;
+    }
+
+    fn materializeInitializerValues(self: *Resolver, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
+        var changed = false;
+        const measurement = if (self.scan_profile) |profile| profile.begin(.initializer_contexts) else null;
+        defer if (measurement) |m| m.finish(changed);
         for (self.graph.bindings.items, 0..) |binding, raw| {
             if (measurement) |m| m.visit(1);
+            if (parent) |m| m.visit(1);
             if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
             const initialization = binding.initialization orelse continue;
             if (try self.materializeValueContext(initialization, binding.ty)) changed = true;
         }
+        return changed;
+    }
+
+    fn materializeWriteValues(self: *Resolver, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
+        var changed = false;
+        const measurement = if (self.scan_profile) |profile| profile.begin(.write_contexts) else null;
+        defer if (measurement) |m| m.finish(changed);
         for (self.graph.nodes.items) |node| {
             if (measurement) |m| m.visit(1);
+            if (parent) |m| m.visit(1);
             const assignment = switch (node.content) {
                 .assignment => |value| value,
                 .pointer_assignment => |value| {
@@ -3020,6 +3049,8 @@ test "typed record literals complete nested lists after operand types resolve" {
     });
     var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     defer resolver.deinit();
+    var profile: @import("resolution_profile.zig").Profile = .{ .io = std.testing.io };
+    resolver.scan_profile = &profile;
     try std.testing.expect(!try resolver.materializeAssignmentValues());
     try std.testing.expect(try resolver.materializeBindingTypes());
     var transaction = graph.beginTransaction(a);
@@ -3036,4 +3067,13 @@ test "typed record literals complete nested lists after operand types resolve" {
     try graph.setNodeType(a, @enumFromInt(0), @enumFromInt(3));
     try std.testing.expect(!try resolver.materializeAssignmentValues());
     try std.testing.expect(graph.node(@enumFromInt(1)).content == .list_literal);
+    const passes = @import("resolution_profile.zig").Pass;
+    const total = profile.entries[@intFromEnum(passes.assignment_values)];
+    var visits: u64 = 0;
+    inline for (.{ passes.typed_literal_contexts, passes.initializer_contexts, passes.write_contexts }) |pass| {
+        const phase = profile.entries[@intFromEnum(pass)];
+        try std.testing.expectEqual(total.calls, phase.calls);
+        visits += phase.visits;
+    }
+    try std.testing.expectEqual(total.visits, visits);
 }
