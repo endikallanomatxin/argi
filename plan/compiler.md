@@ -2,7 +2,9 @@
 
 ## Resolution and transactions
 
-- Remove resolver state used only to communicate temporary results.
+- Remove resolver state used only to communicate temporary results. Preserve
+  diagnostics needed after speculative applicability probes; blanket rollback of
+  virtual-signature failures loses the readonly generic-conversion explanation.
 - Reduce measured redundant resolution and verification, including remaining
   binding/type sweeps. Include older entities completed by new facts.
   Do not restrict expression type propagation to execution reachability alone:

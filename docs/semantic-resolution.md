@@ -52,9 +52,13 @@ including checked replacement plans, rather than rediscovering destruction rules
 
 Graph rollback owns provisional IDs and reversible completions. Resolver undo
 owns auxiliary references to those IDs, including caches, reached calls and
-captures. Contract checkpoints own their conformance and virtual-signature
-diagnostics. Session rollback also restores scheduler completions and persistent
-interactive state.
+captures. Contract checkpoints own conformance resolution state. Virtual-signature
+diagnostics have a different lifetime: generic applicability probing may discover
+an invalid conversion that must still explain why the enclosing call failed after
+its graph is rolled back. These source-based explanations survive local probes;
+the outer resolver checkpoint restores them when rejecting the whole submission.
+Session rollback also restores scheduler completions and persistent interactive
+state. Diagnostic retention is not permission to retain provisional graph IDs.
 
 A discarded candidate releases its new compile-time requests. A genuinely
 suspended selection can explicitly retain request recipes while rolling back

@@ -62,7 +62,6 @@ pub const VirtualSignatureFailure = struct {
 pub const Resolver = struct {
     const RegistrationCursor = struct { module: u32 = 0, conformance: u32 = 0 };
     pub const ResolutionCheckpoint = struct {
-        virtual_failure: ?VirtualSignatureFailure,
         participant_failure: ?ParticipantConformanceFailure,
         registration: RegistrationCursor,
         caches: [2]usize,
@@ -124,11 +123,10 @@ pub const Resolver = struct {
     }
 
     pub fn checkpointResolution(self: *const Resolver) ResolutionCheckpoint {
-        return .{ .virtual_failure = self.virtual_signature_failure, .participant_failure = self.participant_conformance_failure, .registration = self.registration, .caches = .{ self.constraint_declarations.checkpoint(), self.resolved_contract_refs.checkpoint() }, .templates = self.template_rewrites.items.len };
+        return .{ .participant_failure = self.participant_conformance_failure, .registration = self.registration, .caches = .{ self.constraint_declarations.checkpoint(), self.resolved_contract_refs.checkpoint() }, .templates = self.template_rewrites.items.len };
     }
 
     pub fn rollbackResolution(self: *Resolver, saved: ResolutionCheckpoint) void {
-        self.virtual_signature_failure = saved.virtual_failure;
         self.participant_conformance_failure = saved.participant_failure;
         self.registration = saved.registration;
         self.constraint_declarations.rollback(saved.caches[0]);
@@ -3276,20 +3274,6 @@ fn extendTemplateIndex(allocator: std.mem.Allocator) !void {
     resolver.rollbackResolution(saved);
     try std.testing.expectEqual(@as(usize, 0), (try resolver.implementationTemplates(declaration, 1)).len);
     try std.testing.expect(resolver.implementation_templates.get(.{ .declaration = @enumFromInt(1), .arity = 1 }) == null);
-}
-
-test "contract resolution checkpoints restore nested virtual diagnostics" {
-    var resolver: Resolver = .{ .allocator = std.testing.allocator, .graph = undefined, .modules = &.{}, .offsets = &.{}, .core = undefined, .generics = undefined };
-    defer resolver.deinit();
-    const outer = resolver.checkpointResolution();
-    const retained: VirtualSignatureFailure = .{ .source = .{ .file_index = 0, .offset = 7 }, .method_name = "retained", .reason = "retained failure" };
-    resolver.virtual_signature_failure = retained;
-    const inner = resolver.checkpointResolution();
-    resolver.virtual_signature_failure = .{ .source = .{ .file_index = 1, .offset = 9 }, .method_name = "candidate", .reason = "discarded failure", .static_contract = true };
-    resolver.rollbackResolution(inner);
-    try std.testing.expectEqualDeep(@as(?VirtualSignatureFailure, retained), resolver.virtual_signature_failure);
-    resolver.rollbackResolution(outer);
-    try std.testing.expect(resolver.virtual_signature_failure == null);
 }
 
 test "contract template indexes extend empty groups transactionally" {

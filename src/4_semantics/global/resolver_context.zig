@@ -40,6 +40,7 @@ pub const Context = struct {
         continuation_bindings: usize,
         expression_continuation: ?global_sg.GlobalFunctionId,
         ownership_continuation: ?global_sg.GlobalFunctionId,
+        virtual_failure: @FieldType(contract_mod.Resolver, "virtual_signature_failure"),
         foreach_failure: @FieldType(control_mod.Resolver, "for_each_failure"),
         diagnostics: ?*diagnostics_mod.Diagnostics,
         stats: StatsSnapshot,
@@ -200,6 +201,7 @@ pub const Context = struct {
             .continuation_bindings = self.ownership.continuation_bindings.items.len,
             .expression_continuation = self.expressions.continuation_function,
             .ownership_continuation = self.ownership.continuation_function,
+            .virtual_failure = self.contracts.virtual_signature_failure,
             .foreach_failure = self.control.for_each_failure,
             .diagnostics = self.constructors.diagnostics,
             .stats = undefined,
@@ -231,6 +233,7 @@ pub const Context = struct {
         self.ownership.continuation_bindings.shrinkRetainingCapacity(saved.continuation_bindings);
         self.expressions.continuation_function = saved.expression_continuation;
         self.ownership.continuation_function = saved.ownership_continuation;
+        self.contracts.virtual_signature_failure = saved.virtual_failure;
         self.control.restoreForEachFailure(saved.foreach_failure);
         self.constructors.diagnostics = saved.diagnostics;
         inline for (std.meta.fields(StatsSnapshot)) |field| @field(self, field.name).stats = @field(saved.stats, field.name);
@@ -331,32 +334,6 @@ pub const Context = struct {
         self.* = undefined;
     }
 };
-
-test "resolver speculation discards virtual diagnostics with rejected candidates" {
-    const a = std.testing.allocator;
-    var graph: global_sg.GlobalSemanticGraph = .{};
-    defer graph.deinit(a);
-    var context: Context = undefined;
-    context.init(a, &graph, &.{}, &.{}, null, null);
-    defer context.deinit();
-    const saved = context.checkpointState();
-    const failure: contract_mod.VirtualSignatureFailure = .{ .source = .{ .file_index = 0, .offset = 7 }, .method_name = "operation", .reason = "invalid virtual signature" };
-    {
-        var candidate = context.generic_functions.beginSpeculation();
-        defer candidate.deinit();
-        context.contracts.virtual_signature_failure = failure;
-    }
-    try std.testing.expect(context.contracts.virtual_signature_failure == null);
-    {
-        var candidate = context.generic_functions.beginSpeculation();
-        defer candidate.deinit();
-        context.contracts.virtual_signature_failure = failure;
-        candidate.commit();
-    }
-    try std.testing.expectEqualDeep(@as(?contract_mod.VirtualSignatureFailure, failure), context.contracts.virtual_signature_failure);
-    context.rollbackState(saved);
-    try std.testing.expect(context.contracts.virtual_signature_failure == null);
-}
 
 test "resolver context retains staged demand through its callback transactions" {
     const a = std.testing.allocator;
