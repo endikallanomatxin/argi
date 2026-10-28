@@ -42,14 +42,6 @@ reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
         return
     }
 
-    element_size ::= size_of(.type = t)
-    maximum ::= integer_limits(.value = capacity).maximum
-
-    if element_size != 0 and capacity > maximum / element_size {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
     new_allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
     index :: UIntNative = 0
 

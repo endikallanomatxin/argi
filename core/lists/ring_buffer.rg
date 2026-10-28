@@ -37,14 +37,6 @@ implement#(.t: Type, .Provider: Type: Allocator) Init#(
             return
         }
 
-        element_size ::= size_of(.type = t)
-        maximum ::= integer_limits(.value = _init_capacity).maximum
-
-        if element_size != 0 and _init_capacity > maximum / element_size {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-
         allocation ::= allocate#(.t: t)(_init_allocator, .count = _init_capacity)!
         constructed = (
             ._allocation = ~allocation

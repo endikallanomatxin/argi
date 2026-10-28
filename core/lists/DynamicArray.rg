@@ -62,18 +62,10 @@ implement#(.t: Type, .A: Type: Allocator) Init#(DynamicArray#(t), DynamicArrayIn
 
         assume allocator := _init_allocator
 
-        element_size :: UIntNative = size_of(.type = t)
         actual_capacity ::= _init_capacity
 
         if actual_capacity == 0 {
             actual_capacity = 1
-        }
-
-        bytes ::= actual_capacity * element_size
-
-        if element_size != 0 and bytes / element_size != actual_capacity {
-            result = ..error(.reason = ..out_of_memory)
-            return
         }
 
         allocated ::= allocate#(.t: t)(_init_allocator, .count = actual_capacity)

@@ -16,6 +16,10 @@ main := () -> (.status_code: Int32 = 0) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }
+    match DynamicArray#(.t: Int32)(.capacity = maximum, .allocator = $&allocator) {
+        ..ok _ { abort }
+        ..error ~err { if err.reason != ..out_of_memory { abort } }
+    }
     if allocator.attempts != 0 { abort }
     match RingBuffer#(.t: Int32)(.capacity = 2, .allocator = $&allocator) {
         ..ok _ { abort }
@@ -26,7 +30,7 @@ main := () -> (.status_code: Int32 = 0) {
 
 implement Allocator#(FailingAllocator) (
     .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)

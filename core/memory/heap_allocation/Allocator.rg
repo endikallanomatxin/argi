@@ -19,6 +19,8 @@ allocate_bytes := #(.SelfType: Type: Allocator#(SelfType)) (
     result = Allocator#().allocate(self, .size = size, .alignment = alignment)
 }
 
+-- Validate the complete typed reservation before calling the provider, including
+-- element bytes and companion metadata. Containers need only check their shape.
 allocate := #(.t: Type, .SelfType: Type: Allocator#(SelfType)) (
     .self: $&SelfType, .count: UIntNative = 1
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
