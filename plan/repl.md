@@ -19,7 +19,7 @@ JIT and complete native-backend parity are not prerequisites.
   acquisition tombstones, executable metadata and some immutable value storage
   remain retained until reset. Numbered results intentionally retain their values.
 - Value display is bounded but basic: references are opaque and choices display
-  ordinals. Terminal editing lacks Delete and full Unicode display-width handling.
+  ordinals. Terminal editing lacks full Unicode display-width handling.
 
 ## Work and exit criteria
 
@@ -46,7 +46,7 @@ JIT and complete native-backend parity are not prerequisites.
    Coordinate reclamation with [compiler follow-ups](compiler.md).
 5. Improve named variant/record presentation and ordinary terminal editing without
    dereferencing or copying owners for display. Verify Unicode cursor/rendering,
-   Delete, multiline input, history, Ctrl-C/EOF and piped input. Keep real-terminal
+   multiline input, history, Ctrl-C/EOF and piped input. Keep real-terminal
    tests alongside transport tests and document platform coverage.
 
 Before removing the label, publish the supported subset, failure/reset contract

@@ -284,7 +284,8 @@ pub fn checkEditor() !void {
         var repl = try Child.start(&.{ argi, "repl" }, true, false, false, false);
         defer repl.deinit();
         try repl.until(">>> ");
-        try repl.send("42\n");
+        // Delete the middle digit through the real terminal input path.
+        try repl.send("402\x1b[D\x1b[D\x1b[3~\n");
         try repl.until("_0 = 42");
         try repl.until(">>> ");
         try repl.quit();

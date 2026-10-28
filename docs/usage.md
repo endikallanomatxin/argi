@@ -309,6 +309,8 @@ closing `}` typed on the untouched indentation dedents one level. Braces in
 comments and strings do not affect indentation; continued strings receive no
 inserted spaces. These editor features do not alter piped input.
 In a terminal, Up/Down recall earlier lines and restore the unfinished draft.
+Left/Right move by UTF-8 character; Backspace and Delete remove the character
+before or under the cursor. Home/End move to the line boundaries.
 Recalled lines can be edited before submission; Ctrl-C discards the current line
 and Ctrl-D on an empty line exits. History lasts for the current REPL process.
 

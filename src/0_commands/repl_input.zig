@@ -182,13 +182,21 @@ pub const Editor = struct {
                         'H' => cursor = 0,
                         'F' => cursor = self.line.items.len,
                         else => {
-                            // Consume the rest of unsupported CSI keys (e.g. Delete)
-                            // so their numeric suffix never becomes source text.
+                            // Consume complete CSI parameters before interpreting a
+                            // key, so unsupported suffixes never become source text.
                             var tail = key;
-                            while (tail < 0x40 or tail > 0x7e) tail = input.takeByte() catch |err| switch (err) {
-                                error.EndOfStream => return null,
-                                else => return err,
-                            };
+                            var plain_delete = prefix == '[' and key == '3';
+                            while (tail < 0x40 or tail > 0x7e) {
+                                tail = input.takeByte() catch |err| switch (err) {
+                                    error.EndOfStream => return null,
+                                    else => return err,
+                                };
+                                if (tail < 0x40 or tail > 0x7e) plain_delete = false;
+                            }
+                            if (plain_delete and tail == '~' and cursor < self.line.items.len) {
+                                const end = nextBoundary(self.line.items, cursor);
+                                try self.line.replaceRange(self.allocator, cursor, end - cursor, &.{});
+                            }
                         },
                     }
                 },
@@ -235,6 +243,20 @@ test "REPL editing preserves UTF-8 and cancels without recording a line" {
     try std.testing.expectEqualStrings("a€", (try editor.read(&input, &output.writer, "")).?);
     try std.testing.expect(!editor.cancelled);
     try std.testing.expectEqual(@as(usize, 1), editor.history.items.len);
+}
+
+test "REPL Delete removes one UTF-8 character without consuming neighbouring input" {
+    var editor: Editor = .{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+    var input = std.Io.Reader.fixed("añ€z\x1b[H\x1b[C\x1b[3~\x1b[3~\n\x1b[A\x1b[3~\n\x1b[H\x1b[3~\n\x1b[3;2~ok\n");
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try std.testing.expectEqualStrings("az", (try editor.read(&input, &output.writer, "")).?);
+    // Delete at the end of recalled history is a no-op.
+    try std.testing.expectEqualStrings("az", (try editor.read(&input, &output.writer, "")).?);
+    try std.testing.expectEqualStrings("", (try editor.read(&input, &output.writer, "")).?);
+    // Unsupported modified keys must not leak their suffix into source text.
+    try std.testing.expectEqualStrings("ok", (try editor.read(&input, &output.writer, "")).?);
 }
 
 test "REPL history bounds memory and ignores empty and consecutive duplicate lines" {
