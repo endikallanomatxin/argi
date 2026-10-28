@@ -1,30 +1,20 @@
-FakeIterator := (
-    .index : UIntNative
-)
+FakeIterator := #(.T: Type) (.value: T)
 
-FakeIterable: Type = ()
-
-has_next := (.self: &FakeIterator) -> (.ok: Bool) {
-    ok = 0 == 1
-}
-
-next := (.self: $&FakeIterator) -> (.value: Int32) {
-    value = 0
-}
+FakeIterable := #(.T: Type) (.value: T)
 
 main := () -> (.status_code: Int32) {
-    fake :: FakeIterable = ()
+    fake: FakeIterable#(Int32) = (.value = 0)
     for value in fake {
         status_code = value
     }
     status_code = 0
 }
 
-implement Iterable#(FakeIterable) (
-    .Item         : Type = Int32
-    .IteratorType : Type = FakeIterator
+implement#(.T: Type) Iterable#(FakeIterable#(T)) (
+    .Item         : Type = T
+    .IteratorType : Type = FakeIterator#(T)
 
-    .to_iterator = (.value: &FakeIterable) -> (.iterator: FakeIterator) {
-        iterator = (.index = 0)
+    .to_iterator = (.value: &FakeIterable#(T)) -> (.iterator: FakeIterator#(T)) {
+        iterator = (.value = value&.value)
     }
 )

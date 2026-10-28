@@ -3806,6 +3806,7 @@ pub const Resolver = struct {
                     .modules = self.resolver.modules,
                     .offsets = self.resolver.offsets,
                 };
+                defer control.deinit();
                 try control.materializeInferredErrable(expected, child);
             }
             const variant = global_types.findVariant(self.resolver.graph, expected, name) orelse return error.UnknownParameterizedChoiceVariant;
@@ -4326,6 +4327,7 @@ pub const Resolver = struct {
                 .generic_functions = self.resolver,
                 .contracts = self.resolver.nested_call_context,
             };
+            defer control.deinit();
             // Resolve the iterator protocol before specializing the body: its
             // next output establishes the previously unknown item type. Both
             // concrete and generic loops use the same ownership wrapper.

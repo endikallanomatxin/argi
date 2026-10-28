@@ -20,7 +20,7 @@ pub const Stats = struct {
 
 pub const ForEachFailure = struct {
     source: primitives.SourceRef,
-    actual: global_sg.GlobalTypeId,
+    actual_name: []const u8,
     contract_name: []const u8,
 };
 
@@ -34,6 +34,31 @@ pub const Resolver = struct {
     contracts: ?*contract_mod.Resolver = null,
     stats: Stats = .{},
     for_each_failure: ?ForEachFailure = null,
+
+    pub fn deinit(self: *Resolver) void {
+        self.restoreForEachFailure(null);
+    }
+
+    /// Failure text owns no graph IDs: iterator types can be rolled back before
+    /// the coordinator reports a rejected protocol. Keep the first explanation.
+    fn recordForEachFailure(self: *Resolver, source: primitives.SourceRef, actual: global_sg.GlobalTypeId, contract_name: []const u8) !void {
+        if (self.for_each_failure != null) return;
+        var name = std.array_list.Managed(u8).init(self.allocator);
+        defer name.deinit();
+        try @import("type_names.zig").appendTypeName(&name, self.graph, actual);
+        const text = try name.toOwnedSlice();
+        self.for_each_failure = .{ .source = source, .actual_name = text, .contract_name = contract_name };
+    }
+
+    /// Checkpoints borrow the existing immutable explanation. Only a failure
+    /// created after a previously empty checkpoint needs releasing on rollback.
+    pub fn restoreForEachFailure(self: *Resolver, saved: ?ForEachFailure) void {
+        if (self.for_each_failure) |current| {
+            if (saved == null or current.actual_name.ptr != saved.?.actual_name.ptr)
+                self.allocator.free(current.actual_name);
+        }
+        self.for_each_failure = saved;
+    }
 
     pub fn materializeSugarTypes(self: *Resolver) !bool {
         // Work over the original length: materializing nullable payload structs
@@ -549,11 +574,7 @@ pub const Resolver = struct {
         const contract_ty = if (existing_reference) |pointer_type| pointer_type.child else iterable_ty;
         const iterable_contract = self.visibleContract(module_index, iterable_contract_name) orelse return .deferred;
         if (!try contracts.implements(contract_ty, iterable_contract)) {
-            if (self.for_each_failure == null) self.for_each_failure = .{
-                .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
-                .actual = iterable_ty,
-                .contract_name = iterable_contract_name,
-            };
+            try self.recordForEachFailure(.{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset }, iterable_ty, iterable_contract_name);
             return .invalid;
         }
 
@@ -589,11 +610,7 @@ pub const Resolver = struct {
         if (self.graph.isTypeUnresolved(iterator_ty)) return .deferred;
         const iterator_contract = self.visibleContract(module_index, "Iterator") orelse return .deferred;
         if (!try contracts.implements(iterator_ty, iterator_contract)) {
-            if (self.for_each_failure == null) self.for_each_failure = .{
-                .source = source,
-                .actual = iterator_ty,
-                .contract_name = "Iterator",
-            };
+            try self.recordForEachFailure(source, iterator_ty, "Iterator");
             return .invalid;
         }
 
@@ -883,4 +900,26 @@ test "inferred errable keeps an open reason choice and direct tracer reference" 
     try resolver.ensureInferredReasonVariant(reason.field.ty, "second", source);
     try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
     try std.testing.expectEqual(@as(u32, 2), types.variants(&graph, reason.field.ty).?.len);
+}
+
+test "for protocol failures retain type names across speculative rollback" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer resolver.deinit();
+    const saved = graph.checkpoint();
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try resolver.recordForEachFailure(.{ .file_index = 0, .offset = 0 }, @enumFromInt(0), "Iterator");
+    graph.rollback(a, saved);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try std.testing.expectEqualStrings("Int32", resolver.for_each_failure.?.actual_name);
+    const failure = resolver.for_each_failure;
+    try resolver.recordForEachFailure(.{ .file_index = 0, .offset = 1 }, @enumFromInt(0), "Iterable");
+    resolver.restoreForEachFailure(failure);
+    try std.testing.expectEqualStrings("Int32", resolver.for_each_failure.?.actual_name);
+    resolver.restoreForEachFailure(null);
+    try std.testing.expect(resolver.for_each_failure == null);
+    try resolver.recordForEachFailure(.{ .file_index = 0, .offset = 2 }, @enumFromInt(0), "Iterator");
+    try std.testing.expectEqualStrings("Bool", resolver.for_each_failure.?.actual_name);
 }

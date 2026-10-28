@@ -240,7 +240,7 @@ pub const Context = struct {
         self.ownership.denied_copy = saved.denied_copy;
         self.generics.argument_failure = saved.argument_failure;
         self.contracts.virtual_signature_failure = saved.virtual_failure;
-        self.control.for_each_failure = saved.foreach_failure;
+        self.control.restoreForEachFailure(saved.foreach_failure);
         self.constructors.diagnostics = saved.diagnostics;
         inline for (std.meta.fields(StatsSnapshot)) |field| @field(self, field.name).stats = @field(saved.stats, field.name);
         self.dispatch.pending_call_stages = saved.call_stages;
@@ -296,7 +296,14 @@ pub const Context = struct {
         self.ownership.denied_copy = source.ownership.denied_copy;
         self.ownership.empty_block = source.ownership.empty_block;
         self.ownership.continuation_function = source.ownership.continuation_function;
-        self.control.for_each_failure = source.control.for_each_failure;
+        if (source.control.for_each_failure) |failure| {
+            const name = try allocator.dupe(u8, failure.actual_name);
+            self.control.for_each_failure = .{
+                .source = failure.source,
+                .actual_name = name,
+                .contract_name = failure.contract_name,
+            };
+        }
         self.staged_execution = try source.staged_execution.clone(allocator, &self.generic_functions);
         // Error inference scratch is rebuilt on each pass; it carries no facts.
         inline for (.{ "core", "expressions", "control", "generics", "generic_functions", "contracts", "errors", "ownership" }) |field|
@@ -324,6 +331,7 @@ pub const Context = struct {
     }
 
     pub fn deinit(self: *Context) void {
+        self.control.deinit();
         self.expressions.deinit();
         self.ownership.deinit();
         self.errors.deinit();
@@ -450,6 +458,11 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     var source: Context = undefined;
     source.init(a, &graph, &.{}, &.{}, null, null);
     defer source.deinit();
+    source.control.for_each_failure = .{
+        .source = .{ .file_index = 0, .offset = 0 },
+        .actual_name = try a.dupe(u8, "IteratorType"),
+        .contract_name = "Iterator",
+    };
     const namespace = try source.core.sessionNamespace();
     try namespace.modules.append(a, @enumFromInt(0));
     try namespace.declarations.append(a, @enumFromInt(7));
@@ -469,6 +482,8 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     var candidate: Context = undefined;
     try candidate.cloneFrom(&source, allocator, &candidate_graph, &.{}, null);
     defer candidate.deinit();
+    try std.testing.expectEqualStrings("IteratorType", candidate.control.for_each_failure.?.actual_name);
+    try std.testing.expect(candidate.control.for_each_failure.?.actual_name.ptr != source.control.for_each_failure.?.actual_name.ptr);
     try std.testing.expect(candidate.core.graph == &candidate_graph);
     try std.testing.expect(candidate.generics.core == &candidate.core);
     try std.testing.expect(candidate.generic_functions.active_instance == null);
