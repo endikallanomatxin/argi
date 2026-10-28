@@ -6,6 +6,9 @@ Measurements and commands: [compiler performance](../docs/compiler-performance.m
   before replacing global scans with pending work. Preserve validation of old
   entities completed by a new transaction. Current measurements favor expression
   propagation and assignment contextualization over a binding-inference worklist.
+  Separate literal normalization, binding initializers and write contexts in
+  the assignment profile before choosing a worklist. Preserve their order and
+  nested-list completion; an outer type is not a completion certificate.
   Growing live bindings also spend significant time copying continuation facts.
 - Audit remaining persistent lookup and diagnostic state: keep scratch work local
   and reduce what needs rollback. Pending-queue copying is not a demonstrated

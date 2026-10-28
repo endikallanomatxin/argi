@@ -633,3 +633,21 @@ acquisitions. These profiled controls exclude startup and are not an A/B speedup
 claim. Logs: `.zig-cache/partitioned-post-profile.csv` and
 `.zig-cache/partitioned-post-resources.csv`. Post-state joins retain at most three
 classes per selected output; distinct output selectors are analyzed independently.
+
+A follow-up ReleaseSafe control at `8d8fc4433` used 100 and 1,000 prelude
+calls after the diagnostic-state cleanup. At 1,000 commands it measured
+6,914.9 ms total, 6,212.3 ms frontend/publication and 142.410 MiB retained
+(startup excluded). Assignment contextualization visited 151.2 million entries
+in 469.3 ms without changes; expression propagation took 291.8 ms and binding
+initializer inference 21.6 ms. Resolution and completion were 2,102.5 and
+984.9 ms inclusive. These single observations do not establish an A/B gain.
+
+The assignment pass has three ordered responsibilities: normalize typed record
+literals, contextualize binding initializers, then contextualize direct/indirect
+writes. A typed record may still contain unresolved nested lists; a complete
+outer type is not a safe permanent completion marker. Preserve same-round
+progress and old entities completed by new information when reducing this work.
+The profile does not yet separate those three responsibilities, so instrument
+that boundary before choosing a worklist or adding retained completion state.
+Logs: `.zig-cache/frontend-post-cleanup-profile.log` and
+`.zig-cache/frontend-post-cleanup-1000-profile.log`.
