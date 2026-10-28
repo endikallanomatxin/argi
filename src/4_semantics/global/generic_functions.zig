@@ -3280,6 +3280,8 @@ pub const Resolver = struct {
 
         fn instantiateResolvedNode(self: *InstanceContext, node: ir.ResolvedNode) anyerror!global_sg.Node {
             if (node.content == .struct_value_literal) return self.instantiateStructValue(node);
+            if (node.content == .move_value)
+                return self.resolveMove(&.{try self.instantiateNode(node.content.move_value)}, node.source);
             // TODO: Support reporting value_sequence arguments to concrete
             // callees during contract-operation specialization. Even bare !!!
             // can currently make that enclosing specialization fail.
@@ -3325,7 +3327,7 @@ pub const Resolver = struct {
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = ty,
                 .content = switch (node.content) {
-                    .binding_use, .binding_declaration, .assignment => unreachable,
+                    .binding_use, .binding_declaration, .assignment, .move_value => unreachable,
                     .reach_directive => |reach| .{ .reach_directive = try self.instantiateReach(reach) },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
                     .value_sequence => |block| .{ .value_sequence = try self.instantiateBlock(block) },
@@ -3340,7 +3342,6 @@ pub const Resolver = struct {
                         .origin = try self.resolver.generics.resolveParameterizedFamily(self.module_index, value.origin),
                         .captures = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.captures, self.substitutions),
                     } },
-                    .move_value => |value| .{ .move_value = try self.instantiateNode(value) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,
                     .abort_statement => .abort_statement,

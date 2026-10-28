@@ -12,10 +12,6 @@ Measurements and commands: [compiler performance](../docs/compiler-performance.m
   bottleneck in measured sessions; avoid a more complex transaction mechanism.
 - Clarify pass prerequisites and produced facts. Review ownership operand staging
   against shared lowering without duplicating evaluation or cleanup.
-- Resolve recovery-value types before materializing generic comparisons. A generic
-  buffered flush using `count ::= write(...) handle error, recovered { return }`
-  fails at `count > remaining` with `UntypedParameterizedComparison`; the same
-  control flow expressed with a direct `match` materializes successfully.
 - Measure invariant work in generic specialization before sharing representation.
 
 Compare 10, 100 and 1,000 commands, including rejections and core/prelude workloads.
