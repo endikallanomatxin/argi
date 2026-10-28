@@ -387,6 +387,7 @@ const State = struct {
                 const value = self.graph.switches.items[@intFromEnum(id)];
                 try self.walkNode(value.expression);
                 for (self.graph.switch_cases.items[value.cases.start..][0..value.cases.len]) |case| {
+                    if (case.payload_binding) |binding| try self.functions.bindings.put(binding, {});
                     try self.walkNode(case.value);
                     try self.walkBlock(case.body);
                 }
@@ -613,4 +614,32 @@ test "selected safety proofs distinguish operation specializations" {
     try std.testing.expect(unit.requiresConformance(&graph, proof));
     proof.selection.index = 2;
     try std.testing.expect(!unit.requiresConformance(&graph, proof));
+}
+
+test "match payload bindings are reachable even when their body never reads them" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    for (0..2) |_| try graph.bindings.append(a, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = source,
+        .ty = @enumFromInt(0),
+        .mutability = .constant,
+    });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = null, .content = .{ .bool_literal = true } },
+        .{ .source = source, .ty = null, .content = .{ .int_literal = 0 } },
+        .{ .source = source, .ty = null, .content = .{ .switch_statement = @enumFromInt(0) } },
+    });
+    try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 0 } });
+    try graph.switch_cases.append(a, .{ .value = @enumFromInt(1), .variant = @enumFromInt(0), .body = @enumFromInt(0), .payload_binding = @enumFromInt(1) });
+    try graph.switches.append(a, .{ .expression = @enumFromInt(0), .cases = .{ .start = 0, .len = 1 }, .default_block = null });
+    var unit = try expressionUnit(a, &graph, @enumFromInt(2));
+    defer unit.deinit();
+    try std.testing.expect(unit.containsBinding(@enumFromInt(1)));
+    try std.testing.expect(!unit.containsBinding(@enumFromInt(0)));
+    try std.testing.expect(unit.containsNode(@enumFromInt(0)));
+    try std.testing.expect(unit.containsNode(@enumFromInt(1)));
 }
