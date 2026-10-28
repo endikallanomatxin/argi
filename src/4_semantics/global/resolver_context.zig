@@ -42,7 +42,6 @@ pub const Context = struct {
         ownership_continuation: ?global_sg.GlobalFunctionId,
         denied_copy: @FieldType(ownership_mod.Resolver, "denied_copy"),
         argument_failure: @FieldType(generic_mod.Resolver, "argument_failure"),
-        constraint_failure: @FieldType(generic_functions_mod.Resolver, "failed_constraint"),
         virtual_failure: @FieldType(contract_mod.Resolver, "virtual_signature_failure"),
         foreach_failure: @FieldType(control_mod.Resolver, "for_each_failure"),
         diagnostics: ?*diagnostics_mod.Diagnostics,
@@ -206,7 +205,6 @@ pub const Context = struct {
             .ownership_continuation = self.ownership.continuation_function,
             .denied_copy = self.ownership.denied_copy,
             .argument_failure = self.generics.argument_failure,
-            .constraint_failure = self.generic_functions.failed_constraint,
             .virtual_failure = self.contracts.virtual_signature_failure,
             .foreach_failure = self.control.for_each_failure,
             .diagnostics = self.constructors.diagnostics,
@@ -241,7 +239,6 @@ pub const Context = struct {
         self.ownership.continuation_function = saved.ownership_continuation;
         self.ownership.denied_copy = saved.denied_copy;
         self.generics.argument_failure = saved.argument_failure;
-        self.generic_functions.failed_constraint = saved.constraint_failure;
         self.contracts.virtual_signature_failure = saved.virtual_failure;
         self.control.for_each_failure = saved.foreach_failure;
         self.constructors.diagnostics = saved.diagnostics;
@@ -300,7 +297,6 @@ pub const Context = struct {
         self.ownership.empty_block = source.ownership.empty_block;
         self.ownership.continuation_function = source.ownership.continuation_function;
         self.control.for_each_failure = source.control.for_each_failure;
-        self.generic_functions.failed_constraint = source.generic_functions.failed_constraint;
         self.staged_execution = try source.staged_execution.clone(allocator, &self.generic_functions);
         // Error inference scratch is rebuilt on each pass; it carries no facts.
         inline for (.{ "core", "expressions", "control", "generics", "generic_functions", "contracts", "errors", "ownership" }) |field|

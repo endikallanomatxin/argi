@@ -73,11 +73,6 @@ pub const Resolver = struct {
     rollback_ownership: ?*const fn (*anyopaque, @import("ownership.zig").Resolver.ParameterizedCheckpoint) void = null,
     constraint_diagnostics: ?*std.ArrayList(ConstraintFailure) = null,
     reach_diagnostics: ?*std.array_list.Managed(u8) = null,
-    failed_constraint: ?struct {
-        contract_decl: global_sg.GlobalFamilyDefinitionId,
-        actual: global_sg.GlobalTypeId,
-        parameter_name: []const u8,
-    } = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
     selection_profile: SelectionProfile = .{},
@@ -660,10 +655,10 @@ pub const Resolver = struct {
             self.addProfileTime(phase_start, &self.selection_profile.explicit_prefilter_inference_ns);
             prefilter_active = false;
             phase_start = self.profileTimestamp();
-            const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
+            const constraint_check = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
             self.addProfileTime(phase_start, &self.selection_profile.explicit_constraints_ns);
-            if (!constraints_ok) {
-                try self.recordConstraintFailure(candidate_index, declaration, parameterized.input, &bindings, input);
+            if (constraint_check == .rejected) {
+                try self.recordConstraintFailure(candidate_index, declaration, parameterized.input, &bindings, input, constraint_check.rejected);
                 continue;
             }
             phase_start = self.profileTimestamp();
@@ -1185,7 +1180,7 @@ pub const Resolver = struct {
         if (!try self.inferBindingsFromInput(located.module_index, function.input, input, &inferred)) return null;
         if (!try self.inferBindingsFromReachDefaults(located.module_index, function.input, input, &inferred, context)) return null;
         const implementation_parameters: primitives.Range(ir.ComptimeParameterId) = .{ .start = function.parameters.start, .len = capture_count };
-        if (!try self.inferAndValidateConstraints(located.module_index, implementation_parameters, &inferred) or
+        if ((try self.inferAndValidateConstraints(located.module_index, implementation_parameters, &inferred)) != .satisfied or
             !self.parametersBound(located.module_index, implementation_parameters, &inferred)) return null;
         for (0..capture_count) |index| {
             const from = function.parameters.start + index;
@@ -1204,7 +1199,7 @@ pub const Resolver = struct {
                 else => return null,
             };
         }
-        if (!try self.inferAndValidateConstraints(located.module_index, own_parameters, &inferred) or
+        if ((try self.inferAndValidateConstraints(located.module_index, own_parameters, &inferred)) != .satisfied or
             !self.parametersBound(located.module_index, own_parameters, &inferred)) return null;
         const signature = self.generics.instantiateParameterizedType(located.module_index, function.input, &inferred) catch |err| switch (err) {
             error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return null,
@@ -1282,18 +1277,30 @@ pub const Resolver = struct {
         return candidate;
     }
 
+    // Return the explanation with its decision. Recursive probes and later
+    // candidates must not overwrite another check's diagnostic state.
+    const ConstraintCheck = union(enum) {
+        const Failure = struct {
+            contract_decl: global_sg.GlobalFamilyDefinitionId,
+            actual: global_sg.GlobalTypeId,
+            parameter_name: []const u8,
+        };
+        satisfied,
+        rejected: ?Failure,
+    };
+
     fn inferAndValidateConstraints(
         self: *Resolver,
         module_index: usize,
         parameters: primitives.Range(ir.ComptimeParameterId),
         bindings: *generic_mod.Resolver.Bindings,
-    ) !bool {
+    ) !ConstraintCheck {
         self.generics.applyParameterDefaults(module_index, parameters, bindings) catch |err| switch (err) {
-            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return .{ .rejected = null },
             else => return err,
         };
-        self.failed_constraint = null;
-        const contracts = self.nested_call_context orelse return true;
+        var failure: ?ConstraintCheck.Failure = null;
+        const contracts = self.nested_call_context orelse return .satisfied;
         const storage = &self.modules[module_index].semantic.parameterized_storage;
 
         var made_progress = true;
@@ -1319,7 +1326,7 @@ pub const Resolver = struct {
 
                 if (!constraint_ok) {
                     if (self.constraint_diagnostics != null and
-                        try contracts.constraintArgumentsKnown(module_index, constraint_id, bindings)) self.failed_constraint = .{
+                        try contracts.constraintArgumentsKnown(module_index, constraint_id, bindings)) failure = .{
                         .contract_decl = try contracts.constraintDefinition(module_index, constraint_id),
                         .actual = concrete,
                         .parameter_name = self.modules[module_index].text(parameter.name),
@@ -1338,7 +1345,7 @@ pub const Resolver = struct {
                 };
             }
             made_progress = after > before;
-            if (!made_progress and failed) return false;
+            if (!made_progress and failed) return .{ .rejected = failure };
         }
 
         // Every bound constraint was checked in the last no-progress round.
@@ -1346,11 +1353,10 @@ pub const Resolver = struct {
         for (parameters.start..parameters.start + parameters.len) |raw| {
             const parameter = storage.comptime_parameters.items[raw];
             if (parameter.constraint == null) continue;
-            if (parameter.kind != .type) return false;
-            if (bindings.types[raw] == null) return false;
+            if (parameter.kind != .type) return .{ .rejected = null };
+            if (bindings.types[raw] == null) return .{ .rejected = null };
         }
-        self.failed_constraint = null;
-        return true;
+        return .satisfied;
     }
 
     fn parametersBound(
@@ -1498,11 +1504,9 @@ pub const Resolver = struct {
 
     fn explicitOrdinaryApplicable(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, reach: ReachInferenceContext) !OrdinaryApplicability {
         var speculation = self.beginSpeculation();
-        const failed = self.failed_constraint;
         const argument_failure = self.generics.argument_failure;
         defer {
             speculation.deinit();
-            self.failed_constraint = failed;
             self.generics.argument_failure = argument_failure;
         }
         const selected = self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, reach, false, null) catch |err| return switch (err) {
@@ -1520,11 +1524,9 @@ pub const Resolver = struct {
 
     fn implicitOrdinaryApplicableFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, module_filter: ?global_sg.GlobalModuleId) !OrdinaryApplicability {
         var speculation = self.beginSpeculation();
-        const failed = self.failed_constraint;
         const argument_failure = self.generics.argument_failure;
         defer {
             speculation.deinit();
-            self.failed_constraint = failed;
             self.generics.argument_failure = argument_failure;
         }
         const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null, null) catch |err| {
@@ -1619,14 +1621,14 @@ pub const Resolver = struct {
             self.addProfileTime(phase_start, &self.selection_profile.implicit_prefilter_inference_ns);
             prefilter_active = false;
             const constraints_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
+            const constraint_check = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
             if (self.profile_io) |io| {
                 const elapsed: u64 = @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - constraints_start);
                 self.profile_constraints_ns += elapsed;
                 self.selection_profile.implicit_constraints_ns += elapsed;
             }
-            if (!constraints_ok) {
-                try self.recordConstraintFailure(candidate_index, declaration, parameterized.input, &bindings, input);
+            if (constraint_check == .rejected) {
+                try self.recordConstraintFailure(candidate_index, declaration, parameterized.input, &bindings, input, constraint_check.rejected);
                 continue;
             }
             if (!self.parametersBound(candidate_index, parameterized.parameters, &bindings)) continue;
@@ -1745,9 +1747,10 @@ pub const Resolver = struct {
         pattern: ir.ParameterizedTypeId,
         bindings: *generic_mod.Resolver.Bindings,
         input: global_sg.GlobalNodeId,
+        rejected: ?ConstraintCheck.Failure,
     ) !void {
         const failures = self.constraint_diagnostics orelse return;
-        const failure = self.failed_constraint orelse return;
+        const failure = rejected orelse return;
         // A bound can fail on a candidate whose other arguments do not fit.
         // Only explain constraints for otherwise compatible signatures, using
         // the same matcher as function applicability rather than a second rule set.
@@ -1784,7 +1787,6 @@ pub const Resolver = struct {
         const saved_core_stats = self.core.stats;
         const saved_diagnostics = self.constraint_diagnostics;
         const saved_reach_diagnostics = self.reach_diagnostics;
-        const saved_failure = self.failed_constraint;
         defer {
             speculation.deinit();
             self.stats = saved_stats;
@@ -1792,7 +1794,6 @@ pub const Resolver = struct {
             self.core.stats = saved_core_stats;
             self.constraint_diagnostics = saved_diagnostics;
             self.reach_diagnostics = saved_reach_diagnostics;
-            self.failed_constraint = saved_failure;
         }
         failures.clearRetainingCapacity();
         self.constraint_diagnostics = failures;
@@ -2341,11 +2342,9 @@ pub const Resolver = struct {
     pub fn inferOperationParameters(context: *anyopaque, module_index: usize, requirement: @import("../module/parameterized/storage.zig").ContractRequirement, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, reach: ReachInferenceContext) anyerror!bool {
         const signature = requirement.signature orelse return false;
         const self: *Resolver = @ptrCast(@alignCast(context));
-        const saved_constraint = self.failed_constraint;
-        defer self.failed_constraint = saved_constraint;
         if (!try self.inferBindingsFromInput(module_index, signature.input, input, bindings)) return false;
         if (!try self.inferBindingsFromReachDefaults(module_index, signature.input, input, bindings, reach)) return false;
-        if (!try self.inferAndValidateConstraints(module_index, requirement.parameters, bindings)) return false;
+        if ((try self.inferAndValidateConstraints(module_index, requirement.parameters, bindings)) != .satisfied) return false;
         return self.parametersBound(module_index, requirement.parameters, bindings);
     }
 
@@ -2357,7 +2356,7 @@ pub const Resolver = struct {
         defer bindings.deinit(self.allocator);
         try self.generics.bindGlobalArgumentsPartial(located.module_index, .{ .start = located.parameterized.parameters.start, .len = captures.len }, captures, &bindings);
         if (!try self.inferSignatureBindings(located.module_index, located.parameterized.input, input, &bindings)) return error.OperationAliasInputMismatch;
-        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) return error.OperationAliasConstraintMismatch;
+        if ((try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) != .satisfied) return error.OperationAliasConstraintMismatch;
         const arguments = try self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings);
         const saved_publication = self.publishing_signature;
         self.publishing_signature = true;
@@ -2382,7 +2381,7 @@ pub const Resolver = struct {
         defer bindings.deinit(self.allocator);
         _ = try self.generics.bindDefinitionCaptures(located.module_index, located.parameterized.parameters, definition, &bindings);
         if (!try self.inferSignatureBindings(located.module_index, located.parameterized.input, input, &bindings)) return error.OperationAliasInputMismatch;
-        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) return error.OperationAliasConstraintMismatch;
+        if ((try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) != .satisfied) return error.OperationAliasConstraintMismatch;
         const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch |err| {
             if (err == error.MissingGenericArgument) return error.OperationAliasMissingParameter;
             return err;
@@ -2480,7 +2479,7 @@ pub const Resolver = struct {
         var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer substitutions.deinit(self.allocator);
         try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions);
-        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions))
+        if ((try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions)) != .satisfied)
             return error.GenericContractConstraintNotSatisfied;
 
         if (located.parameterized.safety_primitive == .allocation_metadata_layout or located.parameterized.safety_primitive == .prepare_allocation_metadata) {
