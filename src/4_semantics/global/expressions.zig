@@ -70,7 +70,10 @@ pub const Resolver = struct {
                 self.modules,
                 module_index,
                 module.text(path),
-            ) catch return false;
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return false,
+            };
             const target_index: usize = @intFromEnum(target);
             if (!self.graph.sameModuleNamespace(target, @enumFromInt(module_index)) and std.mem.startsWith(u8, name, "_")) return false;
             if (name_lookup.bindingInNamespace(self.graph, self.modules, self.offsets, target_index, name)) |binding|

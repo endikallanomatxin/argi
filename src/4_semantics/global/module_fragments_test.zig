@@ -31,6 +31,27 @@ fn buildCondition(allocator: std.mem.Allocator, path: []const u8, source: []cons
     return graph;
 }
 
+test "qualified binding resolution propagates allocation failure" {
+    const a = std.testing.allocator;
+    var dependency = try build(a, "project/dep/main.rg", "answer := true");
+    defer dependency.deinit(a);
+    var caller = try build(a, "project/app/main.rg",
+        \\dep := import("../dep")
+        \\main := () -> () { value ::= dep.answer }
+    );
+    defer caller.deinit(a);
+    const modules = [_]module.ModuleSemanticGraph{ dependency, caller };
+    try std.testing.checkAllAllocationFailures(a, struct {
+        fn resolve(allocator: std.mem.Allocator, inputs: []const module.ModuleSemanticGraph) !void {
+            var session: sema.Session = undefined;
+            try session.init(allocator, inputs, .{});
+            defer session.deinit();
+            try session.advance();
+            _ = try session.completeUnit();
+        }
+    }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
+}
+
 test "generic constructor resolution propagates allocation failure" {
     const a = std.testing.allocator;
     var input = try build(a, "constructor/main.rg",
