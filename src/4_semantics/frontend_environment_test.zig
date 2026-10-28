@@ -1,6 +1,76 @@
 const std = @import("std");
 const support = @import("frontend_test_support.zig");
 
+test "borrowed array extracted from imported Errable retains lexical lifetime" {
+    var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
+    defer environment.deinit();
+    _ = try environment.check(.{ .name = "imported_errable_array_scope", .files = &.{
+        .{ .path = "main.rg", .code =
+        \\dep := import("./dep")
+        \\main := () -> () {
+        \\    escaped :: ArrayView#(Int32)
+        \\    {
+        \\        values: [2]Int32 = (1, 2)
+        \\        wrapped ::= dep.borrow(.value = &values)
+        \\        match wrapped { ..ok value { escaped = value } ..error _ { abort } }
+        \\    }
+        \\    value ::= get(&escaped, .index = 0)
+        \\}
+        },
+        .{ .path = "dep/main.rg", .code =
+        \\borrow := (.value: &[2]Int32) -> (.result: Errable#(ArrayView#(Int32), (..invalid_input))) {
+        \\    result = ..ok view(value)
+        \\}
+        },
+    }, .diagnostic = .{ .message = "depends on a root that has ended" } });
+    inline for (.{ false, true }) |use_unwrap| {
+        _ = try environment.check(.{ .name = if (use_unwrap) "imported_errable_array_unwrap" else "imported_errable_array_reference", .files = &.{
+            .{ .path = "main.rg", .code =
+            \\dep := import("./dep")
+            \\main := () -> () {
+            \\    escaped :: &[2]Int32
+            \\    {
+            \\        values: [2]Int32 = (1, 2)
+            \\        wrapped ::= dep.borrow(.value = &values)
+            \\
+            ++ (if (use_unwrap)
+                \\        escaped = unwrap_or_abort(.value = wrapped)
+            else
+                \\        match wrapped { ..ok value { escaped = value } ..error _ { abort } }
+            ) ++
+                \\
+                \\    }
+                \\    value ::= escaped&[0]
+                \\}
+            },
+            .{ .path = "dep/main.rg", .code =
+            \\borrow := (.value: &[2]Int32) -> (.result: Errable#(&[2]Int32, (..invalid_input))) {
+            \\    result = ..ok value
+            \\}
+            },
+        }, .diagnostic = .{ .message = "depends on a root that has ended" } });
+    }
+    _ = try environment.check(.{ .name = "imported_errable_live_array", .files = &.{
+        .{ .path = "main.rg", .code =
+        \\dep := import("./dep")
+        \\main := () -> () {
+        \\    values: [2]Int32 = (1, 2)
+        \\    escaped :: ArrayView#(Int32)
+        \\    {
+        \\        wrapped ::= dep.borrow(.value = &values)
+        \\        match wrapped { ..ok value { escaped = value } ..error _ { abort } }
+        \\    }
+        \\    value ::= get(&escaped, .index = 0)
+        \\}
+        },
+        .{ .path = "dep/main.rg", .code =
+        \\borrow := (.value: &[2]Int32) -> (.result: Errable#(ArrayView#(Int32), (..invalid_input))) {
+        \\    result = ..ok view(value)
+        \\}
+        },
+    } });
+}
+
 test "real core environment reuses modules without sharing rejected semantic state" {
     var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
     defer environment.deinit();

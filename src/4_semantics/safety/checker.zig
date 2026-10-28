@@ -6441,9 +6441,6 @@ pub const SafetyChecker = struct {
         if (self.continuation) |continuation| {
             if (self.graph.function(continuation.function).body == block_id and state == &continuation.state.state) return;
         }
-        // TODO: Preserve lexical array roots through imported Errable payload
-        // extraction; a borrowed aggregate assigned into an outer binding can
-        // otherwise lose its dependency when the inner array's scope ends.
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .binding_declaration => |binding| {
