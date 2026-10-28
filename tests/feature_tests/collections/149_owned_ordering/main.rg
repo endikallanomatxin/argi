@@ -20,11 +20,16 @@ implement OrderPolicy#(PairOrder, Pair) (
 
 RefusingAllocator: Type = ()
 
-main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume writer ::= $&system.terminal&.stderr
-    assume allocator := system.page_allocator
+main := () -> (.status_code: Int32 = 1) {
+    assume ffi ::= $&ForeignFunctionInterface()
+    assume error_tracer ::= $&noop_error_tracer
+    storage ::= CAllocator(.ffi = ffi)
+    assume allocator ::= $&storage
     order ::= PairOrder()
-    items ::= DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 3)!!!
+    items ::= [
+        DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 3)
+        | unwrap_or_abort(_)
+    ]
     push_assume_capacity(
         .self = $&items, .value = Pair(.a = Tracked(.id = 3), .b = Tracked(.id = 30))
     )
@@ -41,24 +46,36 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     if drops != 0 { abort }
     for ~item in items { if item.b.id != item.a.id * 10 { abort } }
     if drops != 6 { abort }
-    queue ::= PriorityQueue#(.t: Pair, .order: PairOrder)(
-        .order = &order, .allocator = allocator, .capacity = 1
-    )!!!
-    push(
-        .self      = $&queue
-        .value     = Pair(.a = Tracked(.id = 3), .b = Tracked(.id = 30))
-        .allocator = allocator
-    )!!!
-    push(
-        .self      = $&queue
-        .value     = Pair(.a = Tracked(.id = 1), .b = Tracked(.id = 10))
-        .allocator = allocator
-    )!!!
-    push(
-        .self      = $&queue
-        .value     = Pair(.a = Tracked(.id = 2), .b = Tracked(.id = 20))
-        .allocator = allocator
-    )!!!
+    queue ::= [
+        PriorityQueue#(.t: Pair, .order: PairOrder)(
+            .order = &order, .allocator = allocator, .capacity = 1
+        )
+        | unwrap_or_abort(_)
+    ]
+    submitted_0 ::= [
+        push(
+            .self      = $&queue
+            .value     = Pair(.a = Tracked(.id = 3), .b = Tracked(.id = 30))
+            .allocator = allocator
+        )
+        | unwrap_or_abort(_)
+    ]
+    submitted_1 ::= [
+        push(
+            .self      = $&queue
+            .value     = Pair(.a = Tracked(.id = 1), .b = Tracked(.id = 10))
+            .allocator = allocator
+        )
+        | unwrap_or_abort(_)
+    ]
+    submitted_2 ::= [
+        push(
+            .self      = $&queue
+            .value     = Pair(.a = Tracked(.id = 2), .b = Tracked(.id = 20))
+            .allocator = allocator
+        )
+        | unwrap_or_abort(_)
+    ]
     match peek_reference(.self = &queue).value {
         ..none { abort } ..some entry { if entry.value&.a.id != 1 { abort } }
     }
@@ -69,14 +86,20 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     deinit(.self = $&queue)
     if drops != 12 { abort }
     refusal ::= RefusingAllocator()
-    bounded ::= PriorityQueue#(.t: Pair, .order: PairOrder)(
-        .order = &order, .allocator = allocator, .capacity = 1
-    )!!!
-    push(
-        .self      = $&bounded
-        .value     = Pair(.a = Tracked(.id = 4), .b = Tracked(.id = 40))
-        .allocator = allocator
-    )!!!
+    bounded ::= [
+        PriorityQueue#(.t: Pair, .order: PairOrder)(
+            .order = &order, .allocator = allocator, .capacity = 1
+        )
+        | unwrap_or_abort(_)
+    ]
+    submitted_3 ::= [
+        push(
+            .self      = $&bounded
+            .value     = Pair(.a = Tracked(.id = 4), .b = Tracked(.id = 40))
+            .allocator = allocator
+        )
+        | unwrap_or_abort(_)
+    ]
     match push(
         .self      = $&bounded
         .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
@@ -89,11 +112,14 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     match peek_reference(.self = &bounded).value {
         ..none { abort } ..some entry { if [entry.value&.a.id != 4] { abort } }
     }
-    push(
-        .self      = $&bounded
-        .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
-        .allocator = allocator
-    )!!!
+    submitted_4 ::= [
+        push(
+            .self      = $&bounded
+            .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
+            .allocator = allocator
+        )
+        | unwrap_or_abort(_)
+    ]
     if drops != 14 or length(.self = &bounded).count != 2 { abort }
     match peek_reference(.self = &bounded).value {
         ..none { abort } ..some entry { if [entry.value&.a.id != 4] { abort } }

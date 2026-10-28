@@ -217,13 +217,8 @@ _grow_dynamic_array := #(.t: Type, .Provider: Type: Allocator) (
 
     if new_capacity < min_capacity { new_capacity = min_capacity }
     if new_capacity > maximum { new_capacity = maximum }
-    allocate_result ::= Allocator#(
-        Provider
-    ).allocate(
-        .self      = allocator
-        .size      = element_size * new_capacity
-        .alignment = alignment_of(.type = t)
-    )
+    -- Relocation needs the same typed slot metadata as initial construction.
+    allocate_result ::= allocate#(.t: t)(.self = allocator, .count = new_capacity)
 
     match allocate_result {
         ..ok ~payload {
