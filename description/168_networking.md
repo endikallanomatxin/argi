@@ -79,6 +79,11 @@ These timeouts do not bound DNS resolution, connection establishment, or accept.
 On POSIX, an interrupted connection waits for completion and checks the socket
 error rather than submitting a second connection request. Interruptions while
 waiting do not restart that request.
+Interrupted POSIX sends and receives retry only when the native operation
+reports interruption without progress. A successful partial transfer returns its
+count immediately; completing a TCP transfer belongs to the caller's loop.
+Other errors are reported without retrying. UDP truncation remains an error even
+after retries and even when a prefix was written into the destination.
 Resolution, opening, accepting, reads, writes, options, and close have distinct
 error reasons; argument, allocation, oversized-datagram, and truncation failures
 remain distinguishable. The baseline does not expose platform errno values.
