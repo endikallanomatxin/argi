@@ -67,6 +67,40 @@ test "generic constructor resolution propagates allocation failure" {
     }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
 }
 
+test "semantic rollback retains bounded memory after repeated generic module additions" {
+    const a = std.testing.allocator;
+    var base = try build(a, "accepted/main.rg", "Accepted := (.value: Bool)");
+    defer base.deinit(a);
+    var candidate = try build(a, "candidate/main.rg",
+        \\Box := #(.T: Type) (.value: T)
+        \\make := #(.T: Type) (.value: T) -> (.result: Box#(T)) {
+        \\    result = Box#(T)(.value = value)
+        \\}
+        \\main := () -> () { box ::= make(.value = true) }
+    );
+    defer candidate.deinit(a);
+    var accounting = std.testing.FailingAllocator.init(a, .{});
+    var session: sema.Session = undefined;
+    try session.init(accounting.allocator(), &.{base}, .{});
+    defer session.deinit();
+    try session.advance();
+    _ = try session.completeUnit();
+    const nodes = session.relocation.graph.nodes.items.len;
+    var retained: usize = 0;
+    for (0..100) |iteration| {
+        var transaction = try session.beginTransaction();
+        defer transaction.deinit();
+        try session.appendModules(&.{candidate});
+        try session.advance();
+        _ = try session.completeUnit();
+        transaction.rollback();
+        try std.testing.expectEqual(nodes, session.relocation.graph.nodes.items.len);
+        try std.testing.expectEqual(@as(usize, 1), session.modules.len);
+        const bytes = accounting.allocated_bytes - accounting.freed_bytes;
+        if (iteration == 0) retained = bytes else try std.testing.expectEqual(retained, bytes);
+    }
+}
+
 test "module fragments retain declaration identities and share lexical and qualified lookup" {
     const a = std.testing.allocator;
     const base_source = "Secret := (._value: Int32)\n_hidden := () -> (.result: Int32) { result = 42 }";
