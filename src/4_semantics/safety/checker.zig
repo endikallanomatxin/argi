@@ -395,7 +395,9 @@ pub const SafetyChecker = struct {
         // general proof conversion. Raw payload views are not interchangeable
         // with complete conditional contracts.
         contract = try contracts.withOutcomeGuards(self.allocator, contract);
-        const violation = if (dispatch == .concrete) contracts.checkStatic(contract, summary) else contracts.check(contract, summary);
+        var check_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer check_arena.deinit();
+        const violation = if (dispatch == .concrete) try contracts.checkStatic(check_arena.allocator(), contract, summary) else try contracts.check(check_arena.allocator(), contract, summary);
         if (violation) |failure| {
             const method_name = self.graph.text(self.graph.declarationSourceName(function.declaration));
             if (failure.input) |path| {
