@@ -2,7 +2,7 @@ const support = @import("../../../support.zig");
 const expectSuccessfulBuild = support.expectSuccessfulBuild;
 const runExpectStdout = support.runExpectStdout;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/io/33_print_owned_text" {
     const path = "tests/feature_tests/io/33_print_owned_text";

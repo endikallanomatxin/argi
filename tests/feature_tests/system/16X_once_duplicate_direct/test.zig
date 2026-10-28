@@ -1,7 +1,7 @@
 const support = @import("../../../support.zig");
 const buildExpectFailExact = support.buildExpectFailExact;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/system/16X_once_duplicate_direct" {
     try buildExpectFailExact("tests/feature_tests/system/16X_once_duplicate_direct",

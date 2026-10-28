@@ -3,7 +3,7 @@ main := (.system: System) -> (.status_code: Int32) {
     assume allocator ::= $&allocator_storage
 
     path ::= from_literal(
-        .data = "tests/feature_tests/system/34_file_block_short_read_temp.bin"
+        .data = "tests/feature_tests/system/34_file_block_short_read/build/temp.bin"
     )
 
     if exists(.self = system.file_system, .path = path).ok {

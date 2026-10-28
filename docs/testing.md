@@ -100,6 +100,13 @@ can also run on workers; traversal tests that mutate shared paths remain exclusi
 Arguments, environment reads, allocators, atomics and `once` capabilities belong
 to each child process. Reading clocks or waiting does not modify the system clock
 and needs no exclusive scheduling.
+Filesystem mutation cases keep their files under their own fixture's `build/`
+directory; temporary directories are created beneath that private parent.
+Process tests spawn their own executable and own their child handles and pipes.
+Network fixtures bind loopback port zero and use the OS-assigned port, rather
+than sharing a fixed port. Entropy reads do not mutate process-wide test state.
+These I/O and system cases run on fixture workers, including expected runtime
+failures whose effects remain inside their child process.
 
 One executable contains the complete suite. Workers are separate processes,
 since Zig's testing allocator and I/O context are global. The runner uses Zig's

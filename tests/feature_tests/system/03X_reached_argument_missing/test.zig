@@ -1,7 +1,7 @@
 const support = @import("../../../support.zig");
 const buildExpectFailExact = support.buildExpectFailExact;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/system/03X_reached_argument_missing" {
     try buildExpectFailExact("tests/feature_tests/system/03X_reached_argument_missing",

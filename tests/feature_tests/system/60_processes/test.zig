@@ -2,7 +2,7 @@ const support = @import("../../../support.zig");
 const expectSuccessfulBuild = support.expectSuccessfulBuild;
 const runExpect = support.runExpect;
 
-pub const isolation: support.Isolation = .exclusive;
+pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/system/60_processes" {
     const path = "tests/feature_tests/system/60_processes";

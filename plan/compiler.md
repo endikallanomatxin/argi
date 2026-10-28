@@ -28,7 +28,6 @@
 
 Validate with growing REPL sessions, rollback/allocation failures and native/VM
 comparisons. New Safety precision needs aliasing and duplicate-cleanup rejections.
-Finish auditing I/O/system fixture isolation by actual shared resources.
 
 References: [performance](../docs/compiler-performance.md),
 [Safety](../description/34_safety_model.md#precision-of-safety-effects),
