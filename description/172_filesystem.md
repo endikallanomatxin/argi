@@ -44,6 +44,8 @@ Traversal has no filesystem snapshot: renames or removals can make a later
 metadata lookup fail. The first error is reported, further `next` calls return
 none, and the walker retains its owners for cleanup. Native directory-open
 failures, including descriptor exhaustion, publish no directory handle.
+Allocation failures during enumeration follow the same terminal-error rule;
+cleanup still closes every active directory level.
 
 ## File positions
 
