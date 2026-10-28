@@ -1082,18 +1082,8 @@ pub const Session = struct {
                 // can prefer a preceding move error. If another operation remains
                 // unresolved, report that definite copy failure before unrelated
                 // call-resolution diagnostics prevent Safety from running.
-                if (ownership.denied_copy) |denied| {
-                    var type_name = std.array_list.Managed(u8).init(allocator);
-                    defer type_name.deinit();
-                    try appendTypeName(&type_name, &relocation.graph, denied.ty);
-                    try diagnostics.add(
-                        diagnosticLocation(&relocation.graph, diagnostics, denied.source),
-                        .semantic,
-                        "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
-                        .{type_name.items},
-                    );
+                if (try diagnoseDeniedCopy(allocator, &relocation.graph, reachable, diagnostics))
                     return error.Reported;
-                }
                 if (try diagnoseUnknownNames(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, core, diagnostics))
                     return error.Reported;
                 if (try diagnoseUnresolvedFunctionSignatures(&relocation.graph, modules, resolved, relocation.offsets.items, diagnostics))
@@ -3244,6 +3234,30 @@ fn diagnoseUnresolvedIndex(
             );
             return true;
         }
+    }
+    return false;
+}
+
+fn diagnoseDeniedCopy(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    for (graph.nodes.items, 0..) |node, raw| {
+        if (node.content != .denied_implicit_copy) continue;
+        if (reachable) |set| if (!set.containsNode(@enumFromInt(raw))) continue;
+        const ty = node.ty orelse continue;
+        var type_name = std.array_list.Managed(u8).init(allocator);
+        defer type_name.deinit();
+        try appendTypeName(&type_name, graph, ty);
+        try diagnostics.add(
+            diagnosticLocation(graph, diagnostics, node.source),
+            .semantic,
+            "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
+            .{type_name.items},
+        );
+        return true;
     }
     return false;
 }

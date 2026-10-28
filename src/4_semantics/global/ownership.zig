@@ -24,7 +24,6 @@ pub const Stats = struct {
 };
 
 const Deferred = struct { marker: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId };
-pub const DeniedCopy = struct { source: primitives.SourceRef, ty: global_sg.GlobalTypeId };
 const AutoNode = struct { binding: global_sg.GlobalBindingId, node: ?global_sg.GlobalNodeId };
 const ResolvedDestructor = struct {
     function: global_sg.GlobalFunctionId,
@@ -48,7 +47,6 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     dispatch: ?*dispatch_mod.Resolver = null,
     deferred: std.ArrayList(Deferred) = .empty,
-    denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
 
     empty_block: ?global_sg.GlobalBlockId = null,
@@ -332,10 +330,6 @@ pub const Resolver = struct {
                 });
                 return true;
             }
-            if (self.denied_copy == null) self.denied_copy = .{
-                .source = self.graph.nodes.items[@intFromEnum(source)].source,
-                .ty = ty,
-            };
             try self.graph.setNode(self.allocator, target, .{
                 .source = self.graph.nodes.items[@intFromEnum(source)].source,
                 .ty = ty,

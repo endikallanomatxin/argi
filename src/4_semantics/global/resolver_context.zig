@@ -40,7 +40,6 @@ pub const Context = struct {
         continuation_bindings: usize,
         expression_continuation: ?global_sg.GlobalFunctionId,
         ownership_continuation: ?global_sg.GlobalFunctionId,
-        denied_copy: @FieldType(ownership_mod.Resolver, "denied_copy"),
         virtual_failure: @FieldType(contract_mod.Resolver, "virtual_signature_failure"),
         foreach_failure: @FieldType(control_mod.Resolver, "for_each_failure"),
         diagnostics: ?*diagnostics_mod.Diagnostics,
@@ -202,7 +201,6 @@ pub const Context = struct {
             .continuation_bindings = self.ownership.continuation_bindings.items.len,
             .expression_continuation = self.expressions.continuation_function,
             .ownership_continuation = self.ownership.continuation_function,
-            .denied_copy = self.ownership.denied_copy,
             .virtual_failure = self.contracts.virtual_signature_failure,
             .foreach_failure = self.control.for_each_failure,
             .diagnostics = self.constructors.diagnostics,
@@ -235,7 +233,6 @@ pub const Context = struct {
         self.ownership.continuation_bindings.shrinkRetainingCapacity(saved.continuation_bindings);
         self.expressions.continuation_function = saved.expression_continuation;
         self.ownership.continuation_function = saved.ownership_continuation;
-        self.ownership.denied_copy = saved.denied_copy;
         self.contracts.virtual_signature_failure = saved.virtual_failure;
         self.control.restoreForEachFailure(saved.foreach_failure);
         self.constructors.diagnostics = saved.diagnostics;
@@ -289,7 +286,6 @@ pub const Context = struct {
         try self.ownership.deferred.appendSlice(allocator, source.ownership.deferred.items);
         try self.ownership.auto_nodes.appendSlice(allocator, source.ownership.auto_nodes.items);
         try self.ownership.continuation_bindings.appendSlice(allocator, source.ownership.continuation_bindings.items);
-        self.ownership.denied_copy = source.ownership.denied_copy;
         self.ownership.empty_block = source.ownership.empty_block;
         self.ownership.continuation_function = source.ownership.continuation_function;
         if (source.control.for_each_failure) |failure| {

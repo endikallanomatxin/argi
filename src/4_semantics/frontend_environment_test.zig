@@ -28,6 +28,19 @@ test "real core environment reuses modules without sharing rejected semantic sta
 test "real core environment preserves private library storage and allocator safety" {
     var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
     defer environment.deinit();
+    _ = try environment.check(.{
+        .name = "denied_copy_before_pending_call",
+        .files = &.{.{ .path = "main.rg", .code =
+        \\Owner := (.value: Int32)
+        \\implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () {})
+        \\main := () -> () {
+        \\    owner: Owner = (.value = 1)
+        \\    copy ::= owner
+        \\    missing(copy)
+        \\}
+        }},
+        .diagnostic = .{ .message = "type 'Owner' cannot be copied implicitly; use '~value' to transfer ownership", .file = "main.rg", .marker = "owner\n", .exact = true },
+    });
     _ = try environment.checkModule(std.testing.allocator, "tests/feature_tests/text/70X_string_private_storage", .{ .message = "field '_length' is private", .file = "main.rg" });
     _ = try environment.checkModule(std.testing.allocator, "tests/feature_tests/collections/29X_dynamic_array_growth_invalidates_old_alias", .{ .message = "root that has ended", .file = "main.rg" });
     _ = try environment.checkModule(std.testing.allocator, "tests/feature_tests/modules/28X_imported_abstract_input_requires_implementation", .{ .message = "contract constraint 'ExampleAbstract'", .file = "main.rg" });
