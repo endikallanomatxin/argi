@@ -63,7 +63,10 @@ pub const Resolver = struct {
                 .base = declaration_id,
                 .arguments = arguments,
             } });
-            _ = generics.ensureGenericInstance(generic_ty) catch return null;
+            _ = generics.ensureGenericInstance(generic_ty) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return null,
+            };
             break :blk generic_ty;
         } else blk: {
             const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding }) catch |err| switch (err) {
@@ -339,7 +342,10 @@ pub const Resolver = struct {
             const expected = globalizer.globalType(o, local_expected);
             if (!self.graph.isTypeUnresolved(expected)) switch (self.graph.types.items[@intFromEnum(expected)]) {
                 .generic => |identity| if (identity.base == declaration_id) {
-                    _ = generics.ensureGenericInstance(expected) catch return .deferred;
+                    _ = generics.ensureGenericInstance(expected) catch |err| switch (err) {
+                        error.OutOfMemory => return err,
+                        else => return .deferred,
+                    };
                     if (self.contractInitializer(module_index, expected, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
                         if (err == error.DeferredContractInitializer) return .deferred;
                         return err;
@@ -432,7 +438,7 @@ pub const Resolver = struct {
             .arguments = arguments,
         } });
         _ = generics.ensureGenericInstance(ty) catch |err| switch (err) {
-            error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
+            error.OutOfMemory, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
             else => return .deferred,
         };
 

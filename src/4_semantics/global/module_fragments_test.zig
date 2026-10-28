@@ -31,6 +31,42 @@ fn buildCondition(allocator: std.mem.Allocator, path: []const u8, source: []cons
     return graph;
 }
 
+test "generic constructor resolution propagates allocation failure" {
+    const a = std.testing.allocator;
+    var input = try build(a, "constructor/main.rg",
+        \\Init#(.Target: Type, .Args: Type): Contract = (
+        \\    .Result: Type
+        \\    .init: Args -> (.result: Result)
+        \\)
+        \\Box := #(.T: Type) (.value: T)
+        \\BoxArgs := #(.T: Type) (.value: T)
+        \\implement#(.T: Type) Init#(Box#(T), BoxArgs#(T)) (
+        \\    .Result: Type = Box#(T)
+        \\    .init = BoxArgs#(T) -> (.result: Result) { result = (.value = value) }
+        \\)
+        \\make := #(.T: Type) (.value: T) -> (.result: Box#(T)) {
+        \\    result = Box#(T)(.value = value)
+        \\}
+        \\main := () -> () {
+        \\    nested ::= make(.value = true)
+        \\    explicit ::= Box#(Int32)(.value = 42)
+        \\    contextual: Box#(UInt8) = Box(.value = 7)
+        \\}
+    );
+    defer input.deinit(a);
+    input.is_bundled_core = true;
+    const modules = [_]module.ModuleSemanticGraph{input};
+    try std.testing.checkAllAllocationFailures(a, struct {
+        fn resolve(allocator: std.mem.Allocator, inputs: []const module.ModuleSemanticGraph) !void {
+            var session: sema.Session = undefined;
+            try session.init(allocator, inputs, .{});
+            defer session.deinit();
+            try session.advance();
+            _ = try session.completeUnit();
+        }
+    }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
+}
+
 test "module fragments retain declaration identities and share lexical and qualified lookup" {
     const a = std.testing.allocator;
     const base_source = "Secret := (._value: Int32)\n_hidden := () -> (.result: Int32) { result = 42 }";

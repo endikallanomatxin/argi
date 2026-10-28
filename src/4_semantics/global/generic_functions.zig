@@ -547,7 +547,7 @@ pub const Resolver = struct {
                     error.DeferredGenericFunction => return .deferred,
                     error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName, error.UncontextualizedRecordValue => return err,
+                    error.OutOfMemory, error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName, error.UncontextualizedRecordValue => return err,
                     else => return .deferred,
                 }
             else
@@ -556,7 +556,7 @@ pub const Resolver = struct {
                     error.DeferredGenericFunction => return .deferred,
                     error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName, error.UncontextualizedRecordValue => return err,
+                    error.OutOfMemory, error.InvalidGenericCallArguments, error.InvalidNumericTypeCall, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.UnknownParameterizedName, error.UncontextualizedRecordValue => return err,
                     error.ConflictingGenericArgument => return err,
                     else => return .deferred,
                 };
