@@ -151,6 +151,7 @@ pub const Context = struct {
     fn literalBytes(self: *Context, bytes: []const u8) !b.Value {
         if (self.literal_bytes.get(bytes)) |reference| return .{ .reference = reference };
         try self.storage.charge(1);
+        errdefer self.storage.cells -= 1;
         const allocator = self.arena.allocator();
         try self.literal_bytes.ensureUnusedCapacity(allocator, 1);
         const reference = try self.storage.staticBytes(bytes);
@@ -166,11 +167,16 @@ pub const Context = struct {
                 return .{ .integer = @intCast(index) };
         }
         const id = std.math.cast(u32, self.trace_locations.items.len) orelse return error.ExecutionTraceLocationLimit;
-        try self.storage.charge(1 + location.path.len + location.source_line.len);
+        const text_cells = std.math.add(usize, location.path.len, location.source_line.len) catch return error.ExecutionMemoryLimit;
+        const cells = std.math.add(usize, 1, text_cells) catch return error.ExecutionMemoryLimit;
+        try self.storage.charge(cells);
+        errdefer self.storage.cells -= cells;
         const a = self.arena.allocator();
         var retained = location;
         retained.path = try a.dupe(u8, location.path);
+        errdefer a.free(retained.path);
         retained.source_line = try a.dupe(u8, location.source_line);
+        errdefer a.free(retained.source_line);
         try self.trace_locations.append(a, retained);
         return .{ .integer = id };
     }
@@ -787,6 +793,32 @@ pub const Vm = struct {
         }
     }
 };
+
+test "failed context metadata publication preserves storage quota and indexes" {
+    const Probe = struct {
+        fn run(a: std.mem.Allocator, trace: bool) !void {
+            var context = Context.init(a, 100000);
+            defer context.deinit();
+            _ = try context.sessionSlots(1, &.{});
+            const cells = context.storage.cells;
+            const frames = context.storage.frames.items.len;
+            const text: [16384]u8 = @splat('a');
+            const result = if (trace)
+                context.registerTraceLocation(.{ .path = "source.rg", .offset = 0, .line = 1, .column = 1, .source_line = &text })
+            else
+                context.literalBytes(&text);
+            _ = result catch |err| {
+                try std.testing.expectEqual(cells, context.storage.cells);
+                try std.testing.expectEqual(frames, context.storage.frames.items.len);
+                try std.testing.expectEqual(@as(usize, 0), context.literal_bytes.count());
+                try std.testing.expectEqual(@as(usize, 0), context.trace_locations.items.len);
+                return err;
+            };
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Probe.run, .{false});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Probe.run, .{true});
+}
 
 test "source metadata resolution rejects invalid IDs and retains immutable text" {
     var context = Context.init(std.testing.allocator, 1024);
