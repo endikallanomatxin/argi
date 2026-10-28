@@ -3,7 +3,13 @@
 [Contracts and conformance](135_contracts.md) defines the general evidence model,
 including jointly virtualized participants. Explicit unary contracts support
 runtime handles with selected implementation evidence and bound associated
-types/constants. Joint evidence for multiple hidden participants remains pending.
+types/constants. Multiple hidden participants are not currently supported.
+
+> [!IDEA]
+> A joint package could retain several hidden participants and their selected
+> conformance evidence. This is an exploratory idea, not scheduled work. It needs
+> a useful consumer, joint lifetime/cleanup rules and representable results;
+> independently virtualized values would not establish that joint conformance.
 
 Contracts are static and use monomorphization by default. `Virtual#(.contract: A)`
 requests runtime dispatch through the fixed interface of A, useful for streams,
