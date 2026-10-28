@@ -301,6 +301,11 @@ again. The prelude also acquires `ffi` and `Terminal`, borrowing stdout as `writ
 so `print("hola")` works directly. An ordinary `CAllocator` supplies the persistent
 `allocator` assumption. Owning values retain their allocations between commands;
 healthy exit and reset run their checked cleanup before releasing the context.
+Prelude initialization uses the same preparation/execution boundary as user
+commands. Failure before publication leaves the session available for another
+attempt. A trap after execution starts poisons the context even though the
+prelude was not installed successfully; reset is required before continuing.
+Reset discards that failed prelude's state rather than rerunning its source.
 Allocation uses VM regions rather than native pointers; the supported value and
 storage restrictions still apply.
 

@@ -965,6 +965,35 @@ test "interactive prelude executes checked assumptions again after reset" {
     try session.close();
 }
 
+test "interactive failed prelude distinguishes preparation allocation failure from execution traps" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var session: Interactive = undefined;
+    try session.init(failing.allocator(), &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    const checkpoint = session.compiler.semantic.relocation.graph.checkpoint();
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, session.initializePrelude("enabled :: Bool = true"));
+    try std.testing.expect(session.prelude == null);
+    try std.testing.expectEqual(@as(u64, 0), session.compiler.revision);
+    try std.testing.expectEqualDeep(checkpoint, session.compiler.semantic.relocation.graph.checkpoint());
+    try std.testing.expect(session.runtime.context.state == .fresh);
+    failing.fail_index = std.math.maxInt(usize);
+
+    try std.testing.expectError(error.ExecutionAborted, session.initializePrelude("enabled :: Bool = true\nabort"));
+    try std.testing.expect(session.prelude == null);
+    try std.testing.expect(session.compiler.revision != 0);
+    try std.testing.expect(session.runtime.context.state == .poisoned);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.ExecutionContextPoisoned, session.submitStatements("enabled = false"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.reset();
+    try std.testing.expectEqual(@as(u64, 0), session.compiler.revision);
+    try std.testing.expect(session.runtime.context.state == .fresh);
+    try session.initializePrelude("enabled :: Bool = true");
+    try std.testing.expect((try session.submitInput("enabled")).?.value.runtime.boolean);
+    try session.close();
+}
+
 test "interactive reset retains the new compiler when prelude execution traps" {
     var session: Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});

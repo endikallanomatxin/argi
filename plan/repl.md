@@ -32,10 +32,11 @@ JIT and complete native-backend parity are not prerequisites.
    test runner. Compare values, observable effects and cleanup counts. Cover
    replacement, aliases, early exits, numeric boundaries and dispatch between old
    and new code units; retain internal tests for exhaustive local rules.
-3. Close the failure-lifecycle matrix: rejected commands and allocation failures
+3. Close the failure-lifecycle matrix: rejected commands and preparation failures
    publish nothing; traps, budget exhaustion, cancellation and host callback
    failures prevent further execution until reset. Extend host-resource and
-   allocation-failure coverage, including failed prelude initialization. Document
+   allocation-failure coverage through prelude preparation and execution; source
+   retention OOM and initialization traps already have acceptance coverage. Document
    which effects
    cannot be undone and how context-owned resources are released without user
    cleanup. Never promise transactional rollback of execution.
