@@ -383,10 +383,11 @@ conservatively rather than gaining a guarantee that needs both results.
 
 > [!IMPLEMENTATION]
 > General summary guards represent conjunctions of entry-input and output
-> selectors, with shared records for every effect dimension. Existing outcome
-> partitions are published in this representation alongside their conservative
-> fallback. General conditional contracts can be checked against complete
-> guarded summaries; proving only a stricter subset of the declared condition
+> selectors, with shared records for every effect dimension. Compact single-output
+> partitions retain their effect records alongside the conservative fallback and
+> are matched directly during contract checks. General conditional contracts can
+> be checked against complete guarded summaries; proving only a stricter subset
+> of the declared condition
 > is insufficient. Existing output contracts use this proof path after concrete
 > domain resolution; unreachable output partitions have vacuous guarantees.
 > Stable terminal matches and branches can infer joint structural entry/input

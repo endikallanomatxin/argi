@@ -89,14 +89,23 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     match peek_reference(.self = &bounded).value {
         ..none { abort } ..some entry { if [entry.value&.a.id != 4] { abort } }
     }
+    push(
+        .self      = $&bounded
+        .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
+        .allocator = allocator
+    )!!!
+    if drops != 14 or length(.self = &bounded).count != 2 { abort }
+    match peek_reference(.self = &bounded).value {
+        ..none { abort } ..some entry { if [entry.value&.a.id != 4] { abort } }
+    }
     deinit(.self = $&bounded)
-    if drops != 16 { abort }
+    if drops != 18 { abort }
     status_code = 0
 }
 
 implement Allocator#(RefusingAllocator) (
     .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
         result = ..error(.reason = ..out_of_memory)
     }

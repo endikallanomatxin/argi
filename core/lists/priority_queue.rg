@@ -34,12 +34,6 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) Deinit#(
     PriorityQueue#(.t: t, .order: order)
 ) (
     .deinit = (.self: $&PriorityQueue#(.t: t, .order: order)) -> () {
-        while length(&self&._items).count > 0 {
-            discarded ::= ~unwrap_or_abort(
-                .value = Removable#(DynamicArray#(.t: t)).pop($&self&._items)
-            )
-        }
-
         deinit(.self = $&self&._items)
     }
 )
