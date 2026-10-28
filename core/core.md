@@ -51,7 +51,7 @@ operations. Language contracts belong in `description/`; shipped changes are
 summarized in the [0.3 release notes](../releases/0.3.0.md). Planned library
 extensions belong in [the foundations plan](../plan/core_foundations.md).
 Compiler execution and frontend work have their own
-[follow-ups](../plan/comptime_execution.md).
+[follow-ups](../plan/compiler.md#execution).
 Exploratory possibilities that are not scheduled remain in
 [the library ideas inventory](library_ideas.txt), alongside existing module
 sketches.
