@@ -2,7 +2,6 @@
 
 Prioritize real consumers; reproduce compiler gaps before adding workarounds.
 
-- Audit owning containers under structural cleanup and allocation failures.
 - Audit stream adapters under allocation/native failures.
 - Extend CLI argument relationships, subcommands, and typed diagnostics.
 - Audit traversal under filesystem changes and resource limits.

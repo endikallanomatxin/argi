@@ -317,15 +317,6 @@ insert_growing := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok Void()
 }
 
--- A lexical owner recursively destroys fields, including structural values
--- with no nominal destructor of their own.
-_destroy_array_element := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .value: t, .allocator: $&AllocatorType
-) -> () {
-    assume allocator
-    discarded ::= ~value
-}
-
 replace := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
@@ -340,12 +331,11 @@ replace := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = index)
     -- Extract before destroying so nested owners receive ordinary lexical
     -- cleanup. Finish that cleanup before installing the replacement.
-    _destroy_array_element#(.t: t)(
-        .value = ~_trusted_uninit_take#(.t: t)(
+    {
+        discarded ::= ~_trusted_uninit_take#(.t: t)(
             .allocation = $&self&._allocation, .slot = slot
         )
-        .allocator = allocator
-    )
+    }
     _trusted_uninit_write#(.t: t)(
         .allocation = $&self&._allocation, .slot = slot, .value = ~owned
     )
