@@ -26,5 +26,32 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         .allocator     = allocator
     )!!!
     match next(.self = $&zero, .allocator = allocator)!!! { ..none {} ..some ~_ { abort } }
+    #if target_os("linux") or target_os("macos") {
+        assume file_system := system.file_system
+        temporary ::= TemporaryDirectory(
+            .parent = "tests/feature_tests/system/93_directory_walk/build"
+        )!!!
+        original ::= path(.self = &temporary).view
+        child ::= concat(.left = original, .right = "/child", .allocator = allocator)!!!
+        moved ::= concat(.left = original, .right = "-moved", .allocator = allocator)!!!
+        create_directory(.path = view(&child))!!!
+        changed ::= DirectoryWalker(.path = original, .allocator = allocator)!!!
+        _ ::= rename(
+            .self = file_system, .from = original, .to = view(&moved), .allocator = allocator
+        )!!!
+        match next(.self = $&changed, .allocator = allocator) {
+            ..ok ~_ { abort }
+            ..error error { if error.reason != ..path_not_found { abort } }
+        }
+        match next(.self = $&changed, .allocator = allocator)!!! {
+            ..none {} ..some ~_ { abort }
+        }
+        deinit(.self = $&changed)
+        _ ::= rename(
+            .self = file_system, .from = view(&moved), .to = original, .allocator = allocator
+        )!!!
+        remove_directory(.path = view(&child))!!!
+        close(.self = $&temporary)!!!
+    }
     status_code = 0
 }

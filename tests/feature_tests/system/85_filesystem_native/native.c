@@ -1,6 +1,7 @@
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
 #include <unistd.h>
+#include <sys/resource.h>
 #else
 #include <io.h>
 #include <fcntl.h>
@@ -9,6 +10,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef _WIN32
+static int probe_directory_limit(const char *path) {
+    struct rlimit previous, limited;
+    if (getrlimit(RLIMIT_NOFILE, &previous)) return 28;
+    limited = previous;
+    limited.rlim_cur = 0;
+    if (setrlimit(RLIMIT_NOFILE, &limited)) return 29;
+    uintptr_t handle = 99;
+    int status = _argi_fs_directory_open((const uint8_t *)path, strlen(path), &handle);
+    /* Restore before reporting or opening anything else in this process. */
+    int restored = setrlimit(RLIMIT_NOFILE, &previous);
+    if (status == 0) _argi_fs_directory_close(handle);
+    if (restored) return 30;
+    if (status != -1 || handle != 0) return 31;
+    if (_argi_fs_directory_open((const uint8_t *)path, strlen(path), &handle)) return 32;
+    _argi_fs_directory_close(handle);
+    return 0;
+}
+#endif
 
 int32_t argi_filesystem_probe(void) {
     uintptr_t temporary = 0, directory = 0, length = 0;
@@ -43,6 +64,10 @@ int32_t argi_filesystem_probe(void) {
     int64_t seconds = 0;
     uint32_t nanoseconds = 0;
     if (_argi_fs_metadata((uint8_t *)path, length, &kind, &size, &seconds, &nanoseconds) || kind != 2 || nanoseconds >= 1000000000) { result = 7; goto done; }
+#ifndef _WIN32
+    result = probe_directory_limit(path);
+    if (result) goto done;
+#endif
     if (_argi_fs_directory_open((uint8_t *)path, length, &directory)) { result = 8; goto done; }
     uintptr_t name_length = 0;
     uint8_t name[6] = {0};

@@ -33,6 +33,18 @@ Allocation failure after native advancement consumes that entry. End is sticky:
 subsequent calls return none. Cleanup closes the native handle exactly once;
 copying a Directory or using it after cleanup is rejected.
 
+`DirectoryWalker(.path, .maximum_depth, .self, .allocator)` performs depth-first
+enumeration and returns owning `WalkEntry` values with path, metadata and depth.
+It keeps one directory handle per active level, up to `maximum_depth` (64 by
+default). Depth zero visits nothing and need not resolve the path. Links and
+reparse points are not deliberately followed; path lookup races still make this
+unsuitable as a security boundary.
+
+Traversal has no filesystem snapshot: renames or removals can make a later
+metadata lookup fail. The first error is reported, further `next` calls return
+none, and the walker retains its owners for cleanup. Native directory-open
+failures, including descriptor exhaustion, publish no directory handle.
+
 ## File positions
 
 `seek(.self, .offset, .origin)` accepts a signed Int64 offset and `SeekOrigin`
