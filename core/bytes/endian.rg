@@ -9,46 +9,55 @@ _binary_range := (.length: UIntNative, .offset: UIntNative, .width: UIntNative) 
     if offset <= length { ok = width <= length - offset }
 }
 
-read_uint16_at := (.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
-    .result : Errable#(UInt16, (..out_of_bounds))
-) {
-    if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 2).ok == false] {
+-- One range-checked implementation for the public multi-byte widths.
+_read_multibyte_uint_at := #(.Value: Type: UInt) (
+    .bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder
+) -> (.result: Errable#(Value, (..out_of_bounds))) {
+    width ::= size_of(.type = Value)
+    if [
+        _binary_range(.length = length(&bytes).count, .offset = offset, .width = width).ok
+        == false
+    ] {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
 
-    value :: UInt16 = 0
-    last: UIntNative = 1
+    value :: Value = 0
+    last ::= width - 1
     index :: UIntNative = 0
 
-    while index < 2 {
+    while index < width {
         position :: UIntNative = index
         if order == ..little { position = last - index }
         byte ::= get_reference(&bytes, .index = offset + position)!
-        value = value * 256 + byte&| convert#(.to: UInt16)(_)
+        value = value * 256 + byte&| convert#(.to: Value)(_)
         index = index + 1
     }
 
     result = ..ok value
 }
 
-write_uint16_at := (
+_write_multibyte_uint_at := #(.Value: Type: UInt) (
     .bytes  : MutableArrayView#(.t: UInt8),
     .offset : UIntNative                    = 0,
-    .value  : UInt16,
+    .value  : Value,
     .order  : ByteOrder
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
+    width ::= size_of(.type = Value)
     -- Prove the whole range before any destination byte changes.
-    if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 2).ok == false] {
+    if [
+        _binary_range(.length = length(&bytes).count, .offset = offset, .width = width).ok
+        == false
+    ] {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
 
-    remaining :: UInt16 = value
-    last: UIntNative = 1
+    remaining :: Value = value
+    last ::= width - 1
     index :: UIntNative = 0
 
-    while index < 2 {
+    while index < width {
         position :: UIntNative = index
         if order == ..big { position = last - index }
         byte ::= get_mutable_reference($&bytes, .index = offset + position)!
@@ -60,104 +69,9 @@ write_uint16_at := (
     result = ..ok Void()
 }
 
-read_uint32_at := (.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
-    .result : Errable#(UInt32, (..out_of_bounds))
-) {
-    if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 4).ok == false] {
-        result = ..error(.reason = ..out_of_bounds)
-        return
-    }
-
-    value :: UInt32 = 0
-    last: UIntNative = 3
-    index :: UIntNative = 0
-
-    while index < 4 {
-        position :: UIntNative = index
-        if order == ..little { position = last - index }
-        byte ::= get_reference(&bytes, .index = offset + position)!
-        value = value * 256 + byte&| convert#(.to: UInt32)(_)
-        index = index + 1
-    }
-
-    result = ..ok value
-}
-
-write_uint32_at := (
-    .bytes  : MutableArrayView#(.t: UInt8),
-    .offset : UIntNative                    = 0,
-    .value  : UInt32,
-    .order  : ByteOrder
-) -> (.result: Errable#(Void, (..out_of_bounds))) {
-    -- Prove the whole range before any destination byte changes.
-    if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 4).ok == false] {
-        result = ..error(.reason = ..out_of_bounds)
-        return
-    }
-
-    remaining :: UInt32 = value
-    last: UIntNative = 3
-    index :: UIntNative = 0
-
-    while index < 4 {
-        position :: UIntNative = index
-        if order == ..big { position = last - index }
-        byte ::= get_mutable_reference($&bytes, .index = offset + position)!
-        byte&= unwrap_or_abort(.value = [remaining % 256] | convert#(.to: UInt8)(_))
-        remaining = remaining / 256
-        index = index + 1
-    }
-
-    result = ..ok Void()
-}
-
-read_uint64_at := (.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
-    .result : Errable#(UInt64, (..out_of_bounds))
-) {
-    if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 8).ok == false] {
-        result = ..error(.reason = ..out_of_bounds)
-        return
-    }
-
-    value :: UInt64 = 0
-    last: UIntNative = 7
-    index :: UIntNative = 0
-
-    while index < 8 {
-        position :: UIntNative = index
-        if order == ..little { position = last - index }
-        byte ::= get_reference(&bytes, .index = offset + position)!
-        value = value * 256 + byte&| convert#(.to: UInt64)(_)
-        index = index + 1
-    }
-
-    result = ..ok value
-}
-
-write_uint64_at := (
-    .bytes  : MutableArrayView#(.t: UInt8),
-    .offset : UIntNative                    = 0,
-    .value  : UInt64,
-    .order  : ByteOrder
-) -> (.result: Errable#(Void, (..out_of_bounds))) {
-    -- Prove the whole range before any destination byte changes.
-    if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 8).ok == false] {
-        result = ..error(.reason = ..out_of_bounds)
-        return
-    }
-
-    remaining :: UInt64 = value
-    last: UIntNative = 7
-    index :: UIntNative = 0
-
-    while index < 8 {
-        position :: UIntNative = index
-        if order == ..big { position = last - index }
-        byte ::= get_mutable_reference($&bytes, .index = offset + position)!
-        byte&= unwrap_or_abort(.value = [remaining % 256] | convert#(.to: UInt8)(_))
-        remaining = remaining / 256
-        index = index + 1
-    }
-
-    result = ..ok Void()
-}
+read_uint16_at := _read_multibyte_uint_at#(.Value: UInt16)
+read_uint32_at := _read_multibyte_uint_at#(.Value: UInt32)
+read_uint64_at := _read_multibyte_uint_at#(.Value: UInt64)
+write_uint16_at := _write_multibyte_uint_at#(.Value: UInt16)
+write_uint32_at := _write_multibyte_uint_at#(.Value: UInt32)
+write_uint64_at := _write_multibyte_uint_at#(.Value: UInt64)

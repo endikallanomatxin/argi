@@ -54,38 +54,20 @@ _byte_reader_skip := (.self: $&ByteReader, .count: UIntNative) -> (
     result = ..ok Void()
 }
 
-read_uint16 := (.self: $&ByteReader, .order: ByteOrder) -> (
-    .result : Errable#(UInt16, (..out_of_bounds))
+_read_uint_cursor := #(.Value: Type: UInt) (.self: $&ByteReader, .order: ByteOrder) -> (
+    .result : Errable#(Value, (..out_of_bounds))
 ) {
-    value_out ::= read_uint16_at(
+    value_out ::= _read_multibyte_uint_at#(.Value: Value)(
         .bytes = self&._bytes, .offset = self&._position, .order = order
     )!
-    self&._position = self&._position + 2
+    self&._position = self&._position + size_of(.type = Value)
 
     result = ..ok value_out
 }
 
-read_uint32 := (.self: $&ByteReader, .order: ByteOrder) -> (
-    .result : Errable#(UInt32, (..out_of_bounds))
-) {
-    value_out ::= read_uint32_at(
-        .bytes = self&._bytes, .offset = self&._position, .order = order
-    )!
-    self&._position = self&._position + 4
-
-    result = ..ok value_out
-}
-
-read_uint64 := (.self: $&ByteReader, .order: ByteOrder) -> (
-    .result : Errable#(UInt64, (..out_of_bounds))
-) {
-    value_out ::= read_uint64_at(
-        .bytes = self&._bytes, .offset = self&._position, .order = order
-    )!
-    self&._position = self&._position + 8
-
-    result = ..ok value_out
-}
+read_uint16 := _read_uint_cursor#(.Value: UInt16)
+read_uint32 := _read_uint_cursor#(.Value: UInt32)
+read_uint64 := _read_uint_cursor#(.Value: UInt64)
 
 _byte_writer_skip := (.self: $&ByteWriter, .count: UIntNative) -> (
     .result : Errable#(Void, (..out_of_bounds))
@@ -100,35 +82,17 @@ _byte_writer_skip := (.self: $&ByteWriter, .count: UIntNative) -> (
     result = ..ok Void()
 }
 
-write_uint16 := (.self: $&ByteWriter, .value: UInt16, .order: ByteOrder) -> (
-    .result : Errable#(Void, (..out_of_bounds))
-) {
-    value_out ::= write_uint16_at(
+_write_uint_cursor := #(.Value: Type: UInt) (
+    .self: $&ByteWriter, .value: Value, .order: ByteOrder
+) -> (.result: Errable#(Void, (..out_of_bounds))) {
+    value_out ::= _write_multibyte_uint_at#(.Value: Value)(
         .bytes = self&._bytes, .offset = self&._position, .value = value, .order = order
     )!
-    self&._position = self&._position + 2
+    self&._position = self&._position + size_of(.type = Value)
 
     result = ..ok value_out
 }
 
-write_uint32 := (.self: $&ByteWriter, .value: UInt32, .order: ByteOrder) -> (
-    .result : Errable#(Void, (..out_of_bounds))
-) {
-    value_out ::= write_uint32_at(
-        .bytes = self&._bytes, .offset = self&._position, .value = value, .order = order
-    )!
-    self&._position = self&._position + 4
-
-    result = ..ok value_out
-}
-
-write_uint64 := (.self: $&ByteWriter, .value: UInt64, .order: ByteOrder) -> (
-    .result : Errable#(Void, (..out_of_bounds))
-) {
-    value_out ::= write_uint64_at(
-        .bytes = self&._bytes, .offset = self&._position, .value = value, .order = order
-    )!
-    self&._position = self&._position + 8
-
-    result = ..ok value_out
-}
+write_uint16 := _write_uint_cursor#(.Value: UInt16)
+write_uint32 := _write_uint_cursor#(.Value: UInt32)
+write_uint64 := _write_uint_cursor#(.Value: UInt64)
