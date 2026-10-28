@@ -71,6 +71,36 @@ const c_abi = @import("4_semantics/global/c_abi.zig");
 
 // Register imported tests independently of the runner's name filters.
 comptime {
+    _ = @import("0_commands/build.zig");
+    _ = @import("0_commands/file_uri.zig");
+    _ = @import("0_commands/init.zig");
+    _ = @import("0_commands/lsp_syntax.zig");
+    _ = @import("0_commands/repl_input.zig");
+    _ = @import("0_commands/run.zig");
+    _ = @import("1_base/diagnostic.zig");
+    _ = @import("1_base/path_identity.zig");
+    _ = @import("1_base/source_db.zig");
+    _ = @import("1_base/target.zig");
+    _ = @import("2_tokens/token.zig");
+    _ = @import("4_semantics/frontend_test_support.zig");
+    _ = @import("4_semantics/global/cleanup_input.zig");
+    _ = @import("4_semantics/global/constructors.zig");
+    _ = @import("4_semantics/global/contract_evidence.zig");
+    _ = @import("4_semantics/global/expressions.zig");
+    _ = @import("4_semantics/global/identity_cache.zig");
+    _ = @import("4_semantics/global/module_linker.zig");
+    _ = @import("4_semantics/global/print.zig");
+    _ = @import("4_semantics/global/reach_context.zig");
+    _ = @import("4_semantics/global/resolution.zig");
+    _ = @import("4_semantics/global/standard_contracts.zig");
+    _ = @import("4_semantics/module/function_identity_lowerer.zig");
+    _ = @import("4_semantics/module/module_alias_lowerer.zig");
+    _ = @import("4_semantics/primitives/registry.zig");
+    _ = @import("4_semantics/safety/annotations.zig");
+    _ = @import("4_semantics/safety/body_cache.zig");
+    _ = @import("4_semantics/safety/input_demands.zig");
+    _ = @import("4_semantics/safety/summary_cache.zig");
+    _ = @import("execution/acquired_values.zig");
     _ = @import("compiler_fingerprint.zig");
     _ = @import("0_commands/repl_highlight.zig");
     _ = @import("4_semantics/entry_interface.zig");

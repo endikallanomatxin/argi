@@ -33,6 +33,19 @@ every substantive root `main.rg` to have a sibling `test.zig` or coverage in tho
 custom tests. Nested imported modules belong to their containing fixture.
 Unfiltered runs also reject discovered files that contribute no Zig tests.
 
+## Compiler unit test registration
+
+Register source files containing local Zig tests explicitly in
+`src/internal_tests.zig`. Zig discovers tests in imported modules, but a module
+reachable only through a function body may not be analyzed under a name filter.
+Do not rely on another test incidentally touching that code. Repeated imports
+refer to the same Zig module and do not duplicate its tests.
+
+When adding or auditing local tests, run a filter matching the module or test
+name and confirm the output reports a nonzero test count; a successful build
+with no tests executed does not validate the case. Fixture discovery remains
+separate and automatic as described above.
+
 ## In-process frontend fixtures
 
 Semantic/Safety fixtures can keep their `.rg` modules and ordinary Zig test
