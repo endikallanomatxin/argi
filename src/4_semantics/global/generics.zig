@@ -388,7 +388,7 @@ pub const Resolver = struct {
             try self.graph.resolveType(self.allocator, ty, value);
             if (value == .generic) {
                 const instance = global_types.genericInstance(self.graph, body_type) orelse return .changed;
-                try self.graph.generic_instances.append(self.allocator, .{ .type_id = ty, .shape = instance.shape });
+                try self.graph.registerGenericInstance(self.allocator, .{ .type_id = ty, .shape = instance.shape });
             }
             self.stats.type_instances += 1;
             return .changed;
@@ -414,7 +414,7 @@ pub const Resolver = struct {
             } },
             else => @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .alias = body_type },
         };
-        try self.graph.generic_instances.append(self.allocator, .{ .type_id = ty, .shape = shape });
+        try self.graph.registerGenericInstance(self.allocator, .{ .type_id = ty, .shape = shape });
         self.stats.type_instances += 1;
         return .changed;
     }
@@ -1697,7 +1697,7 @@ test "pending generic types revisit old holes and discover appended types" {
     try graph.resolveType(a, @enumFromInt(0), .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } });
     try std.testing.expect(!try resolver.materializePendingTypes(&pending));
     try std.testing.expectEqual(@as(usize, 1), pending.items.items.len);
-    try graph.generic_instances.append(a, .{ .type_id = @enumFromInt(0), .shape = .{ .alias = @enumFromInt(1) } });
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(0), .shape = .{ .alias = @enumFromInt(1) } });
     try graph.types.append(a, .{ .builtin = .Int32 });
     try graph.markTypeUnresolved(a, @enumFromInt(1));
     try std.testing.expect(!try resolver.materializePendingTypes(&pending));

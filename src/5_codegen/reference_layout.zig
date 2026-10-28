@@ -203,10 +203,10 @@ test "reference evidence follows materialized nominal and generic shapes" {
     try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(1), .source = source });
     try graph.declarations.append(a, .{ .name = name, .source = source, .kind = .type });
     try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
-    try graph.generic_instances.appendSlice(a, &.{
+    for ([_]g.GenericInstance{
         .{ .type_id = @enumFromInt(3), .shape = .{ .array = .{ .element = @enumFromInt(2), .length = 7 } } },
         .{ .type_id = @enumFromInt(4), .shape = .{ .alias = @enumFromInt(3) } },
-    });
+    }) |instance| try graph.registerGenericInstance(a, instance);
     var layout: Layout = .{};
     defer layout.deinit(a);
     try std.testing.expectEqual(@as(usize, 1), try layout.count(a, &graph, @enumFromInt(2)));

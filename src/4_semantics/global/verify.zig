@@ -255,6 +255,12 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
     };
     try require(materialized_generic_count == graph.generic_instances.items.len);
 
+    try require(graph.generic_instance_by_type.items.len <= graph.types.items.len);
+    for (graph.generic_instance_by_type.items, 0..) |index, raw| {
+        if (index == graph_mod.GlobalSemanticGraph.no_generic_instance) continue;
+        try require(index < graph.generic_instances.items.len);
+        try require(@intFromEnum(graph.generic_instances.items[index].type_id) == raw);
+    }
     for (graph.generic_instances.items, 0..) |instance, index| {
         try require(verify.idFits(instance.type_id, graph.types.items.len));
         const generic = switch (graph.types.items[@intFromEnum(instance.type_id)]) {
@@ -262,8 +268,9 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
             else => return error.InvalidGlobalSemanticGraph,
         };
         try require(graph.familyDefinition(generic.base).kind == .type);
-        for (graph.generic_instances.items[0..index]) |previous|
-            try require(previous.type_id != instance.type_id);
+        const raw = @intFromEnum(instance.type_id);
+        try require(raw < graph.generic_instance_by_type.items.len);
+        try require(graph.generic_instance_by_type.items[raw] == index);
         switch (instance.shape) {
             .structure => |shape| try require(verify.rangeFits(shape.fields, graph.fields.items.len)),
             .choice => |shape| try require(verify.rangeFits(shape.variants, graph.variants.items.len)),
@@ -489,4 +496,27 @@ test "global verifier requires cleanup targets to prove the written storage" {
         .input_bindings = .{ .start = 0, .len = 1 },
     });
     try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+}
+
+test "generic instance verifier rejects inconsistent derived indexes" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.family_definitions.append(a, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .type, .parameter_count = 0 });
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } },
+    });
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(1), .shape = .{ .alias = @enumFromInt(0) } });
+    try verifyGenericInstances(&graph);
+    graph.generic_instance_by_type.items[1] = graph_mod.GlobalSemanticGraph.no_generic_instance;
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyGenericInstances(&graph));
+    graph.generic_instance_by_type.items[1] = 0;
+    graph.generic_instance_by_type.items[0] = 0;
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyGenericInstances(&graph));
+    try std.testing.expectEqual(null, graph.genericInstance(@enumFromInt(0)));
+    graph.generic_instance_by_type.items[0] = graph_mod.GlobalSemanticGraph.no_generic_instance;
+    graph.generic_instance_by_type.items[1] = 99;
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyGenericInstances(&graph));
+    try std.testing.expectEqual(null, graph.genericInstance(@enumFromInt(1)));
 }

@@ -302,7 +302,7 @@ fn appendTypes(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGr
 }
 
 fn appendGenericInstances(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
-    for (module.semantic.generic_instances.items) |instance| try result.generic_instances.append(allocator, .{
+    for (module.semantic.generic_instances.items) |instance| try result.registerGenericInstance(allocator, .{
         .type_id = globalType(o, instance.type_id),
         .shape = switch (instance.shape) {
             .structure => |shape| .{ .structure = .{

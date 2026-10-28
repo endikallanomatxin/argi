@@ -388,6 +388,8 @@ pub const GlobalSemanticGraph = struct {
     type_definitions: std.ArrayList(TypeDefinition) = .empty,
     family_definitions: std.ArrayList(FamilyDefinition) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
+    /// Derived pool positions indexed by TypeId. An empty slot has no instance.
+    generic_instance_by_type: std.ArrayList(u32) = .empty,
     functions: std.ArrayList(Function) = .empty,
     generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
@@ -567,6 +569,11 @@ pub const GlobalSemanticGraph = struct {
     /// Resolver-owned worklists and caches remain outside this graph checkpoint.
     pub fn rollback(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
+        const instance_count = saved.pool_lengths[std.meta.fieldIndex(GlobalSemanticGraph, "generic_instances").?];
+        for (self.generic_instances.items[instance_count..]) |instance| {
+            const raw = @intFromEnum(instance.type_id);
+            self.generic_instance_by_type.items[raw] = no_generic_instance;
+        }
         self.discardIndexedTail(allocator, saved.indexed_functions, saved.indexed_declarations);
         self.discardParameterizedTail(allocator, saved.indexed_parameterized_modules, saved.indexed_module_functions);
         while (self.construction.node_rewrites.items.len > saved.node_rewrites_len) {
@@ -652,20 +659,47 @@ pub const GlobalSemanticGraph = struct {
         }
         self.safety_batches.deinit(allocator);
         inline for (.{
-            &self.modules,                      &self.module_aliases,               &self.files,                       &self.declarations,
-            &self.symbols,                      &self.symbol_declarations,          &self.types,                       &self.type_definitions,
-            &self.family_definitions,           &self.generic_instances,            &self.functions,                   &self.generic_function_instances,
-            &self.bindings,                     &self.nodes,                        &self.blocks,                      &self.fields,
-            &self.variants,                     &self.generic_arguments,            &self.value_fields,                &self.switch_cases,
-            &self.switches,                     &self.auto_deinit_fields,           &self.auto_deinits,                &self.virtual_registries,
-            &self.virtualizes,                  &self.virtual_calls,                &self.reach_segments,              &self.reach_alternatives,
-            &self.reaches,                      &self.nullable_unwraps,             &self.testing_expect_errors,       &self.error_propagations,
-            &self.error_contexts,               &self.node_refs,                    &self.type_refs,                   &self.binding_refs,
-            &self.function_refs,                &self.virtual_registry_refs,        &self.strings,                     &self.roots,
-            &self.contract_safety_conformances, &self.contract_conformances,        &self.contract_operation_bindings, &self.captured_expressions,
-            &self.argument_default_temporaries, &self.captured_expression_bindings, &self.comptime_requests,           &self.block_assumptions,
+            &self.modules,                  &self.module_aliases,               &self.files,                        &self.declarations,
+            &self.symbols,                  &self.symbol_declarations,          &self.types,                        &self.type_definitions,
+            &self.family_definitions,       &self.generic_instances,            &self.functions,                    &self.generic_function_instances,
+            &self.generic_instance_by_type, &self.bindings,                     &self.nodes,                        &self.blocks,
+            &self.fields,                   &self.variants,                     &self.generic_arguments,            &self.value_fields,
+            &self.switch_cases,             &self.switches,                     &self.auto_deinit_fields,           &self.auto_deinits,
+            &self.virtual_registries,       &self.virtualizes,                  &self.virtual_calls,                &self.reach_segments,
+            &self.reach_alternatives,       &self.reaches,                      &self.nullable_unwraps,             &self.testing_expect_errors,
+            &self.error_propagations,       &self.error_contexts,               &self.node_refs,                    &self.type_refs,
+            &self.binding_refs,             &self.function_refs,                &self.virtual_registry_refs,        &self.strings,
+            &self.roots,                    &self.contract_safety_conformances, &self.contract_conformances,        &self.contract_operation_bindings,
+            &self.captured_expressions,     &self.argument_default_temporaries, &self.captured_expression_bindings, &self.comptime_requests,
+            &self.block_assumptions,
         }) |list| list.deinit(allocator);
         self.* = .{};
+    }
+
+    pub const no_generic_instance = std.math.maxInt(u32);
+
+    pub fn registerGenericInstance(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, instance: GenericInstance) !void {
+        const raw = @intFromEnum(instance.type_id);
+        if (raw >= self.types.items.len) return error.InvalidGenericInstanceType;
+        if (raw < self.generic_instance_by_type.items.len and self.generic_instance_by_type.items[raw] != no_generic_instance)
+            return error.DuplicateGenericInstance;
+        if (self.generic_instances.items.len >= no_generic_instance) return error.GenericInstanceLimit;
+        // Reserve both buffers before publishing either the record or its index.
+        try self.generic_instances.ensureUnusedCapacity(allocator, 1);
+        try self.generic_instance_by_type.ensureTotalCapacity(allocator, @as(usize, raw) + 1);
+        while (self.generic_instance_by_type.items.len <= raw)
+            self.generic_instance_by_type.appendAssumeCapacity(no_generic_instance);
+        self.generic_instance_by_type.items[raw] = @intCast(self.generic_instances.items.len);
+        self.generic_instances.appendAssumeCapacity(instance);
+    }
+
+    pub fn genericInstance(self: *const GlobalSemanticGraph, ty: GlobalTypeId) ?GenericInstance {
+        const raw = @intFromEnum(ty);
+        if (raw >= self.generic_instance_by_type.items.len) return null;
+        const index = self.generic_instance_by_type.items[raw];
+        if (index >= self.generic_instances.items.len) return null;
+        const instance = self.generic_instances.items[index];
+        return if (instance.type_id == ty) instance else null;
     }
 
     pub fn declarationSourceName(self: *const GlobalSemanticGraph, id: GlobalDeclId) StringRange {
@@ -1264,6 +1298,7 @@ pub const GlobalSemanticGraph = struct {
             self.types.items.len * @sizeOf(GlobalType) +
             self.construction.type_resolution.items.len * @sizeOf(TypeResolutionState) +
             self.generic_instances.items.len * @sizeOf(GenericInstance) +
+            self.generic_instance_by_type.items.len * @sizeOf(u32) +
             self.functions.items.len * @sizeOf(Function) +
             self.generic_function_instances.items.len * @sizeOf(GenericFunctionInstance) +
             self.bindings.items.len * @sizeOf(Binding) +
@@ -2277,4 +2312,66 @@ test "nominal definition completion rolls back without changing identity" {
     try std.testing.expectEqual(@as(usize, 1), graph.type_definitions.items.len);
     try std.testing.expectEqual(null, graph.typeDefinition(id).struct_fields);
     try std.testing.expectEqual(@as(u32, 7), graph.typeDefinition(id).source.offset);
+}
+
+test "generic instance registration indexes old type completions through nested rollback" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    for (0..8) |_| try graph.types.append(a, .{ .builtin = .Int32 });
+    const instance = GenericInstance{ .type_id = @enumFromInt(7), .shape = .{ .alias = @enumFromInt(0) } };
+    try graph.registerGenericInstance(a, instance);
+    const outer = graph.checkpoint();
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(2), .shape = .{ .alias = @enumFromInt(1) } });
+    const inner = graph.checkpoint();
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(3), .shape = .{ .alias = @enumFromInt(0) } });
+    try std.testing.expect(graph.genericInstance(@enumFromInt(3)) != null);
+    graph.rollback(a, inner);
+    try std.testing.expectEqual(null, graph.genericInstance(@enumFromInt(3)));
+    try std.testing.expect(graph.genericInstance(@enumFromInt(2)) != null);
+    graph.rollback(a, outer);
+    try std.testing.expectEqual(null, graph.genericInstance(@enumFromInt(2)));
+    try std.testing.expectEqualDeep(instance, graph.genericInstance(@enumFromInt(7)).?);
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(2), .shape = .{ .alias = @enumFromInt(0) } });
+    try std.testing.expectEqual(@as(GlobalTypeId, @enumFromInt(0)), graph.genericInstance(@enumFromInt(2)).?.shape.alias);
+    try std.testing.expectError(error.DuplicateGenericInstance, graph.registerGenericInstance(a, instance));
+    var copy = try graph.clone(a);
+    defer copy.deinit(a);
+    for (0..64) |_| try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(63), .shape = .{ .alias = @enumFromInt(0) } });
+    try std.testing.expectEqualDeep(instance, copy.genericInstance(@enumFromInt(7)).?);
+    try std.testing.expectEqual(null, copy.genericInstance(@enumFromInt(63)));
+}
+
+fn instanceRegistrationAllocationFailures(allocator: std.mem.Allocator) !void {
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    for (0..9) |_| try graph.types.append(allocator, .{ .builtin = .Int32 });
+    graph.registerGenericInstance(allocator, .{ .type_id = @enumFromInt(8), .shape = .{ .alias = @enumFromInt(0) } }) catch |err| {
+        try std.testing.expectEqual(@as(usize, 0), graph.generic_instances.items.len);
+        try std.testing.expectEqual(@as(usize, 0), graph.generic_instance_by_type.items.len);
+        return err;
+    };
+    try std.testing.expect(graph.genericInstance(@enumFromInt(8)) != null);
+    for (0..8) |raw| try std.testing.expectEqual(null, graph.genericInstance(@enumFromInt(raw)));
+}
+
+test "generic instance registration never publishes half an index on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, instanceRegistrationAllocationFailures, .{});
+}
+
+test "generic instance rollback clears reused type and pool identifiers" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    const saved = graph.checkpoint();
+    try graph.types.append(a, .{ .builtin = .UInt8 });
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(1), .shape = .{ .alias = @enumFromInt(0) } });
+    graph.rollback(a, saved);
+    try std.testing.expectEqual(null, graph.genericInstance(@enumFromInt(1)));
+    try std.testing.expectEqual(@as(usize, 0), graph.generic_instances.items.len);
+    try graph.types.append(a, .{ .builtin = .UInt16 });
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(1), .shape = .{ .array = .{ .length = 3, .element = @enumFromInt(0) } } });
+    try std.testing.expectEqual(@as(u64, 3), graph.genericInstance(@enumFromInt(1)).?.shape.array.length);
 }

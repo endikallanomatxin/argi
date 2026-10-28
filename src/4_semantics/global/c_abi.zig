@@ -770,7 +770,7 @@ test "callback signatures reject safe references through materialized aliases" {
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
         .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } },
     });
-    try graph.generic_instances.append(allocator, .{ .type_id = @enumFromInt(2), .shape = .{ .alias = @enumFromInt(1) } });
+    try graph.registerGenericInstance(allocator, .{ .type_id = @enumFromInt(2), .shape = .{ .alias = @enumFromInt(1) } });
     try std.testing.expect(isSafeReferenceValue(&graph, @enumFromInt(2)));
     try std.testing.expect(!isSafeReferenceValue(&graph, @enumFromInt(0)));
 }

@@ -578,7 +578,7 @@ test "cleanup ownership follows late aggregate children and generic aliases with
         .{ .array = .{ .element = @enumFromInt(4), .length = 0 } },
         .{ .structural_choice = .{ .variants = .{ .start = 1, .len = 1 } } },
     });
-    try graph.generic_instances.append(a, .{ .type_id = @enumFromInt(3), .shape = .{ .alias = @enumFromInt(2) } });
+    try graph.registerGenericInstance(a, .{ .type_id = @enumFromInt(3), .shape = .{ .alias = @enumFromInt(2) } });
     try graph.generic_arguments.append(a, .{ .name = name, .value = .{ .type = @enumFromInt(4) } });
     try graph.contract_conformances.append(a, .{ .declaration = @enumFromInt(0), .participants = .{ .start = 0, .len = 1 }, .associated_arguments = .{ .start = 0, .len = 0 }, .source = source });
     try std.testing.checkAllAllocationFailures(a, struct {

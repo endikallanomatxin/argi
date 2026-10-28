@@ -259,8 +259,7 @@ pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.
 
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {
     if (graph.isTypeUnresolved(ty)) return null;
-    for (graph.generic_instances.items) |instance| if (instance.type_id == ty) return instance;
-    return null;
+    return graph.genericInstance(ty);
 }
 
 pub fn typeForDeclaration(graph: *const graph_mod.GlobalSemanticGraph, decl: graph_mod.GlobalDeclId) ?graph_mod.GlobalTypeId {
