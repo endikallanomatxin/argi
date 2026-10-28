@@ -1414,7 +1414,7 @@ fn advanceResolution(
             // Propagated operand types can complete nested lists in writes or
             // independently typed literals. A parent's type does not certify
             // its value shape; later materialization may need another sweep.
-            if (try core.materializeAssignmentValues()) changed = true;
+            if (try core.materializeAssignmentValuesForUnit(reachable)) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_assignment_values_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (try core.materializeDereferences()) changed = true;

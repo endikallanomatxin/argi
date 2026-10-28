@@ -30,6 +30,49 @@ Retained memory includes the prelude (126.145 MiB before commands).
 
 Raw local logs: `.zig-cache/current-resolution-prelude-{10,100,1000}.csv`.
 
+## Contextualization within an execution unit
+
+Literal and write contextualization now select candidates from the unit's existing
+reachable-node set. Candidates are rebuilt each round and sorted by node ID, so
+older nodes completed by new facts remain eligible without a persistent cache.
+Initializer contextualization retains its full binding scan; compilation without
+a closed unit retains the full node scans.
+
+Three alternating ReleaseSafe runs of `execution-benchmark 1000 prelude calls
+1024`, comparing `e3aa998f5` with this change on Linux x86-64, measured:
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Median total command-loop time | 6,459.6 ms | 6,166.7 ms |
+| Total time range | 6,418.2–6,469.3 ms | 6,146.3–6,233.3 ms |
+| Median frontend/publication time | 5,800.4 ms | 5,504.2 ms |
+| Retained memory after 1,000 commands | 142.378 MiB | 142.378 MiB |
+
+Both binaries ran from the installed binary directory against the same core
+bundle, with no concurrent test suite. Initial prelude preparation is excluded.
+The median total improvement is 4.5% for this workload, not a general compilation
+speedup claim.
+
+Separate instrumented runs reduced assignment-context visits from 151,559,519
+to 9,763,257 and inclusive time from 469.3 to 78.4 ms. This includes candidate
+discovery and the unchanged initializer scan. Typed-literal and write visits
+each fell from 71,897,966 to 170,057; fixed-point rounds remained 3,001.
+
+Raw local logs: `.zig-cache/context-unit-controlled-{base,new}-{1,2,3}.csv`,
+`.zig-cache/context-candidates-before-profile.csv`, and
+`.zig-cache/context-unit-after-profile.csv`.
+
+An earlier attempt rebuilt literal/write candidate lists by scanning the entire
+graph once, replacing two full node scans. It reduced outer visits from 151.6
+million to about 93.6 million, but inclusive contextualization time increased
+from 469.3 to 519.3 ms. A pointer-iteration variant measured 522.8 ms. Unprofiled
+total timings did not establish a consistent improvement, so both were discarded.
+Fewer counted visits alone did not offset candidate discovery and allocation.
+The retained change instead limits discovery to the existing unit dependency set.
+These exploratory single-run timings are not controlled throughput comparisons.
+Local logs: `.zig-cache/context-candidates-after-{profile,throughput}.csv` and
+`.zig-cache/context-candidates-pointer-{profile,throughput}.csv`.
+
 Build the compiler and benchmark tool before measuring, with no test suite active:
 
 ```sh

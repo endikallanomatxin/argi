@@ -4,8 +4,8 @@
 
 - Remove resolver state used only to communicate temporary results.
 - Clarify pass dependencies and ownership operand staging versus lowering.
-- Reduce measured redundant resolution and verification, especially nested
-  literal/write contextualization. Include older entities completed by new facts.
+- Reduce measured redundant resolution and verification, including remaining
+  binding/type sweeps. Include older entities completed by new facts.
 - Measure repeated work across generic specializations before sharing it.
 
 ## Safety

@@ -2429,24 +2429,53 @@ pub const Resolver = struct {
     // Keep this order: record normalization can expose initializer context,
     // and writes may consume types completed by either preceding phase.
     pub fn materializeAssignmentValues(self: *Resolver) !bool {
+        return self.materializeAssignmentValuesForUnit(null);
+    }
+
+    pub fn materializeAssignmentValuesForUnit(self: *Resolver, reachable: ?*const @import("reachability.zig").FunctionSet) !bool {
         var changed = false;
         const measurement = if (self.scan_profile) |profile| profile.begin(.assignment_values) else null;
         defer if (measurement) |m| m.finish(changed);
-        if (try self.materializeTypedLiterals(measurement)) changed = true;
+        // A closed unit already owns its dependency set. Rebuild candidate
+        // lists each sweep so old nodes completed by new facts remain eligible.
+        var literals: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+        defer literals.deinit(self.allocator);
+        var writes: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+        defer writes.deinit(self.allocator);
+        if (reachable) |unit| {
+            var nodes = unit.nodes.keyIterator();
+            while (nodes.next()) |id| {
+                if (measurement) |m| m.visit(1);
+                switch (self.graph.node(id.*).content) {
+                    .struct_value_literal => try literals.append(self.allocator, id.*),
+                    .assignment, .pointer_assignment => try writes.append(self.allocator, id.*),
+                    else => {},
+                }
+            }
+            // Preserve the full sweep's deterministic dependency order.
+            const Order = struct {
+                fn less(_: void, left: global_sg.GlobalNodeId, right: global_sg.GlobalNodeId) bool {
+                    return @intFromEnum(left) < @intFromEnum(right);
+                }
+            };
+            std.mem.sort(global_sg.GlobalNodeId, literals.items, {}, Order.less);
+            std.mem.sort(global_sg.GlobalNodeId, writes.items, {}, Order.less);
+        }
+        if (try self.materializeTypedLiterals(if (reachable != null) literals.items else null, measurement)) changed = true;
         if (try self.materializeInitializerValues(measurement)) changed = true;
-        if (try self.materializeWriteValues(measurement)) changed = true;
+        if (try self.materializeWriteValues(if (reachable != null) writes.items else null, measurement)) changed = true;
         return changed;
     }
 
-    fn materializeTypedLiterals(self: *Resolver, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
+    fn materializeTypedLiterals(self: *Resolver, candidates: ?[]const global_sg.GlobalNodeId, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
         var changed = false;
         const measurement = if (self.scan_profile) |profile| profile.begin(.typed_literal_contexts) else null;
         defer if (measurement) |m| m.finish(changed);
         // Specialized generic bodies can already carry their contextual type.
         // Normalize their literals too, even without an assignment type change.
-        const count = self.graph.nodes.items.len;
-        var index: usize = 0;
-        while (index < count) : (index += 1) {
+        const count = if (candidates) |ids| ids.len else self.graph.nodes.items.len;
+        for (0..count) |offset| {
+            const index = if (candidates) |ids| @intFromEnum(ids[offset]) else offset;
             if (measurement) |m| m.visit(1);
             if (parent) |m| m.visit(1);
             const node = self.graph.nodes.items[index];
@@ -2473,11 +2502,14 @@ pub const Resolver = struct {
         return changed;
     }
 
-    fn materializeWriteValues(self: *Resolver, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
+    fn materializeWriteValues(self: *Resolver, candidates: ?[]const global_sg.GlobalNodeId, parent: ?@import("resolution_profile.zig").Profile.Measurement) !bool {
         var changed = false;
         const measurement = if (self.scan_profile) |profile| profile.begin(.write_contexts) else null;
         defer if (measurement) |m| m.finish(changed);
-        for (self.graph.nodes.items) |node| {
+        const count = if (candidates) |ids| ids.len else self.graph.nodes.items.len;
+        for (0..count) |offset| {
+            const index = if (candidates) |ids| @intFromEnum(ids[offset]) else offset;
+            const node = self.graph.nodes.items[index];
             if (measurement) |m| m.visit(1);
             if (parent) |m| m.visit(1);
             const assignment = switch (node.content) {
@@ -3130,4 +3162,22 @@ test "typed record literals complete nested lists after operand types resolve" {
         visits += phase.visits;
     }
     try std.testing.expectEqual(total.visits, visits);
+
+    // A node outside the selected unit stays pending. Adding that old node to
+    // reachability must discover it on the next sweep, without a new graph ID.
+    resolver.scan_profile = null;
+    var unit = @import("reachability.zig").FunctionSet.init(a);
+    defer unit.deinit();
+    try graph.setNodeType(a, @enumFromInt(0), @enumFromInt(0));
+    try std.testing.expect(!try resolver.materializeAssignmentValuesForUnit(&unit));
+    try std.testing.expect(graph.node(@enumFromInt(1)).content == .list_literal);
+    try unit.nodes.put(@enumFromInt(2), {});
+    var selected = graph.beginTransaction(a);
+    defer selected.deinit();
+    try std.testing.expect(try resolver.materializeAssignmentValuesForUnit(&unit));
+    try std.testing.expect(graph.node(@enumFromInt(1)).content == .array_literal);
+    try std.testing.expect(!try resolver.materializeAssignmentValuesForUnit(&unit));
+    selected.rollback();
+    try std.testing.expect(graph.node(@enumFromInt(1)).content == .list_literal);
+    try std.testing.expect(try resolver.materializeAssignmentValuesForUnit(&unit));
 }
