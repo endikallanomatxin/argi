@@ -402,6 +402,116 @@ pub const State = struct {
     pub fn variantActive(self: *State, storage: facts.Place, index: u32) bool {
         return if (self.activeVariant(storage)) |active| active == index else false;
     }
+    /// Seed an unknown input referent without asserting that inputs are disjoint.
+    /// Backing may be shared; each observation keeps its own value generation.
+    pub fn establishSymbolicInput(self: *State, ty: graph_mod.GlobalTypeId, shared_backing: ?facts.ValidityRootId) !SymbolicPointeeState {
+        const namespace = self.tracker.namespace;
+        const identity = if (namespace) |shared| shared.next_symbolic_id else self.symbolic_pointees.items.len;
+        if (identity >= std.math.maxInt(u32)) return error.SafetySymbolicIdentityLimit;
+        const root_count: u32 = if (shared_backing == null) 2 else 1;
+        const first_root = if (namespace) |shared| shared.next_id else self.tracker.roots.items.len;
+        if (first_root > std.math.maxInt(u32) - root_count) return error.SafetyRootIdentityLimit;
+        try self.symbolic_pointees.ensureUnusedCapacity(1);
+        try self.tracker.roots.ensureTotalCapacity(first_root + root_count);
+        const backing = shared_backing orelse try self.tracker.establish(.fresh);
+        const generation = try self.tracker.establish(.fresh);
+        const input: SymbolicPointeeState = .{
+            .identity = @enumFromInt(identity),
+            .ty = ty,
+            .initializedness = .initialized,
+            .backing = backing,
+            .generation = generation,
+        };
+        self.symbolic_pointees.appendAssumeCapacity(input);
+        if (namespace) |shared| shared.next_symbolic_id += 1;
+        return input;
+    }
+
+    /// Observe a projected unknown referent using branch-shared identities.
+    /// The caller supplies its checked type; this state owns no type graph.
+    pub fn projectSymbolicStorage(self: *State, parent: SymbolicPointeeState, projection: facts.Projection, child_type: ?graph_mod.GlobalTypeId) !?struct { identity: facts.SymbolicPointeeId, generation: facts.ValidityRootId } {
+        const namespace = self.tracker.namespace orelse return null;
+        const parent_generation = parent.generation orelse return null;
+        var identity: ?facts.SymbolicPointeeId = null;
+        var initial: ?facts.ValidityRootId = null;
+        var backing: ?facts.ValidityRootId = null;
+        for (namespace.projected_storage.items) |entry| {
+            if (entry.parent == parent.identity and entry.parent_generation == parent_generation and entry.projection.eql(projection)) {
+                identity = entry.identity;
+                initial = entry.generation;
+                backing = entry.backing;
+                break;
+            }
+        }
+        if (identity == null) {
+            const next = namespace.next_symbolic_id;
+            const following = try std.math.add(u32, next, 1);
+            identity = @enumFromInt(next);
+            for (namespace.projected_storage.items) |entry| {
+                if (entry.parent_generation == parent_generation and entry.projection.eql(projection)) {
+                    backing = entry.backing;
+                    break;
+                }
+            }
+            // Reserve every table and root before publishing this projection.
+            const root_count: u32 = if (backing == null) 2 else 1;
+            if (namespace.next_id > std.math.maxInt(u32) - root_count) return error.SafetyRootIdentityLimit;
+            try namespace.projected_storage.ensureUnusedCapacity(self.symbolic_pointees.allocator, 1);
+            try self.symbolic_pointees.ensureUnusedCapacity(1);
+            try self.tracker.roots.ensureTotalCapacity(@as(usize, namespace.next_id) + root_count);
+            if (backing == null) backing = try self.tracker.establish(.fresh);
+            initial = try self.tracker.establish(.fresh);
+            namespace.projected_storage.appendAssumeCapacity(.{
+                .parent = parent.identity,
+                .parent_generation = parent_generation,
+                .projection = projection,
+                .identity = identity.?,
+                .backing = backing.?,
+                .generation = initial.?,
+                .ty = child_type,
+            });
+            namespace.next_symbolic_id = following;
+        }
+        var generation: ?facts.ValidityRootId = null;
+        for (self.symbolic_pointees.items) |*entry| if (entry.identity == identity.?) {
+            if (entry.generation) |current| {
+                if (entry.initializedness == .initialized and !self.tracker.isAlive(current)) {
+                    // A joined write can leave a complete value with several
+                    // possible incarnations. A new address observes the current
+                    // value; historical references retain the old incarnation.
+                    generation = try self.tracker.establish(.fresh);
+                    entry.generation = generation;
+                } else generation = current;
+            } else if (entry.initializedness == .initialized) {
+                generation = try self.tracker.establish(.fresh);
+                entry.generation = generation;
+            } else {
+                // Preserve the uncertain incarnation as a validity obligation;
+                // never turn failed projection into an untracked reference.
+                try self.tracker.materialize(initial.?);
+                generation = initial;
+            }
+            break;
+        };
+        if (generation == null) {
+            // A field not observed on this branch still starts with the input's
+            // initialized value. Refreshes retain their separate generations.
+            try self.symbolic_pointees.ensureUnusedCapacity(1);
+            try self.tracker.roots.ensureTotalCapacity(@as(usize, @max(@intFromEnum(backing.?), @intFromEnum(initial.?))) + 1);
+            try self.tracker.materialize(backing.?);
+            try self.tracker.materialize(initial.?);
+            generation = initial;
+            self.symbolic_pointees.appendAssumeCapacity(.{
+                .identity = identity.?,
+                .initializedness = .initialized,
+                .ty = child_type,
+                .backing = backing,
+                .generation = generation,
+            });
+        }
+        return .{ .identity = identity.?, .generation = generation.? };
+    }
+
     pub fn referenceObservationGeneration(self: *State, pointer: facts.ValueFacts) !?facts.ValidityRootId {
         if (pointer.referenced_place) |place| return try self.storageGeneration(place);
         if (pointer.symbolic_pointees.len == 1) {
@@ -746,6 +856,71 @@ fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(.initialized, state.findPlace(storage).?.initializedness);
     try std.testing.expectEqual(@as(?u32, 2), state.activeVariant(storage));
     try std.testing.expect(state.tracker.isAlive(root));
+}
+
+test "Safety symbolic inputs publish identities and roots together" {
+    inline for (.{ false, true }) |namespaced| {
+        try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+            fn seed(a: std.mem.Allocator, shared: bool) !void {
+                var namespace: facts.Tracker.RootNamespace = .{};
+                defer namespace.deinit(a);
+                var state = State.init(a);
+                defer state.deinit();
+                if (shared) state.tracker.namespace = &namespace;
+                const first = state.establishSymbolicInput(@enumFromInt(0), null) catch |err| {
+                    try std.testing.expectEqual(@as(usize, 0), state.symbolic_pointees.items.len);
+                    try std.testing.expectEqual(@as(usize, 0), state.tracker.roots.items.len);
+                    try std.testing.expectEqual(@as(u32, 0), namespace.next_symbolic_id);
+                    try std.testing.expectEqual(@as(u32, 0), namespace.next_id);
+                    return err;
+                };
+                const second = try state.establishSymbolicInput(@enumFromInt(1), first.backing);
+                try std.testing.expectEqual(first.backing, second.backing);
+                try std.testing.expect(first.identity != second.identity);
+                try std.testing.expect(first.generation != second.generation);
+                try std.testing.expectEqual(value_state.Initializedness.initialized, first.initializedness);
+                try std.testing.expect(state.tracker.isAlive(first.backing.?));
+                try std.testing.expect(state.tracker.isAlive(first.generation.?));
+                try std.testing.expect(state.tracker.isAlive(second.generation.?));
+            }
+        }.seed, .{namespaced});
+    }
+}
+
+test "Safety symbolic projection publication preserves branch identities on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn project(a: std.mem.Allocator) !void {
+            var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+            defer namespace.deinit(a);
+            var state = State.init(a);
+            defer state.deinit();
+            state.tracker.namespace = &namespace;
+            const backing = try state.tracker.establish(.fresh);
+            const generation = try state.tracker.establish(.fresh);
+            const parent: SymbolicPointeeState = .{ .identity = @enumFromInt(0), .initializedness = .initialized, .backing = backing, .generation = generation };
+            try state.symbolic_pointees.append(parent);
+            var other = try state.clone(a);
+            defer other.deinit();
+            const selected = (state.projectSymbolicStorage(parent, .{ .field = 0 }, null) catch |err| {
+                try std.testing.expectEqual(@as(usize, 0), namespace.projected_storage.items.len);
+                try std.testing.expectEqual(@as(u32, 1), namespace.next_symbolic_id);
+                try std.testing.expectEqual(@as(u32, 2), namespace.next_id);
+                try std.testing.expectEqual(@as(usize, 2), state.tracker.roots.items.len);
+                try std.testing.expectEqual(@as(usize, 1), state.symbolic_pointees.items.len);
+                return err;
+            }).?;
+            const observed = (try other.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+            try std.testing.expectEqual(selected.identity, observed.identity);
+            try std.testing.expectEqual(selected.generation, observed.generation);
+            try std.testing.expectEqual(@as(usize, 1), namespace.projected_storage.items.len);
+            state.tracker.end(selected.generation);
+            const current = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+            try std.testing.expectEqual(selected.identity, current.identity);
+            try std.testing.expect(selected.generation != current.generation);
+            try std.testing.expect(!state.tracker.isAlive(selected.generation));
+            try std.testing.expect(other.tracker.isAlive(selected.generation));
+        }
+    }.project, .{});
 }
 
 test "Safety storage observation publishes generations atomically" {

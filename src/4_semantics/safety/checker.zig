@@ -640,26 +640,17 @@ pub const SafetyChecker = struct {
         prefix: facts.InputPath,
     ) anyerror!facts.ValueFacts {
         if (isPointer(self.graph, ty)) {
-            const backing = shared_backing.* orelse blk: {
-                const root = try state.tracker.establish(.fresh);
-                shared_backing.* = root;
-                break :blk root;
-            };
-            // Observations have separate generations even when inputs may
-            // alias. Ordered summary obligations check overlap at callers.
-            const generation = try state.tracker.establish(.fresh);
-            shared_generation.* = generation;
-            const identity: facts.SymbolicPointeeId = if (state.tracker.namespace) |namespace| blk: {
-                const next = namespace.next_symbolic_id;
-                namespace.next_symbolic_id = try std.math.add(u32, next, 1);
-                break :blk @enumFromInt(next);
-            } else @enumFromInt(state.symbolic_pointees.items.len);
-            try state.symbolic_pointees.append(.{ .identity = identity, .ty = self.graph.semanticType(ty).pointer.child, .initializedness = .initialized, .backing = backing, .generation = generation });
-            return .{
-                .dependencies = try self.allocator.dupe(facts.ValidityDependency, &.{ .{ .root = backing }, .{ .root = generation } }),
-                .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{identity}),
-            };
+            const dependencies = try self.allocator.alloc(facts.ValidityDependency, 2);
+            const identities = try self.allocator.alloc(facts.SymbolicPointeeId, 1);
+            const input = try state.establishSymbolicInput(self.graph.semanticType(ty).pointer.child, shared_backing.*);
+            shared_backing.* = input.backing;
+            shared_generation.* = input.generation;
+            dependencies[0] = .{ .root = input.backing.? };
+            dependencies[1] = .{ .root = input.generation.? };
+            identities[0] = input.identity;
+            return .{ .dependencies = dependencies, .symbolic_pointees = identities };
         }
+
         if (types.arrayElement(self.graph, ty)) |element| {
             if (!self.inputTypeHasReferences(element, 0)) return .{};
             const selected = summary orelse return .{};
@@ -5663,7 +5654,6 @@ pub const SafetyChecker = struct {
 
     fn projectSymbolicStorage(self: *SafetyChecker, pointer: facts.ValueFacts, projection: facts.Projection, state: *FunctionState) !?facts.ValueFacts {
         if (pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
-        const namespace = state.tracker.namespace orelse return null;
         const parent_id = pointer.symbolic_pointees[0];
         const parent = for (state.symbolic_pointees.items) |entry| {
             if (entry.identity == parent_id) break entry;
@@ -5689,79 +5679,11 @@ pub const SafetyChecker = struct {
                 .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else return null,
             };
         } else null;
-        const parent_generation = parent.generation orelse return null;
-        var identity: ?facts.SymbolicPointeeId = null;
-        var initial: ?facts.ValidityRootId = null;
-        var backing: ?facts.ValidityRootId = null;
-        for (namespace.projected_storage.items) |entry| {
-            if (entry.parent == parent_id and entry.parent_generation == parent_generation and entry.projection.eql(projection)) {
-                identity = entry.identity;
-                initial = entry.generation;
-                backing = entry.backing;
-                break;
-            }
-        }
-        if (identity == null) {
-            const next = namespace.next_symbolic_id;
-            namespace.next_symbolic_id = try std.math.add(u32, next, 1);
-            identity = @enumFromInt(next);
-            for (namespace.projected_storage.items) |entry| {
-                if (entry.parent_generation == parent_generation and entry.projection.eql(projection)) {
-                    backing = entry.backing;
-                    break;
-                }
-            }
-            if (backing == null) backing = try state.tracker.establish(.fresh);
-            initial = try state.tracker.establish(.fresh);
-            try namespace.projected_storage.append(self.allocator, .{
-                .parent = parent_id,
-                .parent_generation = parent_generation,
-                .projection = projection,
-                .identity = identity.?,
-                .backing = backing.?,
-                .generation = initial.?,
-                .ty = child_type,
-            });
-        }
-        var generation: ?facts.ValidityRootId = null;
-        for (state.symbolic_pointees.items) |*entry| if (entry.identity == identity.?) {
-            if (entry.generation) |current| {
-                if (entry.initializedness == .initialized and !state.tracker.isAlive(current)) {
-                    // A joined write can leave a complete value with several
-                    // possible incarnations. A new address observes the current
-                    // value; historical references retain the old incarnation.
-                    generation = try state.tracker.establish(.fresh);
-                    entry.generation = generation;
-                } else generation = current;
-            } else if (entry.initializedness == .initialized) {
-                generation = try state.tracker.establish(.fresh);
-                entry.generation = generation;
-            } else {
-                // Preserve the uncertain incarnation as a validity obligation;
-                // never turn failed projection into an untracked reference.
-                try state.tracker.materialize(initial.?);
-                generation = initial;
-            }
-            break;
-        };
-        if (generation == null) {
-            // A field not observed on this branch still starts with the input's
-            // initialized value. Refreshes retain their separate generations.
-            try state.tracker.materialize(backing.?);
-            try state.tracker.materialize(initial.?);
-            generation = initial;
-            try state.symbolic_pointees.append(.{
-                .identity = identity.?,
-                .initializedness = .initialized,
-                .ty = child_type,
-                .backing = backing,
-                .generation = generation,
-            });
-        }
+        const observation = try state.projectSymbolicStorage(parent, projection, child_type) orelse return null;
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         try dependencies.appendSlice(pointer.dependencies);
-        try appendDependencyFact(&dependencies, .{ .root = generation.? });
-        return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{identity.?}) };
+        try appendDependencyFact(&dependencies, .{ .root = observation.generation });
+        return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{observation.identity}) };
     }
 
     // Reading an input reference slot observes the pointer stored in it, not

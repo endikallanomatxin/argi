@@ -10,8 +10,7 @@
 
 ## Safety
 
-- Consolidate remaining symbolic/opaque state transitions and
-  declaration/inferred effects.
+- Consolidate opaque state transitions and declaration/inferred effects.
 - Extend conditional storage effects through stored results, indirect outputs
   and loops, preserving intervening writes and exact caller identities.
 - Extend hidden retention/replacement and grouped opaque mappings through output
