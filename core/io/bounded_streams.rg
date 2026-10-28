@@ -1,16 +1,3 @@
-_bounded_stream_maximum := () -> (.value: UIntNative) {
-    maximum :: UIntNative = 0
-    byte_index :: UIntNative = 0
-    native_bytes ::= size_of(.type = UIntNative)
-
-    while byte_index < native_bytes {
-        maximum = maximum * 256 + 255
-        byte_index = byte_index + 1
-    }
-
-    value = maximum
-}
-
 StreamCopyEnd: Type = (..end, ..limit)
 
 implement ImplicitlyCopyable#(StreamCopyEnd) ()

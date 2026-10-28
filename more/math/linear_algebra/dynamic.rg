@@ -10,13 +10,7 @@ DynamicMatrix := #(.t: Type: Scalar) (
 _extent := (.rows: UIntNative, .cols: UIntNative) -> (
     .result : Errable#(UIntNative, (..dimension_mismatch))
 ) {
-    maximum :: UIntNative = 0
-    i :: UIntNative = 0
-
-    while i < size_of(.type = UIntNative) {
-        maximum = maximum * 256 + 255
-        i = i + 1
-    }
+    maximum ::= integer_limits(.value = rows).maximum
 
     if cols != 0 {
         if rows > maximum / cols {
