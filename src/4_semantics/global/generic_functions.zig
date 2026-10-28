@@ -1396,12 +1396,27 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach_context: ?ReachInferenceContext,
     ) !global_sg.GlobalFunctionId {
+        const selected = try self.selectImplicitGenericFunction(current_module, module, reference, input, reach_context);
+        const started = self.profileTimestamp();
+        const result = try self.instantiate(selected.declaration, selected.arguments);
+        self.addProfileTime(started, &self.selection_profile.implicit_final_instantiation_ns);
+        return result;
+    }
+
+    fn selectImplicitGenericFunction(
+        self: *Resolver,
+        current_module: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        reach_context: ?ReachInferenceContext,
+    ) !ImplicitGenericSelection {
         const module_filter = if (reference.module_path) |path|
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
             null;
         const selected_definition = try self.core.resolveDefinitionAlias(current_module, reference);
-        return self.resolveImplicitGenericFunctionFiltered(
+        return self.selectImplicitGenericFunctionFiltered(
             current_module,
             if (selected_definition) |value| self.graph.familyDefinitionName(value.origin) else module.text(reference.name),
             module_filter,
@@ -1473,23 +1488,6 @@ pub const Resolver = struct {
         declaration: global_sg.GlobalDeclId,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
     };
-
-    fn resolveImplicitGenericFunctionFiltered(
-        self: *Resolver,
-        current_module: usize,
-        name: []const u8,
-        module_filter: ?global_sg.GlobalModuleId,
-        input: global_sg.GlobalNodeId,
-        reach: ?ReachInferenceContext,
-        ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
-        selected_definition: ?global_sg.DefinitionValue,
-    ) !global_sg.GlobalFunctionId {
-        const selected = try self.selectImplicitGenericFunctionFiltered(current_module, name, module_filter, input, reach, ambiguity_candidates, selected_definition);
-        const started = self.profileTimestamp();
-        const result = try self.instantiate(selected.declaration, selected.arguments);
-        self.addProfileTime(started, &self.selection_profile.implicit_final_instantiation_ns);
-        return result;
-    }
 
     pub const OrdinaryApplicability = union(enum) {
         applicable: global_sg.GlobalDeclId,
@@ -1808,16 +1806,16 @@ pub const Resolver = struct {
         self.constraint_diagnostic = &failure;
         missing_reach.clearRetainingCapacity();
         self.reach_diagnostics = missing_reach;
-        // TODO: Preserve selected-body instantiation failures separately from
-        // selection failures, so rejected bounds do not hide a nested error.
+        // Explain applicability only. A selected body's errors belong to normal
+        // instantiation, not to this diagnostic probe or its discarded effects.
         const selected = selection: {
             if (try self.generics.resolveCallArguments(current_module, reference)) |relocated| {
-                _ = self.resolveExplicitGenericFunction(current_module, module, reference, relocated, input, reach) catch |err| {
+                _ = self.selectExplicitGenericFunction(current_module, module, reference, relocated, input, reach, false, null) catch |err| {
                     if (err == error.OutOfMemory) return err;
                     break :selection false;
                 };
             } else {
-                _ = self.resolveImplicitGenericFunction(current_module, module, reference, input, reach) catch |err| {
+                _ = self.selectImplicitGenericFunction(current_module, module, reference, input, reach) catch |err| {
                     if (err == error.OutOfMemory) return err;
                     break :selection false;
                 };
@@ -1862,7 +1860,7 @@ pub const Resolver = struct {
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
             null;
-        _ = self.resolveImplicitGenericFunctionFiltered(
+        _ = self.selectImplicitGenericFunctionFiltered(
             current_module,
             module.text(reference.name),
             module_filter,
@@ -1872,6 +1870,7 @@ pub const Resolver = struct {
             null,
         ) catch |err| return switch (err) {
             error.AmbiguousGenericFunction => true,
+            error.OutOfMemory => return err,
             else => false,
         };
         return false;

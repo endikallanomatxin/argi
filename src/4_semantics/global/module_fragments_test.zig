@@ -67,6 +67,54 @@ test "generic constructor resolution propagates allocation failure" {
     }.resolve, .{@as([]const module.ModuleSemanticGraph, &modules)});
 }
 
+test "generic diagnostic probes select without instantiating the chosen body" {
+    const a = std.testing.allocator;
+    var input = try build(a, "probe/main.rg",
+        \\Box := #(.T: Type) (.value: T)
+        \\make := #(.T: Type) (.value: T) -> (.result: Box#(T)) {
+        \\    result = Box#(T)(.value = value)
+        \\}
+        \\main := () -> () {
+        \\    implicit ::= make(.value = true)
+        \\    explicit ::= make#(Bool)(.value = true)
+        \\}
+    );
+    defer input.deinit(a);
+    const modules = [_]module.ModuleSemanticGraph{input};
+    var session: sema.Session = undefined;
+    try session.init(a, &modules, .{});
+    defer session.deinit();
+    const Probe = struct {
+        calls: usize = 0,
+        fn constructor(context: *anyopaque, _: usize, _: @import("../module/entities.zig").ExternalRef, _: @import("../primitives/schema.zig").Range(g.GlobalGenericArgId), _: g.GlobalNodeId, _: @import("reach_context.zig").Context, _: @import("../primitives/schema.zig").SourceRef) anyerror!?g.Node {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.calls += 1;
+            return error.UnexpectedBodyInstantiation;
+        }
+    };
+    var probe: Probe = .{};
+    session.resolvers.generic_functions.nested_constructor_context = &probe;
+    session.resolvers.generic_functions.nested_constructor_resolver = Probe.constructor;
+    var message = std.array_list.Managed(u8).init(a);
+    defer message.deinit();
+    var candidates: std.ArrayList(g.GlobalDeclId) = .empty;
+    defer candidates.deinit(a);
+    const offsets = session.relocation.offsets.items[0];
+    var checked: usize = 0;
+    for (input.semantic.pending_operations.items) |operation| {
+        if (operation != .resolve_call) continue;
+        const call = operation.resolve_call;
+        const reference = input.semantic.external_refs.items[@intFromEnum(call.callee)];
+        if (!std.mem.eql(u8, input.text(reference.name), "make")) continue;
+        const failure = try session.resolvers.generic_functions.probeGenericCallFailure(0, &modules[0], reference, @import("globalizer.zig").globalNode(offsets, call.input), @import("reach_context.zig").Context.fromModule(&modules[0], offsets, call.visible_bindings, call.owner_function), &message);
+        try std.testing.expectEqual(null, failure);
+        try std.testing.expect(!try session.resolvers.generic_functions.collectImplicitGenericAmbiguity(0, &modules[0], reference, @import("globalizer.zig").globalNode(offsets, call.input), &candidates));
+        checked += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), checked);
+    try std.testing.expectEqual(@as(usize, 0), probe.calls);
+}
+
 test "semantic rollback retains bounded memory after repeated generic module additions" {
     const a = std.testing.allocator;
     var base = try build(a, "accepted/main.rg", "Accepted := (.value: Bool)");
