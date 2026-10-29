@@ -560,6 +560,31 @@ test "REPL resource-bearing prelude survives failed reset and releases poisoned 
     // Reset discards the trapped context without executing user destructors.
     try session.reset();
     try std.testing.expectEqual(.fresh, session.runtime.context.state);
+    var unavailable_output: std.Io.Writer = .failing;
+    for ([_]bool{ false, true }) |host_failure| {
+        session.limits.instructions = 100_000;
+        if (host_failure) host_output.writer = &unavailable_output;
+        const source = if (host_failure)
+            owning_prelude ++ "unwrap_or_abort(.value = print(\"unavailable\"))\n"
+        else
+            owning_prelude ++ "while true {}\n";
+        try std.testing.expectError(
+            if (host_failure) error.ExecutionAborted else error.ExecutionInstructionLimit,
+            session.initializePrelude(source),
+        );
+        try std.testing.expect(session.prelude == null);
+        try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+        try std.testing.expectEqual(@as(usize, 1), session.runtime.context.storage.acquisitions.entries.items.len);
+        try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+        const trapped_revision = session.compiler.revision;
+        try std.testing.expectError(error.ExecutionContextPoisoned, session.submitStatements("owned"));
+        try std.testing.expectEqual(trapped_revision, session.compiler.revision);
+        session.limits.instructions = 1_000_000;
+        host_output.writer = &output.writer;
+        try session.reset();
+        try std.testing.expectEqual(.fresh, session.runtime.context.state);
+        try std.testing.expectEqualStrings("", output.written());
+    }
     try session.initializePrelude(owning_prelude);
     try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
     const namespace = session.compiler.namespace;
